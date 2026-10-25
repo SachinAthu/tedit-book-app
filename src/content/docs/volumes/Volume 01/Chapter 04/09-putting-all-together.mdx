@@ -1,0 +1,384 @@
+---
+title: 4.9 Putting It All Together
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Over the past several sections, we have explored the individual building blocks that allow a terminal application to control the screen.
+
+We learned how to:
+
+- move the cursor,
+- clear the display,
+- change text formatting,
+- hide and show the cursor, and
+- use the alternate screen buffer for full-screen applications.
+
+Each of these features is useful on its own, but their true power becomes apparent when they are combined into a complete rendering cycle.
+
+Every time a modern terminal editor updates its display, it performs essentially the same sequence of operations.
+
+## The Rendering Cycle
+
+Rather than modifying isolated parts of the screen, many terminal applications redraw the entire visible interface whenever something changes.
+
+Conceptually, each frame follows this pattern:
+
+```text
+Program
+
+↓
+
+Hide Cursor
+
+↓
+
+Move Cursor Home
+
+↓
+
+Clear Screen
+
+↓
+
+Draw Lines
+
+↓
+
+Move Cursor
+
+↓
+
+Show Cursor
+```
+
+Each step has a specific purpose.
+
+## Step 1: Hide the Cursor
+
+The first operation is to make the cursor invisible.
+
+```text
+ESC[?25l
+```
+
+As discussed in the previous section, hiding the cursor prevents the user from seeing it jump around while the screen is being updated.
+
+Without this step, every cursor movement during rendering would become visible.
+
+## Step 2: Move the Cursor Home
+
+Next, the application positions the cursor at the upper-left corner of the screen.
+
+```text
+ESC[H
+```
+
+Conceptually:
+
+```text
+Before
+
++----------------------+
+|            █         |
+|                      |
+|                      |
++----------------------+
+
+        │
+        ▼
+
+After
+
++----------------------+
+|█                     |
+|                      |
+|                      |
++----------------------+
+```
+
+Starting from a known location ensures that the next drawing operation begins at the correct position.
+
+## Step 3: Clear the Screen
+
+Once the cursor is at the home position, the application clears the visible display.
+
+```text
+ESC[2J
+```
+
+This removes the previous frame completely.
+
+```text
+Old Frame
+
++----------------------+
+|Line 1                |
+|Line 2                |
+|Status                |
++----------------------+
+
+        │
+        ▼
+
+Screen Cleared
+
++----------------------+
+|                      |
+|                      |
+|                      |
++----------------------+
+```
+
+The renderer now has a blank canvas on which to draw the next frame.
+
+## Step 4: Draw the Interface
+
+With the screen cleared, the application prints the current state of the editor.
+
+This may include:
+
+- visible document lines,
+- the status bar,
+- the message bar,
+- line numbers,
+- highlighted selections, and
+- any other interface elements.
+
+Conceptually:
+
+```text
++----------------------+
+|int main()            |
+|{                     |
+|    return 0;         |
+|}                     |
+|----------------------|
+|main.c      4:5       |
++----------------------+
+```
+
+At this stage, the cursor is still hidden, allowing the renderer to move freely while drawing the interface.
+
+## Step 5: Position the Cursor
+
+After the interface has been drawn, the renderer moves the cursor to its logical editing position.
+
+For example:
+
+```text
+ESC[3;5H
+```
+
+The cursor is now exactly where the user expects the next typed character to appear.
+
+```text
++----------------------+
+|int main()            |
+|{                     |
+|    █return 0;        |
+|}                     |
++----------------------+
+```
+
+Notice that the cursor has been positioned **after** the interface is complete.
+
+## Step 6: Show the Cursor
+
+Finally, the renderer makes the cursor visible again.
+
+```text
+ESC[?25h
+```
+
+Only now does the user see the finished frame.
+
+The complete sequence can therefore be summarized as:
+
+```text
+Hide Cursor
+
+↓
+
+Prepare Screen
+
+↓
+
+Draw Everything
+
+↓
+
+Position Cursor
+
+↓
+
+Show Cursor
+```
+
+Because the cursor remains hidden throughout the rendering process, the user experiences a clean and stable interface rather than watching the editor construct it piece by piece.
+
+## Why Redraw the Entire Screen?
+
+At first, redrawing the entire display may seem inefficient.
+
+Why not simply update the parts that changed?
+
+For example, if the user types a single character, couldn't the editor print just that character?
+
+While this is certainly possible, it introduces considerable complexity.
+
+The renderer would need to answer questions such as:
+
+- Which characters changed?
+- Did the cursor move?
+- Does the status bar need updating?
+- Did scrolling occur?
+- Which regions of the screen must be erased?
+- Which escape sequences are required to keep the display synchronized?
+
+A full redraw avoids all of these problems.
+
+Instead of trying to determine what changed, the renderer simply regenerates the entire visible interface from the current editor state.
+
+Conceptually:
+
+```text
+Editor State
+
+        │
+        ▼
+
+Generate Frame
+
+        │
+        ▼
+
+Display Frame
+```
+
+The screen becomes a direct visual representation of the editor's current state.
+
+This greatly simplifies the renderer and reduces the likelihood of display inconsistencies.
+
+## A Frame Is a Snapshot
+
+An important way to think about rendering is that every frame is a complete snapshot of the editor at a particular instant.
+
+Suppose the document changes from:
+
+```text
+Hello
+World
+```
+
+to:
+
+```text
+Hello!
+World
+```
+
+The renderer does not attempt to modify the old frame.
+
+Instead, it generates an entirely new one.
+
+```text
+Frame 1
+
+Hello
+World
+
+        │
+        ▼
+
+Frame 2
+
+Hello!
+World
+```
+
+Each frame stands on its own.
+
+This idea is similar to how video games render animation. Rather than changing individual pixels from the previous image, they repeatedly generate complete frames that represent the current state of the world.
+
+Our editor follows the same philosophy, except that it renders text instead of graphics.
+
+## Bringing the Pieces Together
+
+We can now see how the concepts introduced throughout this chapter work together.
+
+```text
+User Presses Key
+
+        │
+        ▼
+
+Editor State Changes
+
+        │
+        ▼
+
+Hide Cursor
+
+        │
+        ▼
+
+Move Cursor Home
+
+        │
+        ▼
+
+Clear Screen
+
+        │
+        ▼
+
+Draw Entire Interface
+
+        │
+        ▼
+
+Move Cursor to Editing Position
+
+        │
+        ▼
+
+Show Cursor
+
+        │
+        ▼
+
+Wait for Next Input
+```
+
+This sequence repeats every time the editor needs to update the display.
+
+Whether the user inserts a character, deletes a line, scrolls the document, resizes the terminal window, or saves a file, the renderer follows the same overall procedure.
+
+<Aside type="note" title="Historical Note">
+
+Early terminal software often updated only portions of the display because communication with hardware terminals occurred over relatively slow serial connections. Minimizing the number of transmitted characters improved responsiveness.
+
+Modern terminal emulators communicate locally with applications and are significantly faster. For editors of modest size, regenerating the entire visible screen is both simple and efficient. Many educational editors—and even some production applications—adopt this strategy because its clarity outweighs the relatively small cost of redrawing a few dozen lines of text.
+
+</Aside>
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Every frame of our editor will follow the rendering pattern introduced in this section.
+
+Whenever the document changes, we will not ask _"What should I update?"_ Instead, we will ask _"What should the screen look like right now?"_ The renderer will answer that question by generating a complete frame from the current editor state.
+
+This design has an important architectural advantage: rendering becomes a **pure output operation**. It does not modify the document, process keyboard input, or make editing decisions. Its only responsibility is to transform the current editor state into a sequence of terminal escape sequences and text that reproduces the desired interface on the screen.
+
+This separation of responsibilities will become a central architectural principle throughout the remainder of the book.
+
+</Aside>
+
+## Summary
+
+The individual ANSI escape sequences introduced throughout this chapter are rarely used in isolation. Instead, they are combined into a predictable rendering cycle that updates the terminal display safely and consistently.
+
+Each frame begins by hiding the cursor, positioning it at the top of the screen, and clearing the previous contents. The renderer then draws the entire interface, moves the cursor to its logical editing position, and finally makes it visible again. This sequence creates the illusion of an interface that updates instantaneously, even though the screen is being redrawn from top to bottom.
+
+In the next section, we will step back from individual escape sequences and examine a practical challenge faced by every terminal application: **terminal compatibility**. Not every terminal behaves exactly the same, and understanding these differences is essential for writing robust, portable software.

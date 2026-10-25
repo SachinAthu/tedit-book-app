@@ -1,0 +1,285 @@
+---
+title: 4.1 The Problem with Plain Text
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous chapters, we learned how a character travels from a program to the screen. A program writes bytes to **stdout**, the operating system passes those bytes through a terminal device, and the terminal emulator interprets them before finally drawing text on the display.
+
+So far, every example has simply **printed text**. This is sufficient for many command-line programs, but it is not enough for building an interactive application such as a text editor.
+
+Before we learn how terminals can be controlled, we must first understand the limitations of plain text output.
+
+## Printing Text Is a One-Way Operation
+
+The C standard library provides functions such as `printf()` for writing text to the terminal.
+
+```c
+printf("Hello\n");
+printf("World\n");
+```
+
+The output is straightforward:
+
+```text
+Hello
+World
+```
+
+Each call writes characters to **stdout**, and the terminal displays them one after another.
+
+The flow looks like this:
+
+```text
+Program
+    │
+    ▼
+stdout
+    │
+    ▼
+Terminal
+    │
+    ▼
+Hello
+World
+```
+
+Once the characters have been displayed, the program simply continues executing. There is no concept of selecting previously printed text or modifying it.
+
+## Text Only Moves Forward
+
+When we use `printf()`, the terminal maintains an internal **cursor position**, which indicates where the next character will be drawn.
+
+Initially, the cursor is at the beginning of the first line.
+
+```text
+|
+```
+
+After printing `"Hello"`:
+
+```text
+Hello|
+```
+
+After printing a newline:
+
+```text
+Hello
+|
+```
+
+After printing `"World"`:
+
+```text
+Hello
+World|
+```
+
+Each character advances the cursor. A newline moves it to the beginning of the next line.
+
+The important observation is that **output always moves forward**.
+
+## You Cannot Edit Existing Output
+
+Suppose we print:
+
+```c
+printf("Count: 1\n");
+printf("Count: 2\n");
+printf("Count: 3\n");
+```
+
+The terminal displays:
+
+```text
+Count: 1
+Count: 2
+Count: 3
+```
+
+If our intention was to update the same counter on the screen, this clearly does not work. Instead of replacing the previous value, every call simply adds more text.
+
+Likewise, if we print:
+
+```c
+printf("Hello");
+```
+
+there is no function such as:
+
+```c
+erase_previous_character();
+```
+
+or
+
+```c
+move_cursor_to_row(5);
+```
+
+in the C standard library.
+
+Once text has been written, `printf()` provides no mechanism to modify what has already been displayed.
+
+## Why This Is a Problem
+
+Imagine implementing even the simplest text editor.
+
+Suppose the screen initially shows:
+
+```text
+Hello
+```
+
+The user presses the **A** key, intending to insert it at the beginning of the line.
+
+The desired result is:
+
+```text
+AHello
+```
+
+However, if the program simply prints the new character:
+
+```c
+printf("A");
+```
+
+the terminal produces:
+
+```text
+HelloA
+```
+
+because the cursor is already positioned after the word _Hello_.
+
+The terminal faithfully prints the next character at the current cursor position. It has no knowledge of editing, insertion, or replacement.
+
+## More Problems
+
+The limitations become even more obvious when considering common editor operations.
+
+### Moving the Cursor
+
+A text editor must allow the user to move freely through the document.
+
+For example:
+
+```text
+Hello
+World
+     ^
+```
+
+The cursor may need to move upward:
+
+```text
+Hello
+  ^
+World
+```
+
+Plain text output provides no way to reposition the cursor.
+
+### Clearing the Screen
+
+Editors constantly redraw their interface.
+
+Suppose the document changes.
+
+With ordinary output, one possible approach is:
+
+```c
+for (int i = 0; i < 100; i++)
+    printf("\n");
+```
+
+This merely pushes the previous contents upward:
+
+```text
+(old content...)
+
+
+
+
+
+
+
+
+
+
+
+
+(new content...)
+```
+
+The screen has not actually been cleared. We have simply scrolled the terminal.
+
+### Updating a Status Bar
+
+Many editors display information such as:
+
+```text
+example.txt    Line 42, Column 18
+```
+
+Whenever the cursor moves, this information changes.
+
+Without the ability to overwrite existing text, every update would produce another status line:
+
+```text
+example.txt    Line 1, Column 1
+example.txt    Line 2, Column 5
+example.txt    Line 3, Column 8
+```
+
+Clearly, this is not the intended behavior.
+
+## Plain Text Is Designed for Documents, Not Interfaces
+
+The original purpose of terminal output was simple: display information sequentially.
+
+Programs such as:
+
+- `ls`
+- `cat`
+- `grep`
+- `find`
+
+produce output that the user reads from top to bottom. Once displayed, the text rarely needs to change.
+
+For example:
+
+```text
+$ ls
+
+Documents
+Downloads
+Pictures
+Videos
+```
+
+Appending new lines works perfectly because these programs are producing a document-like stream of text.
+
+Interactive applications have different requirements. They need to update parts of the screen repeatedly, move the cursor, and redraw their interface many times per second.
+
+Plain text alone cannot provide these capabilities.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The terminal does not remember your application's user interface.
+
+Once characters have been displayed, the terminal treats them as ordinary output. If a program wants to change what the user sees, it must explicitly instruct the terminal how to modify the display.
+
+This is a fundamental difference between a terminal and a graphical user interface. A GUI toolkit provides buttons, windows, and editable text fields as reusable components. A terminal provides only a stream of characters unless the program uses additional control commands.
+
+</Aside>
+
+## Summary
+
+Ordinary text output is inherently sequential. Functions such as `printf()` can write new characters, but they cannot move the cursor, erase existing text, clear the screen, or update previously displayed content. These limitations make plain text output unsuitable for interactive applications such as text editors.
+
+To build a terminal editor, we need a way to communicate commands to the terminal instead of merely printing characters. Fortunately, terminals support a standardized command language for this purpose.
+
+In the next section, we will introduce **ANSI Escape Sequences**, the mechanism that allows programs to control the terminal by moving the cursor, clearing the screen, changing colors, and much more.

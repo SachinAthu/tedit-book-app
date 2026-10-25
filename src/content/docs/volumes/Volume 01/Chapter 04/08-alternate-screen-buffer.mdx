@@ -1,0 +1,353 @@
+---
+title: 4.8 Alternate Screen Buffer
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+So far, we have learned how to control the terminal by moving the cursor, clearing the screen, changing text formatting, and hiding the cursor during rendering. These capabilities allow us to build a full-screen interface, but they introduce an important question:
+
+**What happens to everything that was already on the screen?**
+
+Suppose a user has just executed several commands:
+
+```text
+$ ls
+Documents  Downloads  Projects
+
+$ git status
+On branch main
+nothing to commit
+
+$
+```
+
+If our text editor clears the screen and begins drawing its interface, has all of this output been lost?
+
+Fortunately, the answer is **no**.
+
+Modern terminal emulators provide a feature called the **alternate screen buffer**, allowing full-screen applications to temporarily take control of the display without destroying the user's existing terminal session.
+
+## The Terminal Has More Than One Screen
+
+Although we usually think of a terminal as having a single screen, most modern terminal emulators actually maintain two separate screen buffers.
+
+Conceptually:
+
+```text
+                 Terminal Emulator
+
+        +---------------------------+
+        |                           |
+        |  Normal Screen Buffer     |
+        |                           |
+        +---------------------------+
+                   ▲
+                   │
+          User's shell session
+                   │
+                   ▼
+        +---------------------------+
+        |                           |
+        | Alternate Screen Buffer   |
+        |                           |
+        +---------------------------+
+```
+
+Only one buffer is visible at a time.
+
+The shell normally uses the **normal screen buffer**. When a full-screen application starts, it requests that the terminal switch to the **alternate screen buffer**. The application then draws its entire interface there.
+
+The original shell contents remain safely stored in the normal buffer.
+
+## Switching Buffers
+
+The process looks like this:
+
+```text
+Normal Screen
+
+↓
+
+Enter Alternate Screen
+
+↓
+
+Editor Runs
+
+↓
+
+Leave Alternate Screen
+
+↓
+
+Original Shell Returns
+```
+
+From the user's perspective, it appears as though the editor has temporarily replaced the terminal window.
+
+In reality, the terminal has simply switched which screen buffer it is displaying.
+
+## Entering the Alternate Screen
+
+Most modern terminal emulators recognize the following private mode escape sequence:
+
+```text
+ESC [ ? 1049 h
+```
+
+or:
+
+```c
+printf("\x1b[?1049h");
+```
+
+After receiving this command, the terminal switches to the alternate screen buffer.
+
+Initially, this buffer is empty.
+
+Conceptually:
+
+```text
+Before
+
++----------------------+
+| Shell Output         |
+|                      |
+| $                    |
++----------------------+
+
+        │
+        │ ESC[?1049h
+        ▼
+
++----------------------+
+|                      |
+|      Empty Screen    |
+|                      |
++----------------------+
+```
+
+The application can now draw whatever interface it requires without affecting the shell's display.
+
+## Leaving the Alternate Screen
+
+When the application finishes, it returns to the normal screen buffer using:
+
+```text
+ESC [ ? 1049 l
+```
+
+or:
+
+```c
+printf("\x1b[?1049l");
+```
+
+As soon as the terminal processes this sequence, the alternate buffer is discarded and the original screen becomes visible again.
+
+The user's previous shell session appears exactly as it was before the application started.
+
+```text
+Application exits
+
+        │
+        ▼
+
+Discard Alternate Buffer
+
+        │
+        ▼
+
+Restore Normal Buffer
+
+        │
+        ▼
+
+$ git status
+On branch main
+nothing to commit
+
+$
+```
+
+Nothing needed to be redrawn because the terminal preserved the entire contents of the normal screen while the application was running.
+
+## Why Editors Do Not Destroy Your Shell Output
+
+This behavior explains something that many programmers notice but rarely think about.
+
+Suppose you execute:
+
+```text
+$ make
+```
+
+followed by:
+
+```text
+$ vim main.c
+```
+
+While editing, the compilation output disappears from view.
+
+After quitting Vim, however, everything is still there.
+
+```text
+$ make
+...
+Build successful.
+
+$ vim main.c
+
+(Editor opens)
+
+(Editor exits)
+
+$ make
+...
+Build successful.
+
+$
+```
+
+The editor did **not** save or reconstruct the shell output.
+
+Instead:
+
+1. The shell remained in the normal screen buffer.
+2. Vim switched to the alternate screen buffer.
+3. Vim drew its interface there.
+4. When Vim exited, the terminal restored the normal screen buffer automatically.
+
+The shell never knew that another screen had temporarily been displayed.
+
+The same mechanism is used by editors such as **Nano**, **Vim**, **Neovim**, **Helix**, and many other terminal applications.
+
+## Why Full-Screen Applications Use It
+
+Imagine that the alternate screen buffer did not exist.
+
+A text editor would have only one option:
+
+```text
+Shell Output
+
+↓
+
+Clear Screen
+
+↓
+
+Draw Editor
+
+↓
+
+Exit
+
+↓
+
+???
+```
+
+Once the screen had been cleared and overwritten, the previous shell output would be gone forever.
+
+The application could not realistically reconstruct it because that output may have been produced by many different commands over a long period of time.
+
+The alternate screen buffer solves this problem elegantly.
+
+Instead of modifying the user's existing display, the application temporarily works on a completely separate screen.
+
+This provides several important advantages:
+
+- The shell remains exactly as the user left it.
+- The application begins with a clean workspace.
+- Exiting the application restores the previous terminal contents instantly.
+- The application does not need to save or redraw the shell output.
+
+As a result, full-screen programs behave as though they temporarily "borrow" the terminal rather than permanently taking it over.
+
+## Not a Separate Terminal
+
+It is important to understand what the alternate screen buffer is **not**.
+
+It is **not**:
+
+- another terminal window,
+- another process,
+- another shell session, or
+- another pseudo terminal (PTY).
+
+The shell and the editor continue communicating through the same terminal connection.
+
+Conceptually:
+
+```text
+Application
+
+      │
+      ▼
+
+Same PTY
+
+      │
+      ▼
+
+Terminal Emulator
+
+      │
+      ├── Normal Screen Buffer
+      │
+      └── Alternate Screen Buffer
+```
+
+Only the displayed buffer changes.
+
+The underlying terminal session remains exactly the same.
+
+## Private Mode Revisited
+
+Like cursor visibility, the alternate screen buffer is controlled using a private mode sequence beginning with `ESC[?`.
+
+```text
+ESC [ ? 1049 h
+```
+
+This reinforces an important distinction introduced in the previous section.
+
+Standard ANSI escape sequences primarily control cursor movement and text formatting.
+
+Private mode sequences control broader aspects of terminal behavior, such as:
+
+- cursor visibility,
+- alternate screen buffers,
+- mouse reporting,
+- bracketed paste mode, and
+- many other terminal features.
+
+These capabilities originated with DEC VT-series terminals and have become de facto standards adopted by nearly all modern terminal emulators.
+
+<Aside type="note" title="Historical Note">
+
+Early hardware terminals generally provided only a single display buffer. As interactive software became more sophisticated, users wanted full-screen applications that did not erase their command history every time they ran. DEC introduced alternate screen buffers on later VT terminals, allowing applications to temporarily replace the display while preserving the original contents.
+
+This idea proved so useful that it became a standard feature of terminal emulators on Unix-like systems. Today, it is considered an essential capability for terminal-based editors, pagers, file managers, and other full-screen applications.
+
+</Aside>
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The alternate screen buffer is one of the key building blocks that transforms a stream of printed text into a true terminal user interface.
+
+Without it, every execution of our editor would permanently overwrite the user's shell output, making the terminal frustrating to use. By entering the alternate screen when the editor starts and leaving it when the editor exits, we can provide a clean editing workspace while respecting the user's existing terminal session.
+
+Our editor will therefore treat the alternate screen buffer as part of its initialization and shutdown sequence. Entering raw mode, switching to the alternate screen, hiding the cursor, and later restoring all of these terminal settings will become a coordinated responsibility of the editor rather than isolated operations. This disciplined approach ensures that, regardless of what happens while the editor is running, the terminal is returned to the same state in which the user left it.
+
+</Aside>
+
+## Summary
+
+The alternate screen buffer allows a terminal application to temporarily take over the display without modifying the user's existing shell output. Rather than clearing the normal terminal screen, applications switch to a second screen buffer, perform all rendering there, and then discard it when they exit.
+
+This mechanism explains why editors such as **Vim** and **Nano** leave the shell exactly as it was before they started, despite occupying the entire terminal window while running. Together with cursor movement, screen clearing, text formatting, and cursor visibility, the alternate screen buffer forms one of the essential building blocks for creating professional full-screen terminal applications.
+
+In the next section, we will see how all of the individual escape sequences from this chapter come together into a single, coordinated rendering cycle.

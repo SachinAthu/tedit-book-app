@@ -1,0 +1,485 @@
+---
+title: 4.5 Clearing the Screen
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+In the previous section, we learned how to move the cursor to any position on the screen. Cursor movement allows us to decide **where** the next character will be drawn.
+
+However, moving the cursor alone is not enough.
+
+Suppose our editor redraws the screen after every key press.
+
+Initially, the screen might contain:
+
+```text
+Hello
+World
+```
+
+After editing the document, we want it to display:
+
+```text
+Hello
+ChatGPT
+```
+
+If we simply move the cursor to the beginning and print the new text, remnants of the old display may remain on the screen.
+
+To produce a clean, consistent interface, we must first remove the previous contents.
+
+This is the purpose of **screen clearing**.
+
+## Why Printing Blank Lines Doesn't Work
+
+A common beginner's approach to "clearing" the screen is:
+
+```c
+for (int i = 0; i < 50; i++)
+{
+    printf("\n");
+}
+```
+
+At first glance, this seems reasonable.
+
+The output scrolls upward until the previous text disappears from view.
+
+```text
+Hello
+World
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+Eventually the screen appears empty.
+
+But has it actually been cleared?
+
+No.
+
+The terminal has simply **scrolled**.
+
+The old output still exists in the scrollback buffer.
+
+If the user scrolls upward, the previous text is still visible.
+
+```text
+↑ Scroll Up
+
+-------------------------
+Hello
+World
+-------------------------
+```
+
+Printing blank lines does not erase anything—it only moves the viewport.
+
+## Clearing Is Different from Scrolling
+
+A true screen clear tells the terminal:
+
+> "Remove the existing contents of the display."
+
+This is fundamentally different from printing more output.
+
+Conceptually:
+
+```text
+Printing Blank Lines
+
+↓
+
+Old text moves upward
+
+↓
+
+Screen appears empty
+```
+
+versus
+
+```text
+Clear Screen Command
+
+↓
+
+Terminal erases display
+
+↓
+
+Screen becomes empty
+```
+
+The second approach is what interactive applications use.
+
+## The Clear Screen Command
+
+The most commonly used ANSI sequence for clearing the screen is:
+
+```text
+ESC [ 2 J
+```
+
+In C:
+
+```c
+printf("\x1b[2J");
+```
+
+Let's break it apart.
+
+```text
+ESC
+
+↓
+
+Start command
+```
+
+```text
+[
+
+↓
+
+CSI
+```
+
+```text
+2
+
+↓
+
+Parameter
+```
+
+```text
+J
+
+↓
+
+Erase display
+```
+
+Together, the sequence instructs the terminal to erase the screen.
+
+Notice that nothing is printed.
+
+Instead, the terminal performs an action.
+
+## What Does the Parameter Mean?
+
+The `J` command can behave differently depending on its parameter.
+
+### Parameter 0
+
+```text
+ESC [ 0 J
+```
+
+Erases from the cursor position **to the end of the screen**.
+
+Example:
+
+```text
+Hello|
+World
+```
+
+becomes
+
+```text
+Hello|
+```
+
+Everything after the cursor is removed.
+
+### Parameter 1
+
+```text
+ESC [ 1 J
+```
+
+Erases from the beginning of the screen **to the cursor position**.
+
+Example:
+
+```text
+Hello
+Wo|rld
+```
+
+becomes
+
+```text
+      |
+rld
+```
+
+Everything before the cursor disappears.
+
+### Parameter 2
+
+```text
+ESC [ 2 J
+```
+
+Erases the **entire visible screen**.
+
+This is the command most frequently used by terminal applications.
+
+## Clearing the Screen Does Not Move the Cursor
+
+An important detail often surprises beginners.
+
+Suppose the cursor is here:
+
+```text
+Hello
+World|
+```
+
+Executing:
+
+```c
+printf("\x1b[2J");
+```
+
+clears the screen.
+
+But the cursor **remains in the same position**.
+
+Conceptually:
+
+```text
+Before
+
+Hello
+World|
+
+↓
+
+Clear Screen
+
+↓
+
+     |
+```
+
+The display is empty, but the cursor has not returned to the upper-left corner.
+
+## Returning to the Home Position
+
+Because clearing the screen does not reposition the cursor, programs almost always perform two operations together.
+
+First:
+
+```text
+ESC [ 2 J
+```
+
+Clear the screen.
+
+Then:
+
+```text
+ESC [ H
+```
+
+Move the cursor to the home position.
+
+The sequence becomes:
+
+```c
+printf("\x1b[2J");
+printf("\x1b[H");
+```
+
+or equivalently:
+
+```text
+Clear Screen
+
+↓
+
+Move Cursor Home
+
+↓
+
+Begin Drawing
+```
+
+This combination ensures that rendering starts from the upper-left corner of the terminal.
+
+## How a Text Editor Uses Screen Clearing
+
+Imagine the user types a single character.
+
+Internally, our editor might perform the following steps.
+
+```text
+User presses key
+
+↓
+
+Update document
+
+↓
+
+Clear screen
+
+↓
+
+Move cursor home
+
+↓
+
+Draw entire document
+
+↓
+
+Move cursor to editing position
+
+↓
+
+Wait for next input
+```
+
+Notice that the editor does **not** attempt to erase individual characters one by one.
+
+Instead, it simply redraws everything.
+
+This approach is surprisingly common because it greatly simplifies the rendering logic.
+
+Later in the book, we will adopt the same strategy for our editor.
+
+## Clearing Individual Lines
+
+Sometimes a program only needs to redraw one line rather than the entire screen.
+
+ANSI provides another command for this purpose.
+
+```text
+ESC [ K
+```
+
+The `K` command erases part or all of the current line.
+
+Like `J`, it accepts parameters.
+
+### Parameter 0
+
+```text
+ESC [ 0 K
+```
+
+Erase from the cursor to the end of the line.
+
+### Parameter 1
+
+```text
+ESC [ 1 K
+```
+
+Erase from the beginning of the line to the cursor.
+
+### Parameter 2
+
+```text
+ESC [ 2 K
+```
+
+Erase the entire current line.
+
+These commands are useful for updating status bars, progress indicators, and other single-line interfaces.
+
+## What About the Scrollback Buffer?
+
+Modern terminal emulators usually maintain a **scrollback buffer**, allowing users to scroll upward and review previous output.
+
+The command:
+
+```text
+ESC [ 2 J
+```
+
+clears only the **visible screen**.
+
+It typically does **not** erase the scrollback history.
+
+Some terminals support another sequence:
+
+```text
+ESC [ 3 J
+```
+
+which requests that the scrollback buffer also be cleared.
+
+However, this behavior is **not standardized** and is not supported by every terminal emulator.
+
+Since our editor uses the **alternate screen buffer** (introduced later in this chapter), we generally do not need to worry about clearing the user's scrollback history.
+
+<Aside type="note" title="Historical Note">
+
+On early hardware terminals, clearing the screen was a relatively expensive operation because the terminal had to erase every character stored in its display memory. Modern terminal emulators perform the same operation in software, making full-screen redraws much faster than they once were.
+
+</Aside>
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Many beginners assume that efficient terminal applications update only the parts of the screen that have changed.
+
+While this can improve performance, it also makes the rendering logic much more complex.
+
+For a simple text editor, a far better strategy is:
+
+```text
+Update editor state
+
+↓
+
+Clear screen
+
+↓
+
+Redraw everything
+
+↓
+
+Display frame
+```
+
+This is known as a **full redraw** strategy. It keeps the renderer simple, predictable, and easy to reason about. On modern hardware, redrawing an ordinary terminal window is typically fast enough that users perceive the interface as instantaneous.
+
+This design choice aligns with **ADR-002: Rendering Strategy**, where we intentionally choose **full redraw** over incremental updates because simplicity is more valuable than premature optimization.
+
+</Aside>
+
+## Summary
+
+ANSI escape sequences provide commands for erasing both the screen and individual lines. The `J` command clears portions of the display, while the `K` command clears portions of the current line. The most commonly used sequence, `ESC[2J`, clears the entire visible screen, but it **does not** reposition the cursor. Consequently, terminal applications almost always follow it with `ESC[H` to return the cursor to the upper-left corner before redrawing the interface.
+
+Screen clearing is a fundamental part of the rendering pipeline used by terminal applications. Rather than modifying the existing display piece by piece, our editor will clear the screen, redraw the current document, and then restore the cursor to its logical position on every frame.
+
+In the next section, we will explore **text formatting and colors**, learning how ANSI escape sequences can control the appearance of text in addition to its position.

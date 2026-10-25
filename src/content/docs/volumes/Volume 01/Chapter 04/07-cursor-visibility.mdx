@@ -1,0 +1,234 @@
+---
+title: 4.7 Cursor Visibility
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+In the previous sections, we learned how to move the cursor, clear portions of the screen, and change the appearance of text. There is one more aspect of the cursor that applications often control: whether it is visible at all.
+
+When working in a terminal, the cursor normally appears as a blinking block, bar, or underline, indicating where the next character will be drawn. For many interactive applications, this is exactly the desired behavior. In other situations, however, the cursor can become distracting or even misleading.
+
+ANSI escape sequences allow applications to temporarily hide the cursor and later restore it when appropriate.
+
+## Why Hide the Cursor?
+
+Imagine a program that redraws the entire screen many times each second.
+
+Each frame might follow this sequence:
+
+```text
+Clear screen
+
+↓
+
+Draw interface
+
+↓
+
+Move cursor
+
+↓
+
+Wait for input
+```
+
+If the cursor remains visible throughout this process, the user may briefly see it moving across the screen as different parts of the interface are drawn. On slower terminals or remote connections, this movement can produce an unpleasant flickering effect.
+
+Conceptually, the rendering process looks like this:
+
+```text
+Visible Cursor
+
+    │
+    ▼
+
+Move Cursor
+Draw Text
+Move Cursor
+Draw More Text
+Move Cursor
+
+    │
+    ▼
+
+User sees cursor jumping
+```
+
+Instead, many applications perform the rendering while the cursor is hidden:
+
+```text
+Hide Cursor
+
+      │
+      ▼
+
+Draw Entire Frame
+
+      │
+      ▼
+
+Move Cursor to Final Position
+
+      │
+      ▼
+
+Show Cursor
+```
+
+The user only sees the completed frame, resulting in a smoother and more professional interface.
+
+## Hiding the Cursor
+
+The ANSI escape sequence for hiding the cursor is:
+
+```text
+ESC [ ? 25 l
+```
+
+or, in C:
+
+```c
+printf("\x1b[?25l");
+```
+
+The final letter is a lowercase `l` (the letter _ell_), not the number `1`.
+
+When the terminal receives this sequence, it stops displaying the cursor. The cursor itself still exists internally and continues to move normally; only its visual representation is hidden.
+
+For example:
+
+```c
+printf("\x1b[?25l");
+/* Draw the interface */
+```
+
+After this command, subsequent cursor movement commands continue to work exactly as before. The only difference is that the user cannot see the cursor while the application is updating the display.
+
+## Showing the Cursor Again
+
+Once rendering is complete, the application should restore the cursor.
+
+The corresponding escape sequence is:
+
+```text
+ESC [ ? 25 h
+```
+
+or:
+
+```c
+printf("\x1b[?25h");
+```
+
+The final letter `h` stands for **set** (historically, "high"), while `l` stands for **reset** (historically, "low"). Together, these commands enable or disable various terminal modes.
+
+A complete rendering cycle often follows this pattern:
+
+```c
+printf("\x1b[?25l");   /* Hide cursor */
+
+/* Redraw the screen */
+
+printf("\x1b[H");      /* Move cursor to its final position */
+
+printf("\x1b[?25h");   /* Show cursor */
+```
+
+The user experiences only the finished result rather than watching the drawing process.
+
+## Private Mode Sequences
+
+You may have noticed that these escape sequences look slightly different from the ones introduced earlier.
+
+Cursor movement commands typically follow this form:
+
+```text
+ESC [ parameters command
+```
+
+For example:
+
+```text
+ESC [ 10 ; 20 H
+```
+
+Cursor visibility commands, however, include an additional question mark:
+
+```text
+ESC [ ? 25 l
+```
+
+The `?` indicates that this is a **private mode** sequence.
+
+Conceptually:
+
+```text
+ESC [
+
+   │
+   ├── Without ?
+   │      Standard ANSI command
+   │
+   └── With ?
+          Terminal-specific mode
+```
+
+Private modes control terminal behavior rather than cursor position or text formatting. Cursor visibility is one example, but many other terminal features—including the alternate screen buffer discussed in the next section—are controlled using similar sequences.
+
+Although these commands originated with DEC VT-series terminals rather than the ANSI standard itself, they became so widely adopted that virtually every modern terminal emulator supports them.
+
+## The Importance of Restoring the Cursor
+
+Hiding the cursor is safe only if the application later makes it visible again.
+
+Suppose a program exits unexpectedly after sending:
+
+```text
+ESC [ ? 25 l
+```
+
+but never sends:
+
+```text
+ESC [ ? 25 h
+```
+
+The terminal continues operating normally, but the cursor remains invisible. From the user's perspective, it appears to have disappeared completely.
+
+Fortunately, the cursor has not actually been removed—it is merely hidden. Sending the show-cursor sequence restores it immediately.
+
+Well-designed terminal applications therefore ensure that the cursor is restored before exiting, even if an error occurs. This is one reason why applications carefully clean up the terminal state when they terminate.
+
+<Aside type="note" title="Historical Note">
+
+Early video terminals displayed the cursor using dedicated hardware. Some applications, particularly full-screen editors and terminal-based user interfaces, found that the constantly blinking cursor distracted users while the screen was being refreshed. As terminals evolved, manufacturers introduced commands to temporarily suppress the cursor during updates.
+
+Modern terminal emulators preserve this behavior because it improves the visual quality of interactive applications and maintains compatibility with decades of existing software.
+
+</Aside>
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Our text editor will hide the cursor during each rendering pass and restore it immediately afterward. Combined with the screen-clearing and cursor-positioning techniques introduced earlier, this approach creates the illusion that the entire interface updates instantaneously.
+
+Although hiding and showing the cursor may seem like a minor detail, it is an example of an important engineering principle: **small improvements in presentation often have a significant impact on perceived quality**. A renderer that avoids unnecessary flicker feels faster and more polished, even when the underlying rendering algorithm remains unchanged.
+
+As our renderer becomes more sophisticated in later volumes, cursor visibility will become a standard part of every rendering cycle rather than an optional enhancement.
+
+</Aside>
+
+<Aside type="note" title="Cursor Appearance">
+
+The appearance of the cursor is controlled by the terminal emulator, not directly by the text editor. Different terminals may render the same cursor position using different styles, such as a blinking vertical bar, a block, or an underline. The editor only determines the cursor's logical position and sends the appropriate terminal control sequences; the terminal decides how that position is visually represented.
+
+We can therefore treat the logical cursor position separately from its visual appearance.
+
+</Aside>
+
+## Summary
+
+The cursor is more than just a marker for text input—it is also part of the terminal's user interface. ANSI escape sequences allow applications to temporarily hide the cursor during screen updates and restore it once rendering is complete, reducing flicker and creating a smoother visual experience.
+
+Unlike cursor movement and text formatting commands, cursor visibility is controlled using **private mode** escape sequences beginning with `ESC[?`. These commands modify the terminal's operating mode rather than its display contents.
+
+In the next section, we will explore another private terminal mode that is fundamental to full-screen applications: the **alternate screen buffer**, which allows programs to take over the terminal temporarily without disturbing the user's existing command-line session.

@@ -1,0 +1,447 @@
+---
+title: 4.4 Cursor Movement
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Imagine using a text editor where the cursor never moves.
+
+Every character you type would simply appear at the end of the document. You could never return to a previous line, insert text in the middle of a sentence, or correct a mistake.
+
+Clearly, a text editor must be able to position the cursor anywhere on the screen.
+
+Fortunately, cursor movement is one of the most fundamental capabilities provided by ANSI escape sequences.
+
+In this section, we will learn how programs instruct the terminal to move the cursor, laying the foundation for building our editor's rendering system.
+
+## The Cursor Is Controlled by the Terminal
+
+In Chapter 2, we learned that the terminal maintains a **cursor position**.
+
+When ordinary text is printed, the cursor automatically advances.
+
+For example:
+
+```text
+Hello|
+```
+
+Printing another character:
+
+```c
+printf("!");
+```
+
+produces:
+
+```text
+Hello!|
+```
+
+The program does not explicitly move the cursor.
+
+The terminal automatically updates its position after drawing each character.
+
+ANSI escape sequences allow us to override this automatic behavior and place the cursor wherever we want.
+
+## Moving the Cursor to an Absolute Position
+
+The most important cursor movement command is:
+
+```text
+ESC [ <row> ; <column> H
+```
+
+This command moves the cursor directly to a specific position on the screen.
+
+For example:
+
+```text
+ESC [ 5 ; 10 H
+```
+
+means:
+
+> Move the cursor to **row 5, column 10**.
+
+Notice the two parameters:
+
+```text
+ESC [ 5 ; 10 H
+       │    │
+       │    └── Column
+       │
+       └────── Row
+```
+
+After executing this command, the next character printed will appear at that location.
+
+For example:
+
+```c
+printf("\x1b[5;10H");
+printf("X");
+```
+
+produces something conceptually like:
+
+```text
+1
+2
+3
+4
+5         X
+```
+
+The terminal first moves the cursor, then prints the character.
+
+## Coordinates Start at One
+
+Many programmers are accustomed to zero-based indexing.
+
+Arrays begin at index `0`.
+
+```text
+letters
+
+0 1 2 3 4
+
+H e l l o
+```
+
+Terminals are different.
+
+ANSI cursor coordinates are **one-based**.
+
+The upper-left corner is:
+
+```text
+Row = 1
+Column = 1
+```
+
+not:
+
+```text
+Row = 0
+Column = 0
+```
+
+Conceptually:
+
+```text
+      Columns
+
+      1 2 3 4 5
+
+Rows
+
+1     • . . . .
+
+2     . . . . .
+
+3     . . . . .
+```
+
+This is important to remember when converting your editor's internal coordinates to terminal coordinates.
+
+<Aside type="note">
+  Later in the book, our editor will likely store cursor positions using
+  zero-based indexing because it aligns naturally with C arrays. Whenever we
+  communicate with the terminal, we will convert those values to one-based
+  coordinates.
+</Aside>
+
+## Relative Cursor Movement
+
+Sometimes we do not know the cursor's exact destination.
+
+Instead, we simply want to move it relative to its current position.
+
+ANSI provides separate commands for each direction.
+
+### Move Up
+
+```text
+ESC [ n A
+```
+
+Example:
+
+```text
+ESC [ 3 A
+```
+
+moves the cursor up three rows.
+
+### Move Down
+
+```text
+ESC [ n B
+```
+
+Example:
+
+```text
+ESC [ 2 B
+```
+
+moves the cursor down two rows.
+
+### Move Right
+
+```text
+ESC [ n C
+```
+
+Example:
+
+```text
+ESC [ 5 C
+```
+
+moves the cursor five columns to the right.
+
+### Move Left
+
+```text
+ESC [ n D
+```
+
+Example:
+
+```text
+ESC [ 4 D
+```
+
+moves the cursor four columns to the left.
+
+## Visualizing Relative Movement
+
+Suppose the cursor is here:
+
+```text
+Hello
+Wo|rld
+```
+
+Sending:
+
+```text
+ESC [ 2 D
+```
+
+moves it two columns left:
+
+```text
+Hello
+|World
+```
+
+Likewise,
+
+```text
+ESC [ 3 C
+```
+
+moves it three columns right:
+
+```text
+Hello
+Wor|ld
+```
+
+The text itself does not change.
+
+Only the cursor position changes.
+
+## Home Position
+
+Moving to the upper-left corner of the screen is so common that it deserves special attention.
+
+The command:
+
+```text
+ESC [ H
+```
+
+is equivalent to:
+
+```text
+ESC [ 1 ; 1 H
+```
+
+Both move the cursor to:
+
+```text
+Row    = 1
+Column = 1
+```
+
+This command is frequently used before redrawing the screen.
+
+For example:
+
+```c
+printf("\x1b[H");
+```
+
+moves the cursor to the beginning of the terminal without printing anything.
+
+## Saving and Restoring the Cursor
+
+Sometimes a program needs to move the cursor temporarily and then return it to its original position.
+
+Many terminals support:
+
+Save cursor:
+
+```text
+ESC 7
+```
+
+Restore cursor:
+
+```text
+ESC 8
+```
+
+Conceptually:
+
+```text
+Current Cursor
+
+↓
+
+Save Position
+
+↓
+
+Move Somewhere Else
+
+↓
+
+Draw Something
+
+↓
+
+Restore Position
+```
+
+Modern terminals also commonly support the CSI equivalents:
+
+Save:
+
+```text
+ESC [ s
+```
+
+Restore:
+
+```text
+ESC [ u
+```
+
+These commands are useful when displaying temporary information without disturbing the user's current cursor position.
+
+## Cursor Movement Does Not Modify Text
+
+An important point is that moving the cursor **does not erase or overwrite anything**.
+
+Suppose the screen contains:
+
+```text
+Hello
+World
+```
+
+If we move the cursor back to the first line:
+
+```text
+He|llo
+World
+```
+
+the text remains unchanged.
+
+Only when we print another character:
+
+```text
+A
+```
+
+does the display become:
+
+```text
+HeAllo
+World
+```
+
+The terminal replaces the character at the cursor position because that is where the new output is directed.
+
+The cursor movement command itself performs no drawing.
+
+## Why Cursor Movement Matters
+
+Nearly every screen update performed by a text editor depends on cursor movement.
+
+Consider what happens after the user presses a key.
+
+The editor typically performs these steps:
+
+```text
+Update document
+
+↓
+
+Move cursor to home position
+
+↓
+
+Redraw every visible line
+
+↓
+
+Move cursor to logical position
+
+↓
+
+Wait for next input
+```
+
+Without cursor movement, the editor would have no way to redraw the screen or position the insertion point where the user expects it.
+
+Cursor positioning is therefore one of the core building blocks of terminal-based user interfaces.
+
+<Aside type="note" title="Historical Note">
+
+Early video terminals had hardware cursors that physically tracked where the next character would appear. ANSI cursor movement commands provided a standardized way for software to control these cursors, allowing the same applications to run on different terminal models without knowing their hardware details.
+
+Although today's terminal emulators are software running inside graphical windows, they continue to emulate this behavior for compatibility with decades of existing software.
+
+</Aside>
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Notice that there are two different notions of a cursor:
+
+1. **The terminal's cursor**, which determines where the next character will be drawn on the screen.
+2. **The editor's cursor**, which represents the user's logical position within the document.
+
+These are not always the same.
+
+For example, if a document has been scrolled, the editor's cursor might be on line 250, while the terminal's cursor is drawn on row 15 because only a portion of the document is visible.
+
+One of the renderer's responsibilities is to translate the editor's logical cursor position into the appropriate terminal screen coordinates before issuing the cursor movement command.
+
+This distinction will become increasingly important when we implement scrolling in later chapters.
+
+</Aside>
+
+## Summary
+
+ANSI escape sequences provide precise control over the terminal's cursor. A program can move the cursor to an absolute position using `ESC[row;columnH` or move it relative to its current location using the `A`, `B`, `C`, and `D` commands. The terminal uses **one-based coordinates**, with `(1,1)` representing the upper-left corner of the screen.
+
+Moving the cursor does not modify any existing text—it simply changes where the next character will be drawn. This capability is fundamental to every terminal-based application, enabling text editors to redraw the screen, update individual regions, and position the insertion point accurately.
+
+In the next section, we will learn how to **clear portions of the screen**, another essential operation for refreshing a terminal interface.

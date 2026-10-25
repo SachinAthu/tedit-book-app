@@ -1,0 +1,414 @@
+---
+title: 4.6 Text Formatting
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Up to this point, we have focused on controlling _where_ text appears on the screen. We learned how to move the cursor and how to clear portions of the display, allowing a program to redraw its user interface. Positioning alone, however, is only part of what makes a terminal interface useful.
+
+A terminal can also control _how_ text is displayed. It can draw text in bold, underline important information, swap foreground and background colors, or display text in a wide range of colors. These visual attributes help programs communicate information more effectively without changing the text itself.
+
+This capability is provided by a family of ANSI escape sequences known as **Select Graphic Rendition**, commonly abbreviated as **SGR**.
+
+## Select Graphic Rendition (SGR)
+
+The term _graphic rendition_ refers to the visual appearance of text. Unlike cursor movement sequences, which affect the cursor's position, SGR sequences affect the attributes that the terminal applies to characters as they are rendered.
+
+The general form of an SGR escape sequence is:
+
+```
+ESC [ parameters m
+```
+
+Or, using the escape character notation introduced earlier:
+
+```c
+"\x1b[parametersm"
+```
+
+The final letter `m` identifies the sequence as an SGR command. The numbers before it specify which visual attributes should be enabled.
+
+For example:
+
+```c
+printf("\x1b[1mBold Text\x1b[0m\n");
+```
+
+produces text that appears bold, then restores the default formatting before printing the next line.
+
+The terminal processes this sequence in much the same way it processes cursor movement commands:
+
+```
+Application
+
+     │
+     ▼
+Print ESC [ 1 m
+
+     │
+     ▼
+Terminal Emulator
+
+     │
+     ▼
+Enable Bold Attribute
+
+     │
+     ▼
+Subsequent characters
+appear in bold
+```
+
+Unlike ordinary characters, SGR sequences are interpreted as commands. They do not become part of the displayed text.
+
+## Formatting Is State
+
+One important characteristic of SGR commands is that they modify the terminal's current formatting state.
+
+Suppose a program prints:
+
+```c
+printf("\x1b[1m");
+printf("Hello");
+printf(" World");
+```
+
+The output is not:
+
+```
+Hello World
+```
+
+with only "Hello" in bold.
+
+Instead, both words appear bold because the bold attribute remains active until another SGR sequence changes it.
+
+The terminal maintains a collection of rendering attributes similar to this conceptual model:
+
+```
+Current Rendering State
+
+Bold        : ON
+Underline   : OFF
+Reverse     : OFF
+Foreground  : Default
+Background  : Default
+```
+
+Every character drawn afterward inherits these settings until they are modified.
+
+This stateful behavior allows applications to change formatting once instead of attaching formatting information to every individual character.
+
+## Resetting Formatting
+
+Since formatting remains active, programs must eventually restore the terminal's normal appearance.
+
+The most common SGR sequence is therefore the reset command:
+
+```
+ESC [ 0 m
+```
+
+or
+
+```c
+"\x1b[0m"
+```
+
+This clears all active text attributes and returns the terminal to its default rendering state.
+
+A typical pattern looks like this:
+
+```c
+printf("\x1b[1mWarning\x1b[0m\n");
+printf("Normal text\n");
+```
+
+Without the reset sequence, the second line would also appear bold.
+
+Because applications may terminate unexpectedly or encounter errors, well-designed terminal programs reset formatting whenever they finish drawing or before exiting. Leaving a user's terminal in an unexpected visual state is considered poor behavior.
+
+## Bold Text
+
+Bold text emphasizes important information such as headings, warnings, or status messages.
+
+The SGR code for bold is:
+
+```
+ESC [ 1 m
+```
+
+Example:
+
+```c
+printf("\x1b[1mChapter Title\x1b[0m\n");
+```
+
+Historically, physical terminals often produced bold text by increasing character intensity or brightness rather than using a heavier font. Modern terminal emulators usually render bold using a bold font when one is available, although some still simulate it by increasing brightness.
+
+Because terminal implementations differ, the visual appearance of bold text is not guaranteed to be identical across systems.
+
+## Underlined Text
+
+Underlining draws a horizontal line beneath characters.
+
+The corresponding SGR sequence is:
+
+```
+ESC [ 4 m
+```
+
+Example:
+
+```c
+printf("\x1b[4mImportant\x1b[0m\n");
+```
+
+Underlining was particularly useful on early text terminals that lacked multiple font styles. It provided a simple way to highlight important information without requiring graphical capabilities.
+
+Today, underlined text is less common in terminal applications but remains widely supported.
+
+## Reverse Video
+
+Instead of changing the characters themselves, reverse video swaps the foreground and background colors.
+
+The SGR sequence is:
+
+```
+ESC [ 7 m
+```
+
+Suppose the terminal normally displays:
+
+```
+White text
+Black background
+```
+
+Reverse video produces:
+
+```
+Black text
+White background
+```
+
+Conceptually:
+
+```
+Before
+
+Foreground : White
+Background : Black
+
+        │
+        ▼
+
+Reverse Video
+
+        │
+        ▼
+
+Foreground : Black
+Background : White
+```
+
+This technique has been used for decades to indicate selections, active menu items, or the current cursor position.
+
+Many terminal applications continue to use reverse video because it works regardless of the user's chosen color theme.
+
+## Foreground Colors
+
+One of the most recognizable uses of SGR is changing text color.
+
+The original ANSI standard defined eight basic foreground colors.
+
+```
+30  Black
+31  Red
+32  Green
+33  Yellow
+34  Blue
+35  Magenta
+36  Cyan
+37  White
+```
+
+For example:
+
+```c
+printf("\x1b[31mError\x1b[0m\n");
+```
+
+prints the word "Error" using the terminal's red foreground color.
+
+Most terminals later introduced a brighter variant of these colors using the range:
+
+```
+90–97
+```
+
+These are often referred to as **bright** or **high-intensity** colors.
+
+The exact shades depend on the terminal's color theme. One user's red may appear slightly different from another's because modern terminal emulators allow users to customize their color palettes.
+
+## Background Colors
+
+Background colors follow the same idea but affect the space behind the characters instead of the characters themselves.
+
+The original background color range is:
+
+```
+40  Black
+41  Red
+42  Green
+43  Yellow
+44  Blue
+45  Magenta
+46  Cyan
+47  White
+```
+
+Example:
+
+```c
+printf("\x1b[30;43mWarning\x1b[0m\n");
+```
+
+This sequence combines multiple SGR parameters:
+
+```
+30  → Black foreground
+43  → Yellow background
+```
+
+Multiple parameters are separated by semicolons:
+
+```
+ESC [ 30 ; 43 m
+```
+
+Many SGR commands can therefore be combined into a single escape sequence.
+
+## 256-Color Mode
+
+The original ANSI color palette was sufficient for many early applications, but it quickly became limiting as terminal interfaces grew more sophisticated.
+
+To provide a wider range of colors, many terminals introduced **256-color mode**.
+
+Instead of choosing from only eight predefined colors, applications can select one of 256 color indices.
+
+The general form is:
+
+```
+ESC [ 38 ; 5 ; n m
+```
+
+where `n` is a color number between 0 and 255.
+
+Similarly, background colors use:
+
+```
+ESC [ 48 ; 5 ; n m
+```
+
+The 256-color palette is typically organized into three sections:
+
+```
+0–15
+Basic and bright colors
+
+16–231
+6 × 6 × 6 RGB color cube
+
+232–255
+Grayscale ramp
+```
+
+Programs can therefore produce much richer interfaces while remaining compatible with many terminal emulators.
+
+Although 256-color mode is now widely supported, it is still based on predefined color indices rather than arbitrary RGB values.
+
+## True Color
+
+Modern terminal emulators go even further by supporting **true color**, also known as **24-bit color**.
+
+Instead of selecting from a predefined palette, applications specify the exact red, green, and blue intensity for each color.
+
+The general form is:
+
+```
+ESC [ 38 ; 2 ; R ; G ; B m
+```
+
+where:
+
+```
+R = Red component
+G = Green component
+B = Blue component
+```
+
+Each component ranges from 0 to 255, allowing more than sixteen million possible colors.
+
+Background colors follow the same pattern:
+
+```
+ESC [ 48 ; 2 ; R ; G ; B m
+```
+
+True color enables terminal applications to display modern themes, gradients, and syntax highlighting that closely resemble graphical editors.
+
+Support for true color is not part of the original ANSI standard, but it has become common among modern terminal emulators.
+
+## Why So Many Formatting Options?
+
+At first glance, the large number of SGR features may seem excessive. After all, a text editor primarily displays plain text.
+
+The answer lies in the wide variety of software that runs inside terminals. Shells highlight prompts and errors, system monitoring tools distinguish changing values, compilers emphasize warnings and diagnostics, and interactive applications use formatting to guide the user's attention.
+
+Without visual attributes, every piece of information would appear identical:
+
+```
+File saved successfully.
+Error opening configuration file.
+Unsaved changes.
+Current line.
+```
+
+Formatting allows applications to communicate meaning immediately:
+
+```
+Bold heading
+Red error
+Yellow warning
+Reverse-video selection
+Green success message
+```
+
+Rather than changing the content itself, SGR provides a lightweight visual language that helps users interpret information more quickly.
+
+<Aside type="note" title="Historical Note">
+
+Early video terminals offered little more than monochrome text. As display hardware improved, manufacturers introduced additional attributes such as blinking, reverse video, and multiple colors. ANSI standardized many of these capabilities so that software could produce consistent output across different terminal hardware.
+
+Modern terminal emulators preserve these conventions for compatibility, even though today's displays are vastly more capable than the terminals for which the original standards were written.
+
+</Aside>
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Although SGR defines dozens of formatting attributes and modern terminals support hundreds of colors, our text editor will initially use only a very small subset of these features.
+
+In the early implementation stages, our renderer needs only a few capabilities: resetting formatting, applying reverse video for the status bar or cursor line, and possibly changing foreground or background colors to distinguish interface elements. Restricting ourselves to this small subset keeps the rendering logic simple and portable while we focus on the editor's architecture.
+
+Additional features, such as syntax highlighting, themes, and true-color support, will be introduced in later volumes after the rendering pipeline and document model are firmly established. This incremental approach allows each new capability to build upon a stable foundation instead of complicating the renderer from the outset.
+
+</Aside>
+
+## Summary
+
+SGR (Select Graphic Rendition) escape sequences control the visual appearance of text rather than its position on the screen. They modify the terminal's current rendering state, allowing applications to display bold, underlined, reverse-video, and colored text until those attributes are changed or reset.
+
+The original ANSI standard introduced a small collection of text attributes and eight basic colors, while modern terminals have expanded these capabilities with 256-color palettes and full 24-bit true-color support. These formatting features enable terminal applications to communicate information clearly, making interfaces more readable and expressive without abandoning the simplicity of text-based output.
+
+In the next section, we will examine another important aspect of terminal presentation: controlling whether the cursor itself is visible, allowing applications to create cleaner and less distracting user interfaces.

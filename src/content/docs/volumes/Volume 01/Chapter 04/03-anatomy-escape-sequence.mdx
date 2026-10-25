@@ -1,0 +1,481 @@
+---
+title: 4.3 Anatomy of an Escape Sequence
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+In the previous section, we learned that every ANSI escape sequence begins with the **Escape (ESC)** character, which tells the terminal that the following bytes should be interpreted as a command rather than ordinary text.
+
+However, not all escape sequences are the same. Some move the cursor, others clear the screen, while others change text colors or formatting.
+
+How does the terminal distinguish between these different commands?
+
+The answer is that ANSI escape sequences follow a well-defined structure, much like the syntax of a programming language. Each part of the sequence has a specific purpose, allowing the terminal to interpret the command correctly.
+
+In this section, we will examine that structure one piece at a time.
+
+## Escape Sequences Have a Grammar
+
+Consider the following sequence:
+
+```text
+ESC [ 31 m
+```
+
+Although it appears to be just four characters, each part has a specific meaning.
+
+```text
+┌─────┬──────┬────────────┬──────────────┐
+│ ESC │  [   │     31     │      m       │
+└─────┴──────┴────────────┴──────────────┘
+   │      │         │             │
+   │      │         │             └── Final command
+   │      │         │
+   │      │         └────────────── Parameter
+   │      │
+   │      └──────────────────────── Control Sequence Introducer
+   │
+   └─────────────────────────────── Escape character
+```
+
+Each component plays a different role.
+
+Rather than memorizing hundreds of escape sequences, it is far more useful to understand this general pattern.
+
+## Part 1 — The Escape Character (ESC)
+
+Every ANSI escape sequence begins with the **Escape** character.
+
+In C, it is usually written as:
+
+```c
+"\x1b"
+```
+
+or
+
+```c
+"\033"
+```
+
+This is a single byte with the hexadecimal value:
+
+```text
+0x1B
+```
+
+When the terminal receives this byte, it does not display anything on the screen.
+
+Instead, it understands:
+
+> "The following bytes are part of a terminal command."
+
+Without the Escape character, the remaining characters would simply be printed as ordinary text.
+
+For example:
+
+```c
+printf("[31m");
+```
+
+produces:
+
+```text
+[31m
+```
+
+because there is no leading Escape character.
+
+## Part 2 — The Control Sequence Introducer (CSI)
+
+Immediately after the Escape character, many sequences contain the character:
+
+```text
+[
+```
+
+Together,
+
+```text
+ESC [
+```
+
+form what is known as the **Control Sequence Introducer**, commonly abbreviated as **CSI**.
+
+You will often see it represented as:
+
+```text
+CSI
+```
+
+which is simply shorthand for:
+
+```text
+ESC [
+```
+
+Its purpose is to indicate that the following bytes form a structured control sequence.
+
+Conceptually:
+
+```text
+ESC
+
+↓
+
+Start command
+
+↓
+
+[
+
+↓
+
+This is a CSI command
+```
+
+Most of the terminal commands used in this book are CSI sequences.
+
+## Part 3 — Parameters
+
+After the CSI come one or more **parameters**.
+
+For example:
+
+```text
+ESC [ 31 m
+```
+
+Here,
+
+```text
+31
+```
+
+is the parameter.
+
+Parameters tell the terminal **how** to perform the command.
+
+Different commands interpret parameters differently.
+
+For example:
+
+```text
+ESC [ 10 ; 20 H
+```
+
+contains two parameters:
+
+```text
+10
+
+20
+```
+
+These values are separated by semicolons.
+
+The terminal interprets them according to the command that follows.
+
+Another example:
+
+```text
+ESC [ 2 J
+```
+
+contains a single parameter:
+
+```text
+2
+```
+
+Again, the meaning of the parameter depends on the final command character.
+
+## Multiple Parameters
+
+Many escape sequences accept more than one parameter.
+
+For example:
+
+```text
+ESC [ 1 ; 34 m
+```
+
+contains two parameters.
+
+```text
+1
+
+34
+```
+
+The semicolon acts as a separator.
+
+```text
+Parameter 1
+
+;
+
+Parameter 2
+
+;
+
+Parameter 3
+
+...
+
+```
+
+The terminal reads each parameter individually before executing the command.
+
+## Part 4 — The Final Command Character
+
+Every escape sequence ends with a **final command character**.
+
+This single character tells the terminal **which operation to perform**.
+
+For example:
+
+```text
+ESC [ 31 m
+           ▲
+```
+
+The final character is:
+
+```text
+m
+```
+
+which means:
+
+> Apply text formatting.
+
+Another example:
+
+```text
+ESC [ 2 J
+          ▲
+```
+
+The final character is:
+
+```text
+J
+```
+
+which means:
+
+> Clear part or all of the screen.
+
+Likewise,
+
+```text
+ESC [ 10 ; 20 H
+               ▲
+```
+
+ends with:
+
+```text
+H
+```
+
+which instructs the terminal to move the cursor.
+
+Notice that the terminal cannot determine the command until it reaches this final character.
+
+## How the Terminal Parses a Sequence
+
+Imagine the terminal receiving the following bytes one at a time:
+
+```text
+ESC
+
+↓
+
+[
+
+↓
+
+3
+
+↓
+
+1
+
+↓
+
+m
+```
+
+Internally, the process is similar to this:
+
+```text
+Receive ESC
+
+↓
+
+Start command
+
+↓
+
+Receive '['
+
+↓
+
+CSI detected
+
+↓
+
+Read parameters
+
+↓
+
+31
+
+↓
+
+Receive 'm'
+
+↓
+
+Execute command
+```
+
+The terminal buffers the incoming bytes until it encounters the final command character.
+
+Only then does it know enough information to execute the instruction.
+
+## A Real Example
+
+Consider this C program:
+
+```c
+printf("\x1b[31m");
+printf("Hello");
+```
+
+The bytes sent to the terminal are:
+
+```text
+ESC
+
+[
+
+3
+
+1
+
+m
+
+H
+
+e
+
+l
+
+l
+
+o
+```
+
+The terminal processes them like this:
+
+```text
+ESC [ 31 m
+
+↓
+
+Change text color
+
+↓
+
+H
+
+↓
+
+Draw 'H'
+
+↓
+
+e
+
+↓
+
+Draw 'e'
+
+↓
+
+...
+```
+
+The escape sequence itself is not displayed.
+
+Only the word:
+
+```text
+Hello
+```
+
+appears on the screen, but it is rendered using the attributes established by the preceding command.
+
+## Not Every Escape Sequence Uses CSI
+
+Although CSI sequences are by far the most common, they are not the only type of escape sequence.
+
+For example:
+
+```text
+ESC 7
+```
+
+and
+
+```text
+ESC 8
+```
+
+are traditional VT100 commands for saving and restoring the cursor position.
+
+Similarly,
+
+```text
+ESC c
+```
+
+requests a terminal reset.
+
+These sequences do not contain the `[` character.
+
+Fortunately, for building our editor, we will primarily work with **CSI sequences**, so understanding their structure will cover nearly everything we need.
+
+<Aside type="note" title="Historical Note">
+
+The CSI format originated with the **ANSI X3.64** standard and became widely adopted through Digital Equipment Corporation's **VT100** terminal. Over time, this grammar became the de facto language for terminal control, and nearly all modern terminal emulators continue to support it.
+
+This long-standing compatibility is one reason why programs written decades ago can still run correctly in today's terminals.
+
+</Aside>
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Notice how ANSI escape sequences resemble the syntax of a programming language.
+
+Each command contains:
+
+- a beginning (`ESC`),
+- a command type (`[` for CSI),
+- optional arguments (parameters),
+- and an operation (the final character).
+
+This design makes the protocol both **compact** and **extensible**. Instead of inventing a new byte for every possible operation, the terminal reuses the same grammar with different parameters and final command characters. This is similar to how a function call combines a function name with its arguments.
+
+</Aside>
+
+## Summary
+
+ANSI escape sequences follow a structured grammar rather than being arbitrary collections of characters. Every CSI sequence begins with the **Escape (ESC)** character, followed by the **Control Sequence Introducer (`[`)**, zero or more **parameters**, and a **final command character** that determines the operation to perform.
+
+Understanding this structure is much more valuable than memorizing individual commands. Once you know how a terminal parses an escape sequence, you can easily recognize and understand new commands as you encounter them.
+
+In the next section, we will begin exploring the most important CSI commands used by terminal applications, starting with **cursor movement**.

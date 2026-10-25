@@ -1,0 +1,27 @@
+---
+title: 4.12 Conclusion
+---
+
+ANSI escape sequences are a standardized command language for terminals, beginning with the Escape character (`ESC`, `0x1B`) and followed by a structured sequence that the terminal interprets as instructions rather than printable text. These sequences allow programs to control the cursor, clear the screen, format text, and manage screen buffers. A terminal text editor relies on these capabilities to redraw its entire interface on every frame, forming the foundation of our rendering system.
+
+## Exercises
+
+### Review Questions
+
+1. Explain why printing text alone is insufficient for implementing a text editor.
+2. Break down the escape sequence `ESC[31m` into its individual components and explain the role of each part.
+3. Describe the difference between printing blank lines and sending a screen-clear command.
+4. Explain why full-screen applications use the alternate screen buffer.
+5. Draw the sequence of terminal commands used during one frame of a text editor's rendering cycle.
+
+### Thought Experiment
+
+Imagine you must write a terminal application that works correctly in any modern terminal emulator (xterm, Kitty, Windows Terminal, iTerm2, etc.) without relying on a capability database such as terminfo.
+
+- Which escape sequences from this chapter would you consider safe to use across all of them, and which might require fallback behavior?
+- How would you design your renderer so that a missing feature (such as true color or cursor visibility control) does not break the entire application?
+- What is the cost of not using a capability database, and at what point would adopting one become worthwhile?
+
+## Preview of the Next Chapter
+
+Chapter 5 shifts focus from terminal output to terminal input. We will explore how Unix terminals process keyboard events, why the default line-buffered behavior is unsuitable for interactive applications, and how **raw terminal mode** gives our editor direct access to every key the user presses — including arrow keys, Backspace, and special control sequences.

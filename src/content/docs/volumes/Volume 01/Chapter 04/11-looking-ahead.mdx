@@ -1,0 +1,269 @@
+---
+title: 4.11 Looking Ahead - Building Our Renderer
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+This chapter has introduced a collection of individual terminal control techniques. We learned how to move the cursor, clear the screen, format text, hide the cursor, and switch to the alternate screen buffer. Each of these features may seem independent, but they all serve a single purpose.
+
+Together, they form the foundation of the **renderer**.
+
+Although we have not yet begun implementing our editor, we now understand the language that a renderer uses to communicate with a terminal.
+
+## Revisiting the Journey of a Character
+
+In Chapter 2, we followed the journey of a single character from a C program to the monitor.
+
+The process looked like this:
+
+```text
+printf("A")
+
+↓
+
+stdout
+
+↓
+
+Kernel
+
+↓
+
+PTY
+
+↓
+
+Terminal Emulator
+
+↓
+
+Font
+
+↓
+
+GPU
+
+↓
+
+Monitor
+```
+
+At the time, our program simply printed ordinary characters.
+
+For example:
+
+```c
+printf("Hello\n");
+```
+
+The terminal emulator received the bytes `H`, `e`, `l`, `l`, and `o`, interpreted them as printable characters, and displayed them on the screen.
+
+Our renderer will use exactly the same communication path.
+
+The only difference is that it will send **both printable characters and ANSI escape sequences**.
+
+## The Renderer's Output
+
+Instead of producing only text, the renderer generates a stream of terminal commands interleaved with the text that should appear on the screen.
+
+Conceptually:
+
+```text
+ESC[?25l
+ESC[H
+ESC[2J
+Hello
+World
+ESC[3;5H
+ESC[?25h
+```
+
+To us, this looks like a mixture of strange symbols and ordinary text.
+
+To the terminal emulator, however, it is a sequence of instructions:
+
+- hide the cursor,
+- move to the home position,
+- clear the screen,
+- print "Hello",
+- print "World",
+- move the cursor,
+- show the cursor.
+
+The renderer is therefore not "drawing" the interface directly. Instead, it is describing the interface by sending commands to the terminal.
+
+## Connecting the Previous Chapters
+
+We can now combine everything we have learned so far into a single picture.
+
+```text
+Editor State
+
+↓
+
+Renderer
+
+↓
+
+ANSI Escape Sequences
+
+↓
+
+stdout
+
+↓
+
+PTY
+
+↓
+
+Terminal Emulator
+
+↓
+
+Screen
+```
+
+Each stage has a distinct responsibility.
+
+- **Editor State** stores the current document, cursor position, scrolling offsets, and other information describing the editor.
+- **Renderer** examines that state and decides what should appear on the screen.
+- **ANSI Escape Sequences** provide the language used to express those drawing instructions.
+- **stdout** carries the resulting byte stream to the operating system.
+- The **PTY**, introduced in Chapter 3, transports those bytes between the application and the terminal emulator.
+- Finally, the **terminal emulator** interprets the escape sequences, renders the characters, and updates the display.
+
+Notice that the renderer never communicates directly with the monitor. As we learned in Chapter 2, the renderer's only output is a stream of bytes written to standard output.
+
+## From State to Screen
+
+One of the most important architectural ideas in this book is that the renderer does not make decisions about editing.
+
+It does not insert characters.
+
+It does not delete lines.
+
+It does not process keyboard input.
+
+Instead, it performs a simple transformation:
+
+```text
+Current Editor State
+
+        │
+        ▼
+
+"What should the screen
+look like?"
+
+        │
+        ▼
+
+Sequence of Characters
+and Escape Sequences
+
+        │
+        ▼
+
+Terminal Display
+```
+
+This separation of responsibilities keeps the design clean.
+
+The rest of the editor modifies the editor state. The renderer merely presents that state to the user.
+
+## A Preview of the Rendering Loop
+
+When we eventually implement our editor, each update will follow a predictable cycle.
+
+```text
+User Presses Key
+
+↓
+
+Editor State Changes
+
+↓
+
+Renderer Generates Frame
+
+↓
+
+Write Frame to stdout
+
+↓
+
+PTY
+
+↓
+
+Terminal Emulator
+
+↓
+
+Updated Screen
+```
+
+This process repeats continuously while the editor is running.
+
+Whether the user types a character, moves the cursor, scrolls the document, or resizes the terminal window, the renderer simply generates a new frame representing the current editor state.
+
+The renderer never needs to remember what the previous frame looked like. It only needs to know the current state of the editor.
+
+## Why We Have Waited to Implement
+
+Some readers may have expected to begin writing code much earlier.
+
+Instead, we have spent four chapters studying how computers display text, how Unix terminals work, and how terminal control sequences operate.
+
+This deliberate progression reflects the philosophy of this book: **understand the system before building upon it**.
+
+If we had immediately started writing rendering code, many operations would have appeared almost magical:
+
+```c
+printf("\x1b[2J");
+printf("\x1b[H");
+```
+
+Now, however, we know exactly what happens after these functions are called.
+
+We understand:
+
+- how `stdout` delivers bytes,
+- how the PTY transports them,
+- how the terminal emulator interprets them,
+- and how those instructions ultimately become pixels on the screen.
+
+Implementation is much easier once the underlying system is no longer a mystery.
+
+## Looking Ahead to Chapter 5
+
+Although we can now control the terminal's output, our editor is still missing something essential.
+
+It cannot yet respond to the user's keyboard input.
+
+If you press the arrow keys, Backspace, or even a single letter, the operating system does not immediately deliver those keystrokes to our program. Instead, the terminal processes them according to its normal interactive behavior.
+
+Before we can build an editor, we must change how the terminal handles input.
+
+The next chapter introduces **raw terminal mode**, one of the most important concepts in systems programming. We will learn how Unix terminals normally process keyboard input, why that behavior is unsuitable for interactive editors, and how applications temporarily reconfigure the terminal so that every key press is delivered immediately to the program.
+
+Only after mastering raw mode will we be ready to receive user input and begin constructing the interactive editor itself.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+By the end of this chapter, we have assembled every piece required for the output side of our editor.
+
+More importantly, we have established a clear architectural boundary. The editor's internal state, rendering logic, terminal communication, and display are distinct stages in a pipeline, each with a single responsibility. This separation will allow us to develop, test, and reason about each component independently as the project grows.
+
+Professional text editors are built on exactly this kind of layered architecture. While they may employ more sophisticated rendering algorithms, optimized screen updates, and richer user interfaces, the fundamental pipeline remains the same: **state becomes rendering commands, rendering commands become terminal output, and terminal output becomes the screen the user sees.**
+
+</Aside>
+
+## Summary
+
+This chapter transformed ANSI escape sequences from isolated control codes into the language of a terminal renderer. By combining the rendering concepts from Chapter 2 with the terminal architecture introduced in Chapter 3, we established the complete path from the editor's internal state to the final display on the user's screen.
+
+The renderer will examine the current editor state, generate a sequence of characters and ANSI escape sequences, write them to `stdout`, and rely on the PTY and terminal emulator to produce the visible interface. Every frame our editor draws will follow this pipeline.
+
+In the next chapter, we shift our attention from **output** to **input**. We will explore how Unix terminals process keyboard events, why the default behavior is unsuitable for interactive applications, and how **raw terminal mode** gives our editor direct access to every key the user presses.
