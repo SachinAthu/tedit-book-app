@@ -20,4 +20,5 @@ pnpm-debug.log*
 # macOS-specific files
 .DS_Store
 
+# local manuscript copy (not part of the repo)
 /book

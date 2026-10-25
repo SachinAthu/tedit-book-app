@@ -5,7 +5,6 @@ Before making any change or decision, read these files first:
 - `/book/Overview.md` — what the book is and who it's for.
 - `/book/Outline.md` — the canonical outline (volumes, chapters, sections,
   appendices).
-- `/book/Book-Bible.md` — writing standards and educational philosophy.
 
 ## This project's job
 

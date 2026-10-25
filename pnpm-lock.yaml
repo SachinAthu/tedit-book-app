@@ -17,6 +17,12 @@ importers:
       sharp:
         specifier: ^0.35.3
         version: 0.35.4(@types/node@24.13.6)
+      starlight-theme-flexoki:
+        specifier: ^0.3.0
+        version: 0.3.0(@astrojs/starlight@0.42.3(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.6)))
+      starlight-theme-rapide:
+        specifier: ^0.6.0
+        version: 0.6.0(@astrojs/starlight@0.42.3(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.6)))
 
 packages:
 
@@ -1487,6 +1493,18 @@ packages:
 
   space-separated-tokens@2.0.2:
     resolution: {integrity: sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q==}
+
+  starlight-theme-flexoki@0.3.0:
+    resolution: {integrity: sha512-r5hM0A5zFGe1OY2D1dxDEsCTp2L7Z1bV89uFgsNPLGhDYfFh6lREe7JVI5j5M/j5PZkEtEN4E9NO9CeUBPCrKw==}
+    engines: {node: '>=22.12.0'}
+    peerDependencies:
+      '@astrojs/starlight': '>=0.42'
+
+  starlight-theme-rapide@0.6.0:
+    resolution: {integrity: sha512-pKfOQh7duWFYXed6RNv75zoRs32b8aeWMu14xlRd35UWeGtgZholOABXM3B0ZRan9uQzjwTxqehmrZv6oskBog==}
+    engines: {node: '>=22.12.0'}
+    peerDependencies:
+      '@astrojs/starlight': '>=0.42.0'
 
   stringify-entities@4.0.4:
     resolution: {integrity: sha512-IwfBptatlO+QCJUo19AqvrPNqlVMpW9YEL2LIVY+Rpv2qsjCGxaDLNRgeGsQWJhfItebuJhsGSLjaBbNSQ+ieg==}
@@ -3282,6 +3300,14 @@ snapshots:
   source-map-js@1.2.1: {}
 
   space-separated-tokens@2.0.2: {}
+
+  starlight-theme-flexoki@0.3.0(@astrojs/starlight@0.42.3(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.6))):
+    dependencies:
+      '@astrojs/starlight': 0.42.3(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.6))
+
+  starlight-theme-rapide@0.6.0(@astrojs/starlight@0.42.3(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.6))):
+    dependencies:
+      '@astrojs/starlight': 0.42.3(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@24.13.6))
 
   stringify-entities@4.0.4:
     dependencies:

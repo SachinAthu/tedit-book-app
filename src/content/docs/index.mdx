@@ -1,40 +1,93 @@
 ---
-title: Welcome to Starlight
-description: Get started building your docs site with Starlight.
-template: splash # Remove or comment out this line to display the site sidebar on this page.
-hero:
-  tagline: Congrats on setting up a new Starlight project!
-  image:
-    file: ../../assets/houston.webp
-  actions:
-    - text: Example Guide
-      link: /guides/example/
-      icon: right-arrow
-    - text: Read the Starlight docs
-      link: https://starlight.astro.build
-      icon: external
-      variant: minimal
+title: Building a Terminal Text Editor
+description: Learn systems programming and software architecture by building a Nano-like terminal text editor from scratch in C.
+template: splash
+editUrl: false
+next:
+  label: Outline
+  link: /outline
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import {
+  Aside,
+  Badge,
+  Card,
+  CardGrid,
+  LinkCard,
+  Steps,
+} from "@astrojs/starlight/components";
 
-## Next steps
+> Every programmer uses a text editor. Few programmers understand how one actually works.
+
+We spend thousands of hours inside Nano, Vim, Emacs, and VS Code — but most of us never stop to ask what's happening underneath. How does a keypress reach your program? How is text stored in memory? Why does inserting into a huge file sometimes feel slow?
+
+This book answers those questions by building a real terminal text editor from scratch in C. Along the way you'll pick up the systems programming, data structures, and architecture ideas that power every editor — and every interactive program.
+
+## What you'll learn
 
 <CardGrid stagger>
-	<Card title="Update content" icon="pencil">
-		Edit `src/content/docs/index.mdx` to see this page change.
-	</Card>
-	<Card title="Change page layout" icon="document">
-		Delete `template: splash` in `src/content/docs/index.mdx` to display a
-		sidebar on this page.
-	</Card>
-	<Card title="Add new content" icon="add-document">
-		Add Markdown or MDX files to `src/content/docs` to create new pages.
-	</Card>
-	<Card title="Configure your site" icon="setting">
-		Edit your `sidebar` and other config in `astro.config.mjs`.
-	</Card>
-	<Card title="Read the docs" icon="open-book">
-		Learn more in [the Starlight Docs](https://starlight.astro.build/).
-	</Card>
+  <Card title="Operating Systems" icon="window">
+    Processes, file descriptors, standard input/output, and terminal devices.
+  </Card>
+  <Card title="Terminal Programming" icon="seti:shell">
+    ANSI escape sequences, cursor control, raw mode, and keyboard input.
+  </Card>
+  <Card title="Software Architecture" icon="puzzle">
+    Modular design, state management, layered architecture, and event loops.
+  </Card>
+  <Card title="Data Structures" icon="database">
+    Dynamic arrays, strings, gap buffers, piece tables, and ropes.
+  </Card>
+  <Card title="Algorithms" icon="analytics">
+    Cursor movement, searching, scrolling, and rendering.
+  </Card>
+  <Card title="File Systems" icon="document">
+    Loading and saving files, encodings, line endings, and safe writes.
+  </Card>
 </CardGrid>
+
+## What you'll build
+
+By the end, you'll have a working, Nano-like editor that can open, edit, and save files, move the cursor, scroll, and more. It's deliberately simple — but it's built from the same architectural blocks used by much larger editors.
+
+## Where this book came from
+
+This book started as a collection of ChatGPT prompts I used to learn how editors work and build a baseline Nano-like terminal text editor. That journey eventually grew into a full book, so you can follow the same path — from first principles to a working editor.
+
+## Pick your route
+
+Three ways to work through the book:
+
+<Steps>
+  1. **Read the theory first** <Badge text="Recommended" variant="success" /> —
+  Work through Volumes I–IX to learn the concepts, then build the editor in
+  Volume X. 2. **Take a middle path** — Read just the theory you need, then
+  start building sooner. A good route: Volume I for how terminals work, Volume
+  III for the core editor engine, and Volume VI for the data structures you'll
+  actually implement — then jump into Volume X and dip back into the theory
+  whenever you hit a gap. 3. **Jump straight to the code** — Already comfortable
+  with the theory? Start building from Volume X.
+</Steps>
+
+## Get the code
+
+<CardGrid stagger>
+  <LinkCard
+    title="tedit — editor implementation"
+    description="Complete, commented code for every milestone. Feel free to contribute!"
+    href="https://github.com/SachinAthu/tedit"
+    icon="github"
+  />
+  <LinkCard
+    title="The book source"
+    description="Browse the Markdown behind these pages on GitHub."
+    href="https://github.com/SachinAthu/tedit-book-app/tree/main/src/content/docs"
+    icon="open-book"
+  />
+</CardGrid>
+
+<Aside type="note" title="Book vs. repository">
+  The repository holds the finished, fully-commented code for each
+  implementation milestone. The code printed in the book may differ a little,
+  because the book builds everything up step by step.
+</Aside>

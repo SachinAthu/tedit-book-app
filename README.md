@@ -27,6 +27,7 @@ content; it does not replace it.
 
 ## Project structure
 
+```
 .
 ├── public/ # Static assets (favicons, og-images)
 ├── src/
@@ -42,6 +43,7 @@ content; it does not replace it.
 ├── astro.config.mjs # Starlight config + sidebar
 ├── package.json
 └── tsconfig.json
+```
 
 Content is organized to mirror the book:
 
