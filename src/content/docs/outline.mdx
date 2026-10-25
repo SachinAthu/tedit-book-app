@@ -3,124 +3,119 @@ title: Outline
 description: How the book is organized — ten volumes from computing fundamentals to a working editor, plus appendices.
 ---
 
-import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
+import { Aside } from "@astrojs/starlight/components";
 
 The book is split into **ten volumes** plus a set of appendices. It follows a **theory-first** path: Volumes I–IX build the concepts, and Volume X turns them into a working editor.
 
 <Aside type="note" title="Not sure where to start?">
-  There are three ways through the book — read the theory first, mix and match, or jump straight to the implementation. See [the home page](/).
+  There are three ways through the book — read the theory first, mix and match,
+  or jump straight to the implementation. See [the home page](/).
 </Aside>
 
 ## Volumes I–X
 
-<CardGrid stagger>
-  <Card title="Volume I — Computing Foundations" icon="window">
-    Learn what actually happens before your program even starts.
+### Volume I — Computing Foundations
 
-    - [Chapter 1 — Introduction](/volume-01/chapter-01)
-    - [Chapter 2 — How Computers Display Text](/volume-01/chapter-02)
-    - [Chapter 3 — The Unix Terminal](/volume-01/chapter-03)
-    - [Chapter 4 — ANSI Escape Sequences](/volume-01/chapter-04)
-    - [Chapter 5 — Raw Terminal Mode](/volume-01/chapter-05)
-    - [Chapter 6 — Keyboard Input](/volume-01/chapter-06)
-  </Card>
+Learn what actually happens before your program even starts.
 
-  <Card title="Volume II — Software Architecture" icon="puzzle">
-    Design before writing code.
+- [Chapter 1 — Introduction](/volumes/volume-01/chapter-01)
+- [Chapter 2 — How Computers Display Text](/volumes/volume-01/chapter-02)
+- [Chapter 3 — The Unix Terminal](/volumes/volume-01/chapter-03)
+- [Chapter 4 — ANSI Escape Sequences](/volumes/volume-01/chapter-04)
+- [Chapter 5 — Raw Terminal Mode](/volumes/volume-01/chapter-05)
+- [Chapter 6 — Keyboard Input](/volumes/volume-01/chapter-06)
 
-    - [Chapter 7 — Software Requirements Specification](/volume-02/chapter-07)
-    - [Chapter 8 — System Architecture](/volume-02/chapter-08)
-    - [Chapter 9 — Event Driven Architecture](/volume-02/chapter-09)
-    - [Chapter 10 — Project Structure](/volume-02/chapter-10)
-    - [Chapter 11 — Design Decisions](/volume-02/chapter-11)
-  </Card>
+### Volume II — Software Architecture
 
-  <Card title="Volume III — Core Editor Engine" icon="rocket">
-    - [Chapter 12 — Editor State](/volume-03/chapter-12)
-    - [Chapter 13 — Document Model](/volume-03/chapter-13)
-    - [Chapter 14 — Cursor Engine](/volume-03/chapter-14)
-    - [Chapter 15 — Input Engine](/volume-03/chapter-15)
-    - [Chapter 16 — Command Engine](/volume-03/chapter-16)
-  </Card>
+Design before writing code.
 
-  <Card title="Volume IV — Rendering Engine" icon="document">
-    - [Chapter 17 — Rendering Theory](/volume-04/chapter-17)
-    - [Chapter 18 — Screen Buffer](/volume-04/chapter-18)
-    - [Chapter 19 — Renderer](/volume-04/chapter-19)
-    - [Chapter 20 — Scrolling](/volume-04/chapter-20)
-  </Card>
+- [Chapter 7 — Software Requirements Specification](/volumes/volume-02/chapter-07)
+- [Chapter 8 — System Architecture](/volumes/volume-02/chapter-08)
+- [Chapter 9 — Event Driven Architecture](/volumes/volume-02/chapter-09)
+- [Chapter 10 — Project Structure](/volumes/volume-02/chapter-10)
+- [Chapter 11 — Design Decisions](/volumes/volume-02/chapter-11)
 
-  <Card title="Volume V — File System" icon="seti:folder">
-    - [Chapter 21 — File I/O](/volume-05/chapter-21)
-    - [Chapter 22 — Text Encoding](/volume-05/chapter-22)
-    - [Chapter 23 — File Safety](/volume-05/chapter-23)
-  </Card>
+### Volume III — Core Editor Engine
 
-  <Card title="Volume VI — Algorithms &amp; Data Structures" icon="database">
-    This is where the book becomes much deeper than a typical tutorial.
+- [Chapter 12 — Editor State](/volumes/volume-03/chapter-12)
+- [Chapter 13 — Document Model](/volumes/volume-03/chapter-13)
+- [Chapter 14 — Cursor Engine](/volumes/volume-03/chapter-14)
+- [Chapter 15 — Input Engine](/volumes/volume-03/chapter-15)
+- [Chapter 16 — Command Engine](/volumes/volume-03/chapter-16)
 
-    - [Chapter 24 — Complexity Analysis](/volume-06/chapter-24)
-    - [Chapter 25 — Arrays and Strings](/volume-06/chapter-25)
-    - [Chapter 26 — Gap Buffer](/volume-06/chapter-26)
-    - [Chapter 27 — Piece Table](/volume-06/chapter-27)
-    - [Chapter 28 — Rope](/volume-06/chapter-28)
-    - [Chapter 29 — Comparing Text Buffers](/volume-06/chapter-29)
-  </Card>
+### Volume IV — Rendering Engine
 
-  <Card title="Volume VII — Professional Features" icon="star">
-    - [Chapter 30 — Search](/volume-07/chapter-30)
-    - [Chapter 31 — Undo / Redo](/volume-07/chapter-31)
-    - [Chapter 32 — Syntax Highlighting](/volume-07/chapter-32)
-    - [Chapter 33 — Configuration](/volume-07/chapter-33)
-    - [Chapter 34 — Multiple Buffers](/volume-07/chapter-34)
-  </Card>
+- [Chapter 17 — Rendering Theory](/volumes/volume-04/chapter-17)
+- [Chapter 18 — Screen Buffer](/volumes/volume-04/chapter-18)
+- [Chapter 19 — Renderer](/volumes/volume-04/chapter-19)
+- [Chapter 20 — Scrolling](/volumes/volume-04/chapter-20)
 
-  <Card title="Volume VIII — Software Engineering" icon="approve-check-circle">
-    - [Chapter 35 — Testing](/volume-08/chapter-35)
-    - [Chapter 36 — Debugging](/volume-08/chapter-36)
-    - [Chapter 37 — Portability](/volume-08/chapter-37)
-    - [Chapter 38 — Packaging](/volume-08/chapter-38)
-  </Card>
+### Volume V — File System
 
-  <Card title="Volume IX — Advanced Topics" icon="code-branch">
-    - [Chapter 39 — Plugin Architecture](/volume-09/chapter-39)
-    - [Chapter 40 — Language Server Protocol (LSP)](/volume-09/chapter-40)
-    - [Chapter 41 — Tree-sitter and Incremental Parsing](/volume-09/chapter-41)
-    - [Chapter 42 — Terminal Graphics](/volume-09/chapter-42)
-    - [Chapter 43 — Modern Text Editors: Architecture in the Real World](/volume-09/chapter-43)
-  </Card>
+- [Chapter 21 — File I/O](/volumes/volume-05/chapter-21)
+- [Chapter 22 — Text Encoding](/volumes/volume-05/chapter-22)
+- [Chapter 23 — File Safety](/volumes/volume-05/chapter-23)
 
-  <Card title="Volume X — Building Our Editor" icon="pencil">
-    This is the implementation volume. Each chapter extends the same implementation repository and preserves the architecture and decisions established in Volumes I–IX.
+### Volume VI — Algorithms & Data Structures
 
-    - [Chapter 44 — Volume X Preparation](/volume-10/chapter-44)
-    - [Chapter 45 — Establishing the Runtime](/volume-10/chapter-45)
-    - [Chapter 46 — Building the First Editable Screen](/volume-10/chapter-46)
-    - [Chapter 47 — Editing Text](/volume-10/chapter-47)
-    - [Chapter 48 — Working with Lines](/volume-10/chapter-48)
-    - [Chapter 49 — Navigating the Document](/volume-10/chapter-49)
-    - [Chapter 50 — Opening Files](/volume-10/chapter-50)
-    - [Chapter 51 — Saving Files](/volume-10/chapter-51)
-    - [Chapter 52 — Completing the Editor Interface](/volume-10/chapter-52)
-    - [Chapter 53 — Completing Keyboard Editing and Navigation](/volume-10/chapter-53)
-    - [Chapter 54 — Hardening the Editor](/volume-10/chapter-54)
-    - [Chapter 55 — Final Integration and Release](/volume-10/chapter-55)
-  </Card>
-</CardGrid>
+This is where the book becomes much deeper than a typical tutorial.
+
+- [Chapter 24 — Complexity Analysis](/volumes/volume-06/chapter-24)
+- [Chapter 25 — Arrays and Strings](/volumes/volume-06/chapter-25)
+- [Chapter 26 — Gap Buffer](/volumes/volume-06/chapter-26)
+- [Chapter 27 — Piece Table](/volumes/volume-06/chapter-27)
+- [Chapter 28 — Rope](/volumes/volume-06/chapter-28)
+- [Chapter 29 — Comparing Text Buffers](/volumes/volume-06/chapter-29)
+
+### Volume VII — Professional Features
+
+- [Chapter 30 — Search](/volumes/volume-07/chapter-30)
+- [Chapter 31 — Undo / Redo](/volumes/volume-07/chapter-31)
+- [Chapter 32 — Syntax Highlighting](/volumes/volume-07/chapter-32)
+- [Chapter 33 — Configuration](/volumes/volume-07/chapter-33)
+- [Chapter 34 — Multiple Buffers](/volumes/volume-07/chapter-34)
+
+### Volume VIII — Software Engineering
+
+- [Chapter 35 — Testing](/volumes/volume-08/chapter-35)
+- [Chapter 36 — Debugging](/volumes/volume-08/chapter-36)
+- [Chapter 37 — Portability](/volumes/volume-08/chapter-37)
+- [Chapter 38 — Packaging](/volumes/volume-08/chapter-38)
+
+### Volume IX — Advanced Topics
+
+- [Chapter 39 — Plugin Architecture](/volumes/volume-09/chapter-39)
+- [Chapter 40 — Language Server Protocol (LSP)](/volumes/volume-09/chapter-40)
+- [Chapter 41 — Tree-sitter and Incremental Parsing](/volumes/volume-09/chapter-41)
+- [Chapter 42 — Terminal Graphics](/volumes/volume-09/chapter-42)
+- [Chapter 43 — Modern Text Editors: Architecture in the Real World](/volumes/volume-09/chapter-43)
+
+### Volume X — Building Our Editor
+
+This is the implementation volume. Each chapter extends the same implementation repository and preserves the architecture and decisions established in Volumes I–IX.
+
+- [Chapter 44 — Volume X Preparation](/volumes/volume-10/chapter-44)
+- [Chapter 45 — Establishing the Runtime](/volumes/volume-10/chapter-45)
+- [Chapter 46 — Building the First Editable Screen](/volumes/volume-10/chapter-46)
+- [Chapter 47 — Editing Text](/volumes/volume-10/chapter-47)
+- [Chapter 48 — Working with Lines](/volumes/volume-10/chapter-48)
+- [Chapter 49 — Navigating the Document](/volumes/volume-10/chapter-49)
+- [Chapter 50 — Opening Files](/volumes/volume-10/chapter-50)
+- [Chapter 51 — Saving Files](/volumes/volume-10/chapter-51)
+- [Chapter 52 — Completing the Editor Interface](/volumes/volume-10/chapter-52)
+- [Chapter 53 — Completing Keyboard Editing and Navigation](/volumes/volume-10/chapter-53)
+- [Chapter 54 — Hardening the Editor](/volumes/volume-10/chapter-54)
+- [Chapter 55 — Final Integration and Release](/volumes/volume-10/chapter-55)
 
 ## Appendices
 
-<CardGrid stagger>
-  <Card title="Appendices" icon="open-book">
-    - A — ANSI Escape Reference
-    - B — ASCII Table
-    - C — UTF-8 Reference
-    - D — termios Cheat Sheet
-    - E — POSIX APIs Used
-    - F — Common Terminal Bugs
-    - G — Design Decision Records (ADRs)
-    - H — Glossary
-    - I — Recommended Reading
-    - J — Exercises and Challenge Projects
-  </Card>
-</CardGrid>
+- A — ANSI Escape Reference
+- B — ASCII Table
+- C — UTF-8 Reference
+- D — termios Cheat Sheet
+- E — POSIX APIs Used
+- F — Common Terminal Bugs
+- G — Architecture Decision Records (ADRs)
+- H — Glossary
+- I — Recommended Reading
+- J — Exercises and Challenge Projects

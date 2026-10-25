@@ -1,0 +1,300 @@
+---
+title: Chapter 1 — Introduction
+---
+
+> _Every programmer uses a text editor. Few programmers understand how one actually works._
+
+## 1.1 Welcome
+
+Whether you're writing a simple script, developing a web application, or contributing to an operating system, one tool remains at the center of your workflow: the **text editor**.
+
+We spend thousands of hours inside editors like Nano, Vim, Emacs, VS Code, Sublime Text, Helix, or Zed. Yet, despite relying on them every day, many software developers have only a superficial understanding of what happens beneath the user interface.
+
+Questions such as these often go unanswered:
+
+- How does an editor know when you press an arrow key?
+- How does the cursor move around the screen?
+- How is text stored efficiently in memory?
+- Why is inserting text in large files sometimes slow?
+- How can an editor redraw the screen without visible flickering?
+- How does pressing **Ctrl+S** eventually modify a file on disk?
+
+Most programming books teach _how to use_ an editor. Very few teach _how to build one_.
+
+This book aims to change that.
+
+By building a terminal text editor from the ground up, you'll gain a practical understanding of computer systems, software architecture, data structures, operating systems, and terminal programming—all through a single, cohesive project.
+
+## 1.2 What You Will Learn
+
+This project teaches far more than editor development.
+
+Along the way, you will gain experience with:
+
+### Operating Systems
+
+- Processes
+- File descriptors
+- Standard input/output
+- Terminal devices
+- Process communication
+
+### Terminal Programming
+
+- ANSI escape sequences
+- Cursor positioning
+- Screen management
+- Raw terminal mode
+- Keyboard input parsing
+
+### Software Architecture
+
+- Modular design
+- State management
+- Separation of concerns
+- Layered architecture
+- Event loops
+
+### Data Structures
+
+- Dynamic arrays
+- Strings
+- Gap buffers
+- Piece tables
+- Rope data structures
+
+### Algorithms
+
+- Cursor movement
+- Text insertion
+- Searching
+- Scrolling
+- Rendering optimization
+
+### File Systems
+
+- Loading files
+- Saving files
+- Line endings
+- Character encodings
+- Safe write operations
+
+By the end, you'll have practical experience with concepts that extend far beyond text editors.
+
+## 1.3 Why Build a Text Editor?
+
+At first glance, creating a text editor may seem like reinventing the wheel.
+
+After all, mature editors already exist, offering countless features and years of optimization.
+
+However, building one yourself is not about replacing those tools. It is about understanding the engineering principles behind them.
+
+A text editor is one of the rare projects that naturally combines multiple areas of computer science:
+
+- Terminal programming
+- Keyboard input handling
+- Screen rendering
+- Memory management
+- Data structures
+- File systems
+- Event-driven programming
+- Software architecture
+- Performance optimization
+- User interface design
+
+Unlike many toy projects, a text editor exposes you to problems that real-world software engineers solve every day.
+
+By the time you complete this book, you will have built a fully functional terminal editor and developed a much deeper understanding of how interactive software operates.
+
+## 1.4 Why a Terminal Editor Instead of a GUI Editor?
+
+Modern graphical editors are incredibly sophisticated.
+
+They rely on graphics libraries, window managers, event systems, GPU rendering, accessibility frameworks, and platform-specific APIs.
+
+While fascinating, those layers introduce significant complexity that can obscure the fundamental concepts.
+
+A terminal editor offers a much cleaner learning environment.
+
+Instead of worrying about windows, buttons, or graphics rendering, you can focus on the core responsibilities of an editor:
+
+- Receiving user input
+- Managing editable text
+- Updating application state
+- Rendering content
+- Reading and writing files
+
+This separation allows us to study the editor itself rather than the graphical framework surrounding it.
+
+Once you understand how a terminal editor works, transitioning to graphical editors becomes far easier because the underlying architecture remains surprisingly similar.
+
+## 1.5 Our Philosophy - Learn the "Why"
+
+Many programming tutorials follow a recipe-like approach:
+
+> Copy this code. Compile it. Move on.
+
+While this can produce working software, it rarely produces deep understanding.
+
+This book follows a different philosophy.
+
+Every design decision will answer three questions:
+
+1. **What problem are we solving?**
+2. **Why does this solution work?**
+3. **What alternatives exist, and why are we not choosing them?**
+
+Understanding trade-offs is just as important as understanding implementation.
+
+For example, when we choose a particular data structure to store text, we will examine:
+
+- Simplicity
+- Memory usage
+- Performance
+- Scalability
+- Maintainability
+
+Only then will we implement it.
+
+This approach mirrors how professional software engineers design systems.
+
+## 1.6 What We Will Build
+
+By the end of this book, you will have created a functional terminal text editor with features such as:
+
+- Opening existing files
+- Creating new files
+- Editing text
+- Inserting and deleting characters
+- Multi-line editing
+- Cursor navigation
+- Vertical scrolling
+- Saving files
+- Status bar
+- Keyboard shortcuts
+- Error handling
+
+The completed application will resemble lightweight terminal editors such as Nano.
+
+While intentionally simple compared to modern IDEs, it will contain all of the architectural building blocks used by much larger editors.
+
+## 1.7 What We Will Not Build (Initially)
+
+Professional editors include hundreds of advanced features.
+
+Implementing everything at once would make the project unnecessarily complex.
+
+Throughout most of this book, we will intentionally avoid features such as:
+
+- Syntax highlighting
+- Auto-completion
+- Plugin systems
+- Mouse support
+- Multiple cursors
+- Split windows
+- Integrated terminals
+- Language Server Protocol (LSP)
+- Undo/redo history
+- Collaborative editing
+
+These topics will be discussed later after the core editor architecture is complete.
+
+This incremental approach keeps the project manageable while ensuring every new feature builds upon a solid foundation.
+
+## 1.8 Who This Book Is For
+
+This book is intended for readers who:
+
+- Have basic programming experience in C
+- Want to understand systems programming
+- Are curious about terminal applications
+- Want to improve software architecture skills
+- Prefer understanding concepts rather than memorizing code
+
+You do **not** need prior experience with terminal programming, POSIX APIs, or editor internals.
+
+Every concept will be introduced from first principles.
+
+## 1.9 Recommended Prerequisites
+
+To get the most from this book, you should already be comfortable with:
+
+- Variables
+- Functions
+- Loops
+- Conditionals
+- Arrays
+- Pointers
+- Structures
+- Basic file I/O
+- Basic compilation using GCC or Clang
+
+If you have completed a beginner-level C programming course, you are ready.
+
+## 1.10 Development Environment
+
+Throughout this book, we assume a POSIX-compatible operating system.
+
+Recommended platforms:
+
+- Linux (recommended)
+- macOS
+- Windows using WSL2
+
+Recommended tools:
+
+- GCC or Clang
+- Make or CMake
+- Git
+- A terminal emulator
+- An existing text editor (ironically!)
+
+Although many concepts are portable, some terminal APIs differ across operating systems. We will discuss portability where appropriate.
+
+## 1.11 How This Book Is Organized
+
+The book is divided into ten progressively deeper volumes.
+
+Rather than mixing theory and implementation, we adopt a **theory-first** approach:
+
+1. Learn the computing fundamentals.
+2. Understand terminal systems.
+3. Design the software architecture.
+4. Study the necessary data structures.
+5. Finally, implement the editor from scratch.
+
+This progression ensures that every line of code has a clear purpose.
+
+Instead of copying code mechanically, you will understand the engineering decisions behind it.
+
+## 1.12 The Journey Ahead
+
+Building a text editor is not merely an exercise in writing software.
+
+It is an exploration of how computers interact with users.
+
+Along the way, you will learn how keystrokes travel from your keyboard to your program, how terminals interpret escape sequences, how text is represented in memory, why different editors choose different data structures, and how software architecture influences performance and maintainability.
+
+By the final chapter, you will have created far more than a working application.
+
+You will have developed a mental model for designing interactive software systems—knowledge that applies equally to command-line tools, integrated development environments, terminal user interfaces, and many other classes of software.
+
+The editor is our destination.
+
+Understanding computer systems is the real journey.
+
+## Chapter Summary
+
+In this chapter, we:
+
+- Introduced the purpose and scope of the project.
+- Discussed why building a text editor is an exceptional systems programming exercise.
+- Defined the goals and limitations of our editor.
+- Outlined the concepts and technologies that will be covered.
+- Explained the learning philosophy and roadmap for the rest of the book.
+
+With the destination clearly defined, we are now ready to begin exploring the first fundamental question:
+
+> **How does a computer display text on a terminal?**
+
+That question will be answered in **Chapter 2 – How Computers Display Text**.

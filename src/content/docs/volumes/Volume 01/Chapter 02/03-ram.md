@@ -1,0 +1,261 @@
+﻿---
+title: 2.3 Main Memory (RAM)
+---
+
+Imagine opening a 200-page text document in a text editor.
+
+Within a fraction of a second, the entire document becomes available for editing. You can move the cursor, insert characters, delete words, and scroll through the file almost instantly.
+
+Have you ever wondered how this is possible?
+
+Surely the editor is not reading the file from the disk every time you press a key.
+
+Instead, the editor first **loads the document into the computer's main memory**, commonly known as **Random Access Memory (RAM)**. Once the document is in memory, all editing operations take place there. Only when you choose to save the file are the changes written back to permanent storage.
+
+Understanding RAM is essential because our text editor will spend almost all of its time working with data stored in memory rather than directly interacting with files on disk.
+
+## What Is Main Memory?
+
+**Main memory**, or **RAM**, is the computer's primary working area.
+
+It stores the instructions and data that are actively being used by the CPU.
+
+Unlike permanent storage devices such as solid-state drives (SSDs) or hard disk drives (HDDs), RAM is designed for **speed** rather than long-term storage. Reading from or writing to RAM is many times faster than accessing data stored on disk.
+
+You can think of RAM as the computer's workspace.
+
+When you launch a program, the operating system copies the program from storage into RAM. The CPU then executes the instructions directly from memory.
+
+Similarly, when you open a document in a text editor, the file is copied into RAM so that it can be modified efficiently.
+
+## Why Can't the CPU Work Directly with the Disk?
+
+If files already exist on a storage device, why bother copying them into memory?
+
+The answer is performance.
+
+Storage devices are optimized for preserving data even when the computer is turned off. They are not optimized for the rapid, repeated access required while a program is running.
+
+Consider what would happen if a text editor modified the file directly on the disk every time you typed a character.
+
+Suppose you type the word:
+
+```text
+Hello
+```
+
+Five key presses would require at least five separate write operations to the storage device.
+
+Now imagine typing hundreds of characters every minute. Constantly reading from and writing to the disk would make the editor noticeably slower and could increase wear on storage devices.
+
+Instead, the editor follows a much more efficient approach:
+
+1. Load the file into RAM.
+2. Modify the copy stored in memory.
+3. Save the updated contents back to the disk only when requested.
+
+This approach provides both better performance and greater reliability.
+
+## RAM Is Temporary
+
+One important characteristic of RAM is that it is **volatile**.
+
+Volatile memory loses its contents when electrical power is removed.
+
+For example, if you create a new document, type several paragraphs, and then disconnect the computer's power before saving, everything stored only in RAM is lost.
+
+This is why text editors repeatedly remind users to save their work.
+
+Storage devices preserve data permanently.
+
+RAM preserves data only while the computer remains powered.
+
+## What Does RAM Store?
+
+A running program requires more than just its source code.
+
+It also needs memory for variables, temporary calculations, open files, and many other pieces of information.
+
+Conceptually, the memory used by a program contains several different kinds of data.
+
+```text
++--------------------------------+
+| Program Instructions           |
++--------------------------------+
+| Global Variables               |
++--------------------------------+
+| Stack                          |
++--------------------------------+
+| Heap                           |
++--------------------------------+
+```
+
+At this stage, you do not need to understand every region in detail.
+
+The important idea is that **both the program itself and the data it manipulates must reside in RAM while the program is running.**
+
+In later volumes, we will examine memory organization in greater depth.
+
+## Memory and Our Text Editor
+
+When our editor opens a file, the file is first copied into memory.
+
+For example, suppose the file contains:
+
+```text
+Hello
+World
+```
+
+On the disk, this is simply a sequence of bytes.
+
+```text
+Storage
+
++----------------------+
+| H e l l o \n W o r...|
++----------------------+
+```
+
+After loading the file, the editor creates an in-memory representation.
+
+Conceptually, it might look like this:
+
+```text
+RAM
+
+Line 1 ──► "Hello"
+
+Line 2 ──► "World"
+```
+
+Notice that the original file has not changed.
+
+The editor is working entirely with the copy stored in memory.
+
+If the user inserts another line,
+
+```text
+Hello
+
+Beautiful
+
+World
+```
+
+only the memory representation changes.
+
+The file on the storage device remains untouched until the user chooses to save it.
+
+## Editing Happens in Memory
+
+This design provides several important advantages.
+
+### Fast Editing
+
+RAM is significantly faster than permanent storage.
+
+Operations such as inserting characters, deleting words, and moving the cursor can therefore happen almost instantly.
+
+### Safe Experimentation
+
+Suppose you accidentally delete an entire chapter.
+
+Because the original file has not yet been overwritten, the editor can allow you to undo the operation or simply exit without saving.
+
+If editing occurred directly on the disk, recovering from mistakes would be much more difficult.
+
+### Reduced Disk Activity
+
+Rather than writing thousands of small changes to the storage device, the editor performs a single save operation when requested.
+
+This greatly reduces unnecessary disk operations.
+
+## Memory Is Shared Carefully
+
+Modern computers often run dozens—or even hundreds—of programs simultaneously.
+
+A web browser, music player, terminal emulator, code editor, and many background services may all be running at the same time.
+
+Each program receives its own portion of memory.
+
+Conceptually, the operating system keeps them separate.
+
+```text
++------------------------------+
+| Process A Memory             |
++------------------------------+
+| Process B Memory             |
++------------------------------+
+| Process C Memory             |
++------------------------------+
+```
+
+This separation prevents one program from accidentally modifying another program's data.
+
+We'll learn more about this when we discuss processes in the next section.
+
+## From Disk to Memory and Back Again
+
+The complete life cycle of a document inside a text editor looks like this:
+
+```text
+        Storage Device
+              │
+         Open File
+              │
+              ▼
++--------------------------+
+|      RAM (Document)      |
++--------------------------+
+              │
+     User edits text
+              │
+              ▼
+     Modified in Memory
+              │
+         Save File
+              │
+              ▼
+        Storage Device
+```
+
+Almost every modern text editor—from Nano to Visual Studio Code—follows this basic workflow.
+
+Although the internal data structures differ, the fundamental idea remains the same: **edit the document in memory, then write the updated version to permanent storage when saving.**
+
+## Engineering Insight
+
+A beginner's instinct is often to imagine that a text editor changes the file directly.
+
+Professional software rarely works this way.
+
+Instead, applications almost always load data into memory, perform all modifications there, and write the results back only when appropriate.
+
+This pattern appears in many kinds of software beyond text editors. Image editors, spreadsheet applications, and database management systems all use memory as a workspace before committing changes to permanent storage.
+
+Understanding this design principle will help explain many architectural decisions throughout this book.
+
+## Common Mistakes
+
+### Mistake 1 — Thinking RAM is permanent storage
+
+RAM is temporary. Its contents disappear when power is lost or the computer is shut down.
+
+### Mistake 2 — Believing a text editor edits the file directly
+
+A text editor almost always edits an in-memory copy of the document. The original file is updated only during a save operation.
+
+### Mistake 3 — Assuming the CPU stores everything internally
+
+Although the CPU contains a small number of registers, they are far too limited to hold an entire program or document. RAM provides the large working area needed by running applications.
+
+## Summary
+
+Main memory (RAM) is the computer's primary workspace. It stores both the instructions that the CPU executes and the data those instructions manipulate.
+
+When a text editor opens a document, it first copies the file from permanent storage into RAM. Every editing operation modifies this in-memory representation rather than the original file. Only when the user saves the document are the updated contents written back to storage.
+
+This design makes editing fast, efficient, and reliable while protecting the original file from accidental changes.
+
+In the next section, we'll examine **processes**—the running instances of programs—and see how the operating system manages the memory and resources required by each running application.

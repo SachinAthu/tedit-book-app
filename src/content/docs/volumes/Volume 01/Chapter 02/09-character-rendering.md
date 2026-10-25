@@ -1,0 +1,323 @@
+﻿---
+title: 2.9 Character Rendering
+---
+
+So far, we have followed a character from our program to the terminal emulator.
+
+The program writes bytes.
+
+The operating system forwards them.
+
+The terminal emulator receives them.
+
+One important question remains:
+
+> **How does the terminal emulator transform those bytes into visible text?**
+
+The answer lies in **character rendering**.
+
+Unlike a graphical application, which can draw shapes at arbitrary pixel positions, a terminal emulator displays text inside a structured grid. Every character occupies a specific location, and the terminal emulator is responsible for determining what should appear in each position.
+
+Understanding this rendering model is essential because our text editor will rely on it entirely. Every cursor movement, every line of text, and every screen refresh will ultimately manipulate this character grid.
+
+## Characters Are Not Images
+
+When a program writes the character:
+
+```text
+A
+```
+
+it is not sending a picture of the letter "A."
+
+Instead, it sends the byte that represents the character.
+
+The terminal emulator receives that byte and determines **how the character should look**.
+
+This distinction is important.
+
+The application provides the **identity** of the character.
+
+The terminal emulator provides its **appearance**.
+
+This separation allows the same program to appear differently depending on the user's font settings without requiring any changes to the application itself.
+
+## Fonts
+
+A **font** defines the visual appearance of characters.
+
+It specifies details such as:
+
+- shape
+- size
+- weight
+- spacing
+- style
+
+Although the visual appearance changes, the underlying characters remain identical.
+
+A terminal application does not choose how each individual pixel should be drawn.
+
+Instead, it simply requests that a particular character be displayed.
+
+The terminal emulator consults the selected font to determine what that character should look like.
+
+## Glyphs
+
+A font contains more than characters—it contains **glyphs**.
+
+A **glyph** is the graphical representation of a character.
+
+For example, the character:
+
+```text
+A
+```
+
+may appear slightly differently depending on the chosen font.
+
+```text
+Character
+
+    A
+
+       │
+       ▼
+
+Glyph in Font A
+
+    A
+
+Glyph in Font B
+
+    A
+```
+
+Although the two glyphs may differ in shape, they both represent the same character.
+
+This distinction is important because computers store characters, not glyphs.
+
+The terminal emulator combines the character received from the application with the glyph provided by the selected font to produce the final image on the screen.
+
+## The Character Grid
+
+Unlike graphical drawing programs, terminal emulators organize the screen into a **grid of character cells**.
+
+Each cell can normally contain one displayed character.
+
+Consider the following example.
+
+```text
++---+---+---+---+
+| H | e | l | l |
++---+---+---+---+
+| o |   |   |   |
++---+---+---+---+
+```
+
+Rather than thinking about pixels, it is helpful to imagine a spreadsheet.
+
+Every displayed character occupies one cell.
+
+Each cell has a **row** and a **column**.
+
+For example:
+
+```text
+        Column
+
+        0   1   2   3
+
+      +---+---+---+---+
+Row 0 | H | e | l | l |
+      +---+---+---+---+
+Row 1 | o |   |   |   |
+      +---+---+---+---+
+```
+
+The terminal emulator maintains this grid internally.
+
+When an application displays text, it is effectively asking the terminal emulator to place characters into particular cells.
+
+This grid-based model is one of the defining characteristics of terminal applications.
+
+## Character Cells
+
+Each position in the grid is called a **character cell**.
+
+A character cell represents a fixed area of the screen reserved for displaying one character.
+
+Conceptually, a cell contains information such as:
+
+- the character to display,
+- its foreground color,
+- its background color,
+- and various display attributes such as bold or underline.
+
+You can think of each cell as a small container.
+
+```text
++---------+
+|    A    |
++---------+
+```
+
+When a different character is written to the same position, the terminal emulator simply updates the contents of that cell.
+
+Unlike graphical applications, terminal programs rarely think in terms of individual pixels.
+
+Instead, they operate by updating character cells.
+
+## Monospaced Fonts
+
+Character cells work best when every character occupies the same amount of horizontal space.
+
+Fonts with this property are called **monospaced fonts**.
+
+In a monospaced font:
+
+- every letter,
+- every digit,
+- and every punctuation mark
+
+occupies exactly one character cell.
+
+For example:
+
+```text
+iiii
+MMMM
+1234
+```
+
+Although these characters have very different shapes, each one consumes the same amount of horizontal space.
+
+This uniform spacing makes columns line up perfectly.
+
+By contrast, most fonts used in books and web pages are **proportional fonts**.
+
+In proportional fonts, different characters have different widths.
+
+For example, the letter "W" is typically much wider than the letter "i."
+
+If a terminal used proportional fonts, columns would quickly become misaligned.
+
+```text
+Name      Score
+Alice     92
+Bob       87
+Charlie   95
+```
+
+With proportional spacing, maintaining neat alignment would become much more difficult.
+
+Monospaced fonts solve this problem by ensuring that every displayed character occupies one cell in the grid. (Control characters such as TAB are expanded by the application, not drawn as glyphs — Chapter 19.)
+
+This is why virtually every terminal emulator uses a monospaced font by default.
+
+## Cursor Positioning
+
+Because the screen is organized as a grid, the cursor is also positioned using **rows and columns** rather than pixel coordinates.
+
+Instead of saying:
+
+> Move the cursor to pixel (347, 182).
+
+A terminal application says something equivalent to:
+
+> Move the cursor to row 8, column 15.
+
+Conceptually:
+
+```text
+      Columns
+
+      0 1 2 3 4 5
+
+    +-----------+
+0   |H|e|l|l|o| |
+    +-----------+
+1   | | | | | | |
+    +-----------+
+2   | | | |█| | |
+    +-----------+
+```
+
+The highlighted cell represents the cursor position.
+
+This coordinate system greatly simplifies terminal programming.
+
+Moving left decreases the column.
+
+Moving right increases the column.
+
+Moving up decreases the row.
+
+Moving down increases the row.
+
+As we begin implementing our editor in later volumes, you will see that the cursor's position is naturally represented as a pair of integers:
+
+```text
+Row    = 12
+Column = 37
+```
+
+The editor will spend much of its time updating these two values as the user navigates through the document.
+
+## Why Character Grids Matter
+
+The grid-based nature of terminals has a profound influence on how terminal applications are designed.
+
+Graphical applications often think in terms of:
+
+- pixels,
+- rectangles,
+- images,
+- and arbitrary coordinates.
+
+Terminal applications think in terms of:
+
+- rows,
+- columns,
+- character cells,
+- and text.
+
+Our editor will adopt exactly this model.
+
+When the document changes, the renderer will determine which character should appear in each visible cell of the grid and instruct the terminal emulator to update the display accordingly.
+
+Everything—from the status bar to the cursor and the document itself—will ultimately be represented as characters placed into this grid.
+
+## Engineering Insight
+
+The character grid is one of the reasons terminal applications remain remarkably efficient.
+
+Instead of manipulating millions of individual pixels, terminal programs work with a comparatively small number of character cells. An 80×24 terminal, for example, contains only 1,920 cells. Updating the contents of these cells requires significantly less work than redrawing an entire graphical interface pixel by pixel.
+
+This abstraction allows terminal applications to remain lightweight while still providing responsive interactive interfaces.
+
+## Common Mistakes
+
+**Thinking the application draws letters itself**
+
+Applications send characters. The terminal emulator renders those characters using glyphs from the selected font.
+
+**Confusing characters with glyphs**
+
+A character is an abstract symbol stored by the computer. A glyph is its visual representation within a particular font.
+
+**Assuming terminals use pixel coordinates**
+
+Terminal applications position content using rows and columns within a character grid, not arbitrary pixel locations.
+
+**Using proportional fonts in terminal applications**
+
+Terminal interfaces rely on consistent character widths to maintain alignment. Monospaced fonts ensure that every displayed character occupies exactly one cell, making tables, source code, and text layouts predictable.
+
+## Summary
+
+Character rendering is the process of converting a stream of characters into visible text on the screen. The terminal emulator receives characters from an application, selects the appropriate glyphs from the current font, and places them into a grid of fixed-size character cells.
+
+This grid-based rendering model distinguishes terminal applications from graphical applications. Instead of thinking in terms of pixels, terminal programs operate on rows and columns, making cursor positioning and text layout both simple and predictable.
+
+The final remaining piece of our foundation is understanding how those characters themselves are represented in memory. In the next section, we will introduce **UTF-8**, the character encoding used by modern Unix systems, and explain how computers represent not only English letters but also thousands of characters from writing systems around the world.

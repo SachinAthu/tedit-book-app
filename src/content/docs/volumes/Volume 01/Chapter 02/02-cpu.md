@@ -1,0 +1,280 @@
+﻿---
+title: 2.2 The CPU
+---
+
+Every computer program, from the simplest "Hello, World!" application to a modern operating system, ultimately depends on one physical component to execute its instructions: the **Central Processing Unit (CPU)**.
+
+When you write a program in C, you express your ideas using a language designed for humans. The CPU, however, cannot understand C, Python, Rust, or any other high-level programming language. It understands only **machine instructions**—simple operations encoded as binary numbers.
+
+One of the compiler's primary responsibilities is to translate your source code into these machine instructions. Once compiled, the CPU executes them one by one.
+
+Understanding the CPU is important because our text editor is nothing more than another program executed by the processor. Every key press, every cursor movement, every character insertion, and every screen redraw will eventually be reduced to CPU instructions.
+
+## What Is a CPU?
+
+The **Central Processing Unit (CPU)** is the component responsible for executing instructions and performing computations.
+
+Although it is often described as the "brain" of the computer, this analogy can be misleading. Unlike a human brain, the CPU does not think, reason, or understand the meaning of a program. It simply follows instructions exactly as they are provided.
+
+For example, consider the following statement:
+
+```c
+x = y + z;
+```
+
+To a programmer, this instruction clearly means "add the values of `y` and `z`, then store the result in `x`."
+
+The CPU does not perceive it this way. It receives a sequence of machine instructions that might conceptually resemble:
+
+```text
+Load y into a register
+Load z into another register
+Add the two values
+Store the result in memory
+Continue to the next instruction
+```
+
+The CPU performs each operation exactly as specified, without any understanding of variables, mathematics, or the purpose of the program.
+
+## The CPU Executes Instructions
+
+Every program consists of a sequence of instructions.
+
+When your text editor starts, it does not execute an entire function or file at once. Instead, the CPU processes one instruction after another in a continuous cycle.
+
+This process is known as the **instruction cycle**, sometimes called the **fetch-decode-execute cycle**.
+
+```text
+           +----------------+
+           | Fetch          |
+           | Read next      |
+           | instruction    |
+           +----------------+
+                    │
+                    ▼
+           +----------------+
+           | Decode         |
+           | Determine what |
+           | the instruction |
+           | means          |
+           +----------------+
+                    │
+                    ▼
+           +----------------+
+           | Execute        |
+           | Perform the    |
+           | requested task |
+           +----------------+
+                    │
+                    ▼
+                    │
+                    └───────────────┐
+                                    ▼
+                    ┌───────────────────────────────┐
+                    │  Advance to Next Instruction  │
+                    └───────────────────────────────┘
+                                    │
+                                    │
+                                    └──────────────────────┐
+                                                           ▼
+                                           (repeat from Fetch)
+```
+
+This cycle repeats continuously while the computer is powered on.
+
+Modern CPUs can execute billions of instructions every second. Although the cycle itself is simple, its incredible speed allows computers to perform complex tasks almost instantaneously.
+
+## Machine Instructions
+
+At the lowest level, every instruction executed by the CPU is represented as binary data.
+
+For example, a machine instruction may tell the processor to:
+
+- add two numbers,
+- copy data from one location to another,
+- compare two values,
+- jump to another instruction,
+- call a function,
+- return from a function.
+
+Notice that none of these instructions say things like:
+
+- "Open a text file."
+- "Move the cursor."
+- "Display a character."
+
+These are **high-level operations** that require many machine instructions working together.
+
+For example, the single line
+
+```c
+printf("Hello\n");
+```
+
+may eventually result in hundreds or even thousands of individual machine instructions after library code and operating system interactions are included.
+
+This illustrates an important principle:
+
+> High-level programming constructs are built from many simple machine instructions.
+
+## Registers: The CPU's Workspace
+
+While executing instructions, the CPU needs a place to temporarily store data.
+
+It uses **registers**, which are tiny storage locations built directly into the processor.
+
+Unlike main memory (RAM), registers are extremely small but exceptionally fast.
+
+A simplified view looks like this:
+
+```text
+          +----------------------+
+          |        CPU           |
+          |                      |
+          |  +---------------+   |
+          |  | Registers     |   |
+          |  +---------------+   |
+          |                      |
+          | Arithmetic Logic |   |
+          |      Unit        |   |
+          +----------------------+
+```
+
+Whenever possible, the CPU performs calculations using register values because accessing registers is much faster than reading from RAM.
+
+Suppose your program executes:
+
+```c
+int total = a + b;
+```
+
+Conceptually, the CPU might perform the following steps:
+
+```text
+Load a into Register 1
+
+Load b into Register 2
+
+Add Register 1 and Register 2
+
+Store result in Register 3
+
+Write Register 3 back to memory
+```
+
+This is not the exact sequence generated by every compiler or processor architecture, but it illustrates how registers act as the CPU's temporary workspace.
+
+## The Program Counter
+
+How does the CPU know which instruction to execute next?
+
+It uses a special register called the **Program Counter (PC)**.
+
+The Program Counter stores the memory address of the next instruction to execute.
+
+A simplified example looks like this:
+
+```text
+Memory
+
+Address      Instruction
+
+1000         Load x
+1004         Add y
+1008         Store z
+1012         Return
+
+          ▲
+          │
+    Program Counter
+```
+
+After executing one instruction, the Program Counter is updated to point to the next one.
+
+Sometimes the program deliberately changes the Program Counter.
+
+For example:
+
+- `if` statements,
+- loops,
+- function calls,
+- function returns,
+
+all modify the normal flow of execution by changing which instruction the CPU executes next.
+
+Without the Program Counter, programs could only execute instructions in a straight line.
+
+## The CPU Is Not Working Alone
+
+Although the CPU executes instructions, it cannot perform its job in isolation.
+
+It depends on several other components:
+
+- **RAM** stores the program and its data.
+- The **operating system** provides access to hardware resources.
+- Storage devices hold files.
+- Input devices supply user input.
+- Output devices display results.
+
+The CPU coordinates these components by executing instructions that request their services.
+
+For example, when your program executes:
+
+```c
+printf("Hello");
+```
+
+the CPU does **not** display the word "Hello."
+
+Instead, it executes instructions that ask the operating system to write the characters to the program's standard output stream. The operating system then delivers those characters to the terminal, which eventually renders them on the screen.
+
+This separation of responsibilities is a recurring theme throughout this book.
+
+## Why This Matters for Our Text Editor
+
+Our text editor is simply another program executed by the CPU.
+
+When the user presses a key, the CPU executes instructions to:
+
+1. Read the keyboard input.
+2. Determine which key was pressed.
+3. Update the editor's internal state.
+4. Modify the text buffer if necessary.
+5. Redraw the visible screen.
+6. Wait for the next input event.
+
+This sequence may involve thousands of machine instructions, yet it happens so quickly that it appears instantaneous to the user.
+
+Understanding that the CPU is executing instructions—not "running the editor" as a single operation—helps explain why performance, algorithms, and data structures become important as software grows in complexity.
+
+## Engineering Insight
+
+A common misconception is that the CPU "runs a function."
+
+In reality, the CPU has no concept of functions, variables, loops, or objects. These are abstractions created by programming languages and compilers.
+
+At the hardware level, the CPU executes one machine instruction at a time. Features such as functions, recursion, and loops are implemented by carefully arranging these instructions and manipulating the Program Counter.
+
+Recognizing the difference between **language abstractions** and **hardware reality** is one of the first steps toward becoming a systems programmer.
+
+## Common Mistakes
+
+### Mistake 1 — Thinking the CPU understands C
+
+The CPU understands only machine instructions. C source code must first be compiled into machine code before it can be executed.
+
+### Mistake 2 — Believing the CPU executes an entire function at once
+
+Functions are collections of machine instructions. The CPU executes them one instruction at a time.
+
+### Mistake 3 — Assuming the CPU directly controls the monitor
+
+The CPU executes instructions that communicate with the operating system and other hardware. It does not directly render characters on the screen.
+
+## Summary
+
+The Central Processing Unit is responsible for executing every instruction that makes a program run. It repeatedly fetches, decodes, and executes machine instructions while using registers to hold temporary data and the Program Counter to determine the next instruction.
+
+Although the CPU performs the computations required by our text editor, it does not work alone. It relies on memory to store the program and its data, the operating system to manage resources, and the terminal to present the final output.
+
+In the next section, we'll examine the CPU's closest collaborator—**main memory (RAM)**—and see how programs and data are stored while they execute.

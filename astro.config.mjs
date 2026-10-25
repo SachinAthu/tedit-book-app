@@ -20,8 +20,22 @@ export default defineConfig({
         baseUrl: "https://github.com/SachinAthu/tedit-book-app/edit/main/",
       },
       sidebar: [
-        { label: "Homepage", slug: "" },
-        { label: "Outline", slug: "outline" },
+        {
+          label: "Start Here",
+          items: [
+            { label: "Overview", link: "/" },
+            { label: "Outline", slug: "outline" },
+          ],
+        },
+        {
+          label: "Volumes",
+          items: [{ autogenerate: { directory: "volumes" } }],
+        },
+        {
+          label: "Appendices",
+          items: [{ autogenerate: { directory: "appendices" } }],
+          collapsed: true,
+        },
       ],
     }),
   ],

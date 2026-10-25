@@ -1,0 +1,47 @@
+---
+title: Chapter 2 — How Computers Display Text
+description: A tour of the components involved in getting text from memory onto the terminal screen.
+---
+
+Most programmers write:
+
+```c
+printf("Hello, World!\n");
+```
+
+and immediately see the text appear on the screen.
+
+It feels almost magical.
+
+However, between calling `printf()` and seeing the word **Hello** displayed, many different hardware and software components work together. The CPU executes instructions, memory stores data, the operating system manages the process, the terminal emulator interprets incoming bytes, and finally the graphics system renders characters onto the display.
+
+Understanding this journey is essential because a terminal text editor relies entirely on this pipeline. Our editor will never draw pixels directly—it will communicate with the terminal by sending text and control sequences.
+
+In this chapter, we'll examine every major component involved in displaying text and establish the foundation for the chapters that follow.
+
+## Learning Objectives
+
+By the end of this chapter, you should be able to:
+
+- Explain the roles of the CPU and main memory.
+- Describe what a process is.
+- Distinguish between standard input and standard output.
+- Explain how a terminal emulator differs from a console.
+- Describe how characters are represented and rendered.
+- Understand the basics of UTF-8 encoding.
+- Trace the complete path from `printf()` to visible text on the screen.
+
+## Sections
+
+- [2.1 The Journey of a Character](/volumes/volume-01/chapter-02/01-journey-character/)
+- [2.2 The CPU](/volumes/volume-01/chapter-02/02-cpu/)
+- [2.3 Main Memory (RAM)](/volumes/volume-01/chapter-02/03-ram/)
+- [2.4 Processes](/volumes/volume-01/chapter-02/04-process/)
+- [2.5 Standard Input and Standard Output](/volumes/volume-01/chapter-02/05-stdin-stdout/)
+- [2.6 From `stdout` to the Terminal](/volumes/volume-01/chapter-02/06-stdout-terminal/)
+- [2.7 Terminal Emulators](/volumes/volume-01/chapter-02/07-terminal-emulator/)
+- [2.8 Console vs Terminal](/volumes/volume-01/chapter-02/08-console-vs-terminal/)
+- [2.9 Character Rendering](/volumes/volume-01/chapter-02/09-character-rendering/)
+- [2.10 Character Encoding](/volumes/volume-01/chapter-02/10-character-encoding/)
+- [2.11 Following One Character](/volumes/volume-01/chapter-02/11-following-one-character/)
+- [Conclusion](/volumes/volume-01/chapter-02/12-conclusion/)

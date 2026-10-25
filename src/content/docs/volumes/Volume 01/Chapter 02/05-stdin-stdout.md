@@ -1,0 +1,388 @@
+﻿---
+title: 2.5 Standard Input and Standard Output
+---
+
+Imagine writing the following program:
+
+```c
+#include <stdio.h>
+
+int main(void)
+{
+    printf("Hello, World!\n");
+    return 0;
+}
+```
+
+When you run it in a terminal, the message appears on the screen.
+
+Now consider a slightly different command:
+
+```bash
+./hello > output.txt
+```
+
+This time, nothing appears in the terminal.
+
+Instead, a new file named `output.txt` is created, containing:
+
+```text
+Hello, World!
+```
+
+Notice that the program itself has not changed. The call to `printf()` is exactly the same.
+
+How can the same program sometimes display text on the screen and other times write it into a file?
+
+The answer lies in one of the most elegant ideas in Unix-like operating systems: **standard streams**.
+
+Rather than communicating directly with the keyboard or the monitor, programs communicate through standardized input and output channels provided by the operating system.
+
+Understanding these channels is essential because our text editor will receive keyboard input and send screen updates through them.
+
+## Why Do We Need Standard Streams?
+
+Suppose every program communicated directly with hardware devices.
+
+One application might read from a USB keyboard.
+
+Another might use a Bluetooth keyboard.
+
+A third might only work with a particular monitor.
+
+Every program would need to understand countless hardware devices and communication protocols.
+
+Such a system would be difficult to develop and nearly impossible to maintain.
+
+Instead, the operating system provides a simple abstraction.
+
+Every process is given a small set of communication channels when it starts.
+
+The program communicates with these channels, and the operating system takes care of the underlying hardware.
+
+This design allows the same program to work on many different computers without modification.
+
+## The Three Standard Streams
+
+Every process begins with three predefined communication streams.
+
+| Stream          | Purpose                 | Common Name |
+| --------------- | ----------------------- | ----------- |
+| Standard Input  | Receives input          | `stdin`     |
+| Standard Output | Produces normal output  | `stdout`    |
+| Standard Error  | Produces error messages | `stderr`    |
+
+These streams are created automatically by the operating system before your program begins executing.
+
+Conceptually, every process starts like this:
+
+```text
+               +----------------------+
+Keyboard ----> |                      |
+               |      Process         |
+Monitor  <---- |                      |
+               +----------------------+
+```
+
+However, the process is not connected directly to the keyboard or monitor.
+
+Instead, it communicates through the three standard streams.
+
+```text
+                 stdin
+                   │
+                   ▼
+          +----------------+
+          |                |
+          |    Process     |
+          |                |
+          +----------------+
+             ▲          ▲
+             │          │
+         stdout      stderr
+```
+
+The operating system decides where each stream is connected.
+
+## Standard Input (`stdin`)
+
+**Standard Input**, abbreviated as **`stdin`**, is the stream from which a program receives input.
+
+By default, when a program runs inside a terminal, `stdin` is connected to the keyboard.
+
+For example:
+
+```c
+char name[100];
+
+scanf("%99s", name);
+```
+
+When `scanf()` executes, it reads data from `stdin`.
+
+Normally, this means waiting for the user to type on the keyboard.
+
+```text
+Keyboard
+
+Sachin↵
+
+     │
+     ▼
+
+stdin
+
+     │
+     ▼
+
+Program
+```
+
+The important point is that `scanf()` is **not reading directly from the keyboard**.
+
+It is reading from `stdin`.
+
+This distinction allows the operating system to redirect input from other sources.
+
+## Redirecting Standard Input
+
+Suppose we have a file named `name.txt` containing:
+
+```text
+Alice
+```
+
+Instead of typing the name manually, we can redirect the file into the program.
+
+```bash
+./program < name.txt
+```
+
+Now the data flows like this:
+
+```text
+name.txt
+
+      │
+      ▼
+
+stdin
+
+      │
+      ▼
+
+Program
+```
+
+The program cannot tell whether the input came from a keyboard or a file.
+
+From its perspective, it simply reads from `stdin`.
+
+This is one of the reasons Unix programs are so flexible.
+
+## Standard Output (`stdout`)
+
+**Standard Output**, abbreviated as **`stdout`**, is the stream used for normal program output.
+
+Functions such as
+
+```c
+printf("Hello\n");
+```
+
+write to `stdout`.
+
+When running inside a terminal, `stdout` is normally connected to the terminal.
+
+```text
+Program
+
+     │
+
+printf()
+
+     │
+     ▼
+
+stdout
+
+     │
+     ▼
+
+Terminal
+
+     │
+     ▼
+
+Screen
+```
+
+Notice that `printf()` does **not** write to the monitor.
+
+It writes to `stdout`.
+
+The operating system determines where `stdout` ultimately goes.
+
+## Redirecting Standard Output
+
+Because the operating system controls `stdout`, redirecting program output is remarkably easy.
+
+Consider the following command:
+
+```bash
+./program > output.txt
+```
+
+The operating system changes the destination of `stdout`.
+
+```text
+Program
+
+     │
+
+stdout
+
+     │
+     ▼
+
+output.txt
+```
+
+The program still calls `printf()` exactly as before.
+
+It has no idea that its output is being written into a file instead of displayed on the screen.
+
+This design keeps programs simple and makes them far more reusable.
+
+## Standard Error (`stderr`)
+
+The third standard stream is **Standard Error**, or **`stderr`**.
+
+Its purpose is to separate normal program output from error messages.
+
+For example, suppose a program cannot open a file.
+
+It might display:
+
+```text
+Error: Unable to open notes.txt
+```
+
+Rather than sending this message to `stdout`, well-designed programs send it to `stderr`.
+
+Why is this useful?
+
+Imagine redirecting normal output into a file.
+
+```bash
+./program > results.txt
+```
+
+If error messages were mixed with normal output, they would also be written into `results.txt`.
+
+Instead, `stderr` remains connected to the terminal by default.
+
+```text
+               stdout ─────► results.txt
+
+Program
+
+               stderr ─────► Terminal
+```
+
+The user still sees important errors, while the output file contains only the intended data.
+
+This separation is one of the reasons Unix command-line tools compose so well.
+
+## Standard Streams and Our Text Editor
+
+Our text editor will rely heavily on these standard streams.
+
+Initially, the communication looks like this:
+
+```text
+              Keyboard
+                  │
+                  ▼
+               stdin
+                  │
+                  ▼
+        +------------------+
+        |   Text Editor    |
+        +------------------+
+                  │
+                  ▼
+               stdout
+                  │
+                  ▼
+         Terminal Emulator
+                  │
+                  ▼
+              Screen
+```
+
+Whenever the user presses a key, the operating system delivers that input through `stdin`.
+
+Whenever the editor needs to redraw the screen, it sends characters and control sequences to `stdout`.
+
+Although our editor will later place the terminal into **raw mode**, changing how keyboard input is delivered, the fundamental communication channel remains the same.
+
+## Everything Is a Stream
+
+One of the core philosophies of Unix is that programs should communicate using streams of bytes.
+
+Whether those bytes come from:
+
+- a keyboard,
+- a file,
+- another program,
+- or a network connection,
+
+the program interacts with them in essentially the same way.
+
+Likewise, output may be sent to:
+
+- the terminal,
+- a file,
+- another program,
+- or even a remote computer.
+
+This consistent interface greatly simplifies software development.
+
+Instead of learning different APIs for every possible input and output device, programmers work with the same abstraction.
+
+## Engineering Insight
+
+The concepts of `stdin` and `stdout` are examples of **abstraction**.
+
+A text editor does not need to know what model of keyboard the user owns or what graphics hardware drives the display.
+
+Instead, it communicates through standard interfaces provided by the operating system.
+
+This separation allows software to remain portable across different hardware and operating systems.
+
+As you'll see throughout this book, abstraction is one of the most powerful ideas in software engineering. By hiding unnecessary details behind well-defined interfaces, complex systems become easier to understand, maintain, and extend.
+
+## Common Mistakes
+
+### Mistake 1 — Thinking `printf()` writes directly to the screen
+
+`printf()` writes to `stdout`. Whether that output appears on the screen, a file, or another destination depends on how the operating system has connected the stream.
+
+### Mistake 2 — Assuming `scanf()` always reads from the keyboard
+
+`scanf()` reads from `stdin`. By default, `stdin` is connected to the keyboard, but it may also be connected to a file, another program, or another input source.
+
+### Mistake 3 — Ignoring `stderr`
+
+Error messages should generally be written to `stderr` rather than `stdout`. Keeping these streams separate allows users to redirect normal output without losing important diagnostic information.
+
+## Summary
+
+Every process begins with three standard communication streams: **`stdin`**, **`stdout`**, and **`stderr`**. These streams provide a uniform way for programs to receive input and produce output without needing to interact directly with hardware devices.
+
+By default, `stdin` receives input from the keyboard, `stdout` sends output to the terminal, and `stderr` displays error messages. Because the operating system manages these streams, they can easily be redirected to files, pipes, or other programs without modifying the program itself.
+
+Our text editor will use these same mechanisms throughout the book. User input will arrive through `stdin`, while text and terminal control sequences will be sent through `stdout`.
+
+In the next section, we'll follow the path of `stdout` beyond the operating system and explore the program responsible for displaying its contents: the **terminal emulator**.
