@@ -1,0 +1,507 @@
+---
+title: 6.9 The Challenge of Parsing Input
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Throughout this chapter, we have examined the different forms that keyboard input can take.
+
+Some keys produce a single ASCII byte.
+
+Others produce multiple UTF-8 bytes.
+
+Control shortcuts generate ASCII control characters.
+
+Arrow keys, function keys, and navigation keys produce ANSI escape sequences.
+
+Modifier keys can further alter the meaning of these inputs.
+
+Individually, each of these mechanisms is relatively straightforward. The real challenge arises when an editor must handle **all of them together**, one byte at a time, as they arrive from the terminal.
+
+This process is known as **input parsing**.
+
+Input parsing is the process of transforming a stream of incoming bytes into meaningful key events that the rest of the editor can understand.
+
+## Bytes Arrive as a Stream
+
+A common misconception is that every call to `read()` returns exactly one complete key press.
+
+In reality, the terminal provides a **stream of bytes**.
+
+Imagine the user performs the following actions:
+
+```text
+A
+
+↓
+
+Tab
+
+↓
+
+Right Arrow
+
+↓
+
+Ctrl + C
+
+↓
+
+Delete
+```
+
+The editor might receive the following byte stream:
+
+```text
+41
+09
+1B
+5B
+43
+03
+1B
+5B
+33
+7E
+```
+
+To the operating system, these are simply bytes arriving in sequence.
+
+Nothing in this stream indicates where one key ends and the next begins.
+
+The single byte `09` in the middle of the stream is the Horizontal Tab character. Like `41` for `A`, it is a complete, self-contained input—the parser simply recognizes it and reports a Tab key event.
+
+The responsibility for finding those boundaries belongs entirely to the Input Parser.
+
+## One Key Does Not Always Mean One Byte
+
+Earlier in this chapter, we saw examples of several different key encodings.
+
+A printable ASCII character:
+
+```text
+A
+
+↓
+
+41
+```
+
+A UTF-8 character:
+
+```text
+é
+
+↓
+
+C3 A9
+```
+
+An arrow key:
+
+```text
+Right Arrow
+
+↓
+
+ESC [ C
+```
+
+A function key:
+
+```text
+F5
+
+↓
+
+ESC [ 15 ~
+```
+
+These examples demonstrate an important principle:
+
+```text
+One Key
+
+↓
+
+1 Byte
+
+or
+
+2 Bytes
+
+or
+
+3 Bytes
+
+or
+
+More
+```
+
+An Input Parser cannot determine the type of input simply by counting bytes.
+
+Instead, it must examine the contents of the byte stream and recognize known patterns.
+
+## The Same Beginning Can Mean Different Things
+
+Perhaps the greatest difficulty in parsing terminal input is that different keys often begin with the same byte.
+
+Consider these examples:
+
+```text
+Escape
+
+↓
+
+ESC
+```
+
+```text
+Alt + X
+
+↓
+
+ESC x
+```
+
+```text
+Right Arrow
+
+↓
+
+ESC [ C
+```
+
+```text
+F5
+
+↓
+
+ESC [ 15 ~
+```
+
+Every one of these inputs begins with:
+
+```text
+ESC
+```
+
+After reading only the first byte, the Input Parser cannot determine which key the user intended.
+
+It must continue reading additional bytes until enough information is available to make a decision.
+
+## Looking Ahead Before Deciding
+
+Imagine the Input Parser receives this byte:
+
+```text
+ESC
+```
+
+Several possibilities immediately exist:
+
+```text
+ESC
+
+↓
+
+Escape Key
+
+or
+
+Start of Arrow Key
+
+or
+
+Start of Function Key
+
+or
+
+Alt-Modified Key
+
+or
+
+Beginning of Another Escape Sequence
+```
+
+Only after examining the following bytes can the parser identify the correct interpretation.
+
+For example:
+
+```text
+ESC
+[
+A
+```
+
+becomes:
+
+```text
+Up Arrow
+```
+
+Whereas:
+
+```text
+ESC
+x
+```
+
+becomes:
+
+```text
+Alt + X
+```
+
+This need to inspect upcoming bytes before making a decision is known as **lookahead**.
+
+<Aside type="note" title="Note">
+
+Lookahead does not necessarily mean waiting for a large amount of input. In most cases, only a few additional bytes are needed before the parser can confidently identify the key.
+
+</Aside>
+
+## Recognizing Patterns
+
+Rather than treating each byte independently, an Input Parser searches for patterns within the incoming stream.
+
+Conceptually, the parser performs comparisons such as:
+
+```text
+Starts with ESC?
+
+↓
+
+No
+
+↓
+
+Printable Character
+```
+
+or
+
+```text
+Starts with ESC?
+
+↓
+
+Yes
+
+↓
+
+Next Byte = '[' ?
+
+↓
+
+Yes
+
+↓
+
+Navigation or Function Key
+```
+
+or
+
+```text
+Starts with ESC?
+
+↓
+
+Next Byte = Letter
+
+↓
+
+Possibly Alt + Key
+```
+
+The parser is not concerned with the physical keyboard.
+
+Instead, it attempts to match the received bytes against the set of patterns it understands.
+
+## Incomplete Input
+
+Another challenge is that input may arrive incrementally.
+
+Suppose the user presses the Right Arrow key.
+
+The terminal sends:
+
+```text
+ESC
+[
+C
+```
+
+Although these bytes are generated together, the operating system may deliver them in separate reads.
+
+For example:
+
+First call:
+
+```text
+ESC
+```
+
+Second call:
+
+```text
+[
+C
+```
+
+or even:
+
+First call:
+
+```text
+ESC
+[
+```
+
+Second call:
+
+```text
+C
+```
+
+A parser that immediately treats the first `ESC` as the Escape key would incorrectly process the remaining bytes.
+
+Instead, the parser may need to temporarily store partial input until enough bytes have been received to determine whether a complete sequence has arrived.
+
+## Separating Reading from Parsing
+
+As the complexity of keyboard input grows, an important architectural principle emerges.
+
+Reading bytes and interpreting keys are two distinct responsibilities.
+
+A well-designed editor separates them into different stages:
+
+```text
+Keyboard
+
+↓
+
+Terminal Emulator
+
+↓
+
+read()
+
+↓
+
+Raw Byte Stream
+
+↓
+
+Input Parser
+
+↓
+
+Key Event
+
+↓
+
+Input Engine
+
+↓
+
+Command Engine
+```
+
+The `read()` system call knows nothing about keys.
+
+It simply copies bytes into memory.
+
+The Input Parser is responsible for interpreting those bytes and producing meaningful events such as:
+
+```text
+KEY_CHARACTER('A')
+
+KEY_TAB
+
+KEY_UP
+
+KEY_DELETE
+
+KEY_CTRL_S
+
+KEY_ALT_X
+```
+
+The rest of the editor interacts only with these abstract key events, never with raw terminal escape sequences.
+
+## Why This Separation Matters
+
+Imagine that every part of the editor had to recognize escape sequences.
+
+The cursor movement code might contain logic such as:
+
+```text
+If bytes are ESC [ A
+
+Move Cursor Up
+```
+
+The scrolling code might contain similar checks.
+
+The search feature might include them again.
+
+Soon, terminal-specific details would be scattered throughout the codebase.
+
+Instead, only the Input Parser understands terminal protocols.
+
+Everything else receives clean, consistent events.
+
+```text
+Raw Bytes
+
+↓
+
+Input Parser
+
+↓
+
+KEY_PAGE_DOWN
+
+↓
+
+Viewport
+```
+
+This design makes the system easier to understand, easier to test, and easier to extend.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The Input Parser acts as a **translator** between two very different worlds.
+
+On one side is the terminal, which communicates using bytes and escape sequences.
+
+On the other side is the editor, which thinks in terms of user intentions:
+
+- Insert a character
+- Move the cursor
+- Delete text
+- Save the document
+- Quit the editor
+
+By hiding terminal-specific details behind a parser, the rest of the editor remains independent of the communication protocol used by the terminal. This separation of concerns is a recurring principle in software architecture and will continue to guide the design of our editor throughout the rest of the book.
+
+</Aside>
+
+## Common Mistakes
+
+- Assuming each call to `read()` corresponds to exactly one key press.
+- Treating every `ESC` byte as the Escape key without considering longer sequences.
+- Parsing bytes directly inside editor commands instead of using a dedicated Input Parser.
+- Assuming multi-byte sequences always arrive in a single read operation.
+- Designing the editor around raw byte values rather than abstract key events.
+
+## Summary
+
+Parsing keyboard input is considerably more challenging than simply reading bytes from standard input. Different keys produce different numbers of bytes, multiple keys can begin with the same prefix, and escape sequences may arrive incrementally. An Input Parser must therefore examine the incoming byte stream, recognize known patterns, buffer incomplete sequences when necessary, and translate the result into abstract key events.
+
+This parsing layer forms the boundary between the terminal's byte-oriented communication protocol and the editor's event-driven architecture. By isolating this responsibility within the Input Parser, the rest of the editor can remain focused on higher-level operations rather than the complexities of terminal input encoding.
+
+In the next section, we will build on these ideas by exploring **how to design an Input Parser**, examining the responsibilities, structure, and architectural decisions behind a robust parsing system suitable for a professional terminal editor.

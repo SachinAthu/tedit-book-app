@@ -1,0 +1,317 @@
+---
+title: 6.1 From Key Press to Program
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+When you press a key on your keyboard, it may seem as though the character appears instantly in your editor. In reality, that single key press travels through several layers of hardware and software before your program ever receives it.
+
+Understanding this journey is important because a terminal application does not communicate directly with the keyboard. Instead, it receives a stream of bytes that has already been processed by the operating system and the terminal.
+
+In this section, we will follow a key press from the moment your finger touches the keyboard until the corresponding bytes arrive at your program.
+
+## The Journey Begins
+
+Imagine you press the **A** key while your text editor is running.
+
+From the user's perspective, the process seems simple:
+
+```text
+Press A
+
+↓
+
+The editor receives 'A'
+```
+
+However, many components work together behind the scenes.
+
+The complete journey looks like this:
+
+```text
++-----------+
+| Keyboard  |
++-----------+
+      │
+      ▼
++----------------------+
+| Operating System     |
+| (Keyboard Driver)    |
++----------------------+
+      │
+      ▼
++----------------------+
+| Terminal Emulator    |
+| (GNOME Terminal,     |
+| Windows Terminal,    |
+| iTerm2, etc.)        |
++----------------------+
+      │
+      ▼
++----------------------+
+| Pseudo Terminal      |
+| (PTY)                |
++----------------------+
+      │
+      ▼
++----------------------+
+| Standard Input       |
+| (stdin)              |
++----------------------+
+      │
+      ▼
++----------------------+
+| Your Editor          |
++----------------------+
+```
+
+Each component performs a specific task before passing the input to the next.
+
+## Step 1 — The Keyboard
+
+The keyboard is a hardware device that detects when keys are pressed and released.
+
+Importantly, the keyboard does **not** send characters such as `'A'` or `'b'`.
+
+Instead, it sends **key events**, which indicate:
+
+- which key changed state,
+- whether it was pressed or released,
+- and sometimes additional information such as modifier keys.
+
+For example:
+
+```text
+Key Press:
+A
+
+↓
+
+Keyboard Event:
+Key A Pressed
+```
+
+At this stage, there is still no ASCII character or Unicode code point—only a hardware event.
+
+<Aside type="note" title="Note">
+
+Different keyboard layouts (US, UK, German, Japanese, etc.) may generate different characters for the same physical key. The keyboard itself is generally unaware of these layouts; interpreting the key according to the active layout is the operating system's responsibility.
+
+</Aside>
+
+## Step 2 — The Operating System
+
+The operating system receives the hardware events from the keyboard driver.
+
+Its responsibilities include:
+
+- interpreting the active keyboard layout,
+- tracking modifier keys such as **Shift**, **Ctrl**, and **Alt**,
+- generating the appropriate character or control code,
+- and forwarding the input to the active terminal session.
+
+For example, pressing the same physical key can produce different results depending on which modifiers are held:
+
+```text
+Key Press          Result
+
+A                  'a'
+Shift + A          'A'
+Ctrl + A           Control Character
+```
+
+The operating system performs these translations before your application ever sees the input.
+
+## Step 3 — The Terminal Emulator
+
+As discussed in Chapter 3, the terminal emulator acts as the user's interface to terminal applications.
+
+It has two primary responsibilities:
+
+- displaying output received from the application, and
+- forwarding keyboard input to the running program.
+
+When ordinary printable characters are typed, the terminal usually forwards the corresponding bytes directly.
+
+For special keys, however, it often generates **escape sequences** instead of a single byte.
+
+For example:
+
+```text
+Press A
+
+↓
+
+Terminal sends:
+
+0x41
+```
+
+But pressing the **Up Arrow** typically produces:
+
+```text
+ESC
+[
+A
+```
+
+Although the user pressed a single key, the application receives three separate bytes.
+
+We will examine these escape sequences in detail later in this chapter.
+
+## Step 4 — The Pseudo Terminal (PTY)
+
+The terminal emulator and your application do not communicate directly.
+
+Instead, they exchange data through a **Pseudo Terminal (PTY)**, which we explored in Chapter 3.
+
+The PTY acts like a virtual communication channel.
+
+Anything the application writes to **stdout** appears in the terminal emulator.
+
+Anything the user types in the terminal emulator is delivered to the application's **stdin**.
+
+```text
+Terminal Emulator
+       │
+       ▼
++--------------+
+|     PTY      |
++--------------+
+       ▲
+       │
+Your Editor
+```
+
+From the editor's perspective, input simply arrives through standard input.
+
+It has no knowledge of the physical keyboard.
+
+## Step 5 — Standard Input (`stdin`)
+
+Your editor reads keyboard input using the standard input stream.
+
+Conceptually, the program performs operations similar to:
+
+```c
+read(STDIN_FILENO, &buffer, 1);
+```
+
+The editor is not asking questions such as:
+
+- "Was the A key pressed?"
+- "Did the user press the left arrow?"
+- "Is Shift currently held?"
+
+Instead, it simply requests:
+
+> "Give me the next byte from standard input."
+
+What that byte—or sequence of bytes—represents is something the application must determine for itself.
+
+## Where Raw Mode Fits In
+
+In Chapter 5, we configured the terminal to operate in **raw mode**.
+
+This changes how input travels through the final stages of the pipeline.
+
+In canonical mode:
+
+```text
+Keyboard
+
+↓
+
+Operating System
+
+↓
+
+Terminal Emulator
+
+↓
+
+Line Buffer
+
+↓
+
+stdin
+
+↓
+
+Program
+```
+
+The operating system waits until the user presses **Enter** before delivering the accumulated input.
+
+In raw mode:
+
+```text
+Keyboard
+
+↓
+
+Operating System
+
+↓
+
+Terminal Emulator
+
+↓
+
+stdin
+
+↓
+
+Program
+```
+
+Each key press is delivered immediately, allowing interactive applications such as text editors, shells, and terminal-based games to respond without delay.
+
+Raw mode does **not** change how keys are encoded; it only changes **when** they are delivered to your program.
+
+## Putting It All Together
+
+The complete journey of a key press can now be summarized as follows:
+
+```text
+User Presses Key
+        │
+        ▼
+Keyboard
+        │
+        ▼
+Operating System
+(Processes key event)
+        │
+        ▼
+Terminal Emulator
+(Encodes input as bytes)
+        │
+        ▼
+Pseudo Terminal (PTY)
+        │
+        ▼
+Standard Input (stdin)
+        │
+        ▼
+Your Editor
+(Reads bytes)
+```
+
+Notice that nowhere in this pipeline does the editor communicate directly with the keyboard. It only receives a stream of bytes through `stdin`. Those bytes may represent printable characters, control characters, or the beginning of a multi-byte escape sequence. Distinguishing between these possibilities is one of the editor's responsibilities.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A terminal application is fundamentally a **stream processor**.
+
+It does not receive high-level events such as _"Left Arrow Pressed"_ or _"Ctrl+S Activated."_ Instead, it receives bytes one after another and must interpret them according to well-defined encoding rules and terminal conventions.
+
+This separation between **receiving bytes** and **understanding their meaning** keeps the terminal interface simple and flexible. It also explains why applications such as text editors, shells, and terminal multiplexers all implement their own input parsing logic.
+
+</Aside>
+
+## Summary
+
+When a key is pressed, the resulting input passes through several layers before reaching your application. The keyboard generates a hardware event, the operating system interprets it, the terminal emulator encodes it into bytes, the PTY transfers those bytes, and finally your editor reads them from `stdin`.
+
+Chapter 5 introduced **when** these bytes become available by enabling raw mode. In the next section, we will examine **what** these bytes actually represent by distinguishing **characters** from **keys**.

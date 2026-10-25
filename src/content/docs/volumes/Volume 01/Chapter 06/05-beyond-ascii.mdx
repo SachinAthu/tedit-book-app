@@ -1,0 +1,424 @@
+---
+title: 6.5 Beyond ASCII - UTF-8 Input
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous sections, we learned that ASCII assigns numeric values to characters and that many keyboard shortcuts are based on ASCII control characters.
+
+ASCII works well for English text, but it has one major limitation:
+
+It contains only **128 characters**.
+
+This was sufficient for the computing systems of the 1960s, but modern software must support hundreds of languages, mathematical symbols, currency signs, emojis, and countless other characters.
+
+To solve this problem, the computing industry adopted **Unicode**, and one of its most widely used encodings is **UTF-8**.
+
+Understanding UTF-8 is important because a modern text editor must be capable of handling far more than plain English text.
+
+## The Limitations of ASCII
+
+ASCII was designed primarily for English.
+
+It includes:
+
+- uppercase letters
+- lowercase letters
+- digits
+- punctuation
+- common symbols
+- control characters
+
+However, it cannot represent characters such as:
+
+```text
+é
+ñ
+ø
+漢
+あ
+€
+😊
+```
+
+These characters simply do not exist in the ASCII table.
+
+As computers became more widely used around the world, this limitation became increasingly problematic.
+
+People needed to write documents in their own languages.
+
+Programming languages needed identifiers beyond English.
+
+Operating systems needed to display text from every region of the world.
+
+A larger character set became essential.
+
+## Unicode: A Universal Character Set
+
+Unicode was created to provide a unique identifier for every character used in human writing.
+
+Instead of defining only 128 characters, Unicode defines well over one million possible code points, with nearly 150,000 currently assigned.
+
+For example:
+
+```text
+Character      Unicode
+
+A              U+0041
+
+é              U+00E9
+
+€              U+20AC
+
+漢             U+6F22
+
+😊             U+1F60A
+```
+
+Each character has its own **code point**, written using the format:
+
+```text
+U+XXXX
+```
+
+or, for larger values:
+
+```text
+U+1F60A
+```
+
+A code point identifies **which character** we mean.
+
+It does **not** specify how that character is stored in memory.
+
+That is the role of a character encoding.
+
+## Unicode Is Not an Encoding
+
+This distinction often causes confusion.
+
+Unicode and UTF-8 are **not** the same thing.
+
+Unicode defines:
+
+> Which character is being represented.
+
+UTF-8 defines:
+
+> How that character is represented as bytes.
+
+A useful analogy is a book.
+
+Unicode is like assigning every book in a library a unique catalog number.
+
+UTF-8 is the method used to print that catalog number onto labels.
+
+The identifier and its representation are related, but they are different concepts.
+
+## What Is UTF-8?
+
+UTF-8 is the most widely used encoding for Unicode.
+
+Unlike ASCII, which always uses a single byte per character, UTF-8 uses a **variable number of bytes**.
+
+A character may occupy:
+
+- 1 byte
+- 2 bytes
+- 3 bytes
+- 4 bytes
+
+depending on the character being represented.
+
+UTF-8 uses the high bits of the first byte to signal how many bytes a character occupies:
+
+| Byte pattern | Length |
+|---|---|
+| `0xxxxxxx` | 1 byte (ASCII) |
+| `110xxxxx 10xxxxxx` | 2 bytes |
+| `1110xxxx 10xxxxxx 10xxxxxx` | 3 bytes |
+| `11110xxx 10xxxxxx 10xxxxxx 10xxxxxx` | 4 bytes |
+
+Any byte beginning with `10` is a continuation byte. This structure allows a parser to determine byte boundaries without scanning backwards — if a byte starts with `0` or `11`, it is the beginning of a new character.
+
+This allows UTF-8 to represent virtually every written language while remaining compact for common text.
+
+## ASCII Is a Subset of UTF-8
+
+One of UTF-8's greatest strengths is its backward compatibility.
+
+Every ASCII character has exactly the same byte value in UTF-8.
+
+For example:
+
+```text
+Character
+
+A
+```
+
+ASCII:
+
+```text
+0x41
+```
+
+UTF-8:
+
+```text
+0x41
+```
+
+No conversion is required.
+
+This compatibility allowed existing software to continue working when Unicode became widespread.
+
+In fact, a plain English text file is simultaneously:
+
+- a valid ASCII file, and
+- a valid UTF-8 file.
+
+## Single-Byte Characters
+
+Characters from the original ASCII range still occupy one byte.
+
+Examples include:
+
+```text
+Character      UTF-8 Bytes
+
+A              41
+
+7              37
+
+?              3F
+
+Space          20
+
+Tab            09
+```
+
+For English text, UTF-8 behaves almost identically to ASCII.
+
+The Tab key belongs to this group. Pressing it produces the single byte **09**, the UTF-8 encoding of the Horizontal Tab character, whose Unicode code point is **U+0009**. There is nothing special about this byte sequence: a tab is an ordinary code point in Unicode, exactly like `A` (U+0041) or `7` (U+0037), and our editor stores it in the document as one logical character. (Chapter 22 develops this encoding boundary in full.)
+
+## Multi-Byte Characters
+
+Characters outside the ASCII range require additional bytes.
+
+For example:
+
+```text
+Character
+
+é
+```
+
+occupies:
+
+```text
+2 bytes
+```
+
+A Chinese character such as:
+
+```text
+漢
+```
+
+typically occupies:
+
+```text
+3 bytes
+```
+
+An emoji such as:
+
+```text
+😊
+```
+
+occupies:
+
+```text
+4 bytes
+```
+
+Although these examples use different numbers of bytes, each still represents a **single character**.
+
+This distinction is extremely important.
+
+## Characters Are Not Bytes
+
+One of the most common mistakes made by beginning systems programmers is assuming:
+
+```text
+1 Character
+
+=
+
+1 Byte
+```
+
+This is true for ASCII.
+
+It is **not** true for UTF-8.
+
+For example, consider the word:
+
+```text
+Café
+```
+
+Visually, it contains four characters:
+
+```text
+C
+a
+f
+é
+```
+
+However, in UTF-8, the final character occupies two bytes.
+
+Internally, the word requires:
+
+```text
+C   1 byte
+
+a   1 byte
+
+f   1 byte
+
+é   2 bytes
+```
+
+for a total of **5 bytes**.
+
+Likewise:
+
+```text
+😊
+```
+
+is one character but occupies four bytes.
+
+A text editor therefore cannot assume that moving one byte always means moving one character.
+
+## What Does the Terminal Send?
+
+When a user types an ASCII character such as:
+
+```text
+A
+```
+
+the terminal sends:
+
+```text
+41
+```
+
+When the user types:
+
+```text
+é
+```
+
+the terminal sends two bytes.
+
+Similarly, typing:
+
+```text
+😊
+```
+
+results in four bytes being sent through `stdin`.
+
+From the application's perspective, there is no difference between these cases.
+
+It simply receives a stream of bytes.
+
+It is the application's responsibility to determine whether those bytes represent:
+
+- one ASCII character,
+- one UTF-8 character,
+- or the beginning of an escape sequence.
+
+This is one of the central challenges of input parsing.
+
+## Why This Matters for Our Editor
+
+Throughout this book, we will initially focus on ASCII input because it allows us to understand terminal programming without introducing unnecessary complexity.
+
+However, our architectural decisions should not prevent future Unicode support.
+
+For example, if the editor assumes:
+
+```text
+Cursor Position
+
+=
+
+Byte Position
+```
+
+it will work correctly for ASCII but fail for UTF-8 text.
+
+Instead, we should recognize from the beginning that:
+
+```text
+Character Position
+
+≠
+
+Byte Position
+```
+
+Professional editors maintain this distinction carefully, allowing them to support multilingual text while still storing data efficiently.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Many simple text editors begin by treating each byte as a character because it keeps the implementation straightforward. This approach works well for plain ASCII text and is valuable for learning terminal programming. As editors evolve to support Unicode, they must distinguish between **bytes**, **UTF-8 code units**, **Unicode code points**, and even **grapheme clusters** (what users perceive as individual characters). We will revisit these topics in later chapters when discussing text representation and cursor movement.
+
+</Aside>
+
+## Common Mistakes
+
+### "Unicode and UTF-8 are the same thing."
+
+False.
+
+Unicode defines the character set.
+
+UTF-8 defines one way of encoding those characters as bytes.
+
+### "Every UTF-8 character occupies four bytes."
+
+False.
+
+UTF-8 uses a variable-length encoding.
+
+Characters may occupy one, two, three, or four bytes.
+
+### "One byte always equals one character."
+
+False.
+
+This is true only for ASCII characters.
+
+Many Unicode characters require multiple bytes.
+
+### "UTF-8 replaced ASCII."
+
+Not exactly.
+
+UTF-8 incorporates the entire ASCII character set unchanged, allowing older ASCII-based software and data to remain compatible.
+
+## Summary
+
+ASCII provided a simple way to represent English text, but its limited character set could not support the world's languages. Unicode solved this problem by assigning unique code points to every character, while UTF-8 defined an efficient variable-length encoding for representing those code points as bytes.
+
+Unlike ASCII, UTF-8 characters may occupy multiple bytes, meaning that a stream of input bytes no longer maps one-to-one with visible characters. This distinction is crucial when designing a text editor, because the program must correctly interpret incoming byte sequences before it can insert characters or execute commands.
+
+In the next section, we will examine another type of multi-byte input: **escape sequences**, which terminals use to represent special keys such as the arrow keys, Home, End, and Page Up.

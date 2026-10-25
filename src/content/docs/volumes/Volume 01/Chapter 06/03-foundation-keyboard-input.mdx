@@ -1,0 +1,386 @@
+---
+title: 6.3 ASCII - The Foundation of Keyboard Input
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we distinguished between **keys** and **characters**. We learned that a text editor ultimately works with characters rather than physical keys.
+
+But how are these characters represented inside a computer?
+
+Computers store and process everything as numbers. Before a character can be displayed, saved to a file, or transmitted to another program, it must first be assigned a numeric value.
+
+One of the earliest and most influential character encoding systems is **ASCII** (American Standard Code for Information Interchange). Although modern software primarily uses Unicode, ASCII remains the foundation upon which many text-based systems—including terminal applications—are built.
+
+Understanding ASCII is essential because many keyboard inputs, control characters, and terminal conventions originate from it.
+
+## Why Do We Need Character Encoding?
+
+Imagine two computers exchanging text.
+
+One computer wants to send the letter **A**.
+
+If it simply transmits the electrical signal without an agreed meaning, the receiving computer has no way of knowing whether the sender intended:
+
+- the letter **A**,
+- the number **1**,
+- the symbol **@**,
+- or something else entirely.
+
+Computers therefore require a common agreement:
+
+> "This number represents this character."
+
+This agreement is called a **character encoding**.
+
+For example:
+
+```text
+Character
+
+↓
+
+Number
+
+↓
+
+Stored as bits
+```
+
+When both systems use the same encoding, they can exchange text reliably.
+
+## What Is ASCII?
+
+ASCII is a standard that assigns numeric values to characters.
+
+For example:
+
+```text
+Character    Decimal
+
+A            65
+
+B            66
+
+C            67
+```
+
+Instead of storing the letter **A**, the computer stores the number **65**.
+
+Similarly:
+
+```text
+Character    Decimal
+
+a            97
+
+b            98
+
+c            99
+```
+
+When a program reads the number **65**, it interprets it as the character **A** according to the ASCII standard.
+
+## ASCII Uses Seven Bits
+
+One of ASCII's defining characteristics is that it uses **7 bits** to represent each character.
+
+Seven bits can represent:
+
+```text
+2⁷ = 128
+```
+
+possible values.
+
+Therefore, standard ASCII contains:
+
+```text
+0
+
+↓
+
+127
+```
+
+for a total of **128 characters**.
+
+These include:
+
+- letters
+- digits
+- punctuation
+- symbols
+- control characters
+
+Although modern computers store characters in 8-bit bytes, the highest bit was originally unused in standard ASCII.
+
+## Printable Characters
+
+Most ASCII values represent characters that can be displayed on the screen.
+
+For example:
+
+```text
+Decimal   Character
+
+48        0
+
+49        1
+
+50        2
+
+...
+
+65        A
+
+66        B
+
+67        C
+
+...
+
+97        a
+
+98        b
+
+99        c
+```
+
+These are known as **printable characters** because they produce visible output.
+
+Typing:
+
+```text
+Hello
+```
+
+actually stores:
+
+```text
+72
+101
+108
+108
+111
+```
+
+Internally, your editor works with numbers even though you see letters on the screen.
+
+## Control Characters
+
+Not every ASCII value represents visible text.
+
+The first part of the ASCII table is reserved for **control characters**.
+
+These were originally designed to control teletypes and other early terminals rather than display text.
+
+For example:
+
+```text
+Decimal   Name
+
+0         NUL
+
+7         BEL
+
+8         BS
+
+9         TAB
+
+10        LF
+
+13        CR
+
+27        ESC
+```
+
+Unlike printable characters, these values instruct a device to perform an action.
+
+For example:
+
+```text
+LF
+
+↓
+
+Move to the next line
+```
+
+or
+
+```text
+TAB
+
+↓
+
+Move to the next tab stop
+```
+
+Many of these control characters are still widely used today.
+
+**TAB**, however, deserves special attention because a text editor treats it differently from most other control characters.
+
+Historically, TAB was a device command: it moved the print head to the next tab stop. In a text editor, pressing the Tab key produces **content** instead. The editor inserts the Horizontal Tab character itself—one logical character with ASCII value **9**—into the document as ordinary text.
+
+A tab is not several spaces. It is a single character, stored in the document exactly like any other character. How much horizontal space it occupies on the screen is not decided by the input system; that is a rendering concern addressed later in this book.
+
+## ASCII in Different Number Bases
+
+Throughout this book, you will encounter ASCII values written in several different forms.
+
+For example, the letter **A** can be written as:
+
+```text
+Character
+
+A
+```
+
+```text
+Decimal
+
+65
+```
+
+```text
+Hexadecimal
+
+0x41
+```
+
+```text
+Binary
+
+01000001
+```
+
+Although these representations look different, they all describe exactly the same value.
+
+In systems programming, hexadecimal is especially common because it provides a compact and readable representation of binary data.
+
+For this reason, the remainder of this book will primarily use hexadecimal when discussing character values.
+
+## Why Uppercase and Lowercase Are Separate
+
+One elegant aspect of ASCII is that uppercase and lowercase letters occupy different ranges.
+
+```text
+Uppercase
+
+A = 65
+...
+Z = 90
+```
+
+```text
+Lowercase
+
+a = 97
+...
+z = 122
+```
+
+Notice that every lowercase letter is exactly **32** greater than its uppercase equivalent.
+
+For example:
+
+```text
+A = 65
+
+a = 97
+
+Difference = 32
+```
+
+This predictable layout makes many text-processing operations straightforward.
+
+For example, converting an uppercase letter to lowercase can be performed by adding **32**, while converting lowercase to uppercase can be achieved by subtracting **32**, provided the character is known to be an ASCII letter.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Modern software typically uses library functions such as `tolower()` and `toupper()` instead of performing arithmetic directly. These functions correctly handle locale-specific behavior and are safer when working with character encodings beyond ASCII.
+
+</Aside>
+
+## ASCII and the Keyboard
+
+When you type an ordinary printable character in a terminal, the terminal typically sends its ASCII value to the application.
+
+For example:
+
+```text
+User presses:
+
+A
+```
+
+The application receives:
+
+```text
+0x41
+```
+
+Likewise:
+
+```text
+User presses:
+
+7
+```
+
+The application receives:
+
+```text
+0x37
+```
+
+At this level, there is no concept of fonts or visual appearance—only numeric values representing characters.
+
+The editor interprets these values according to the ASCII standard and inserts the corresponding characters into the document.
+
+## ASCII Is Still Everywhere
+
+Although Unicode has largely replaced ASCII as the primary character encoding for modern software, ASCII continues to play a fundamental role.
+
+Many important components of terminal systems still rely on ASCII values, including:
+
+- command-line input,
+- ANSI escape sequences,
+- control characters,
+- programming languages,
+- configuration files,
+- network protocols,
+- and source code.
+
+In fact, every standard ASCII character has the same numeric value in Unicode, ensuring that decades of existing software continue to function without modification.
+
+For this reason, understanding ASCII remains an essential foundation for systems programming.
+
+## Common Mistakes
+
+### "ASCII stores every character in every language."
+
+False.
+
+ASCII defines only **128 characters**, primarily intended for English text and control functions.
+
+### "Every byte is valid ASCII."
+
+False.
+
+Standard ASCII uses only the values **0–127**. Values **128–255** are outside the original ASCII specification and were later used by various extended character sets.
+
+### "ASCII is obsolete."
+
+Not entirely.
+
+While modern applications use Unicode for international text, ASCII remains the foundation for many programming languages, protocols, terminals, and control sequences.
+
+## Summary
+
+ASCII is one of the earliest and most influential character encoding standards. Instead of storing characters directly, computers store numeric values defined by the ASCII table. These values include both **printable characters**, such as letters and digits, and **control characters**, such as Line Feed (`LF`) and Escape (`ESC`), which instruct devices to perform specific actions.
+
+Although Unicode has expanded character support far beyond ASCII's original 128-character set, the ASCII values remain unchanged within Unicode. This compatibility is one of the reasons ASCII continues to underpin terminal programming today.
+
+In the next section, we will explore one of the most important groups of ASCII values for terminal applications: **control characters and the keyboard shortcuts created from them**, such as **Ctrl+C**, **Ctrl+D**, and **Ctrl+Q**.

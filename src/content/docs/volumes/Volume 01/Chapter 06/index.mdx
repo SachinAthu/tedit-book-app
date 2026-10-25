@@ -1,0 +1,32 @@
+---
+title: Chapter 6 — Keyboard Input
+---
+
+Now that we've enabled raw mode, every key press reaches our program immediately. However, receiving bytes is only the first step. A text editor must determine _what those bytes represent_. Some keys correspond to a single byte, while others produce sequences of multiple bytes. Understanding this encoding is essential before we can design an input handling system.
+
+## Learning Objectives
+
+By the end of this chapter, readers should be able to:
+
+- Explain how keyboards generate input.
+- Distinguish between characters and key events.
+- Understand the role of ASCII in keyboard input.
+- Recognize why UTF-8 characters may occupy multiple bytes.
+- Explain how special keys are represented using escape sequences.
+- Understand modifier keys such as Ctrl, Alt, and Shift.
+- Design a strategy for parsing keyboard input.
+- Appreciate why input parsing is separate from editor commands.
+
+## Sections
+
+- [6.1 From Key Press to Program](/volumes/volume-01/chapter-06/01-key-press-to-program/)
+- [6.2 Characters vs. Keys](/volumes/volume-01/chapter-06/02-characters-vs-keys/)
+- [6.3 ASCII - The Foundation of Keyboard Input](/volumes/volume-01/chapter-06/03-foundation-keyboard-input/)
+- [6.4 Control Characters and Ctrl Shortcuts](/volumes/volume-01/chapter-06/04-control-characters-ctrl/)
+- [6.5 Beyond ASCII - UTF-8 Input](/volumes/volume-01/chapter-06/05-beyond-ascii/)
+- [6.6 Escape Sequences for Special Keys](/volumes/volume-01/chapter-06/06-escape-sequences/)
+- [6.7 Function Keys and Other Special Keys](/volumes/volume-01/chapter-06/07-function-keys/)
+- [6.8 Modifier Keys](/volumes/volume-01/chapter-06/08-modifier-keys/)
+- [6.9 The Challenge of Parsing Input](/volumes/volume-01/chapter-06/09-challenge-parsing-input/)
+- [6.10 Designing an Input Parser](/volumes/volume-01/chapter-06/10-designing-input-parser/)
+- [6.11 Conclusion](/volumes/volume-01/chapter-06/11-conclusion/)

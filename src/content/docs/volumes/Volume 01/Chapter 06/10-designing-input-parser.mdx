@@ -1,0 +1,538 @@
+---
+title: 6.10 Designing an Input Parser
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we discovered that reading keyboard input is only half of the problem. The terminal delivers a stream of bytes, while the editor needs to respond to meaningful user actions such as "move the cursor up" or "delete a character."
+
+Bridging this gap is the responsibility of the **Input Parser**.
+
+The Input Parser is one of the first examples in this book of a component that translates data from one representation into another. It receives raw bytes from the terminal and produces structured key events that the rest of the editor can easily understand.
+
+Designing this component carefully has a significant impact on the simplicity, maintainability, and portability of the entire editor.
+
+## The Role of the Input Parser
+
+The Input Parser sits between the operating system and the rest of the editor.
+
+Its position within the overall architecture can be illustrated as follows:
+
+```text
+Keyboard
+
+↓
+
+Terminal Emulator
+
+↓
+
+PTY
+
+↓
+
+read()
+
+↓
+
+Raw Byte Stream
+
+↓
+
+Input Parser
+
+↓
+
+Key Event
+
+↓
+
+Input Engine
+
+↓
+
+Command Engine
+
+↓
+
+Editor State
+```
+
+Each component has a clearly defined responsibility.
+
+- The operating system delivers bytes.
+- The Input Parser interprets those bytes.
+- The Input Engine maps each key event to a command.
+- The Command Engine executes that command.
+- The Editor State records the results of that action.
+
+By assigning each responsibility to a separate component, the overall architecture remains easier to understand and modify.
+
+## From Bytes to Events
+
+The parser's primary job is translation.
+
+For example, suppose the terminal produces:
+
+```text
+41
+```
+
+The parser translates this into:
+
+```text
+Character: 'A'
+```
+
+Likewise:
+
+```text
+1B 5B 41
+```
+
+becomes:
+
+```text
+KEY_UP
+```
+
+And:
+
+```text
+03
+```
+
+becomes:
+
+```text
+KEY_CTRL_C
+```
+
+Pressing Tab produces:
+
+```text
+09
+```
+
+which the parser translates into:
+
+```text
+KEY_TAB
+```
+
+The important observation is that the rest of the editor never works directly with these byte values.
+
+Instead, it receives a consistent representation regardless of how the terminal encoded the original input.
+
+## A Complete Example: The Tab Key
+
+The Tab key is a good illustration of how these layers cooperate, because its journey passes through every stage of the architecture.
+
+When the user presses Tab, the terminal sends the single byte **09** through `stdin`. From the input system's point of view, this is an ordinary, self-contained input—no different from the byte **41** produced by the A key.
+
+The Input Parser reads that byte and produces an abstract key event:
+
+```text
+KEY_TAB
+```
+
+The parser does **not** decide what the editor should do with this event. In particular, it does not decide whether a tab should be expanded into spaces. That decision belongs to a higher layer — the Renderer, which expands TAB into screen cells (Chapter 19).
+
+Our editor's Input Engine maps `KEY_TAB` to a Tab action, and the Command Engine executes that action by inserting the Horizontal Tab character into the Document:
+
+```text
+Terminal
+  │
+  │ input bytes (09)
+  ▼
+Input Parser
+  │
+  │ abstract key event (KEY_TAB)
+  ▼
+Input Engine / Command layer
+  │
+  │ Tab action
+  ▼
+Document
+  │
+  │ U+0009
+  ▼
+Logical text
+```
+
+The Document therefore stores **one logical character**—the Unicode code point **U+0009**—not a sequence of spaces. A tab is not "four spaces" or "eight spaces"; it is a single character, exactly like `A` or `7`. How much horizontal space that character occupies on the screen is a **rendering** concern, deliberately deferred until we study the Renderer.
+
+## A Common Event Representation
+
+Rather than exposing terminal-specific details throughout the editor, the Input Parser can produce a simple event structure.
+
+Conceptually:
+
+```text
++----------------------+
+| Key Event            |
++----------------------+
+| Key Type             |
+| Character (optional) |
+| Modifiers            |
++----------------------+
+```
+
+Examples might include:
+
+```text
+Key Type: CHARACTER
+Character: 'x'
+```
+
+```text
+Key Type: UP_ARROW
+```
+
+```text
+Key Type: DELETE
+```
+
+```text
+Key Type: FUNCTION_KEY
+Number: 5
+```
+
+Notice that these events describe **what the user intended**, not the raw bytes that happened to arrive from the terminal.
+
+This abstraction allows every other subsystem to work with meaningful concepts instead of terminal protocols.
+
+## The Parsing Process
+
+Although the implementation details will come much later, the overall process is surprisingly straightforward.
+
+```text
+Receive Bytes
+
+↓
+
+Examine First Byte
+
+↓
+
+Determine Input Category
+
+↓
+
+Read Additional Bytes (if needed)
+
+↓
+
+Recognize Pattern
+
+↓
+
+Generate Key Event
+
+↓
+
+Return Event
+```
+
+Each step narrows the possibilities until the parser can confidently identify the user's input.
+
+## Categorizing Input
+
+One useful design strategy is to classify input into broad categories before attempting detailed interpretation.
+
+For example:
+
+```text
+First Byte
+
+↓
+
++----------------------+
+| Printable Character? |
++----------------------+
+        │
+   Yes  │  No
+        ▼
+Character Event
+```
+
+If the first byte is not a printable character, the parser continues:
+
+```text
+Control Character?
+
+↓
+
+Yes
+
+↓
+
+Control Event
+```
+
+Otherwise:
+
+```text
+Escape Character?
+
+↓
+
+Yes
+
+↓
+
+Escape Sequence Parser
+```
+
+Instead of attempting to recognize every possible key immediately, the parser gradually narrows the search.
+
+This approach keeps the parsing logic organized and easier to extend.
+
+## Parsing as a State Machine
+
+One way to think about an Input Parser is as a **state machine**.
+
+A state machine moves through a series of well-defined states based on the input it receives.
+
+For example:
+
+```text
+        +-------+
+        | Start |
+        +-------+
+            |
+            |
+     Printable?
+       /     \
+     Yes      No
+     |         |
+     ▼         ▼
+Character   ESC?
+ Event      /   \
+          Yes    No
+          |       |
+          ▼       ▼
+ Escape Sequence Control Character
+     Parser          Event
+```
+
+Each decision moves the parser into another state until it eventually reaches a final interpretation.
+
+<Aside type="note" title="Note">
+
+The concept of state machines appears throughout systems programming. Network protocols, lexical analyzers, communication protocols, and terminal parsers all rely on similar ideas. Later chapters will revisit this concept in greater depth.
+
+</Aside>
+
+## Handling Unknown Input
+
+Not every byte sequence has a known meaning.
+
+A parser may encounter:
+
+- an unsupported function key,
+- a terminal-specific escape sequence,
+- an incomplete sequence,
+- or even corrupted input.
+
+Rather than failing unexpectedly, a robust parser should handle these situations gracefully.
+
+Conceptually:
+
+```text
+Incoming Sequence
+
+↓
+
+Recognized?
+
+↓
+
++---------+
+|   Yes   |
++---------+
+      │
+      ▼
+Generate Event
+
+or
+
++---------+
+|    No   |
++---------+
+      │
+      ▼
+Ignore
+Report
+Fallback
+```
+
+Professional software rarely assumes that every input is valid.
+
+Defensive handling of unexpected input improves both reliability and portability.
+
+## Keeping the Parser Independent
+
+The Input Parser should not perform editor operations.
+
+For example, it should **not** contain logic such as:
+
+```text
+If Ctrl+S
+
+↓
+
+Save File
+```
+
+Nor should it contain:
+
+```text
+If Up Arrow
+
+↓
+
+Move Cursor
+```
+
+Instead, its responsibility ends after producing an event.
+
+```text
+Raw Bytes
+
+↓
+
+Input Parser
+
+↓
+
+KEY_CTRL_S
+
+↓
+
+Input Engine
+
+↓
+
+Save Document
+
+↓
+
+Command Engine
+```
+
+Likewise:
+
+```text
+Raw Bytes
+
+↓
+
+Input Parser
+
+↓
+
+KEY_UP
+
+↓
+
+Input Engine
+
+↓
+
+Move Cursor
+
+↓
+
+Command Engine
+```
+
+This separation follows the **Single Responsibility Principle**.
+
+The parser interprets input.
+
+The Input Engine decides what that input means for the editor, and the Command Engine carries out the resulting command.
+
+## Why This Design Scales
+
+At first glance, creating an entire component just to interpret keyboard input may seem unnecessary.
+
+However, consider how the editor will grow over time.
+
+Initially, it might recognize only:
+
+- printable characters,
+- Backspace,
+- Enter,
+- arrow keys.
+
+Later, support may be added for:
+
+- function keys,
+- mouse events,
+- bracketed paste mode,
+- terminal resize notifications,
+- custom shortcuts,
+- future terminal protocols.
+
+Without a dedicated parser, every new feature would require changes throughout the editor.
+
+With a dedicated Input Parser, only one component needs to understand these protocols.
+
+The remainder of the editor continues to receive the same clean, abstract key events.
+
+This is one of the defining characteristics of good software architecture: **localizing complexity**.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The Input Parser acts as a **boundary** between two layers of the system.
+
+On one side is the external world:
+
+```text
+Terminal Protocol
+
+↓
+
+Bytes
+
+↓
+
+Escape Sequences
+```
+
+On the other side is the internal architecture:
+
+```text
+Editor Events
+
+↓
+
+Commands
+
+↓
+
+Editor State
+```
+
+Whenever software communicates with external systems—whether terminals, networks, files, or hardware—it is often beneficial to introduce a translation layer that isolates protocol-specific details from the rest of the application.
+
+This architectural pattern appears repeatedly in professional software engineering because it reduces coupling, improves testability, and makes future changes easier to implement.
+
+</Aside>
+
+---
+
+## Common Mistakes
+
+- Mixing parsing logic with editor commands.
+- Allowing multiple components to interpret raw terminal bytes.
+- Assuming every input sequence is valid or complete.
+- Returning raw escape sequences instead of abstract key events.
+- Designing the parser around specific terminal emulators rather than general parsing principles.
+
+## Summary
+
+An Input Parser transforms the terminal's byte-oriented communication into the structured key events that drive the editor. Rather than exposing raw escape sequences throughout the application, it recognizes known patterns, categorizes input, handles incomplete or unknown sequences, and produces a consistent internal representation.
+
+By separating parsing from command execution, the editor gains a cleaner architecture in which each component has a single, well-defined responsibility. As the editor evolves to support additional keyboard features and terminal capabilities, this design localizes complexity within the Input Parser while allowing the rest of the system to remain simple and focused.

@@ -1,0 +1,360 @@
+---
+title: 6.2 Characters vs. Keys
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In everyday conversation, the words _key_ and _character_ are often used interchangeably.
+
+For example, someone might say:
+
+> "Press the **A** character."
+
+or
+
+> "Press the **A** key."
+
+In most situations, this distinction does not matter. However, when writing a text editor, understanding the difference is essential.
+
+A **key** is a physical control on the keyboard.
+
+A **character** is a piece of textual data produced as a result of pressing one or more keys.
+
+These are related concepts, but they are not the same thing.
+
+## What Is a Key?
+
+A **key** is a physical button on the keyboard.
+
+For example:
+
+```text
++---+---+---+---+
+| A | S | D | F |
++---+---+---+---+
+
++-------+
+| Enter |
++-------+
+
++-----+
+| Esc |
++-----+
+
++---+
+| ↑ |
++---+
+```
+
+Each key occupies a physical position and can be pressed or released.
+
+A key exists regardless of what character it eventually produces.
+
+For example, the key labeled **A** remains the same physical key whether your keyboard layout is English, French, German, or another language.
+
+## What Is a Character?
+
+A **character** is a unit of text.
+
+Characters are what appear inside documents.
+
+Examples include:
+
+```text
+A
+b
+7
+@
+$
+?
+```
+
+Characters are data.
+
+They are stored in files, transmitted over networks, displayed on screens, and manipulated by programs.
+
+Unlike keys, characters have **encodings**, such as ASCII or Unicode.
+
+For example:
+
+```text
+Character      ASCII
+
+A              65
+a              97
+0              48
+```
+
+A text editor ultimately works with characters because documents consist of text, not keyboard hardware.
+
+## One Key, Multiple Characters
+
+A single key can produce different characters depending on the keyboard state.
+
+Consider the **A** key:
+
+```text
+Key Press            Character
+
+A                    a
+
+Shift + A            A
+
+Caps Lock + A        A
+
+Caps Lock + Shift+A  a
+```
+
+The physical key never changes.
+
+Only the resulting character changes.
+
+Similarly, the number key **1** may produce:
+
+```text
+Key Press        Character
+
+1                1
+
+Shift + 1        !
+```
+
+Again, one physical key can represent multiple characters.
+
+## Multiple Keys, One Character
+
+The opposite situation also exists.
+
+Some characters require pressing more than one key.
+
+For example:
+
+```text
+Shift + A
+
+↓
+
+A
+```
+
+The uppercase letter **A** is one character, but it required two keys:
+
+- Shift
+- A
+
+On many international keyboard layouts, certain characters require even more combinations.
+
+For example:
+
+```text
+AltGr + E
+
+↓
+
+€
+```
+
+From the editor's perspective, only the resulting character matters.
+
+How the operating system produced it is largely irrelevant.
+
+## Keys That Produce No Characters
+
+Many keys do not produce text at all.
+
+Examples include:
+
+- Arrow keys
+- Home
+- End
+- Page Up
+- Page Down
+- Escape
+- Function keys
+- Ctrl
+- Shift
+- Alt
+
+Pressing the **Left Arrow** does not insert a symbol into a document.
+
+Instead, it requests an action:
+
+```text
+User presses:
+
+←
+
+↓
+
+Move cursor left
+```
+
+Likewise:
+
+```text
+User presses:
+
+Page Down
+
+↓
+
+Scroll downward
+```
+
+These keys represent **commands**, not textual data.
+
+## Some Characters Have No Dedicated Key
+
+Not every character has its own physical key.
+
+For example:
+
+```text
+©
+€
+£
+✓
+é
+漢
+😊
+```
+
+Many of these require:
+
+- modifier keys,
+- compose sequences,
+- input methods,
+- or Unicode input mechanisms.
+
+Despite their different input methods, they are still ordinary characters once they reach the application.
+
+This is one reason modern software cannot assume that every character corresponds to a single key press.
+
+## Why Editors Care About Keys
+
+Suppose you press the **Left Arrow**.
+
+The editor should not insert anything into the document.
+
+Instead, it should move the cursor.
+
+Likewise:
+
+```text
+Backspace
+
+↓
+
+Delete previous character
+```
+
+or
+
+```text
+Enter
+
+↓
+
+Insert new line
+```
+
+These are editing commands rather than text.
+
+Conversely, typing:
+
+```text
+H
+e
+l
+l
+o
+```
+
+should insert five characters into the document.
+
+Therefore, an editor must distinguish between:
+
+- text input, and
+- command input.
+
+Treating every key as text would make navigation impossible.
+
+Treating every key as a command would prevent users from entering text.
+
+## From Bytes to Meaning
+
+When your editor reads bytes from `stdin`, it cannot immediately know whether they represent:
+
+- a printable character,
+- a control character,
+- or a special key.
+
+For example:
+
+```text
+0x41
+```
+
+represents:
+
+```text
+A
+```
+
+which should be inserted into the document.
+
+However:
+
+```text
+ESC
+[
+A
+```
+
+represents:
+
+```text
+Up Arrow
+```
+
+which should move the cursor instead.
+
+The editor must interpret the incoming bytes before deciding how to respond.
+
+This process is known as **input parsing**, and it forms the foundation of every interactive terminal application.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Many graphical user interface (GUI) frameworks deliver **high-level key events** directly to applications, such as _"Left Arrow Pressed"_ or _"Ctrl+S Activated."_ A terminal application is different. It receives only a stream of bytes and must determine whether those bytes represent characters, commands, or the beginning of a longer sequence.
+
+This additional layer of interpretation is one of the defining characteristics of terminal programming.
+
+</Aside>
+
+## Common Mistakes
+
+### "Every key produces a character."
+
+False.
+
+Keys such as **Escape**, **Shift**, and the **arrow keys** perform actions but do not directly insert text into a document.
+
+### "Every character has its own key."
+
+False.
+
+Many Unicode characters have no dedicated physical key and are entered using modifier combinations or specialized input methods.
+
+### "A key and a character are the same thing."
+
+False.
+
+A key is a physical control on the keyboard.
+
+A character is textual data that may—or may not—be produced by one or more key presses.
+
+## Summary
+
+A **key** is a physical input device, while a **character** is a unit of textual data. One key can produce different characters depending on modifier keys and keyboard layout, and many keys produce no characters at all. Likewise, some characters require multiple key presses or specialized input methods.
+
+Understanding this distinction is crucial because a text editor must decide whether incoming input should be **inserted into the document** or **interpreted as an editing command**. In the next section, we will examine the first and simplest character encoding system used by computers: **ASCII**.

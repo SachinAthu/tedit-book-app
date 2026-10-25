@@ -1,0 +1,379 @@
+---
+title: 6.6 Escape Sequences for Special Keys
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we learned that UTF-8 characters may require multiple bytes to represent a single character.
+
+Interestingly, multi-byte input is not limited to Unicode.
+
+Long before Unicode became common, terminals were already using **multiple bytes** to represent special keyboard keys such as the arrow keys, Home, End, and the function keys.
+
+Unlike UTF-8, these byte sequences do not represent text. Instead, they represent **commands** issued by the keyboard.
+
+These sequences are known as **escape sequences**, and they form one of the most important communication mechanisms between terminal emulators and terminal applications.
+
+## Why Special Keys Need Something Different
+
+ASCII provides values for:
+
+- letters
+- digits
+- punctuation
+- control characters
+
+However, it does **not** define values for keys such as:
+
+- ↑ Up Arrow
+- ↓ Down Arrow
+- ← Left Arrow
+- → Right Arrow
+- Home
+- End
+- Page Up
+- Page Down
+- Insert
+- Delete
+- Function keys
+
+When ASCII was created, these keys either did not exist or varied significantly between different terminals.
+
+There simply were no ASCII values available to represent them.
+
+Terminal designers therefore needed another solution.
+
+## The Escape Character
+
+One of the ASCII control characters is:
+
+```text
+Name
+
+ESC
+```
+
+with the value:
+
+```text
+Decimal
+
+27
+```
+
+or
+
+```text
+Hexadecimal
+
+0x1B
+```
+
+Originally, **ESC** meant exactly what its name suggests:
+
+> "The following bytes should be interpreted differently."
+
+Instead of representing text, the Escape character announces the beginning of a command sequence.
+
+Conceptually:
+
+```text
+ESC
+
+↓
+
+Switch interpretation mode
+```
+
+The bytes that follow determine the actual command.
+
+## One Key, Multiple Bytes
+
+Consider typing the letter:
+
+```text
+A
+```
+
+The terminal sends:
+
+```text
+0x41
+```
+
+Only one byte is required.
+
+Now press the **Up Arrow**.
+
+Instead of sending one byte, a typical terminal sends:
+
+```text
+ESC
+[
+A
+```
+
+or, in hexadecimal:
+
+```text
+0x1B
+
+0x5B
+
+0x41
+```
+
+Although the user pressed **one key**, the application receives **three bytes**.
+
+This demonstrates an important principle:
+
+```text
+One Key
+
+≠
+
+One Byte
+```
+
+## Common Arrow Key Sequences
+
+Most terminals follow the ANSI terminal conventions introduced in Chapter 4.
+
+The arrow keys are commonly encoded as:
+
+| Key   | Escape Sequence |
+| ----- | --------------- |
+| Up    | `ESC [ A`       |
+| Down  | `ESC [ B`       |
+| Right | `ESC [ C`       |
+| Left  | `ESC [ D`       |
+
+Visually:
+
+```text
+Up Arrow
+
+↓
+
+ESC
+[
+A
+```
+
+```text
+Left Arrow
+
+↓
+
+ESC
+[
+D
+```
+
+Notice that every sequence begins with:
+
+```text
+ESC
+[
+```
+
+Only the final byte changes.
+
+## Why Use Escape Sequences?
+
+At first glance, using three bytes to represent one key may seem inefficient.
+
+Why not assign the Up Arrow a single numeric value?
+
+The answer lies in the history of terminal systems.
+
+Different terminals supported different capabilities.
+
+Some terminals had arrow keys.
+
+Others did not.
+
+Some supported color.
+
+Others supported cursor movement.
+
+Still others supported programmable function keys.
+
+Using escape sequences allowed manufacturers to extend terminal functionality without changing the ASCII standard.
+
+Instead of inventing new character values, they simply defined new sequences beginning with the Escape character.
+
+This made the protocol highly extensible.
+
+## More Than Keyboard Input
+
+Escape sequences are not limited to keyboard input.
+
+In Chapter 4, we learned that applications also use escape sequences to **control the terminal**.
+
+For example:
+
+```text
+Application
+
+↓
+
+ESC[2J
+
+↓
+
+Clear Screen
+```
+
+Similarly:
+
+```text
+Application
+
+↓
+
+ESC[H
+
+↓
+
+Move Cursor Home
+```
+
+Interestingly, the communication works in both directions.
+
+The application sends escape sequences to the terminal to control the display.
+
+The terminal sends escape sequences back to the application to represent certain key presses.
+
+```text
+Application
+
+── ESC Sequences ──► Terminal Emulator
+
+Terminal Emulator
+
+── ESC Sequences ──► Application
+```
+
+Although the direction differs, the underlying idea is the same: a sequence of bytes beginning with `ESC` conveys a command rather than ordinary text.
+
+## Reading Escape Sequences
+
+Imagine your editor calls:
+
+```c
+read(STDIN_FILENO, &c, 1);
+```
+
+The first byte received after pressing the Up Arrow is:
+
+```text
+0x1B
+
+(ESC)
+```
+
+At this moment, the editor cannot yet know whether the user:
+
+- pressed the Escape key,
+
+or
+
+- began an escape sequence.
+
+It must wait for the next byte.
+
+If the next byte is:
+
+```text
+[
+```
+
+the application continues reading.
+
+Finally, it receives:
+
+```text
+A
+```
+
+Only after reading the complete sequence can the editor conclude:
+
+```text
+ESC
+[
+A
+
+↓
+
+Up Arrow
+```
+
+This illustrates why input parsing cannot simply process one byte at a time independently.
+
+Sometimes the meaning of a byte depends on the bytes that follow.
+
+## Escape Sequences Vary
+
+Although the arrow key sequences shown above are widely supported, not every terminal generates exactly the same sequences.
+
+For example:
+
+- Home and End keys often differ between terminals.
+- Function keys may have several alternative encodings.
+- Some terminals include modifier information for Shift, Ctrl, or Alt.
+- Older terminals may use entirely different conventions.
+
+Fortunately, modern terminal emulators generally support ANSI-compatible escape sequences, making them sufficiently consistent for most applications.
+
+Even so, terminal software should avoid assuming that every environment behaves identically.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Notice how escape sequences resemble a miniature language.
+
+Rather than assigning every possible action a unique numeric value, terminals encode commands as structured byte sequences.
+
+This design is remarkably flexible. New capabilities can be introduced simply by defining new sequences, without altering the underlying communication protocol.
+
+The same philosophy appears throughout computing—in network protocols, instruction sets, and file formats—where structured messages often provide greater extensibility than fixed numeric codes.
+
+</Aside>
+
+## Common Mistakes
+
+### "The Up Arrow has an ASCII value."
+
+False.
+
+ASCII defines no values for navigation keys.
+
+The Up Arrow is represented by an escape sequence generated by the terminal.
+
+### "Escape sequences are only used for output."
+
+False.
+
+Applications send escape sequences to control the terminal, but terminals also send escape sequences to represent special key presses.
+
+### "Every escape sequence contains three bytes."
+
+False.
+
+Some sequences are three bytes long, while others may contain four, five, or even more bytes depending on the key and the terminal.
+
+### "Receiving `ESC` always means the Escape key was pressed."
+
+False.
+
+`ESC` may represent the Escape key itself, or it may be the beginning of a longer escape sequence.
+
+The application must examine the bytes that follow before making a decision.
+
+## Summary
+
+ASCII provides no representation for navigation and function keys, so terminal emulators encode these keys using **escape sequences** that begin with the **Escape (`ESC`)** control character. A single key press, such as the Up Arrow, may therefore generate multiple bytes, requiring the application to read and interpret the entire sequence before determining its meaning.
+
+This introduces an important challenge for terminal applications: the meaning of an input byte often depends on the bytes that follow it. Simply reading bytes one at a time is no longer sufficient.
+
+In the next section, we will build on this idea by examining **function keys and other special keys**, many of which generate longer and more varied escape sequences than the arrow keys.
