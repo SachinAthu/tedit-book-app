@@ -1,0 +1,454 @@
+---
+title: 3.7 The Shell
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+So far, we have explored the environment surrounding a terminal application.
+
+We have learned about:
+
+- TTYs
+- Virtual consoles
+- Pseudo-terminals (PTYs)
+- Terminal emulators
+
+However, there is still one important question:
+
+> **When you open a terminal window, what is the first program that starts?**
+
+The answer is almost always **the shell**.
+
+The shell is the program that sits between the user and the operating system. It reads commands, starts programs, and manages your interactive terminal session.
+
+Before our text editor can run, the shell must first launch it.
+
+
+## What Is a Shell?
+
+A **shell** is a command-line interpreter.
+
+It provides a text-based interface through which users interact with the operating system.
+
+When you type a command like:
+
+```bash
+$ ls
+```
+
+the shell reads the command, determines what you want to execute, starts the appropriate program, and waits for it to finish.
+
+The shell itself is just another program.
+
+It is **not** part of the terminal emulator, nor is it built into the operating system kernel.
+
+Instead, it is an ordinary user-space application.
+
+
+## Why Is It Called a "Shell"?
+
+The name comes from the idea that the shell surrounds the operating system.
+
+Imagine the operating system kernel at the center.
+
+Around it are programs that interact with the kernel.
+
+The shell provides one of the primary interfaces through which users communicate with the operating system.
+
+```text
+           User
+             │
+             ▼
+      +-------------+
+      |    Shell    |
+      +-------------+
+             │
+             ▼
+      +-------------+
+      |   Kernel    |
+      +-------------+
+             │
+             ▼
+         Hardware
+```
+
+The shell forms an outer layer—a **shell**—around the operating system.
+
+
+## The Shell Does Not Execute Commands Itself
+
+One of the biggest misconceptions among beginners is that the shell contains commands such as:
+
+- `ls`
+- `cat`
+- `grep`
+- `mkdir`
+
+In reality, most of these are **separate programs**.
+
+Consider:
+
+```bash
+$ ls
+```
+
+The shell does **not** list the files itself.
+
+Instead, it:
+
+1. Reads your command.
+2. Finds the `ls` executable.
+3. Starts the program.
+4. Waits for it to finish.
+5. Displays another prompt.
+
+```text
+User types
+
+ls
+
+      │
+
+      ▼
+
+Shell
+
+      │
+
+Starts
+
+      │
+
+      ▼
+
+ls Program
+
+      │
+
+Prints Output
+
+      │
+
+      ▼
+
+Shell Prompt Returns
+```
+
+The shell is therefore a **program launcher**, not the program performing the requested task.
+
+
+## Starting Our Text Editor
+
+Eventually, users will start our editor like this:
+
+```bash
+$ editor notes.txt
+```
+
+What happens internally?
+
+```text
+User
+
+   │
+
+Types:
+
+editor notes.txt
+
+   │
+
+   ▼
+
+Shell
+
+   │
+
+Starts
+
+   │
+
+   ▼
+
+Our Editor
+
+   │
+
+Runs
+
+   │
+
+User Edits File
+
+   │
+
+Editor Exits
+
+   │
+
+Shell Prompt Returns
+```
+
+Notice that once the editor starts, the shell temporarily steps aside.
+
+The editor now receives keyboard input directly from the terminal.
+
+When the editor exits, control returns to the shell.
+
+
+## Popular Unix Shells
+
+Over the years, several shells have become popular.
+
+Some common examples include:
+
+| Shell    | Description                                                      |
+| -------- | ---------------------------------------------------------------- |
+| **sh**   | The original Bourne Shell.                                       |
+| **bash** | Bourne Again Shell. The default on many Linux systems.           |
+| **zsh**  | A feature-rich shell with improved customization and completion. |
+| **fish** | A modern shell focused on user friendliness.                     |
+
+Although these shells differ in features and syntax, they all perform the same fundamental job:
+
+- read commands,
+- launch programs,
+- manage interactive sessions.
+
+Throughout this book, the specific shell is largely unimportant because our editor communicates directly with the terminal, not with shell-specific features.
+
+
+## The Shell Prompt
+
+When you open a terminal, you usually see something like:
+
+```text
+$
+```
+
+or
+
+```text
+username@computer:~$
+```
+
+This is called the **shell prompt**.
+
+The prompt indicates that:
+
+- the shell is running,
+- it is waiting for input,
+- no foreground program is currently executing.
+
+A typical interaction looks like this:
+
+```text
+Shell Prompt
+
+$
+
+      │
+
+User Types
+
+pwd
+
+      │
+
+Shell Starts Program
+
+      │
+
+Program Prints
+
+/home/alice
+
+      │
+
+Program Exits
+
+      │
+
+Shell Prompt Appears Again
+
+$
+```
+
+The prompt is therefore a visual indication that the shell is ready for the next command.
+
+
+## The Shell Starts Programs
+
+When the shell starts another program, it creates a new process.
+
+Conceptually, the sequence looks like this:
+
+```text
+Shell
+
+    │
+
+Create New Process
+
+    │
+
+Load Program
+
+    │
+
+Run Program
+```
+
+On Unix-like systems, this is typically accomplished using two system calls:
+
+- `fork()`
+- `exec()`
+
+We will study these APIs in detail later in the book.
+
+For now, it is enough to understand that the shell is responsible for starting new programs.
+
+
+## Environment Variables
+
+Besides launching programs, the shell also provides information about the user's environment.
+
+This information is stored in **environment variables**.
+
+Examples include:
+
+```text
+HOME
+PATH
+USER
+SHELL
+TERM
+```
+
+Applications can read these variables to learn about their execution environment.
+
+For example:
+
+- `HOME` tells a program where the user's home directory is.
+- `PATH` specifies where executable programs are searched for.
+- `TERM` identifies the type of terminal being used.
+
+Our text editor may eventually use some of these variables, but understanding them in depth is beyond the scope of this chapter.
+
+
+## The Relationship Between the Shell and the Terminal Emulator
+
+At this point, it is useful to see how everything fits together.
+
+When you open a terminal window:
+
+```text
+User
+
+   │
+
+Opens
+
+   │
+
+Terminal Emulator
+
+   │
+
+Creates PTY
+
+   │
+
+Starts Shell
+
+   │
+
+Displays Prompt
+
+$
+```
+
+When you type a command:
+
+```text
+User
+
+     │
+
+Types
+
+editor notes.txt
+
+     │
+
+     ▼
+
+Shell
+
+     │
+
+Starts
+
+     ▼
+
+Editor
+
+     │
+
+Editor Runs
+
+     │
+
+Editor Exits
+
+     ▼
+
+Shell Prompt Returns
+```
+
+The shell exists **inside** the terminal emulator.
+
+The terminal emulator manages the terminal itself.
+
+The shell manages the programs running within that terminal.
+
+These are separate responsibilities performed by separate programs.
+
+
+## Terminal Emulator vs. Shell
+
+Since these terms are often confused, let's compare them directly.
+
+| Terminal Emulator                      | Shell                                 |
+| -------------------------------------- | ------------------------------------- |
+| Creates the terminal window            | Interprets commands                   |
+| Creates the PTY                        | Launches programs                     |
+| Receives keyboard events               | Reads commands from standard input    |
+| Renders text on the screen             | Waits for programs to finish          |
+| Interprets ANSI escape sequences       | Displays the command prompt           |
+| Does **not** understand shell commands | Does **not** draw the terminal window |
+
+Although they work closely together, they solve completely different problems.
+
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Unix deliberately separates the **user interface** from the **command interpreter**.
+
+The terminal emulator focuses solely on presenting a terminal environment and handling input and output. The shell focuses on interpreting commands and managing processes.
+
+Because these responsibilities are independent, users can freely combine different terminal emulators with different shells. For example, Bash can run inside GNOME Terminal, Kitty, Alacritty, or dozens of other terminal emulators without modification.
+
+This modular design is one of Unix's greatest strengths. Each component performs a single well-defined job and communicates through standardized interfaces.
+
+</Aside>
+
+## Summary
+
+The shell is the command-line interpreter that allows users to interact with the operating system. It reads commands, starts programs, waits for them to finish, and then displays another prompt.
+
+Although it usually appears immediately after opening a terminal window, the shell is not the terminal itself. The terminal emulator provides the communication environment, while the shell manages the execution of programs within that environment.
+
+When we eventually launch our text editor, the shell will start it, temporarily hand over control of the terminal, and resume its own operation only after the editor exits.
+
+In the next section, we will examine the complete lifecycle of a **terminal session**, following everything that happens from the moment a terminal window opens until the user closes it.

@@ -30,6 +30,7 @@ export default defineConfig({
         {
           label: "Volumes",
           items: [{ autogenerate: { directory: "volumes" } }],
+          collapsed: true,
         },
         {
           label: "Appendices",

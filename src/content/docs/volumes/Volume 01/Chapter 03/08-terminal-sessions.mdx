@@ -1,0 +1,426 @@
+---
+title: 3.8 Terminal Sessions
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+So far, we have studied each component of the terminal environment individually.
+
+We now know about:
+
+- Terminal emulators
+- Pseudo-terminals (PTYs)
+- Shells
+- Terminal applications
+
+The next step is to understand **how these components work together**.
+
+Every time you open a terminal window, a complete terminal session is created. This session begins when the terminal emulator starts and ends when the terminal window is closed.
+
+Understanding this lifecycle will help us see where our text editor fits into the larger system.
+
+
+## What Is a Terminal Session?
+
+A **terminal session** is an interactive conversation between a user and the operating system through a terminal.
+
+It includes everything associated with that interaction, including:
+
+- the terminal emulator,
+- the PTY,
+- the shell,
+- any programs launched from the shell.
+
+You can think of it as one complete working environment.
+
+For example, when you open a new terminal window, everything inside that window belongs to one terminal session.
+
+
+## Starting a Terminal Session
+
+Let's follow what happens when you click the terminal emulator's icon.
+
+Although many details are hidden from the user, the overall sequence is straightforward.
+
+```text
+User
+   │
+   ▼
+Open Terminal Emulator
+   │
+   ▼
+Create PTY
+   │
+   ▼
+Start Shell
+   │
+   ▼
+Display Prompt
+```
+
+Within a fraction of a second, the terminal window appears and the shell is ready to accept commands.
+
+At this point, the terminal session has begun.
+
+
+## Step 1 — The Terminal Emulator Starts
+
+The first program that runs is the terminal emulator itself.
+
+For example:
+
+```text
+User
+
+      │
+
+Double-click
+
+      │
+
+      ▼
+
+GNOME Terminal
+```
+
+The operating system treats the terminal emulator like any other graphical application.
+
+Initially, however, the window is empty.
+
+The emulator must first prepare an environment in which terminal applications can run.
+
+
+## Step 2 — A PTY Is Created
+
+Next, the terminal emulator asks the operating system to create a new pseudo-terminal.
+
+```text
+Terminal Emulator
+
+        │
+
+Request PTY
+
+        │
+
+        ▼
+
+Linux Kernel
+
+        │
+
+Creates
+
+        │
+
+PTY Master ◄────► PTY Slave
+```
+
+This PTY becomes the communication channel for the entire terminal session.
+
+Every character typed by the user and every byte printed by applications will travel through this PTY.
+
+
+## Step 3 — The Shell Starts
+
+After creating the PTY, the terminal emulator starts the user's default shell.
+
+```text
+Terminal Emulator
+
+        │
+
+Starts
+
+        │
+
+        ▼
+
+Shell
+```
+
+The shell connects its standard input, standard output, and standard error to the PTY.
+
+From this point onward, the shell behaves exactly as though it were running inside a traditional hardware terminal.
+
+
+## Step 4 — The Shell Waits
+
+Once the shell has started, it displays its prompt.
+
+```text
+$
+```
+
+At this moment, nothing else is running.
+
+The shell simply waits for user input.
+
+```text
+User
+
+    │
+
+Types Command
+
+    │
+
+    ▼
+
+Shell
+```
+
+This waiting state is where the terminal session spends most of its time.
+
+
+## Step 5 — The User Starts a Program
+
+Suppose the user launches our future editor.
+
+```bash
+$ editor notes.txt
+```
+
+The shell starts the editor.
+
+```text
+Shell
+
+    │
+
+Starts
+
+    │
+
+    ▼
+
+Editor
+```
+
+Once the editor begins running, something important changes.
+
+The shell is **no longer interacting with the user**.
+
+Instead, the editor now communicates directly with the terminal.
+
+
+## The Terminal Belongs to the Foreground Program
+
+While the editor is running:
+
+- keyboard input goes to the editor,
+- screen output comes from the editor,
+- the shell waits quietly in the background.
+
+```text
+Before
+
+User
+   │
+   ▼
+Shell
+
+After launching editor
+
+User
+   │
+   ▼
+Editor
+
+Shell
+(waiting)
+```
+
+This explains why you cannot type shell commands while an interactive program is running.
+
+The shell is waiting for that program to finish.
+
+
+## Returning to the Shell
+
+Eventually, the user exits the editor.
+
+```text
+Editor
+
+   │
+
+Exit
+
+   │
+
+   ▼
+
+Shell
+```
+
+Control immediately returns to the shell.
+
+The prompt appears again.
+
+```text
+$
+```
+
+The terminal session continues exactly where it left off.
+
+The user can now:
+
+- launch another editor,
+- compile a program,
+- execute a script,
+- or simply exit the shell.
+
+
+## Ending the Terminal Session
+
+A terminal session ends when the shell exits.
+
+For example:
+
+```bash
+$ exit
+```
+
+or by pressing:
+
+```text
+Ctrl+D
+```
+
+The sequence looks like this:
+
+```text
+Shell
+
+   │
+
+Exit
+
+   │
+
+Terminal Emulator
+
+   │
+
+Closes Window
+
+   │
+
+Terminal Session Ends
+```
+
+Once the shell terminates, there is no longer a program managing the terminal session.
+
+Most terminal emulators respond by closing the corresponding window, although some can be configured to keep it open after the shell exits.
+
+
+## The Complete Lifecycle
+
+We can now combine everything we have learned into one complete diagram.
+
+```text
+User
+
+   │
+
+Open Terminal
+
+   │
+
+   ▼
+
+Terminal Emulator
+
+   │
+
+Create PTY
+
+   │
+
+Start Shell
+
+   │
+
+Display Prompt
+
+   │
+
+User Types Command
+
+   │
+
+Shell Starts Program
+
+   │
+
+Program Runs
+
+   │
+
+Program Exits
+
+   │
+
+Shell Prompt Returns
+
+   │
+
+User Types exit
+
+   │
+
+Shell Exits
+
+   │
+
+Terminal Window Closes
+```
+
+This entire sequence is one terminal session.
+
+
+## Where Our Editor Fits
+
+Throughout this book, our text editor will be just another program inside a terminal session.
+
+```text
+Terminal Emulator
+        │
+        ▼
+      Shell
+        │
+        ▼
+   Our Editor
+```
+
+The editor does **not** create the terminal.
+
+It does **not** create the PTY.
+
+It does **not** launch the shell.
+
+Instead, it relies on the environment that already exists.
+
+Its responsibility is simply to communicate with the terminal through the interfaces provided by the operating system.
+
+Understanding this separation of responsibilities will make the implementation much cleaner when we begin writing code in Volume X.
+
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A terminal session demonstrates another important Unix design principle:
+
+> **Programs should compose rather than control one another.**
+
+The terminal emulator, shell, and editor are independent programs created by different developers, often years apart. None of them needs to understand the internal implementation of the others. They cooperate by communicating through standardized interfaces such as PTYs, standard file descriptors, and the process model.
+
+This modular design allows developers to replace individual components without affecting the rest of the system. You can change your terminal emulator, switch to a different shell, or use another text editor, and the overall workflow remains the same.
+
+</Aside>
+
+## Summary
+
+A terminal session begins when a terminal emulator starts, creates a pseudo-terminal, and launches a shell. The shell waits for user commands and starts programs such as text editors, compilers, and debuggers. While one of these programs is running, it becomes the foreground application and communicates directly with the terminal. When the program exits, control returns to the shell, and the session continues until the shell itself terminates.
+
+In the next section, we will examine **standard file descriptors**—`stdin`, `stdout`, and `stderr`. Although we introduced these streams in Chapter 2, we will now place them within the context of a complete terminal session and see how they connect applications to the terminal.

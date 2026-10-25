@@ -1,0 +1,394 @@
+---
+title: 3.6 Terminal Emulator
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+By now, we have encountered the term **terminal emulator** several times.
+
+We know that it communicates with applications through a pseudo-terminal (PTY), but we have not yet examined what it actually does.
+
+Many beginners think a terminal emulator is simply a window that displays text. In reality, it performs far more work than that. It acts as the bridge between the graphical desktop and traditional terminal applications.
+
+Without a terminal emulator, programs such as Bash, Vim, Nano, or our future text editor would have no way to interact with users in a graphical environment.
+
+
+## What Is a Terminal Emulator?
+
+A **terminal emulator** is a software application that mimics the behavior of a traditional hardware terminal.
+
+Instead of using dedicated hardware, it creates a graphical window and behaves like a video terminal from the perspective of terminal-based applications.
+
+Examples include:
+
+- GNOME Terminal
+- Konsole
+- Kitty
+- Alacritty
+- iTerm2
+- Windows Terminal
+
+Although these programs have different features and user interfaces, they all perform the same fundamental task:
+
+> They emulate a terminal.
+
+
+## Why Is It Called an Emulator?
+
+An **emulator** is software that reproduces the behavior of another system.
+
+For example:
+
+- A game console emulator allows old console games to run on a modern computer.
+- A hardware emulator allows software to believe it is communicating with a particular device.
+
+A terminal emulator follows the same idea.
+
+Instead of connecting to a physical video terminal, applications communicate with software that behaves like one.
+
+```text
+Traditional System
+
+Application
+      │
+      ▼
+Video Terminal
+```
+
+```text
+Modern System
+
+Application
+      │
+      ▼
+Terminal Emulator
+      │
+      ▼
+Window on Desktop
+```
+
+From the application's point of view, very little has changed.
+
+
+## The Terminal Emulator Is Not the Shell
+
+One of the most common misconceptions is that the terminal emulator and the shell are the same thing.
+
+They are separate programs with different responsibilities.
+
+```text
++-----------------------+
+| Terminal Emulator     |
+|                       |
+|  +-----------------+  |
+|  |      Shell      |  |
+|  +-----------------+  |
++-----------------------+
+```
+
+The **terminal emulator** provides:
+
+- the graphical window,
+- communication through the PTY,
+- rendering,
+- keyboard input.
+
+The **shell** provides:
+
+- command interpretation,
+- launching programs,
+- managing the current directory,
+- scripting.
+
+When you close the terminal window, you are closing the **terminal emulator**, which usually causes the shell running inside it to terminate as well.
+
+
+## What Does a Terminal Emulator Do?
+
+A terminal emulator performs several important responsibilities.
+
+### 1. Creates a Window
+
+The first responsibility is obvious—it creates a window on the desktop.
+
+```text
++----------------------------------+
+| Terminal Window                  |
+|                                  |
+| $                                |
+|                                  |
++----------------------------------+
+```
+
+Unlike old hardware terminals, this window can be resized, minimized, maximized, and moved like any other graphical application.
+
+
+### 2. Creates a Pseudo Terminal
+
+When a new terminal window opens, the emulator creates a **PTY pair**.
+
+```text
+Terminal Emulator
+        │
+        ▼
+   PTY Master
+        │
+   Linux Kernel
+        │
+   PTY Slave
+```
+
+It then starts a shell attached to the PTY slave.
+
+From that moment onward, all communication passes through the PTY.
+
+
+### 3. Launches the Shell
+
+Most terminal emulators automatically start your default shell.
+
+For example:
+
+```text
+Terminal Emulator
+
+      │
+
+fork()
+
+      │
+
+exec()
+
+      │
+
+Bash
+```
+
+Depending on your system, this might be:
+
+- Bash
+- Zsh
+- Fish
+- another compatible shell
+
+We'll discuss the shell in detail in the next section.
+
+
+### 4. Receives Keyboard Input
+
+Whenever you press a key, the terminal emulator receives the keyboard event from the operating system.
+
+For ordinary characters:
+
+```text
+User presses A
+
+       │
+
+Operating System
+
+       │
+
+Terminal Emulator
+
+       │
+
+PTY Master
+
+       │
+
+Application
+```
+
+The application does **not** communicate directly with the keyboard.
+
+Instead, the terminal emulator forwards the input through the PTY.
+
+
+### 5. Displays Program Output
+
+When an application writes to standard output:
+
+```c
+printf("Hello\n");
+```
+
+the bytes eventually reach the terminal emulator.
+
+The emulator must then:
+
+1. decode the incoming bytes,
+2. interpret any control sequences,
+3. update its internal screen state,
+4. draw the result inside its window.
+
+This process occurs every time a terminal application produces output.
+
+
+### 6. Interprets ANSI Escape Sequences
+
+Applications do not directly move the cursor or clear the screen.
+
+Instead, they send **ANSI escape sequences**.
+
+For example, a program may send instructions that mean:
+
+- Move the cursor.
+- Clear the screen.
+- Change the text color.
+- Hide the cursor.
+
+The terminal emulator recognizes these sequences and performs the requested action.
+
+Our editor will eventually rely heavily on these escape sequences.
+
+We will study them in the next chapter.
+
+
+### 7. Renders Characters
+
+One of the terminal emulator's most visible responsibilities is rendering text.
+
+After interpreting the incoming bytes, it must:
+
+- locate the appropriate font,
+- find the glyph for each character,
+- arrange the glyphs into a grid,
+- draw them using the computer's graphics system.
+
+This is the final stage of the journey we began in Chapter 2.
+
+```text
+Application
+
+     │
+
+stdout
+
+     │
+
+PTY
+
+     │
+
+Terminal Emulator
+
+     │
+
+Font
+
+     │
+
+GPU
+
+     │
+
+Monitor
+```
+
+
+### 8. Maintains Scrollback History
+
+Unlike early hardware terminals, modern terminal emulators remember output that has already scrolled off the screen.
+
+For example:
+
+```text
+Current Screen
+────────────────────
+Line 950
+Line 951
+Line 952
+Line 953
+────────────────────
+
+Scrollback
+
+Line 1
+Line 2
+...
+Line 949
+```
+
+When you scroll upward with the mouse wheel or keyboard, you are viewing the emulator's **scrollback buffer**, not asking the application to redraw old content.
+
+This distinction becomes important later when we implement scrolling inside our editor.
+
+
+### 9. Handles Window Resizing
+
+If you resize the terminal window:
+
+```text
+Before
+
++--------------+
+|              |
++--------------+
+
+↓
+
+After
+
++---------------------------+
+|                           |
++---------------------------+
+```
+
+the emulator detects the new size and informs the application.
+
+Programs can then adjust their layout accordingly.
+
+Our editor will eventually respond to these resize events by redrawing the visible portion of the document. When a resize occurs, the kernel delivers a `SIGWINCH` signal to the foreground process group, which the editor can handle to trigger a full redraw of the interface.
+
+
+## Responsibilities at a Glance
+
+The terminal emulator has many responsibilities, but they can be summarized as follows:
+
+```text
+User
+   │
+   ▼
+Terminal Emulator
+   ├── Creates window
+   ├── Creates PTY
+   ├── Launches shell
+   ├── Receives keyboard input
+   ├── Interprets ANSI sequences
+   ├── Renders characters
+   ├── Maintains scrollback
+   └── Handles resizing
+```
+
+Notice what is **not** on this list.
+
+The terminal emulator does **not** edit text.
+
+It does **not** understand programming languages.
+
+It does **not** implement editor commands.
+
+Those responsibilities belong to applications such as Nano, Vim, or the editor we will build.
+
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The terminal emulator follows an important software engineering principle:
+
+> **Separate presentation from application logic.**
+
+Its job is to present a terminal interface to the user and to relay information between the user and terminal applications. It deliberately avoids understanding what those applications are doing.
+
+Whether the program running inside is a shell, a text editor, a debugger, a database client, or a game, the terminal emulator treats them all the same. This separation of responsibilities keeps both the emulator and terminal applications simpler and more reusable.
+
+</Aside>
+
+## Summary
+
+A terminal emulator is much more than a text window. It creates a graphical interface that behaves like a traditional terminal, establishes communication through a pseudo-terminal, launches a shell, forwards keyboard input, interprets ANSI escape sequences, renders text, maintains scrollback history, and responds to window resizing.
+
+Despite all of these responsibilities, the terminal emulator does not execute commands or edit text. Those tasks belong to the shell and the applications running inside it.
+
+In the next section, we will examine the **shell**—the program that most terminal emulators launch automatically and the component responsible for interpreting commands and starting other programs, including the text editor we will eventually build.

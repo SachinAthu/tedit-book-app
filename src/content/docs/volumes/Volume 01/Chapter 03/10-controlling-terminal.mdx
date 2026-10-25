@@ -1,0 +1,339 @@
+---
+title: 3.10 Controlling Terminal
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+By now, we understand how a terminal session is created.
+
+When a terminal emulator starts, it creates a pseudo-terminal (PTY), launches a shell, and waits for user input. The shell, in turn, starts programs such as our text editor.
+
+This raises an interesting question:
+
+> **How does the operating system know which terminal belongs to a particular program?**
+
+After all, a computer may have many terminal sessions open simultaneously.
+
+For example:
+
+```text
+Terminal 1
+
+$ editor notes.txt
+```
+
+```text
+Terminal 2
+
+$ top
+```
+
+```text
+Terminal 3
+
+$ git status
+```
+
+Each program should receive keyboard input only from its own terminal.
+
+The operating system solves this problem using the concept of a **controlling terminal**.
+
+## What Is a Controlling Terminal?
+
+A **controlling terminal** is the terminal associated with a process or a group of related processes.
+
+It acts as the primary communication channel between the user and those processes.
+
+When a process has a controlling terminal:
+
+- keyboard input comes from that terminal,
+- normal output is displayed on that terminal,
+- terminal-generated signals are delivered through that terminal.
+
+You can visualize it like this:
+
+```text
++----------------------+
+| Terminal Emulator    |
++----------------------+
+           │
+           ▼
+     Controlling
+      Terminal
+           │
+           ▼
+        Shell
+           │
+           ▼
+        Editor
+```
+
+The shell and the editor are both associated with the same controlling terminal.
+
+## Every Terminal Session Has One
+
+Recall what happens when a terminal session begins.
+
+```text
+Open Terminal
+
+      │
+
+Create PTY
+
+      │
+
+Start Shell
+```
+
+The PTY created for that session becomes the controlling terminal for the shell.
+
+Later, when the shell starts another program, such as our editor, that program inherits the same controlling terminal.
+
+```text
+Terminal Emulator
+
+        │
+
+       PTY
+
+        │
+
+      Shell
+
+        │
+
+Starts
+
+        ▼
+
+     Editor
+```
+
+Notice that the controlling terminal does **not** change.
+
+Both programs communicate through the same terminal.
+
+## Why Is This Important?
+
+Suppose you have two terminal windows.
+
+```text
++-----------------+
+| Terminal A      |
+|                 |
+| editor notes.c  |
++-----------------+
+```
+
+```text
++-----------------+
+| Terminal B      |
+|                 |
+| top             |
++-----------------+
+```
+
+If you press the **A** key while Terminal A has focus, only the editor should receive it.
+
+The `top` program running in Terminal B should receive nothing.
+
+Similarly, if Terminal B has focus, keyboard input should go only to `top`.
+
+The controlling terminal ensures that each process communicates with the correct terminal.
+
+## Following a Keystroke
+
+Suppose our editor is running.
+
+The journey of a key press now looks like this:
+
+```text
+Keyboard
+      │
+      ▼
+Terminal Emulator
+      │
+      ▼
+PTY
+      │
+      ▼
+Controlling Terminal
+      │
+      ▼
+Editor
+```
+
+The editor reads the input through its standard input.
+
+It does not need to know which terminal emulator generated the event.
+
+The operating system has already connected everything together.
+
+## Following Program Output
+
+The reverse path is equally straightforward.
+
+```text
+Editor
+     │
+stdout
+     │
+     ▼
+Controlling Terminal
+     │
+     ▼
+PTY
+     │
+     ▼
+Terminal Emulator
+     │
+     ▼
+Screen
+```
+
+Again, the editor simply writes to `stdout`.
+
+The operating system ensures that the output reaches the correct terminal.
+
+## Terminal-Generated Signals
+
+The controlling terminal has another important responsibility.
+
+Some keyboard shortcuts are **not** ordinary characters.
+
+For example:
+
+- **Ctrl+C** (generates SIGINT, typically terminates the program)
+- **Ctrl+Z** (generates SIGTSTP, suspends the program)
+- **Ctrl+\\** (generates SIGQUIT, terminates the program and may produce a core dump)
+
+These combinations are interpreted by the terminal rather than being passed directly to the application.
+
+Instead of sending character data, the terminal asks the operating system to deliver a **signal** to the foreground program.
+
+For example:
+
+```text
+User presses Ctrl+C
+
+        │
+
+Terminal
+
+        │
+
+Generates
+
+        │
+
+SIGINT
+
+        │
+
+Delivered to
+
+        ▼
+
+Foreground Program
+```
+
+The program can then decide how to respond.
+
+Many applications simply terminate.
+
+Others, including text editors, may intercept the signal and perform cleanup before exiting.
+
+We will study signals in greater detail when discussing raw terminal mode.
+
+## Losing the Controlling Terminal
+
+Not every Unix process has a controlling terminal.
+
+For example:
+
+- background services,
+- daemons,
+- scheduled tasks,
+- many server processes
+
+often run without one.
+
+```text
+Web Server
+
+     │
+
+No Terminal
+```
+
+Since these programs do not interact directly with users, they have no need for keyboard input or terminal-generated signals.
+
+This distinction allows Unix to support both interactive and non-interactive applications using the same process model.
+
+## The Shell's Role
+
+The shell plays an important part in managing the controlling terminal.
+
+When it starts a foreground program:
+
+```text
+Shell
+
+    │
+
+Starts
+
+    ▼
+
+Editor
+```
+
+the shell temporarily steps aside.
+
+The editor now becomes the foreground program communicating with the controlling terminal.
+
+When the editor exits:
+
+```text
+Editor
+
+   │
+
+Exit
+
+   ▼
+
+Shell
+```
+
+the shell regains control and displays another prompt.
+
+This handoff happens automatically and is one of the reasons interactive terminal applications work so smoothly.
+
+<Aside type="note">
+Although we have described the controlling terminal as belonging to a process, the operating system actually manages it in terms of **process groups**, not individual processes.
+
+This distinction becomes important for job control and signal delivery.
+
+To keep the discussion simple, we have focused on the process level here. In the next section, we will introduce **process groups**, which explain the complete picture.
+
+</Aside>
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The controlling terminal is another example of Unix's emphasis on **separation of concerns**.
+
+A program does not need to discover which keyboard the user is typing on or which window is displaying its output. It simply communicates through its standard file descriptors. The operating system, using the controlling terminal, handles the routing of input, output, and terminal-generated signals.
+
+This abstraction allows the same application to run in a local terminal emulator, a virtual console, or an SSH session without any changes to its code.
+
+</Aside>
+
+## Summary
+
+A **controlling terminal** associates an interactive process with a specific terminal session. It provides the communication path through which programs receive keyboard input, send output, and receive terminal-generated signals such as **Ctrl+C**.
+
+When the shell launches our editor, the editor inherits the same controlling terminal. The shell temporarily yields control while the editor runs, and regains it when the editor exits. This mechanism allows multiple terminal sessions to exist simultaneously without interfering with one another.
+
+In the next section, we will examine **process groups** and see how Unix organizes related processes. This will explain how the operating system determines which programs receive keyboard input and terminal-generated signals when multiple processes are running within the same terminal session.

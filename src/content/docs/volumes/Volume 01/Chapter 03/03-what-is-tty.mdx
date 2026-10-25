@@ -1,0 +1,213 @@
+---
+title: 3.3 What Is a TTY?
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we learned that the earliest computer terminals were **teletypes**—electromechanical machines that allowed users to communicate directly with a computer. Although these machines disappeared many decades ago, their influence remains visible throughout Unix-like operating systems.
+
+One of the most enduring examples is the term **TTY**.
+
+If you spend any time working on Linux or macOS, you will encounter TTYs in commands, file names, API documentation, and error messages. Understanding what a TTY is will make many other concepts—such as pseudo-terminals (PTYs) and raw mode—much easier to understand.
+
+
+## From Teletype to TTY
+
+Originally, **TTY** was simply an abbreviation for **Teletype**.
+
+A teletype consisted of a keyboard and a printer connected to a computer through a communication line.
+
+When a user pressed a key:
+
+1. The character was sent to the computer.
+2. The computer processed the input.
+3. The response was sent back.
+4. The teletype printed the response on paper.
+
+```text
++-----------+                 +-----------+
+| Teletype  |<--------------->| Computer  |
+|           |                 |           |
+| Keyboard  |                 | Program   |
+| Printer   |                 |           |
++-----------+                 +-----------+
+```
+
+From the computer's perspective, a teletype was simply a device for receiving input and sending output.
+
+This abstraction turned out to be so useful that Unix kept it even after physical teletypes disappeared.
+
+
+## A TTY Is an Abstraction
+
+Today, a TTY is **not** a mechanical printer.
+
+Instead, it is an operating system abstraction that represents an interactive terminal.
+
+Whether the user is typing into:
+
+- a physical console,
+- a virtual console,
+- or a graphical terminal emulator,
+
+the operating system provides a TTY interface that applications use to communicate with the user.
+
+You can think of it like this:
+
+```text
+Application
+      │
+      ▼
+     TTY
+      │
+      ▼
+User
+```
+
+The application does not need to know whether the user is looking at a paper printer, a CRT monitor, or a modern high-resolution display.
+
+It simply communicates with a TTY.
+
+This separation between **interface** and **implementation** is a recurring theme in operating system design.
+
+
+## TTY Device Files
+
+Unix follows a simple philosophy:
+
+> **Everything is a file.**
+
+Hardware devices are therefore represented as files inside the `/dev` directory.
+
+TTYs are no exception.
+
+Some common examples include:
+
+```text
+/dev/tty
+/dev/tty1
+/dev/tty2
+/dev/tty3
+```
+
+Each of these represents a terminal device.
+
+Programs do not usually access these files directly, but the operating system uses them internally to connect applications with terminal devices.
+
+For example, the special file:
+
+```text
+/dev/tty
+```
+
+always refers to **the controlling terminal of the current process**.
+
+We will discuss the concept of a controlling terminal later in this chapter.
+
+
+## Finding Your Current TTY
+
+Most Unix-like systems provide the `tty` command.
+
+Running it prints the terminal associated with your current shell.
+
+For example:
+
+```bash
+$ tty
+/dev/pts/3
+```
+
+On another system, you might see:
+
+```bash
+$ tty
+/dev/tty2
+```
+
+The exact name depends on **how your session was started**.
+
+At this point, don't worry about the difference between `/dev/tty2` and `/dev/pts/3`.
+
+We will explain that distinction in the next two sections when we discuss virtual consoles and pseudo-terminals.
+
+For now, the important idea is that **every interactive terminal session has an associated TTY device**.
+
+
+## Why Applications Care About TTYs
+
+Many programs behave differently depending on whether they are connected to a TTY.
+
+Consider the following command:
+
+```bash
+ls
+```
+
+When run in a terminal, the output might be displayed in multiple columns with colors.
+
+```text
+Documents  Downloads  Pictures  Videos
+```
+
+However, if the output is redirected to a file:
+
+```bash
+ls > files.txt
+```
+
+the command typically disables colors and formatting, producing plain text instead.
+
+Why?
+
+Because the output is no longer being sent to a TTY—it is being sent to a regular file.
+
+Many command-line programs check whether their standard input or standard output is connected to a terminal before enabling interactive features.
+
+This allows the same program to work correctly in both interactive and automated environments.
+
+
+## Why the Name Never Changed
+
+At first glance, keeping the name **TTY** might seem strange.
+
+After all, modern computers no longer use teletypes.
+
+Why not rename everything?
+
+The answer is **backward compatibility**.
+
+Thousands of Unix programs, libraries, APIs, and shell scripts have used TTY terminology for decades.
+
+Changing names such as:
+
+```text
+/dev/tty
+isatty()
+ttyname()
+```
+
+would break existing software and documentation.
+
+Instead of replacing the interface, Unix preserved the familiar terminology while allowing the underlying implementation to evolve.
+
+This is one reason software written many years ago can often run on modern systems with little or no modification.
+
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The TTY is an excellent example of **abstraction** in software engineering.
+
+Applications communicate with a terminal through a well-defined interface rather than interacting directly with hardware. As hardware evolved—from mechanical printers to CRT displays and finally to graphical terminal emulators—the interface remained largely unchanged.
+
+This stability allowed operating systems and applications to evolve independently. Programs continued using the same TTY interface while the operating system adapted to new hardware behind the scenes.
+
+</Aside>
+
+## Summary
+
+Although **TTY** originally referred to a physical teletype machine, today it represents the operating system's abstraction for an interactive terminal.
+
+A TTY provides a standard interface through which applications receive keyboard input and send output, regardless of the underlying hardware or software. This abstraction has remained remarkably stable for decades, making it one of the foundational concepts of Unix systems.
+
+In the next section, we will look at **virtual consoles**, where Linux creates multiple TTYs on a single machine. Understanding virtual consoles will prepare us for one of the most important concepts in terminal programming: **pseudo-terminals (PTYs)**.

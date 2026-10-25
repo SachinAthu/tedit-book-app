@@ -1,0 +1,384 @@
+---
+title: 3.11 Process Groups
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we learned that every interactive process is associated with a **controlling terminal**. We also saw that pressing **Ctrl+C** sends a signal to the program currently running in the terminal.
+
+But this raises another question.
+
+> **What happens when multiple programs are running within the same terminal session?**
+
+For example, a shell may start an editor, which in turn might launch another program. Should keyboard input and signals be delivered to one process or all of them?
+
+Unix answers this question with **process groups**.
+
+
+## Why Process Groups Exist
+
+Imagine that the operating system managed every process independently.
+
+Suppose your shell starts our text editor.
+
+```text
+Shell
+   │
+Starts
+   ▼
+Editor
+```
+
+Now imagine the editor starts another program.
+
+```text
+Shell
+   │
+   ▼
+Editor
+   │
+Starts
+   ▼
+Formatter
+```
+
+If you press **Ctrl+C**, which program should receive it?
+
+- Only the formatter?
+- Only the editor?
+- Both?
+- The shell as well?
+
+Managing each process individually would quickly become complicated.
+
+Instead, Unix groups related processes together.
+
+
+## What Is a Process Group?
+
+A **process group** is a collection of one or more related processes that the operating system manages as a single unit.
+
+Instead of sending signals to individual processes, the operating system can send them to the entire group.
+
+For example:
+
+```text
++----------------------+
+|   Process Group      |
++----------------------+
+| Shell                |
+| Editor               |
+| Formatter            |
++----------------------+
+```
+
+From the operating system's perspective, the entire group can be treated as one interactive job.
+
+
+## Foreground and Background Process Groups
+
+Every controlling terminal has one **foreground process group**.
+
+This group has exclusive access to interactive terminal input.
+
+```text
+                Terminal
+
+                    │
+
+      ┌─────────────┴─────────────┐
+      ▼                           ▼
+
+Foreground Group          Background Groups
+      │                           │
+      ▼                           ▼
+
+    Editor                  Other Processes
+```
+
+Only the **foreground process group**:
+
+- receives keyboard input,
+- receives terminal-generated signals,
+- interacts directly with the user.
+
+Background process groups continue running, but they do not receive keyboard input from the terminal.
+
+
+## A Simple Example
+
+Suppose you open a terminal and run our editor.
+
+Initially:
+
+```text
+Terminal
+
+    │
+
+Foreground Group
+
+    │
+
+Shell
+```
+
+After starting the editor:
+
+```text
+Terminal
+
+    │
+
+Foreground Group
+
+    │
+
+Editor
+```
+
+Notice what happened.
+
+The shell is still running, but it is no longer the foreground process.
+
+Instead, it waits until the editor exits.
+
+When the editor finishes:
+
+```text
+Terminal
+
+    │
+
+Foreground Group
+
+    │
+
+Shell
+```
+
+The shell once again becomes the foreground process.
+
+
+## Keyboard Input Goes to the Foreground Group
+
+Suppose the editor is currently running.
+
+The user presses the **A** key.
+
+```text
+Keyboard
+
+    │
+
+Terminal
+
+    │
+
+Foreground Process Group
+
+    │
+
+Editor
+```
+
+The shell does **not** receive the character.
+
+Neither do background processes.
+
+Only the foreground process group receives interactive input.
+
+This is why you cannot type shell commands while an interactive program is running.
+
+
+## Signals Also Follow the Foreground Group
+
+Terminal-generated signals work in exactly the same way.
+
+Suppose the user presses **Ctrl+C**.
+
+```text
+Keyboard
+
+    │
+
+Ctrl+C
+
+    │
+
+Terminal
+
+    │
+
+SIGINT
+
+    │
+
+Foreground Process Group
+```
+
+Every process in the foreground process group receives the signal.
+
+This allows related processes to respond together.
+
+For example, if an editor launches a helper program, both processes can be interrupted at the same time.
+
+
+## Background Processes
+
+Not every program needs to interact with the terminal.
+
+Some programs continue running in the background.
+
+For example:
+
+```bash
+$ long_running_command &
+```
+
+The `&` tells the shell to start the program as a **background job**.
+
+Conceptually:
+
+```text
+Terminal
+
+     │
+
+Foreground Group
+
+     │
+
+Shell
+
+Background Group
+
+     │
+
+Long-running Command
+```
+
+The background process continues executing, but it does not receive keyboard input from the terminal.
+
+The shell remains available for additional commands.
+
+
+## Job Control
+
+The shell uses process groups to implement **job control**.
+
+This allows users to:
+
+- suspend programs,
+- resume programs,
+- move programs between the foreground and background.
+
+For example:
+
+```text
+Ctrl+Z
+```
+
+suspends the foreground job.
+
+Commands such as:
+
+```bash
+fg
+```
+
+and
+
+```bash
+bg
+```
+
+allow the shell to move jobs between the foreground and background.
+
+We will not explore job control in detail because it is beyond the scope of this book, but it is built directly on process groups.
+
+
+## Where Our Editor Fits
+
+Our editor will normally run as the foreground process.
+
+```text
+Terminal Emulator
+        │
+        ▼
+      Shell
+        │
+Starts Editor
+        │
+        ▼
+Foreground Process Group
+        │
+        ▼
+     Our Editor
+```
+
+While the editor is running:
+
+- it receives keyboard input,
+- it receives terminal-generated signals,
+- it controls what appears on the screen.
+
+When the editor exits, the shell becomes the foreground process again and displays another prompt.
+
+
+## The Big Picture
+
+We can now combine everything we have learned throughout this chapter.
+
+```text
+User
+   │
+   ▼
+Keyboard
+   │
+   ▼
+Terminal Emulator
+   │
+   ▼
+PTY
+   │
+   ▼
+Controlling Terminal
+   │
+   ▼
+Foreground Process Group
+   │
+   ▼
+Our Editor
+```
+
+Every layer has a well-defined responsibility.
+
+- The **terminal emulator** manages the graphical terminal.
+- The **PTY** provides communication.
+- The **controlling terminal** associates the terminal with interactive processes.
+- The **foreground process group** determines which processes receive input.
+- Our **editor** simply reads from standard input and writes to standard output.
+
+Notice how the editor never needs to know how any of these components are implemented. It simply communicates through the standard Unix interfaces provided by the operating system.
+
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Process groups demonstrate one of Unix's most powerful design principles:
+
+> **Manage related processes as a single unit.**
+
+Instead of tracking every process individually, the operating system organizes related processes into groups. This simplifies signal delivery, terminal management, and job control while keeping applications independent of one another.
+
+The shell takes advantage of this abstraction to provide features such as foreground jobs, background jobs, suspension, and resumption—all without requiring individual applications to implement these mechanisms themselves.
+
+</Aside>
+
+## Summary
+
+A **process group** is a collection of related processes managed together by the operating system. Every terminal has one **foreground process group**, which receives keyboard input and terminal-generated signals such as **Ctrl+C** and **Ctrl+Z**. Background process groups continue running but do not interact directly with the terminal.
+
+When our editor is running, it belongs to the foreground process group and temporarily takes control of the terminal. When it exits, the shell regains the foreground and resumes interacting with the user.
+
+In the next and final section of this chapter, we will bring together everything we have learned—from the keyboard to the shell, the PTY, the terminal emulator, and our editor—into one complete walkthrough of a modern terminal session.

@@ -1,0 +1,313 @@
+---
+title: 3.5 Pseudo Terminals (PTYs)
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we learned that Linux provides **virtual consoles**, each represented by a device such as `/dev/tty1` or `/dev/tty2`. These virtual consoles are managed directly by the kernel and are connected to the computer's physical keyboard and display.
+
+But what happens when you open **GNOME Terminal**, **Konsole**, **Kitty**, or **Windows Terminal**?
+
+These applications are just ordinary graphical programs. They are **not** part of the Linux kernel, and they do not own the keyboard or monitor directly.
+
+Yet they somehow behave exactly like a real terminal.
+
+The solution is one of Unix's most elegant abstractions: the **Pseudo Terminal**, or **PTY**.
+
+## The Problem
+
+Suppose you launch a terminal emulator from your desktop.
+
+```text
+Applications
+      │
+      ▼
+GNOME Terminal
+```
+
+The terminal emulator now needs to start a shell.
+
+```text
+GNOME Terminal
+        │
+        ▼
+      Bash
+```
+
+But Bash expects to run inside a terminal.
+
+It expects:
+
+- keyboard input,
+- terminal output,
+- cursor movement,
+- terminal settings,
+- job control,
+- signals such as **Ctrl+C**.
+
+A graphical window cannot simply pretend to be a terminal.
+
+The operating system must provide something that behaves exactly like one.
+
+That is the role of a **pseudo-terminal**.
+
+
+## What Is a Pseudo Terminal?
+
+A **pseudo-terminal (PTY)** is a pair of virtual devices that simulate a real terminal.
+
+One end is connected to the **terminal emulator**.
+
+The other end is connected to the **shell or application**.
+
+From the application's perspective, it appears to be communicating with an ordinary TTY.
+
+```text
+Terminal Emulator
+        │
+        ▼
+   PTY Master
+        │
+   ───────────
+   Kernel
+   ───────────
+        │
+   PTY Slave
+        │
+        ▼
+      Shell
+```
+
+Neither side needs to know how the other is implemented.
+
+The PTY provides a clean communication channel between them.
+
+
+## Why Two Ends?
+
+A PTY consists of two connected devices:
+
+- **Master**
+- **Slave**
+
+Think of them as opposite ends of a pipe.
+
+Anything written to one side becomes available on the other.
+
+```text
+PTY Master  ◄────────────►  PTY Slave
+```
+
+The names **master** and **slave** come from historical Unix terminology. In modern documentation, you may also encounter the terms **PTM** (pseudo-terminal master) and **PTS** (pseudo-terminal slave), but the traditional names remain common in operating system APIs and existing software.
+
+The two ends have different responsibilities.
+
+### The PTY Master
+
+The **master** side is controlled by the terminal emulator.
+
+Its responsibilities include:
+
+- sending keyboard input,
+- receiving application output,
+- forwarding resize events,
+- handling clipboard paste,
+- communicating with the graphical window.
+
+Whenever you type a key, the terminal emulator writes that character to the PTY master.
+
+
+### The PTY Slave
+
+The **slave** side behaves like a real terminal device.
+
+It is attached to programs such as:
+
+- Bash
+- Zsh
+- Nano
+- Vim
+- Our future text editor
+
+From the program's perspective, it is simply talking to a terminal.
+
+The application has no idea that a graphical window exists on the other side.
+
+
+## Following a Keystroke
+
+Suppose you press the **A** key.
+
+The journey looks like this:
+
+```text
+Keyboard
+      │
+      ▼
+Terminal Emulator
+      │
+      ▼
+PTY Master
+      │
+      ▼
+Linux Kernel
+      │
+      ▼
+PTY Slave
+      │
+      ▼
+Shell
+```
+
+The shell reads the character from its standard input exactly as if it had arrived from a physical terminal.
+
+Nothing special is required inside the shell.
+
+
+## Following Program Output
+
+Now suppose the shell executes:
+
+```c
+printf("Hello\n");
+```
+
+The data travels in the opposite direction.
+
+```text
+Program
+      │
+      ▼
+stdout
+      │
+      ▼
+PTY Slave
+      │
+      ▼
+Linux Kernel
+      │
+      ▼
+PTY Master
+      │
+      ▼
+Terminal Emulator
+      │
+      ▼
+Window on Screen
+```
+
+The terminal emulator receives the bytes, interprets them, renders the characters using its selected font, and displays the result in its window.
+
+This should look familiar.
+
+It is the same journey we explored in **Chapter 2**, except we can now see where the PTY fits into the communication path.
+
+
+## Creating Multiple Terminal Windows
+
+One of the greatest advantages of PTYs is that they allow every terminal window to have its own independent terminal.
+
+Imagine opening three terminal windows.
+
+```text
+          Desktop
+
+   ┌────────┬────────┬────────┐
+   │Window 1│Window 2│Window 3│
+   └────┬───┴────┬───┴────┬───┘
+        │        │        │
+        ▼        ▼        ▼
+      PTY1     PTY2     PTY3
+        │        │        │
+        ▼        ▼        ▼
+     Bash      Bash     Bash
+```
+
+Each terminal window creates its own PTY pair.
+
+Each shell believes it owns a private terminal.
+
+As a result:
+
+- command histories are independent,
+- current directories are independent,
+- running programs are independent,
+- terminal settings are independent.
+
+This is why closing one terminal window does not affect programs running in another.
+
+
+## PTY Device Files
+
+On Linux, PTY slave devices usually appear under:
+
+```text
+/dev/pts/
+```
+
+For example:
+
+```text
+/dev/pts/0
+/dev/pts/1
+/dev/pts/2
+```
+
+If you run:
+
+```bash
+$ tty
+```
+
+inside a graphical terminal emulator, you will typically see something like:
+
+```text
+/dev/pts/3
+```
+
+This tells you that your shell is connected to the third pseudo-terminal currently allocated by the system.
+
+The numbering itself has no special meaning beyond identifying individual PTY devices.
+
+
+## Why Applications Don't Know the Difference
+
+One of the most powerful ideas in Unix is that **applications communicate with interfaces, not implementations**.
+
+Whether a program is connected to:
+
+- a physical terminal,
+- a virtual console,
+- an SSH session,
+- or a graphical terminal emulator,
+
+it communicates using the same terminal interface.
+
+To the application, these environments look almost identical.
+
+This is why terminal-based programs written decades ago continue to run inside modern terminal emulators without modification.
+
+The operating system hides the implementation details behind the PTY abstraction.
+
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The PTY demonstrates a classic software engineering principle:
+
+> **Compatibility through abstraction.**
+
+Rather than rewriting every terminal application for graphical environments, Unix introduced an abstraction that emulates the behavior of a traditional terminal.
+
+Existing programs continued working unchanged because they still communicated with what appeared to be a normal TTY.
+
+This decision preserved decades of software investment while allowing terminal technology to evolve from dedicated hardware to graphical applications.
+
+</Aside>
+
+## Summary
+
+A **pseudo-terminal (PTY)** is a software implementation of a terminal. It consists of two connected devices: a **master**, controlled by the terminal emulator, and a **slave**, which behaves like a real terminal for the shell or application.
+
+The PTY allows ordinary graphical applications such as GNOME Terminal, Kitty, and Windows Terminal to provide a terminal environment without requiring dedicated hardware. Applications communicate with the PTY exactly as they would with a physical terminal, while the terminal emulator handles rendering, keyboard input, and interaction with the graphical desktop.
+
+In the next section, we will look more closely at the **terminal emulator** itself. We have already seen that it communicates through a PTY, but what else does it do? Understanding its responsibilities will help explain why modern terminal applications are far more than simple text windows.

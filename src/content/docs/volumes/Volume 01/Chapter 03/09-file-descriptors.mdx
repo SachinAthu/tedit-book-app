@@ -1,0 +1,288 @@
+---
+title: 3.9 Standard File Descriptors
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Throughout this book, we have repeatedly encountered the terms **standard input**, **standard output**, and **standard error**.
+
+In Chapter 2, we introduced them while following the journey of a character from a program to the screen.
+
+Now that we understand terminal sessions, shells, and pseudo-terminals, we can place these streams into their proper context.
+
+Every interactive terminal application—including our future text editor—communicates with the outside world primarily through **three standard file descriptors**.
+
+
+## What Is a File Descriptor?
+
+Before discussing the three standard streams, we first need to understand the concept of a **file descriptor**.
+
+In Unix, a **file descriptor** is a small non-negative integer that identifies an open file or I/O resource.
+
+Despite the name, a file descriptor is **not limited to regular files**.
+
+It can refer to:
+
+- a file,
+- a terminal,
+- a pipe,
+- a socket,
+- or many other input/output resources.
+
+Whenever a program wants to read from or write to one of these resources, it does so through a file descriptor.
+
+
+## The Three Standard File Descriptors
+
+When the operating system starts a program, it automatically opens three file descriptors.
+
+These are:
+
+| File Descriptor | Stream   | Purpose         |
+| --------------: | -------- | --------------- |
+|           **0** | `stdin`  | Standard input  |
+|           **1** | `stdout` | Standard output |
+|           **2** | `stderr` | Standard error  |
+
+These three descriptors exist for almost every command-line program.
+
+Our text editor will use them throughout its lifetime.
+
+
+## Standard Input (`stdin`)
+
+**Standard input**, or `stdin`, is where a program receives input.
+
+In an interactive terminal session, `stdin` is usually connected to the terminal.
+
+```text
+Keyboard
+    │
+    ▼
+Terminal Emulator
+    │
+    ▼
+PTY
+    │
+    ▼
+stdin (0)
+    │
+    ▼
+Program
+```
+
+When the user presses a key, the character eventually arrives through `stdin`.
+
+For example:
+
+```c
+char c;
+read(STDIN_FILENO, &c, 1);
+```
+
+This code reads one byte from standard input.
+
+Later in the book, our editor will use this mechanism to receive keyboard input.
+
+
+## Standard Output (`stdout`)
+
+**Standard output**, or `stdout`, is where a program sends its normal output.
+
+When you write:
+
+```c
+printf("Hello\n");
+```
+
+the text is written to `stdout`.
+
+In an interactive terminal session, the path looks like this:
+
+```text
+Program
+
+stdout (1)
+
+     │
+
+     ▼
+
+PTY
+
+     │
+
+     ▼
+
+Terminal Emulator
+
+     │
+
+     ▼
+
+Screen
+```
+
+The terminal emulator receives the bytes and displays them to the user.
+
+Nearly everything our editor draws—including the document contents, the status bar, and cursor positioning—will eventually be written to `stdout`.
+
+
+## Standard Error (`stderr`)
+
+Programs sometimes need to display error messages.
+
+Instead of mixing these with normal output, Unix provides a separate stream called **standard error**, or `stderr`.
+
+For example:
+
+```c
+fprintf(stderr, "Unable to open file.\n");
+```
+
+This writes the message to file descriptor **2**.
+
+Separating normal output from error output allows each stream to be handled independently.
+
+
+## Why Three Separate Streams?
+
+At first glance, having separate streams for output and errors may seem unnecessary.
+
+Why not send everything to `stdout`?
+
+Consider the following command:
+
+```bash
+$ my_program > output.txt
+```
+
+This redirects only **standard output** into a file.
+
+If an error occurs, the user usually wants to see it immediately on the terminal.
+
+Because error messages are written to `stderr`, they still appear on the screen.
+
+```text
+stdout ─────► output.txt
+
+stderr ─────► Terminal
+```
+
+This separation is extremely useful for scripting, automation, and debugging.
+
+
+## Redirection
+
+One of Unix's most powerful features is **I/O redirection**.
+
+Because programs communicate through standard file descriptors instead of directly with the terminal, the shell can easily redirect them.
+
+For example:
+
+```bash
+$ ls > files.txt
+```
+
+Instead of displaying the output on the screen:
+
+```text
+stdout
+
+     │
+
+Terminal
+```
+
+the shell connects `stdout` to a file.
+
+```text
+stdout
+
+     │
+
+files.txt
+```
+
+The `ls` program does not need to know about this change.
+
+It simply writes to file descriptor **1** as usual.
+
+The operating system handles the rest.
+
+
+## Pipes
+
+Standard file descriptors also make **pipes** possible.
+
+Consider:
+
+```bash
+$ ls | grep ".c"
+```
+
+Here, the shell connects the standard output of `ls` to the standard input of `grep`.
+
+```text
++------+      stdout      +--------+
+|  ls  | ───────────────► |  grep  |
++------+                  +--------+
+                               │
+                               ▼
+                           Terminal
+```
+
+Neither program knows about the other.
+
+Each simply reads from or writes to its standard streams.
+
+The shell creates the connection between them.
+
+
+## How Our Editor Will Use Standard Streams
+
+Our text editor will rely heavily on these file descriptors.
+
+During normal operation:
+
+- Keyboard input will arrive through **standard input**.
+- Screen updates will be written to **standard output**.
+- Error messages will be written to **standard error**.
+
+```text
+Keyboard
+    │
+    ▼
+stdin (0)
+
+Editor
+
+stdout (1) ─────► Screen
+
+stderr (2) ─────► Error Messages
+```
+
+Because our editor uses these standard interfaces, it automatically works inside terminal emulators, over SSH, and in many other Unix environments.
+
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+One of Unix's greatest design decisions was treating input and output as generic streams rather than special terminal operations.
+
+A program reads from file descriptor **0** and writes to descriptors **1** and **2**, without caring whether those descriptors refer to a terminal, a file, a pipe, or a network connection.
+
+This abstraction makes programs highly reusable. The same application can run interactively in a terminal, participate in shell pipelines, or have its output redirected to a file—all without changing its source code.
+
+</Aside>
+
+## Summary
+
+Every Unix program begins life with three standard file descriptors:
+
+- **`stdin` (0)** for receiving input,
+- **`stdout` (1)** for producing normal output,
+- **`stderr` (2)** for reporting errors.
+
+These streams form the primary communication channel between applications and the outside world. Because they are simply file descriptors, the shell can redirect them to files, connect them through pipes, or leave them attached to the terminal.
+
+In the next section, we will examine the concept of the **controlling terminal**. This will explain how the operating system determines which terminal belongs to a process and why keyboard shortcuts such as **Ctrl+C** and **Ctrl+Z** affect the currently running program.

@@ -1,0 +1,121 @@
+---
+title: 3.1 Why Study the Terminal?
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Imagine opening your favorite text editor, such as Nano, Vim, or Helix. You type a character, move the cursor, save a file, and exit the program. These actions feel simple and immediate, but behind each one is a complex chain of interactions between your application, the operating system, and the terminal.
+
+As programmers, it is easy to think of a terminal as merely a black window where commands are entered. In reality, the terminal is a sophisticated communication system that has evolved over decades. Understanding how it works is essential for anyone writing terminal-based software.
+
+This chapter explores the Unix terminal environment from first principles. Before we begin controlling the terminal with ANSI escape sequences or reading keyboard input in raw mode, we must understand the environment in which our editor will run.
+
+
+## The Terminal Is Part of Your Application's Environment
+
+When you write a graphical application, the operating system provides windows, buttons, menus, and mouse events through a graphical framework.
+
+A terminal application operates differently. Instead of communicating with a graphical toolkit, it communicates with a terminal.
+
+Our text editor will not draw pixels on the screen. It will not create windows or render graphics directly. Instead, it will send characters and control sequences to the terminal, which is responsible for displaying them.
+
+Likewise, keyboard input does not arrive directly from the keyboard. It passes through several layers before reaching our program.
+
+Understanding these interactions is just as important as understanding the code we will eventually write.
+
+
+## Why This Knowledge Matters
+
+Throughout this book, we will build a terminal-based text editor from scratch. Nearly every feature of the editor depends on understanding how terminals behave.
+
+For example:
+
+- Reading individual key presses requires understanding terminal input processing.
+- Moving the cursor requires sending terminal control sequences.
+- Redrawing the screen depends on how terminals interpret output.
+- Keyboard shortcuts such as **Ctrl+Q** and **Ctrl+S** rely on terminal behavior.
+- Restoring the terminal after our program exits requires understanding how the operating system manages terminal settings.
+
+Without this foundation, these features can appear to be collections of mysterious API calls. With the proper understanding, each one becomes a logical consequence of how terminals were designed.
+
+
+## Building on Chapter 2
+
+In Chapter 2, we followed the journey of a single character from a program to the monitor.
+
+We learned that a statement such as:
+
+```c
+printf("A");
+```
+
+does not draw the letter **A** directly on the screen.
+
+Instead, the character travels through several layers before it finally appears.
+
+```text
+Program
+    │
+stdout
+    │
+Kernel
+    │
+Terminal Emulator
+    │
+Font
+    │
+GPU
+    │
+Monitor
+```
+
+That chapter explained **how text is displayed**.
+
+This chapter answers a different question:
+
+> **What exactly is the environment that our program is communicating with?**
+
+To answer that question, we need to understand concepts such as terminals, terminal emulators, TTYs, pseudo-terminals (PTYs), shells, and terminal sessions.
+
+
+## Looking Ahead
+
+By the end of this chapter, you will understand the complete environment surrounding a terminal application.
+
+We will explore:
+
+- How computer terminals evolved from mechanical teletypes.
+- Why Unix still uses the term **TTY**.
+- The difference between TTYs and pseudo-terminals (PTYs).
+- The role of terminal emulators.
+- How shells start and manage programs.
+- Why every interactive program communicates through standard file descriptors.
+- How the operating system determines which program receives keyboard input.
+
+These concepts form the foundation for the next three chapters:
+
+- **Chapter 4** introduces ANSI escape sequences, allowing us to control the terminal's appearance.
+- **Chapter 5** explains raw terminal mode, enabling us to receive keyboard input immediately instead of line by line.
+- **Chapter 6** explores how keyboard input is encoded and interpreted by terminal applications.
+
+Together, these chapters will provide everything we need before writing the first lines of our editor.
+
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Many beginners learn terminal programming by copying code that configures `termios`, prints ANSI escape sequences, and reads bytes from `stdin`. While this approach can produce a working program, it often leaves important questions unanswered:
+
+- Why do these APIs exist?
+- Why are escape sequences interpreted as commands?
+- Why do arrow keys send multiple bytes?
+- Why does pressing **Ctrl+C** terminate a program?
+
+This book takes a different approach. Rather than treating terminal programming as a collection of recipes, we will first understand the architecture of the Unix terminal. Once that foundation is in place, the APIs and code will feel natural instead of mysterious.
+
+</Aside>
+
+## Summary
+
+The terminal is not simply a place to type commands—it is the environment in which our text editor will live. Every keystroke, every character drawn on the screen, and every shortcut we implement depends on understanding how this environment works.
+
+In the next section, we begin our journey by looking back in time to the earliest computer terminals. Understanding where modern terminals came from will explain many of the names, conventions, and design decisions that still exist in Unix systems today.

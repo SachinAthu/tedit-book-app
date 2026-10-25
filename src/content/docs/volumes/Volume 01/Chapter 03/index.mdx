@@ -1,0 +1,41 @@
+---
+title: Chapter 3 — The Unix Terminal
+---
+
+Open a terminal window and type a command. You see a prompt, your command, and its output—and it is tempting to think of the terminal as little more than a text window where you run programs.
+
+That picture is far too simple.
+
+The terminal is one of the oldest and most influential ideas in computing. Behind that ordinary-looking window is a layered system that has evolved over more than half a century: from the physical **teletypes** of the earliest mainframes, to the virtual terminals built into the Unix kernel, to the **terminal emulators**, **pseudo-terminals (PTYs)**, and **shells** that connect modern graphical desktops to the programs they run.
+
+Every time you launch a program in the terminal, the operating system establishes a **terminal session**, connects that program to a set of **standard file descriptors**, and uses **process groups** to decide which program should receive your keyboard input. None of this is visible in the window itself, yet all of it determines how a terminal application—including the text editor we will build—actually behaves.
+
+This chapter explains that environment from first principles. By the end, you will know exactly what your editor is connected to when it starts: where its input comes from, where its output goes, and how the operating system, the shell, and the terminal emulator cooperate to make a simple line of text appear on the screen.
+
+## Learning Objectives
+
+After completing this chapter, readers will be able to:
+
+- Explain the historical evolution of Unix terminals.
+- Distinguish between a terminal emulator, TTY, and PTY.
+- Understand the role of the shell.
+- Describe how a terminal session is established.
+- Explain standard file descriptors.
+- Understand foreground and background process groups.
+- See how all these components work together.
+
+## Sections
+
+- [3.1 Why Study the Terminal?](/volumes/volume-01/chapter-03/01-why-study-terminal/)
+- [3.2 A Brief History of Terminals](/volumes/volume-01/chapter-03/02-history-of-terminals/)
+- [3.3 What Is a TTY?](/volumes/volume-01/chapter-03/03-what-is-tty/)
+- [3.4 Virtual Consoles](/volumes/volume-01/chapter-03/04-virtual-consoles/)
+- [3.5 Pseudo Terminals (PTYs)](/volumes/volume-01/chapter-03/05-pseudo-terminals/)
+- [3.6 Terminal Emulator](/volumes/volume-01/chapter-03/06-terminal-emulator/)
+- [3.7 The Shell](/volumes/volume-01/chapter-03/07-shell/)
+- [3.8 Terminal Sessions](/volumes/volume-01/chapter-03/08-terminal-sessions/)
+- [3.9 Standard File Descriptors](/volumes/volume-01/chapter-03/09-file-descriptors/)
+- [3.10 Controlling Terminal](/volumes/volume-01/chapter-03/10-controlling-terminal/)
+- [3.11 Process Groups](/volumes/volume-01/chapter-03/11-process-groups/)
+- [3.12 Putting Everything Together](/volumes/volume-01/chapter-03/12-everything-together/)
+- [Conclusion](/volumes/volume-01/chapter-03/13-conclusion/)

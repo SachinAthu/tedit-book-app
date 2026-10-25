@@ -1,0 +1,233 @@
+---
+title: 3.4 Virtual Consoles
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+In the previous section, we learned that a **TTY** is the operating system's abstraction for an interactive terminal. Originally, each physical teletype corresponded to a single TTY.
+
+As computers evolved, however, users wanted to run multiple terminal sessions on a single machine without requiring multiple physical terminals.
+
+Linux solves this problem using **virtual consoles**.
+
+Virtual consoles allow one computer, one keyboard, and one monitor to behave as though several independent terminals are connected to the system.
+
+## The Problem
+
+Imagine using a computer with only one terminal.
+
+You log in and begin editing a file.
+
+Suddenly, you need to inspect a log file or restart a service.
+
+Without virtual consoles, your options would be limited:
+
+- Exit the editor.
+- Run the new command.
+- Restart the editor.
+
+This constant switching would be frustrating and inefficient.
+
+Instead, Linux allows multiple independent login sessions to exist simultaneously.
+
+Each session has its own TTY.
+
+## One Physical Console, Many Virtual Consoles
+
+A **console** is the physical interface consisting of the computer's keyboard and display.
+
+A **virtual console** is a software-created terminal that shares that same hardware.
+
+You can think of it as multiple terminal screens existing behind a single monitor.
+
+```text
+                 Physical Hardware
+
+          Keyboard + Monitor
+                  │
+                  ▼
+             Linux Kernel
+        ┌─────────┼─────────┐
+        ▼         ▼         ▼
+      TTY1      TTY2      TTY3
+        │         │         │
+    Login A   Login B   Login C
+```
+
+Although only one virtual console is visible at a time, all of them continue to exist independently.
+
+Each maintains its own:
+
+- login session,
+- running programs,
+- command history,
+- current directory,
+- environment variables.
+
+Switching between them does **not** terminate the programs running in the others.
+
+## Switching Between Virtual Consoles
+
+Most Linux distributions provide several virtual consoles by default.
+
+You can switch between them using keyboard shortcuts such as:
+
+```text
+Ctrl + Alt + F1
+Ctrl + Alt + F2
+Ctrl + Alt + F3
+...
+```
+
+The exact function key depends on the Linux distribution and desktop environment.
+
+For example:
+
+- One virtual console might contain a text editor.
+- Another might be compiling a program.
+- A third might display system logs.
+
+Each console behaves as if it were its own independent terminal.
+
+<Aside type="caution">
+  If you are running Linux inside a virtual machine, over SSH, or within Windows
+  Subsystem for Linux (WSL), these shortcuts may not work because the host
+  operating system intercepts them.
+</Aside>
+
+## Virtual Consoles Are Independent Sessions
+
+Suppose you log in on two different virtual consoles.
+
+On **TTY1**, you execute:
+
+```bash
+$ pwd
+/home/alice/projects/editor
+```
+
+On **TTY2**, you execute:
+
+```bash
+$ pwd
+/home/alice
+```
+
+Each shell maintains its own current working directory.
+
+Similarly, if you start a program on one console:
+
+```bash
+$ vim notes.txt
+```
+
+switching to another virtual console does not interrupt it.
+
+When you later return to the first console, the editor is exactly where you left it.
+
+This isolation allows developers and system administrators to work on multiple tasks simultaneously without opening multiple physical terminals.
+
+## Virtual Console Device Files
+
+Like other terminal devices, virtual consoles are represented by files in the `/dev` directory.
+
+Typical examples include:
+
+```text
+/dev/tty1
+/dev/tty2
+/dev/tty3
+```
+
+Each file corresponds to one virtual console.
+
+For example:
+
+```text
+/dev/tty1
+```
+
+usually refers to the first virtual console.
+
+```text
+/dev/tty2
+```
+
+refers to the second.
+
+Programs rarely open these device files directly, but the operating system uses them internally to route keyboard input and display output for each console.
+
+## Where Does the Terminal Emulator Fit?
+
+At this point, you may notice something interesting.
+
+Earlier, we ran the `tty` command and obtained output similar to:
+
+```text
+/dev/pts/3
+```
+
+instead of:
+
+```text
+/dev/tty3
+```
+
+Why the difference?
+
+The answer is simple:
+
+- **Virtual consoles** use device names such as `/dev/tty1`.
+- **Graphical terminal emulators** use **pseudo-terminals**, whose device names typically appear under `/dev/pts/`.
+
+This distinction exists because terminal emulator windows are **not** virtual consoles.
+
+Instead, each terminal window creates its own **pseudo-terminal (PTY)**.
+
+We will explore PTYs in the next section.
+
+## Virtual Consoles vs. Terminal Emulator Windows
+
+Although they may look similar, virtual consoles and terminal emulator windows are fundamentally different.
+
+| Virtual Console                                   | Terminal Emulator                                            |
+| ------------------------------------------------- | ------------------------------------------------------------ |
+| Managed directly by the Linux kernel              | Runs as a normal application                                 |
+| Uses `/dev/ttyN` devices                          | Uses `/dev/pts/N` devices                                    |
+| Accessible without a graphical desktop            | Requires a graphical environment (or similar display server) |
+| Shares the physical keyboard and monitor directly | Runs inside a graphical window                               |
+
+Both provide a text-based interface for interacting with programs, but they are implemented differently.
+
+Fortunately, applications rarely need to care about the difference because both present a terminal interface.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Virtual consoles illustrate an important operating system principle:
+
+> **Virtualization is not limited to virtual machines.**
+
+A virtual console is simply software that makes one physical device appear as multiple independent devices.
+
+This same idea appears throughout computing.
+
+Examples include:
+
+- virtual memory,
+- virtual CPUs,
+- virtual disks,
+- virtual network interfaces.
+
+In each case, software provides the illusion of additional resources while sharing the underlying hardware.
+
+</Aside>
+
+## Summary
+
+Virtual consoles allow Linux to provide multiple independent terminal sessions using a single keyboard and monitor.
+
+Each virtual console has its own TTY device, login session, shell, and running programs. Switching between consoles changes which session is connected to the physical display, but the other sessions continue running in the background.
+
+Understanding virtual consoles also prepares us for the next major concept. Unlike virtual consoles, graphical terminal applications such as GNOME Terminal or Kitty do not use `/dev/ttyN` devices. Instead, they communicate through **pseudo-terminals (PTYs)**, which emulate the behavior of a real terminal while operating entirely in software.
+
+In the next section, we will explore how PTYs work and why they are the foundation of every modern terminal emulator.

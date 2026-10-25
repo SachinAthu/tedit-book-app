@@ -15,5 +15,9 @@
     "sharp": "^0.35.3",
     "starlight-theme-flexoki": "^0.3.0",
     "starlight-theme-rapide": "^0.6.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "typescript": "^6.0.3"
   }
 }

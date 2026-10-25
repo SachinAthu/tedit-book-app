@@ -1,0 +1,405 @@
+---
+title: 3.12 Putting Everything Together
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Over the course of this chapter, we have examined the individual components that make up a modern terminal environment.
+
+We learned about:
+
+- the historical evolution of terminals,
+- TTYs and virtual consoles,
+- pseudo-terminals (PTYs),
+- terminal emulators,
+- shells,
+- terminal sessions,
+- standard file descriptors,
+- controlling terminals,
+- and process groups.
+
+Each topic explained one piece of the puzzle.
+
+In this final section, we will connect those pieces together and follow the complete lifecycle of a terminal application—from the moment the user opens a terminal until a character finally appears on the screen.
+
+
+## Opening a Terminal Window
+
+Everything begins when the user launches a terminal emulator.
+
+```text
+User
+
+   │
+
+Double-click
+
+   │
+
+   ▼
+
+Terminal Emulator
+```
+
+At this point, the terminal emulator is simply another graphical application.
+
+There is no shell yet.
+
+There is no editor.
+
+The window is empty.
+
+
+## Creating the Terminal Environment
+
+The terminal emulator now asks the operating system to create a new pseudo-terminal.
+
+```text
+Terminal Emulator
+
+        │
+
+Create PTY
+
+        │
+
+        ▼
+
+PTY Master ◄────────────► PTY Slave
+```
+
+This PTY pair becomes the communication channel for the entire terminal session.
+
+
+## Starting the Shell
+
+Next, the terminal emulator starts the user's default shell.
+
+```text
+Terminal Emulator
+
+        │
+
+Starts
+
+        ▼
+
+Shell
+```
+
+The shell's standard input, standard output, and standard error are connected to the PTY slave.
+
+The shell now owns the foreground process group and becomes ready to receive user input.
+
+It displays its prompt.
+
+```text
+$
+```
+
+The terminal session has officially begun.
+
+
+## Launching Our Editor
+
+The user types:
+
+```bash
+$ editor notes.txt
+```
+
+What happens next?
+
+```text
+User
+
+      │
+
+Types Command
+
+      │
+
+      ▼
+
+Shell
+
+      │
+
+Starts
+
+      │
+
+      ▼
+
+Editor
+```
+
+The shell creates a new process and starts our editor.
+
+The editor inherits:
+
+- the controlling terminal,
+- the PTY connection,
+- the standard file descriptors,
+- the foreground process group.
+
+From this point onward, the editor communicates directly with the terminal.
+
+The shell simply waits.
+
+
+## The Journey of a Keystroke
+
+Now suppose the user presses the **A** key.
+
+The complete journey looks like this:
+
+```text
+Keyboard
+      │
+      ▼
+Operating System
+      │
+      ▼
+Terminal Emulator
+      │
+      ▼
+PTY Master
+      │
+      ▼
+Linux Kernel
+      │
+      ▼
+PTY Slave
+      │
+      ▼
+stdin (0)
+      │
+      ▼
+Editor
+```
+
+The editor reads the character from **standard input**.
+
+At this point, nothing has appeared on the screen yet.
+
+The editor has only received the user's input.
+
+
+## Updating the Editor
+
+Suppose the cursor is positioned after the word:
+
+```text
+Hell
+```
+
+The user types:
+
+```text
+o
+```
+
+The editor updates its internal text buffer.
+
+```text
+Before
+
+Hell
+```
+
+```text
+After
+
+Hello
+```
+
+Notice that only the editor's **memory** has changed.
+
+The screen has not yet been updated.
+
+As we learned in Chapter 2, the editor always modifies its in-memory representation first.
+
+
+## Rendering the Screen
+
+The editor now redraws the terminal.
+
+Conceptually:
+
+```text
+Read Input
+
+      │
+
+Update Buffer
+
+      │
+
+Generate Screen
+
+      │
+
+Write to stdout
+```
+
+Everything that should appear on the screen is written to **standard output**.
+
+
+## The Journey of Program Output
+
+The output follows the reverse path.
+
+```text
+Editor
+     │
+stdout (1)
+     │
+     ▼
+PTY Slave
+     │
+     ▼
+Linux Kernel
+     │
+     ▼
+PTY Master
+     │
+     ▼
+Terminal Emulator
+     │
+     ▼
+Interpret ANSI Sequences
+     │
+     ▼
+Render Characters
+     │
+     ▼
+GPU
+     │
+     ▼
+Monitor
+```
+
+Finally, the user sees:
+
+```text
+Hello
+```
+
+One keystroke has completed a full round trip through the entire terminal environment.
+
+
+## The Complete Lifecycle
+
+We can now combine everything we have learned into one comprehensive diagram.
+
+```text
+                User
+                  │
+                  ▼
+             Keyboard
+                  │
+                  ▼
+        Operating System
+                  │
+                  ▼
+        Terminal Emulator
+                  │
+                  ▼
+            PTY Master
+                  │
+                  ▼
+            Linux Kernel
+                  │
+                  ▼
+             PTY Slave
+                  │
+                  ▼
+       stdin / stdout / stderr
+                  │
+                  ▼
+              Our Editor
+                  │
+      Updates Text Buffer
+                  │
+                  ▼
+         Writes Screen Output
+                  │
+                  ▼
+            PTY Slave
+                  │
+                  ▼
+            Linux Kernel
+                  │
+                  ▼
+            PTY Master
+                  │
+                  ▼
+        Terminal Emulator
+                  │
+                  ▼
+          Font & Rendering
+                  │
+                  ▼
+                 GPU
+                  │
+                  ▼
+              Monitor
+```
+
+This diagram brings together nearly every concept introduced in **Volume I** so far.
+
+
+## What Our Editor Does—and Does Not Do
+
+By now, an important pattern should be clear.
+
+Our editor has a surprisingly small set of responsibilities.
+
+It:
+
+- reads input from `stdin`,
+- updates its text buffer,
+- writes output to `stdout`.
+
+Everything else is handled by other components.
+
+```text
++---------------------------+------------------------------+
+| Component                 | Responsibility               |
++---------------------------+------------------------------+
+| Operating System          | Process management           |
+| Terminal Emulator         | Rendering and input          |
+| PTY                       | Communication channel        |
+| Shell                     | Starts programs             |
+| Terminal                  | Signal handling             |
+| Our Editor                | Edit text                   |
++---------------------------+------------------------------+
+```
+
+This separation of responsibilities is one of the reasons Unix systems remain simple, modular, and extensible.
+
+Each component focuses on doing one job well.
+
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A remarkable aspect of the Unix terminal architecture is that none of its major components needs to understand the internal implementation of the others.
+
+The shell does not know how the editor stores text.
+
+The editor does not know how the terminal emulator renders fonts.
+
+The terminal emulator does not know how the operating system schedules processes.
+
+Instead, each communicates through standardized interfaces—PTYs, file descriptors, and escape sequences.
+
+This loose coupling has allowed terminal software written decades apart to work together seamlessly. It is a textbook example of modular system design, where independently developed components cooperate through stable, well-defined interfaces.
+
+</Aside>
+
+## Summary
+
+In this section, we connected the individual components of the terminal environment into a single working picture. We followed a complete terminal application from the moment a terminal window is opened—through the creation of a PTY, the launch of the shell, and the start of our editor—down to the round trip of a single keystroke and the character that finally appears on the screen.
+
+Along the way, a clear division of responsibilities emerged. The operating system manages processes, the terminal emulator handles rendering and input, the PTY provides the communication channel, the shell starts programs, and our editor is left with a surprisingly small job: read from `stdin`, update its buffer, and write to `stdout`. Everything else is handled by the surrounding environment.
