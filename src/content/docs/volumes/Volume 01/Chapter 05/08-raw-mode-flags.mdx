@@ -1,0 +1,423 @@
+---
+title: 5.8 Raw Mode Flags
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous sections, we learned that raw mode changes the terminal's behavior by:
+
+- disabling line buffering,
+- disabling automatic echo,
+- preventing the terminal from generating signals for certain key combinations.
+
+But how are these changes actually made?
+
+The answer lies in the configuration options stored inside the `termios` structure.
+
+These options are called **flags**.
+
+Each flag enables or disables a particular feature of the terminal.
+
+Rather than switching between two completely different operating modes, the terminal simply turns individual features on or off.
+
+Raw mode is therefore not a single setting—it is **a collection of carefully chosen flag changes**.
+
+## What Is a Flag?
+
+A flag is simply a setting that can be either **enabled** or **disabled**.
+
+Conceptually:
+
+```text
+Feature
+
+↓
+
+Enabled
+```
+
+or
+
+```text
+Feature
+
+↓
+
+Disabled
+```
+
+The terminal uses many such flags to determine how it should process input and output.
+
+Each flag controls one specific behavior.
+
+For example:
+
+- Should characters be echoed?
+- Should input be line-buffered?
+- Should Ctrl+C generate a signal?
+- Should output characters be processed?
+
+Changing terminal behavior is simply a matter of enabling or disabling the appropriate flags.
+
+## Categories of Flags
+
+As we saw in the previous section, the `termios` structure organizes its settings into several categories.
+
+```text
+struct termios
+
+├── Input Flags
+├── Output Flags
+├── Control Flags
+├── Local Flags
+└── Control Characters
+```
+
+Each category has a different responsibility.
+
+For a text editor, most of the important changes involve **input flags**, **output flags**, and **local flags**.
+
+We will examine each category conceptually before looking at the individual flags commonly modified by editors.
+
+## Input Flags
+
+Input flags control how bytes arriving from the keyboard are processed before reaching the application.
+
+Conceptually:
+
+```text
+Keyboard
+
+↓
+
+Input Processing
+
+↓
+
+Application
+```
+
+These flags determine whether certain characters should be translated, ignored, or interpreted before being delivered to the program.
+
+For example, they can control whether:
+
+- carriage returns are converted into newlines,
+- software flow control is enabled,
+- special input processing takes place.
+
+When enabling raw mode, several of these automatic transformations are disabled so that the application receives the original bytes exactly as they were typed.
+
+## Output Flags
+
+Output flags affect characters travelling in the opposite direction.
+
+```text
+Application
+
+↓
+
+Output Processing
+
+↓
+
+Terminal
+```
+
+Normally, the terminal may perform small transformations before displaying output.
+
+Raw mode minimizes this processing so that the application has precise control over what appears on the screen.
+
+This is particularly important when drawing the screen using ANSI escape sequences, where every byte has a specific meaning.
+
+## Local Flags
+
+Local flags control many of the interactive features users experience while typing.
+
+Conceptually:
+
+```text
+Keyboard
+
+↓
+
+Local Processing
+
+├── Echo
+├── Canonical Mode
+├── Signals
+├── Extended Processing
+
+↓
+
+Application
+```
+
+Many of the behaviors discussed earlier in this chapter are controlled by local flags.
+
+Disabling these flags transfers responsibility from the terminal to the editor.
+
+## The Most Important Raw Mode Flags
+
+Although `termios` defines many configuration options, text editors typically modify only a small subset.
+
+The following are the most significant.
+
+### ICANON
+
+**Purpose:**
+
+Controls canonical (line-buffered) input mode.
+
+When enabled:
+
+```text
+Keyboard
+
+↓
+
+Line Buffer
+
+↓
+
+Enter
+
+↓
+
+Application
+```
+
+When disabled:
+
+```text
+Keyboard
+
+↓
+
+Application
+```
+
+Every key press becomes immediately available.
+
+This is arguably the most important change required for raw mode.
+
+### ECHO
+
+**Purpose:**
+
+Controls automatic character echo.
+
+When enabled:
+
+```text
+Press 'A'
+
+↓
+
+Terminal prints 'A'
+```
+
+When disabled:
+
+```text
+Press 'A'
+
+↓
+
+Application decides whether to display it
+```
+
+The editor becomes completely responsible for rendering the screen.
+
+### ISIG
+
+**Purpose:**
+
+Controls whether certain control characters generate signals.
+
+When enabled:
+
+```text
+Ctrl+C
+
+↓
+
+SIGINT
+
+↓
+
+Program terminates
+```
+
+When disabled:
+
+```text
+Ctrl+C
+
+↓
+
+Application receives input
+```
+
+The editor can now decide what Ctrl+C should mean.
+
+### IEXTEN
+
+**Purpose:**
+
+Controls additional implementation-defined terminal features.
+
+These features vary between Unix systems but often include extra line-editing shortcuts.
+
+Editors typically disable them to ensure that keyboard input reaches the application without unexpected preprocessing.
+
+### IXON
+
+**Purpose:**
+
+Controls software flow control.
+
+Historically:
+
+```text
+Ctrl+S
+
+↓
+
+Pause Output
+```
+
+```text
+Ctrl+Q
+
+↓
+
+Resume Output
+```
+
+This behavior originated when communicating with slow serial terminals.
+
+Modern text editors commonly use:
+
+```text
+Ctrl+S
+
+↓
+
+Save File
+```
+
+and
+
+```text
+Ctrl+Q
+
+↓
+
+Quit Editor
+```
+
+Disabling `IXON` prevents the terminal from intercepting these shortcuts.
+
+### ICRNL
+
+**Purpose:**
+
+Controls carriage-return translation.
+
+When enabled, pressing Enter often causes a carriage return (`'\r'`) to be translated into a newline (`'\n'`).
+
+Conceptually:
+
+```text
+'\r'
+
+↓
+
+'\n'
+```
+
+Editors generally disable this translation so they receive the original input unchanged.
+
+This provides more predictable behavior across different terminal environments.
+
+### OPOST
+
+**Purpose:**
+
+Controls output post-processing.
+
+Normally, the terminal may modify outgoing characters before displaying them.
+
+For example, it may automatically translate newline characters into a carriage-return/newline pair.
+
+```text
+Application writes '\n'
+
+↓
+
+Terminal outputs '\r\n'
+```
+
+Raw mode disables this processing.
+
+The application becomes responsible for writing exactly the bytes it intends the terminal to receive.
+
+This is especially important when drawing the screen with ANSI escape sequences, where unintended character translations could produce incorrect output.
+
+## Putting It All Together
+
+Raw mode is achieved by disabling several independent terminal features.
+
+Conceptually, the transformation looks like this:
+
+| Feature                   | Canonical Mode | Raw Mode   |
+| ------------------------- | -------------- | ---------- |
+| Line buffering            | ✓ Enabled      | ✗ Disabled |
+| Character echo            | ✓ Enabled      | ✗ Disabled |
+| Signal generation         | ✓ Enabled      | ✗ Disabled |
+| Extended input processing | ✓ Enabled      | ✗ Disabled |
+| Software flow control     | ✓ Enabled      | ✗ Disabled |
+| Character translation     | ✓ Enabled      | ✗ Disabled |
+| Output processing         | ✓ Enabled      | ✗ Disabled |
+
+Notice that no single flag creates raw mode.
+
+Instead, raw mode is the combined effect of multiple carefully chosen configuration changes.
+
+## Why Not Disable Every Flag?
+
+You might wonder why editors do not simply turn **everything** off.
+
+The answer is that not every terminal feature is undesirable.
+
+Some settings control hardware characteristics, communication parameters, or behavior that applications still rely on.
+
+Blindly disabling every flag could make the terminal behave unpredictably or even stop working correctly.
+
+A well-designed editor changes **only the settings necessary** to achieve raw mode while preserving everything else.
+
+This is another example of good systems programming practice:
+
+> **Modify only what you understand and only what you need.**
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+One common misconception is that POSIX provides a single "raw mode" switch.
+
+It does not.
+
+The `termios` interface simply provides dozens of individual configuration flags.
+
+Applications create their own version of raw mode by selecting which features to disable.
+
+Most terminal-based editors use a very similar combination of flags because they all need immediate keyboard input and complete control over rendering.
+
+</Aside>
+
+## Summary
+
+Raw mode is not a single terminal setting but a carefully selected combination of configuration flags stored in the `termios` structure. By disabling features such as canonical mode, echo, signal generation, software flow control, and output processing, the application gains direct access to keyboard input and complete control over terminal rendering.
+
+Rather than treating the terminal as a line-oriented interface, raw mode transforms it into a stream of immediate input events, making responsive interactive applications such as text editors possible.
+
+In the next section, we will examine an equally important engineering responsibility: **restoring the terminal's original configuration**, ensuring that our editor leaves the user's terminal exactly as it found it.

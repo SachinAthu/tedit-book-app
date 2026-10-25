@@ -1,0 +1,336 @@
+---
+title: 5.5 Line Buffering
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we learned that the `termios` interface allows applications to configure how the terminal processes input and output. One of the most significant behaviors controlled by these settings is **line buffering**.
+
+Line buffering is the reason why a program running in canonical mode does not immediately receive the characters you type.
+
+Understanding how line buffering works is essential because enabling raw mode fundamentally changes this behavior.
+
+## What Is a Buffer?
+
+Before discussing line buffering specifically, let's first understand the idea of a **buffer**.
+
+A buffer is simply a temporary storage area that holds data while it is waiting to be processed.
+
+Instead of transferring data immediately from one component to another, the system temporarily stores it in memory.
+
+Conceptually:
+
+```text
+Source
+
+↓
+
+Buffer
+
+↓
+
+Destination
+```
+
+Buffers are used throughout computer systems.
+
+For example:
+
+- Network packets are buffered before being processed.
+- Audio samples are buffered before being played.
+- Disk data is buffered before being written to storage.
+- Keyboard input is buffered before being delivered to applications.
+
+Buffers improve efficiency by allowing data to be transferred in convenient chunks rather than one unit at a time.
+
+## What Is Line Buffering?
+
+In canonical mode, the terminal uses a **line buffer**.
+
+Instead of sending each character immediately to the application, it collects characters until the user finishes an entire line by pressing Enter.
+
+Suppose the user types:
+
+```text
+Hello
+```
+
+Internally, the terminal behaves approximately like this:
+
+```text
+Press 'H'
+
+↓
+
+Buffer
+
+"H"
+```
+
+```text
+Press 'e'
+
+↓
+
+Buffer
+
+"He"
+```
+
+```text
+Press 'l'
+
+↓
+
+Buffer
+
+"Hel"
+```
+
+The process continues until Enter is pressed.
+
+Only then does the terminal deliver the entire line.
+
+```text
+Buffer
+
+"Hello\n"
+
+↓
+
+Application
+```
+
+The application never receives:
+
+```text
+'H'
+
+↓
+
+'e'
+
+↓
+
+'l'
+
+↓
+
+'l'
+
+↓
+
+'o'
+```
+
+Instead, it receives:
+
+```text
+"Hello\n"
+```
+
+as a single block of input.
+
+## Visualizing the Flow
+
+The complete flow in canonical mode looks like this:
+
+```text
+Keyboard
+
+↓
+
+Terminal Driver
+
+↓
+
+Line Buffer
+
+↓
+
+Press Enter
+
+↓
+
+Application
+```
+
+Notice where the delay occurs.
+
+The application is ready to read input immediately, but the terminal refuses to send anything until the line is complete.
+
+This delay is entirely intentional.
+
+## Editing the Buffer
+
+One advantage of line buffering is that editing happens **inside the terminal**, not inside the application.
+
+Suppose the user types:
+
+```text
+hellp
+```
+
+The terminal stores:
+
+```text
+hellp
+```
+
+The user presses Backspace.
+
+The terminal modifies the buffer:
+
+```text
+hell
+```
+
+The user types:
+
+```text
+o
+```
+
+The buffer becomes:
+
+```text
+hello
+```
+
+Only after Enter does the application receive:
+
+```text
+hello\n
+```
+
+The application has no knowledge of the typing mistake or its correction.
+
+From its perspective, the user entered the correct text immediately.
+
+## Buffered vs Immediate Input
+
+The difference between canonical mode and raw mode can be summarized visually.
+
+### Canonical Mode
+
+```text
+Keyboard
+
+↓
+
+'H'
+
+↓
+
+Buffer
+
+↓
+
+'e'
+
+↓
+
+Buffer
+
+↓
+
+'l'
+
+↓
+
+Buffer
+
+↓
+
+Enter
+
+↓
+
+"Hel\n"
+
+↓
+
+Application
+```
+
+The application waits until the line is complete.
+
+### Raw Mode
+
+```text
+Keyboard
+
+↓
+
+'H'
+
+↓
+
+Application
+
+↓
+
+'e'
+
+↓
+
+Application
+
+↓
+
+'l'
+
+↓
+
+Application
+```
+
+Every key press is delivered immediately.
+
+There is no intermediate line buffer delaying the input.
+
+## The Effect on User Experience
+
+The difference between these two approaches dramatically affects how an application feels.
+
+In canonical mode:
+
+- the terminal controls editing,
+- the application receives complete lines,
+- interaction happens one command at a time.
+
+In raw mode:
+
+- the application controls editing,
+- every key press becomes an event,
+- the interface feels responsive and interactive.
+
+This responsiveness is essential for applications such as:
+
+- text editors,
+- terminal-based file managers,
+- interactive debuggers,
+- full-screen terminal user interfaces,
+- command-line games.
+
+Without immediate input, these applications could not provide the experience users expect.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Line buffering is not an optimization designed to make programs faster.
+
+It is a **user interface feature**.
+
+Its purpose is to simplify interactive command-line programs by allowing the terminal to manage basic text entry before the application becomes involved.
+
+When building a text editor, however, this convenience becomes an obstacle. We intentionally disable it so that the application can provide a richer and more responsive editing experience.
+
+</Aside>
+
+## Summary
+
+Line buffering is one of the defining characteristics of canonical mode. Rather than delivering each key press immediately, the terminal collects characters into a temporary buffer and waits until the user presses Enter before sending the completed line to the application.
+
+This behavior is ideal for command-line utilities such as shells, where users naturally work with complete commands. A text editor, however, must react to every key press as it occurs. Disabling line buffering is therefore one of the first steps toward enabling raw mode.
+
+In the next section, we will examine another important feature provided by canonical mode: **echo**, where the terminal automatically displays the characters typed by the user.

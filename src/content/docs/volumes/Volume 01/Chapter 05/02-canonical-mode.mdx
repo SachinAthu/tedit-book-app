@@ -1,0 +1,331 @@
+---
+title: 5.2 Canonical Mode
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+In the previous section, we discovered that a program using functions such as `getchar()` does not immediately receive every key the user presses. Instead, the terminal collects input, allows the user to edit it, and only delivers it to the program after the Enter key is pressed.
+
+This behavior is known as **canonical mode**.
+
+Canonical mode is the terminal's default operating mode for interactive applications. It provides a convenient, user-friendly interface by performing several common input-processing tasks automatically before the application ever sees the data.
+
+Most command-line programs rely on canonical mode without even being aware of it.
+
+## What Does "Canonical" Mean?
+
+The word _canonical_ generally means **standard**, **normal**, or **official**.
+
+In the context of terminal programming, canonical mode is the terminal's standard method of handling keyboard input.
+
+It is sometimes called **cooked mode**, because the input is "prepared" or "processed" before being delivered to the application.
+
+Throughout this book, we will use the more formal term **canonical mode**.
+
+## How Canonical Mode Works
+
+Suppose you start a simple program that reads input from the terminal.
+
+```bash
+$ ./input_demo
+```
+
+As you type:
+
+```text
+hello
+```
+
+the sequence of events is approximately:
+
+```text
+Press 'h'
+
+↓
+
+Terminal stores 'h'
+
+↓
+
+Press 'e'
+
+↓
+
+Terminal stores 'e'
+
+↓
+
+Press 'l'
+
+↓
+
+Terminal stores 'l'
+
+↓
+
+Press 'l'
+
+↓
+
+Terminal stores 'l'
+
+↓
+
+Press 'o'
+
+↓
+
+Terminal stores 'o'
+
+↓
+
+Press Enter
+
+↓
+
+Entire line sent to program
+```
+
+The application never sees the individual key presses while you are typing.
+
+Instead, it receives the completed line:
+
+```text
+hello\n
+```
+
+The terminal decides **when** the input is complete, not the application.
+
+## Features Provided by Canonical Mode
+
+Canonical mode does much more than simply buffer characters.
+
+It provides several services that users have come to expect from command-line programs.
+
+### Line Buffering
+
+Characters are collected until the user presses Enter.
+
+Instead of delivering:
+
+```text
+h
+
+↓
+
+e
+
+↓
+
+l
+
+↓
+
+l
+
+↓
+
+o
+```
+
+the terminal delivers:
+
+```text
+hello\n
+```
+
+as a single unit.
+
+This makes interactive programs such as shells much easier to implement.
+
+### Echo
+
+As you type, the terminal automatically displays each character on the screen.
+
+For example, typing:
+
+```text
+hello
+```
+
+immediately produces:
+
+```text
+hello
+```
+
+even if the application itself never prints those characters.
+
+The terminal is responsible for displaying them.
+
+The program simply receives the completed line later.
+
+### Basic Line Editing
+
+Canonical mode also provides simple editing capabilities.
+
+Suppose the user types:
+
+```text
+hellp
+```
+
+and then realizes the mistake.
+
+Pressing Backspace removes the incorrect character before the application receives the input.
+
+The interaction might look like:
+
+```text
+hellp⌫o
+```
+
+The application ultimately receives:
+
+```text
+hello\n
+```
+
+It never knows that a mistake was made or corrected.
+
+From the program's perspective, the user typed the correct word on the first attempt.
+
+### Control Character Processing
+
+Canonical mode interprets several key combinations as special commands instead of ordinary input.
+
+For example:
+
+| Key Combination | Default Behavior         |
+| --------------- | ------------------------ |
+| Ctrl+C          | Interrupt the program    |
+| Ctrl+Z          | Suspend the program      |
+| Ctrl+D          | Signal end-of-file (EOF) |
+| Ctrl+\          | Quit the program         |
+
+These keys are not normally delivered to the application as ordinary characters.
+
+Instead, the terminal interprets them and performs predefined actions.
+
+We will examine these control characters in more detail later in this chapter.
+
+## An Example
+
+Imagine running the following program:
+
+```c
+char buffer[100];
+
+fgets(buffer, sizeof(buffer), stdin);
+
+printf("You entered: %s", buffer);
+```
+
+Now suppose the user types:
+
+```text
+abcde
+```
+
+followed by two Backspaces:
+
+```text
+abc⌫⌫xy
+```
+
+and finally presses Enter.
+
+The terminal performs all the editing internally.
+
+The application simply receives:
+
+```text
+abxy\n
+```
+
+The deleted characters are never delivered to the program.
+
+## Why Canonical Mode Exists
+
+At first, canonical mode might seem unnecessarily restrictive.
+
+Why not simply send every key press directly to the application?
+
+The answer lies in history.
+
+Early command-line programs were designed to process complete commands rather than individual keystrokes.
+
+For example, a shell expects the user to type an entire command before executing it.
+
+```bash
+$ gcc main.c
+```
+
+While entering the command, the user should be able to:
+
+- correct typing mistakes,
+- review the command,
+- erase characters,
+- abandon the line,
+- and submit it only when ready.
+
+If every key press were delivered immediately, every application would have to implement these editing features itself.
+
+Canonical mode centralizes this functionality inside the terminal, making simple programs much easier to write.
+
+For command-line utilities, this design remains highly effective today.
+
+<Aside type="note" title="Historical Note">
+
+The behavior of canonical mode dates back to the era of mechanical teletypes discussed in Chapter 3.
+
+Because communication with remote systems was relatively slow, terminals evolved to provide local editing features before transmitting data to the host computer.
+
+Modern Unix terminals preserve this behavior for compatibility and convenience, even though today's computers are vastly faster than those early systems.
+
+</Aside>
+
+## Why Canonical Mode Is Unsuitable for a Text Editor
+
+Although canonical mode is ideal for shells and many command-line utilities, it prevents a text editor from behaving interactively.
+
+Consider pressing the Left Arrow key.
+
+The editor should move the cursor immediately.
+
+Instead, canonical mode waits for the entire line to be completed.
+
+Likewise:
+
+- every typed character should appear instantly,
+- Backspace should modify the document immediately,
+- shortcut keys such as Ctrl+S should trigger commands at once,
+- cursor movement should happen without waiting for Enter.
+
+An editor cannot afford to wait for the terminal to decide when input is "finished."
+
+It must receive every key press as soon as it occurs.
+
+This requires disabling the terminal's default input processing.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Canonical mode follows a simple philosophy:
+
+> **The terminal owns input editing.**
+
+A text editor follows a different philosophy:
+
+> **The application owns input editing.**
+
+This transfer of responsibility is one of the defining characteristics of interactive terminal applications. Once we disable canonical mode, our editor will become responsible for tasks that the terminal previously handled automatically, including displaying typed characters, interpreting Backspace, moving the cursor, and implementing keyboard shortcuts.
+
+</Aside>
+
+## Summary
+
+Canonical mode is the terminal's default input-processing mode. It buffers input until Enter is pressed, automatically echoes typed characters, provides basic line-editing features, and interprets several control key combinations before the application ever receives the input.
+
+These features make canonical mode ideal for traditional command-line programs, but they prevent applications from responding immediately to individual key presses. A text editor requires complete control over keyboard input, making canonical mode unsuitable for its needs.
+
+In the next section, we will introduce **raw mode**, where the terminal stops preprocessing input and delivers each key press directly to the application.

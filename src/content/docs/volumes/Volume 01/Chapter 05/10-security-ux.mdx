@@ -1,0 +1,244 @@
+---
+title: 5.10 Security and User Experience
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Throughout this chapter, we have focused on the technical aspects of raw mode—how it disables canonical input, echo, and signal generation to give an application complete control over the terminal.
+
+However, enabling raw mode is not just a technical operation.
+
+It is also a matter of **trust**.
+
+When users launch a terminal application, they temporarily hand control of their terminal to that program. They expect the application to use that control responsibly and to return the terminal to its normal state when it finishes.
+
+Good terminal applications respect that trust.
+
+---
+
+## Raw Mode Is Temporary
+
+One of the most important principles of terminal programming is:
+
+> **Raw mode should exist only while it is needed.**
+
+The terminal's default configuration is carefully designed for interactive command-line use.
+
+A text editor temporarily overrides those settings because it has special requirements.
+
+Once those requirements no longer exist, the terminal should immediately return to its original configuration.
+
+The application's lifecycle should look like this:
+
+```text
+Start Application
+
+↓
+
+Save Terminal Settings
+
+↓
+
+Enable Raw Mode
+
+↓
+
+Run Editor
+
+↓
+
+Restore Terminal Settings
+
+↓
+
+Exit
+```
+
+Raw mode is a temporary operating state, not a permanent change to the user's environment.
+
+---
+
+## Respect the User's Environment
+
+Every user has a preferred working environment.
+
+They may have:
+
+- customized terminal settings,
+- personalized keyboard mappings,
+- accessibility features,
+- shell-specific configurations,
+- remote terminal sessions.
+
+A well-designed application assumes that these settings are important.
+
+Rather than replacing them, it preserves them.
+
+When the application exits, the user's environment should behave exactly as it did before the application started.
+
+From the user's perspective, the application should leave no trace of its temporary modifications.
+
+---
+
+## The Principle of Least Surprise
+
+Software engineering often follows the **Principle of Least Surprise**.
+
+This principle states:
+
+> Software should behave in the way users naturally expect.
+
+Applied to terminal applications, this means:
+
+- the shell should behave normally after the application exits,
+- keyboard shortcuts should work as expected,
+- terminal settings should not remain altered,
+- no unexpected side effects should occur.
+
+Users should never need to wonder:
+
+> "Why doesn't my terminal work anymore?"
+
+If they do, the application has failed to meet an important usability expectation.
+
+---
+
+## Own Only What You Need
+
+Raw mode gives the application extensive control over keyboard input.
+
+However, responsible software exercises only the control it actually needs.
+
+For example, our editor disables:
+
+- line buffering,
+- automatic echo,
+- signal generation,
+- certain input and output processing.
+
+It does **not** arbitrarily modify unrelated terminal settings.
+
+This reflects another important engineering principle:
+
+> **Modify only what is necessary.**
+
+The fewer assumptions an application makes about its environment, the more portable and reliable it becomes.
+
+---
+
+## Be a Good Citizen
+
+The terminal is a shared resource.
+
+Many different programs use the same terminal session over its lifetime.
+
+A responsible application behaves like a good citizen within that shared environment.
+
+It should:
+
+- preserve existing settings,
+- restore modified settings,
+- clean up allocated resources,
+- exit gracefully whenever possible.
+
+Conceptually:
+
+```text
+Acquire Resource
+
+↓
+
+Use Resource
+
+↓
+
+Restore Resource
+```
+
+This pattern applies far beyond terminal programming.
+
+It appears throughout systems programming whenever software interacts with operating system resources.
+
+---
+
+## Handling Failures Gracefully
+
+No software is perfect.
+
+Unexpected situations can always occur:
+
+- memory allocation failures,
+- file I/O errors,
+- invalid input,
+- unexpected signals,
+- programming bugs.
+
+While not every failure can be prevented, every application should attempt to fail gracefully.
+
+For a terminal editor, graceful failure includes:
+
+- restoring terminal settings,
+- displaying meaningful error messages when possible,
+- exiting cleanly,
+- avoiding unnecessary data loss.
+
+A crash is unfortunate.
+
+A crash that leaves the user's terminal unusable is far worse.
+
+---
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Experienced systems programmers often evaluate software by asking a simple question:
+
+> **"What happens when something goes wrong?"**
+
+Correct behavior during normal operation is only part of good software design.
+
+Professional-quality applications are distinguished by how carefully they handle exceptional situations.
+
+Planning for cleanup, recovery, and graceful termination is just as important as implementing the application's primary functionality.
+
+</Aside>
+
+---
+
+## Beyond Terminal Programming
+
+The ideas discussed in this chapter extend well beyond text editors.
+
+Whenever software temporarily modifies shared system resources, it should follow the same pattern.
+
+For example:
+
+- A graphics application changes the display resolution and restores it before exiting.
+- A database transaction acquires locks and releases them when complete.
+- A network server opens sockets and closes them during shutdown.
+- A file-processing application creates temporary files and removes them afterward.
+
+In every case, the underlying principle is identical:
+
+```text
+Acquire
+
+↓
+
+Use
+
+↓
+
+Restore
+```
+
+Raw mode is simply another example of this broader engineering pattern.
+
+---
+
+## Summary
+
+Raw mode gives applications complete control over terminal input, but that control must be exercised responsibly. Well-designed terminal programs enable raw mode only while necessary, preserve the user's existing terminal configuration, restore it before exiting, and handle failures gracefully whenever possible.
+
+These practices are examples of broader systems programming principles: respect shared resources, modify only what is necessary, and always clean up after yourself. Following these principles results in software that is both reliable and pleasant to use.
+
+In the next section, we look ahead to the challenge that follows raw mode: interpreting the byte stream that it delivers.

@@ -1,0 +1,346 @@
+---
+title: 5.7 Control Characters and Signals
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+So far, we have examined two important behaviors provided by canonical mode:
+
+- **Line buffering**, where the terminal waits until Enter is pressed before delivering input.
+- **Echo**, where the terminal automatically displays typed characters.
+
+There is one more behavior that every interactive application must understand.
+
+Certain key combinations do not produce ordinary input at all.
+
+Instead, they instruct the operating system to perform specific actions.
+
+For example, if you press **Ctrl+C** while a program is running, the program usually terminates immediately.
+
+If you press **Ctrl+Z**, the program is suspended.
+
+These actions are not implemented by the application itself.
+
+They are provided automatically by the terminal through a mechanism involving **control characters** and **signals**.
+
+## What Are Control Characters?
+
+Control characters are characters that represent **actions** rather than printable symbols.
+
+Unlike ordinary characters such as:
+
+```text
+A
+B
+1
+?
+@
+```
+
+control characters usually do not appear on the screen.
+
+Instead, they trigger some form of processing.
+
+Historically, many of these characters originated on mechanical teletypes, where they controlled devices rather than representing visible text.
+
+Examples include:
+
+- ringing a bell,
+- moving the cursor,
+- starting a new line,
+- interrupting a running program.
+
+Many of these control characters are still part of the ASCII character set today.
+
+## Ctrl Key Combinations
+
+On most terminals, holding the **Ctrl** key while pressing another key generates one of these control characters.
+
+For example:
+
+| Key Combination | Control Character | ASCII Value |
+| --------------- | ----------------- | ----------: |
+| Ctrl+A          | SOH               |           1 |
+| Ctrl+C          | ETX               |           3 |
+| Ctrl+D          | EOT               |           4 |
+| Ctrl+H          | BS                |           8 |
+| Ctrl+I          | HT (Tab)          |           9 |
+| Ctrl+J          | LF                |          10 |
+| Ctrl+M          | CR                |          13 |
+| Ctrl+Z          | SUB               |          26 |
+
+The exact names are not important for building our editor.
+
+What matters is understanding that pressing **Ctrl** does not produce an ordinary printable character.
+
+Instead, it generates a special byte that the terminal may interpret differently.
+
+## Signals
+
+A **signal** is a notification sent by the operating system to a running process.
+
+Signals allow the operating system, the terminal, or another process to inform a program that something important has happened.
+
+Conceptually:
+
+```text
+Operating System
+
+↓
+
+Signal
+
+↓
+
+Running Process
+```
+
+Different signals represent different events.
+
+Some request that a process terminate.
+
+Others suspend execution or indicate exceptional conditions.
+
+We introduced signals briefly in Chapter 3 when discussing process management. Here, we focus on how the terminal generates them from keyboard input.
+
+## The Terminal Generates Signals
+
+When canonical mode is enabled, the terminal watches for certain control characters.
+
+Instead of passing those characters directly to the application, it converts them into signals.
+
+For example, pressing:
+
+```text
+Ctrl+C
+```
+
+typically results in:
+
+```text
+Keyboard
+
+↓
+
+Terminal
+
+↓
+
+SIGINT
+
+↓
+
+Application
+```
+
+Notice that the application does **not** receive the character corresponding to Ctrl+C.
+
+Instead, it receives a signal indicating that an interrupt has occurred.
+
+Unless the program explicitly handles that signal, the default action is to terminate the process.
+
+## Common Terminal Signals
+
+Several keyboard shortcuts have well-known meanings in Unix terminals.
+
+| Shortcut | Signal           | Default Behavior                           |
+| -------- | ---------------- | ------------------------------------------ |
+| Ctrl+C   | SIGINT           | Interrupt the program                      |
+| Ctrl+\   | SIGQUIT          | Quit and produce a core dump               |
+| Ctrl+Z   | SIGTSTP          | Suspend the program                        |
+| Ctrl+D   | _(Not a signal)_ | End-of-file when the input buffer is empty |
+
+Notice that **Ctrl+D** is different.
+
+Unlike Ctrl+C or Ctrl+Z, it does not generate a signal.
+
+Instead, it tells the terminal to indicate **end-of-file (EOF)** when appropriate.
+
+This distinction is important because not every control character results in a signal.
+
+## Why Signals Are Useful
+
+Imagine a program accidentally enters an infinite loop.
+
+```text
+while (1)
+{
+    /* ... */
+}
+```
+
+Without a way to interrupt it, the only solution might be to reboot the computer.
+
+Instead, pressing:
+
+```text
+Ctrl+C
+```
+
+asks the operating system to interrupt the process.
+
+Likewise, if you wish to temporarily pause a program, you can press:
+
+```text
+Ctrl+Z
+```
+
+allowing the shell to suspend it and later resume it.
+
+These shortcuts make Unix systems far more convenient to use.
+
+## Why This Is a Problem for a Text Editor
+
+Now imagine our editor is running.
+
+Suppose we want:
+
+```text
+Ctrl+S
+```
+
+to save the document.
+
+Later we may want:
+
+```text
+Ctrl+Q
+```
+
+to quit.
+
+Eventually we might even use:
+
+```text
+Ctrl+F
+```
+
+to search for text.
+
+The editor intends to use many Ctrl key combinations as application shortcuts.
+
+But what happens if the terminal intercepts them first?
+
+Even worse, suppose we decide to use:
+
+```text
+Ctrl+C
+```
+
+for a future editing command.
+
+If the terminal continues generating `SIGINT`, the editor would terminate immediately instead of executing the intended command.
+
+The application never gets an opportunity to decide what Ctrl+C should mean.
+
+## Disabling Signal Generation
+
+When enabling raw mode, one of the changes made to the terminal configuration is disabling automatic signal generation.
+
+The flow changes from:
+
+### Canonical Mode
+
+```text
+Keyboard
+
+↓
+
+Terminal
+
+↓
+
+Generate Signal
+
+↓
+
+Application
+```
+
+to:
+
+### Raw Mode
+
+```text
+Keyboard
+
+↓
+
+Terminal
+
+↓
+
+Application
+
+↓
+
+Editor Decides What to Do
+```
+
+Now the terminal simply delivers the control character as ordinary input.
+
+The editor can interpret it however it chooses.
+
+For example:
+
+```text
+Ctrl+S
+
+↓
+
+Editor
+
+↓
+
+Save Document
+```
+
+or
+
+```text
+Ctrl+Q
+
+↓
+
+Editor
+
+↓
+
+Quit Editor
+```
+
+The decision now belongs to the application rather than the terminal.
+
+## Signals Do Not Disappear
+
+Disabling terminal-generated signals does **not** eliminate signals from the operating system.
+
+Other processes can still send signals.
+
+The operating system can still notify the application of important events.
+
+Only the terminal's automatic conversion of certain keyboard shortcuts into signals is disabled.
+
+This distinction is important.
+
+Raw mode changes how **keyboard input** is processed; it does not disable the Unix signal mechanism itself.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Signals are an example of the Unix philosophy of separating **events** from **input**.
+
+A shell usually wants Ctrl+C to interrupt the current program, so the terminal converts the key press into `SIGINT`.
+
+A text editor, however, wants to interpret keyboard shortcuts itself.
+
+By disabling automatic signal generation, the editor takes ownership of the keyboard while still remaining part of the operating system's signal framework.
+
+</Aside>
+
+## Summary
+
+Control characters represent special actions rather than printable text. In canonical mode, the terminal interprets several of these characters and automatically generates signals such as `SIGINT` and `SIGTSTP`, allowing users to interrupt or suspend programs with familiar shortcuts like Ctrl+C and Ctrl+Z.
+
+For a text editor, however, these automatic actions interfere with application-defined keyboard shortcuts. Raw mode disables the terminal's signal generation so that control key combinations are delivered directly to the editor, allowing the application to decide what each shortcut should do.
+
+In the next section, we will examine the individual **raw mode flags** that make this behavior possible and see how each one contributes to transforming the terminal from a line-oriented interface into an event-driven input device.

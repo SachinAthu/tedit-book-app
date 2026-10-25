@@ -1,0 +1,293 @@
+---
+title: 5.3 Why Editors Need Raw Mode
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Canonical mode works exceptionally well for traditional command-line programs. It allows users to type an entire command, correct mistakes, and submit the finished line by pressing Enter. The terminal handles much of the interaction automatically, allowing applications to focus on processing completed input.
+
+A text editor, however, has very different requirements.
+
+Unlike a shell, a text editor is an **interactive application**. Every key press can immediately affect the document, the cursor, or the screen. Waiting until the user presses Enter would make editing impossible.
+
+To understand why, let's examine how users expect a text editor to behave.
+
+## Immediate Response
+
+Suppose you open a text editor and press the **A** key.
+
+What should happen?
+
+Immediately after pressing the key, you expect:
+
+- the character to appear,
+- the cursor to move one position to the right,
+- the screen to update.
+
+The interaction feels instantaneous.
+
+```text
+Press 'A'
+
+↓
+
+Character inserted
+
+↓
+
+Cursor advances
+
+↓
+
+Screen redraws
+```
+
+There is no Enter key involved.
+
+The editor reacts to each individual key press.
+
+## Cursor Movement
+
+Now consider the arrow keys.
+
+Imagine the document contains:
+
+```text
+Hello
+World
+```
+
+The cursor starts here:
+
+```text
+Hello|
+World
+```
+
+When the user presses the Left Arrow key once:
+
+```text
+←
+```
+
+the cursor should immediately become:
+
+```text
+Hell|o
+World
+```
+
+If canonical mode were active, nothing would happen until Enter was pressed.
+
+The cursor would remain stationary, making navigation impossible.
+
+## Editing While Typing
+
+Suppose the user types:
+
+```text
+Hellp
+```
+
+They immediately notice the mistake.
+
+They press Backspace and then type **o**.
+
+The editor should display:
+
+```text
+Hello
+```
+
+as the correction is made.
+
+The user should never have to press Enter simply to fix a typo.
+
+Editing must occur continuously while typing.
+
+## Keyboard Shortcuts
+
+Modern text editors rely heavily on keyboard shortcuts.
+
+For example:
+
+| Shortcut | Expected Action                            |
+| -------- | ------------------------------------------ |
+| Ctrl+S   | Save the document                          |
+| Ctrl+Q   | Quit the editor                            |
+| Ctrl+F   | Find text                                  |
+| Ctrl+G   | Go to a line                               |
+| Tab      | Insert tab character (U+0009)                         |
+| Escape   | Change editor state or cancel an operation |
+
+These shortcuts are commands, not text.
+
+The editor must recognize them immediately.
+
+Waiting until Enter would defeat their purpose.
+
+Imagine pressing Ctrl+S and then having to press Enter before the document saves.
+
+That would feel unnatural and inconvenient.
+
+## Continuous Interaction
+
+A text editor is constantly responding to user input.
+
+Every key press follows the same basic cycle:
+
+```text
+User presses a key
+
+↓
+
+Editor receives the key
+
+↓
+
+Editor updates its state
+
+↓
+
+Renderer redraws the screen
+
+↓
+
+User sees the result
+```
+
+This cycle may happen dozens or even hundreds of times each second while someone is typing quickly.
+
+The editor is engaged in a continuous conversation with the user.
+
+Canonical mode interrupts this conversation by delaying input until an entire line has been completed.
+
+## The Problem with Waiting for Enter
+
+Imagine trying to write this sentence in an editor that uses canonical mode:
+
+```text
+The quick brown fox jumps over the lazy dog.
+```
+
+As you type, nothing appears on the screen.
+
+The cursor never moves.
+
+Backspace has no visible effect.
+
+Arrow keys do nothing.
+
+Only after pressing Enter does the entire sentence suddenly appear.
+
+This would not feel like editing a document.
+
+It would feel like submitting commands to a shell.
+
+The difference is fundamental.
+
+A shell processes completed lines.
+
+A text editor processes individual keystrokes.
+
+## Taking Control
+
+To build a responsive editor, we must prevent the terminal from performing its usual input processing.
+
+Instead of allowing the terminal to decide when input is complete, we want every key press delivered directly to our program.
+
+The desired flow becomes:
+
+```text
+Keyboard
+
+↓
+
+Terminal
+
+↓
+
+Editor
+
+↓
+
+Immediate Processing
+
+↓
+
+Screen Update
+```
+
+Notice that the terminal still transports the input.
+
+What changes is **how** it treats the input.
+
+Instead of buffering, editing, echoing, and interpreting special keys, the terminal simply forwards the bytes to the application as they arrive.
+
+The editor becomes responsible for deciding what each key means.
+
+## A New Responsibility
+
+Disabling canonical mode does not simply remove restrictions—it transfers responsibility from the terminal to the application.
+
+Previously, the terminal handled tasks such as:
+
+- collecting characters into a line,
+- displaying typed characters,
+- processing Backspace,
+- recognizing control keys.
+
+After switching modes, the editor must perform these tasks itself.
+
+The architecture changes from:
+
+```text
+Terminal
+
+├── Collect input
+├── Echo characters
+├── Handle Backspace
+├── Process Ctrl keys
+└── Deliver completed line
+```
+
+to:
+
+```text
+Editor
+
+├── Read every key
+├── Interpret input
+├── Update document
+├── Move cursor
+├── Redraw screen
+└── Execute commands
+```
+
+This additional work may seem intimidating, but it provides something far more valuable: **complete control over the user experience**.
+
+Every interactive terminal application—from text editors to terminal-based file managers and debuggers—relies on this same principle.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Interactive applications treat the keyboard as a stream of events rather than a sequence of completed lines.
+
+Instead of asking:
+
+> "What line did the user enter?"
+
+they ask:
+
+> "What key was just pressed?"
+
+This event-driven approach is what makes responsive terminal applications possible.
+
+</Aside>
+
+## Summary
+
+Canonical mode is designed for applications that process complete lines of input, such as shells and command-line utilities. A text editor, however, must respond immediately to every keystroke, whether it is a printable character, an arrow key, or a keyboard shortcut.
+
+To achieve this level of responsiveness, the editor must take over responsibilities that normally belong to the terminal. The first step is disabling canonical mode and enabling **raw mode**, where the terminal delivers each key press directly to the application.
+
+In the next section, we introduce the **`termios` interface** — the POSIX mechanism that allows programs to inspect and modify terminal settings — before examining the individual behaviors that raw mode disables in the sections that follow.

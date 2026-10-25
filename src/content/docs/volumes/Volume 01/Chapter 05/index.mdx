@@ -1,0 +1,31 @@
+---
+title: Chapter 5 — Raw Terminal Mode
+---
+
+The terminal is more than a display—it is also responsible for processing keyboard input before your program ever sees it. By default, the terminal provides a user-friendly interface designed for shells and command-line programs. A text editor, however, needs direct access to every key the user presses. This chapter explores how to temporarily disable the terminal's default behavior and place it into **raw mode**, giving our editor complete control over keyboard input.
+
+## Learning Objectives
+
+By the end of this chapter, readers should be able to:
+
+- Explain why terminals preprocess keyboard input.
+- Distinguish canonical mode from raw mode.
+- Understand the role of the `termios` API.
+- Describe how echo, signals, and control characters are handled.
+- Explain why terminal settings must always be restored.
+- Understand how raw mode fits into the editor's architecture.
+
+## Sections
+
+- [5.1 The Problem with Standard Terminal Input](/volumes/volume-01/chapter-05/01-problem-terminal-input/)
+- [5.2 Canonical Mode](/volumes/volume-01/chapter-05/02-canonical-mode/)
+- [5.3 Why Editors Need Raw Mode](/volumes/volume-01/chapter-05/03-why-editor-raw/)
+- [5.4 The `termios` Interface](/volumes/volume-01/chapter-05/04-termios-interface/)
+- [5.5 Line Buffering](/volumes/volume-01/chapter-05/05-line-buffering/)
+- [5.6 Echo](/volumes/volume-01/chapter-05/06-echo/)
+- [5.7 Control Characters and Signals](/volumes/volume-01/chapter-05/07-control-characters-signals/)
+- [5.8 Raw Mode Flags](/volumes/volume-01/chapter-05/08-raw-mode-flags/)
+- [5.9 Restoring the Terminal](/volumes/volume-01/chapter-05/09-restoring-terminal/)
+- [5.10 Security and User Experience](/volumes/volume-01/chapter-05/10-security-ux/)
+- [5.11 Looking Ahead](/volumes/volume-01/chapter-05/11-looking-ahead/)
+- [5.12 Conclusion](/volumes/volume-01/chapter-05/12-conclusion/)

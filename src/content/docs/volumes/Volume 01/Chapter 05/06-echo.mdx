@@ -1,0 +1,360 @@
+---
+title: 5.6 Echo
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+When you type into a terminal, the characters you press immediately appear on the screen.
+
+For example, if you type:
+
+```text
+hello
+```
+
+the terminal displays:
+
+```text
+hello
+```
+
+Most users never think about how this happens. It seems obvious that typing a key causes that character to appear on the screen.
+
+However, there is an important detail hidden behind this familiar behavior.
+
+**Your program is usually not responsible for displaying those characters.**
+
+Instead, the terminal displays them automatically.
+
+This feature is called **echo**.
+
+## What Is Echo?
+
+Echo is the process of automatically displaying the characters typed by the user.
+
+When echo is enabled, every printable character received from the keyboard is immediately written back to the terminal display.
+
+Conceptually:
+
+```text
+Keyboard
+
+↓
+
+Terminal
+
+├── Send character to application
+└── Display character on screen
+```
+
+The terminal performs both tasks automatically.
+
+This means the application does not need to print the characters itself.
+
+## An Example
+
+Consider the following program:
+
+```c
+#include <stdio.h>
+
+int main(void)
+{
+    getchar();
+    return 0;
+}
+```
+
+This program waits for a single character and immediately exits.
+
+Notice that it never calls `printf()`.
+
+Nevertheless, if you run it and type:
+
+```text
+A
+```
+
+the screen shows:
+
+```text
+A
+```
+
+Where did that **A** come from?
+
+Not from the program.
+
+The terminal displayed it automatically because echo was enabled.
+
+## Echo Happens Before the Application Responds
+
+The sequence of events is approximately:
+
+```text
+Press 'A'
+
+↓
+
+Terminal receives 'A'
+
+↓
+
+Terminal displays 'A'
+
+↓
+
+Terminal stores 'A'
+
+↓
+
+Application eventually reads 'A'
+```
+
+Notice the order.
+
+The character appears on the screen **before** the application processes it.
+
+The application could even ignore the character completely, and it would still appear because the terminal already displayed it.
+
+## Why Echo Exists
+
+Echo makes command-line programs easy to use.
+
+Imagine entering a command into a shell.
+
+```text
+$ ls -l
+```
+
+As you type, you expect to see:
+
+```text
+ls -l
+```
+
+The shell does not need to implement character-by-character rendering.
+
+The terminal already provides that functionality.
+
+Similarly, if you run:
+
+```text
+$ cat
+```
+
+everything you type appears immediately.
+
+Although `cat` eventually writes the characters back to the screen after reading them, the characters are already visible while you are typing because the terminal echoes them.
+
+Echo is therefore a convenience feature that simplifies many command-line applications.
+
+## When Echo Becomes a Problem
+
+Automatic echoing is useful for shells, but it creates serious problems for a text editor.
+
+Imagine opening a document containing:
+
+```text
+Hello
+```
+
+Your editor draws the document:
+
+```text
+Hello|
+```
+
+Now you press:
+
+```text
+A
+```
+
+If echo is still enabled, the terminal immediately prints:
+
+```text
+A
+```
+
+without waiting for the editor.
+
+A moment later, the editor updates its internal document, redraws the screen, and prints:
+
+```text
+HelloA|
+```
+
+Now two different components are trying to draw the screen.
+
+The terminal prints one thing automatically.
+
+The editor prints another.
+
+The result quickly becomes inconsistent.
+
+## Who Should Control the Screen?
+
+A terminal editor follows a simple architectural principle:
+
+> **Only one component should be responsible for drawing the screen.**
+
+If the terminal echoes characters while the editor also redraws the document, both are competing for control of the display.
+
+Conceptually:
+
+```text
+Keyboard
+
+↓
+
+Terminal
+│
+├── Draw character
+│
+└── Send input
+
+↓
+
+Editor
+│
+└── Draw entire screen
+```
+
+Both the terminal and the editor are modifying the display independently.
+
+This leads to visual glitches and unpredictable behavior.
+
+Instead, the editor should become the sole authority responsible for rendering.
+
+## Disabling Echo
+
+To achieve this, echo must be disabled.
+
+Once echo is turned off, pressing a key no longer causes the terminal to display it automatically.
+
+The interaction changes to:
+
+```text
+Keyboard
+
+↓
+
+Terminal
+
+↓
+
+Editor
+
+↓
+
+Update Document
+
+↓
+
+Renderer
+
+↓
+
+Screen
+```
+
+Now every visible character on the screen has been intentionally drawn by the editor.
+
+Nothing appears unless the editor decides it should.
+
+This gives the application complete control over:
+
+- character placement,
+- cursor movement,
+- syntax highlighting,
+- scrolling,
+- status bars,
+- message bars,
+- screen refreshes.
+
+## Echo in Practice
+
+Suppose the user presses the key **A**.
+
+With echo enabled:
+
+```text
+Press 'A'
+
+↓
+
+Terminal displays 'A'
+
+↓
+
+Application processes 'A'
+```
+
+With echo disabled:
+
+```text
+Press 'A'
+
+↓
+
+Application receives 'A'
+
+↓
+
+Editor inserts character
+
+↓
+
+Renderer redraws screen
+
+↓
+
+'A' appears
+```
+
+The visible result is similar, but the responsibility has shifted completely.
+
+The terminal no longer draws anything on behalf of the application.
+
+## Echo and Password Input
+
+You have already encountered applications that disable echo.
+
+Consider logging into a remote server:
+
+```text
+Password:
+```
+
+As you type your password, nothing appears on the screen.
+
+Sometimes asterisks (`*`) or bullets (`•`) are displayed instead, while other systems display nothing at all.
+
+This behavior is possible because the application temporarily disables echo before reading the password and restores it afterward.
+
+A text editor uses the same mechanism, but for a different reason: not to hide input, but to take complete control of rendering.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Many beginners are surprised when they first enable raw mode.
+
+After disabling echo, they press keys and **nothing appears**.
+
+This is not a bug.
+
+It is evidence that the terminal has stopped drawing characters automatically.
+
+From this point onward, every visible character must be drawn by the application itself.
+
+Although this initially feels like extra work, it is precisely what allows editors to implement features such as cursor movement, scrolling, syntax highlighting, and full-screen rendering.
+
+</Aside>
+
+## Summary
+
+Echo is a terminal feature that automatically displays typed characters before the application processes them. This behavior is convenient for command-line programs because it eliminates the need to implement basic character display.
+
+A text editor, however, must control every aspect of the screen. Automatic echo would interfere with the editor's renderer by allowing both the terminal and the application to draw simultaneously. Therefore, one of the essential steps in enabling raw mode is disabling echo, making the editor solely responsible for everything that appears on the display.
+
+In the next section, we will examine another behavior controlled by the terminal: **control characters and signals**, and see why key combinations such as **Ctrl+C** and **Ctrl+Z** must also be handled differently in an interactive editor.

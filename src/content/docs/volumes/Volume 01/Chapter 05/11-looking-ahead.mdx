@@ -1,0 +1,191 @@
+---
+title: 5.11 Looking Ahead
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In this chapter, we have transformed the terminal from a line-oriented interface into an event-driven one.
+
+By enabling raw mode, we disabled line buffering, automatic echo, signal generation, and several other processing features. As a result, the terminal no longer interprets keyboard input on our behalf.
+
+Instead, every key press is delivered directly to our application.
+
+This is a major milestone in building our editor.
+
+However, receiving input is only the first half of the problem.
+
+The next challenge is understanding **what that input actually means**.
+
+## Receiving Bytes vs Understanding Keys
+
+Raw mode gives the editor immediate access to every byte typed by the user.
+
+For ordinary characters, this is straightforward.
+
+Suppose the user presses:
+
+```text
+A
+```
+
+The editor receives:
+
+```text
+0x41
+```
+
+The byte `0x41` is the ASCII encoding for the uppercase letter **A**.
+
+The editor can immediately recognize the character and insert it into the document.
+
+Simple enough.
+
+## Special Keys Are Different
+
+Unfortunately, not every key on the keyboard is represented by a single byte.
+
+Consider the Up Arrow key.
+
+The editor does **not** receive something like:
+
+```text
+UP
+```
+
+Instead, the terminal sends a sequence of bytes.
+
+For many terminals, pressing the Up Arrow produces:
+
+```text
+ESC
+[
+A
+```
+
+Or, expressed as bytes:
+
+```text
+0x1B
+0x5B
+0x41
+```
+
+Although the user pressed a single key, the application received **three separate bytes**.
+
+This raises an important question:
+
+> How does the editor know that these three bytes represent one arrow key instead of three ordinary characters?
+
+The answer is that it must **parse** the incoming byte stream.
+
+## A Stream of Bytes
+
+Once raw mode is enabled, the terminal no longer delivers "keys."
+
+It delivers **bytes**.
+
+The application must interpret those bytes and determine whether they represent:
+
+- printable characters,
+- control characters,
+- arrow keys,
+- function keys,
+- Home and End,
+- Page Up and Page Down,
+- or many other special keys.
+
+Conceptually, the editor sees something like this:
+
+```text
+Keyboard
+
+↓
+
+Raw Mode
+
+↓
+
+Byte Stream
+```
+
+Those bytes have no meaning until the application interprets them.
+
+## From Bytes to Commands
+
+A text editor cannot work directly with raw bytes.
+
+Instead, it converts them into higher-level events that the rest of the editor can understand.
+
+For example:
+
+```text
+0x41
+
+↓
+
+Insert Character 'A'
+```
+
+or
+
+```text
+ESC [ A
+
+↓
+
+Move Cursor Up
+```
+
+This translation layer separates low-level keyboard encoding from the editor's internal logic.
+
+The rest of the editor does not need to know which byte sequence represents an arrow key.
+
+It only needs to know that the user requested a cursor movement.
+
+## The Input Pipeline
+
+As our editor evolves, keyboard input will pass through several stages before affecting the document.
+
+The overall flow looks like this:
+
+```text
+Keyboard
+
+↓
+
+Raw Mode
+
+↓
+
+Byte Stream
+
+↓
+
+Input Parser
+
+↓
+
+Editor Commands
+```
+
+Each stage has a specific responsibility.
+
+- **Keyboard** generates key presses.
+- **Raw Mode** ensures every byte reaches the application immediately.
+- **Byte Stream** carries the raw keyboard data.
+- **Input Parser** interprets bytes and recognizes keys.
+- **Editor Commands** perform actions such as inserting text, moving the cursor, or saving the document.
+
+This layered design keeps each part of the editor focused on a single task, making the overall architecture simpler and easier to extend.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+One of the recurring themes throughout this book is the separation of **representation** from **meaning**.
+
+Raw mode gives us a representation—a stream of bytes.
+
+Our editor must assign meaning to those bytes.
+
+Keeping these two responsibilities separate leads to cleaner software architecture and makes it easier to support different terminals, keyboard layouts, and future features.
+
+</Aside>

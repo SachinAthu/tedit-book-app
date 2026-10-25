@@ -1,0 +1,242 @@
+---
+title: 5.1 The Problem with Standard Terminal Input
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+At first glance, reading keyboard input in a C program seems straightforward. The C standard library provides functions such as `getchar()`, `fgets()`, and `scanf()`, making it appear as though your program simply waits for the user to type something.
+
+For many programs, this mental model is sufficient.
+
+```
+Keyboard
+
+↓
+
+Program
+
+↓
+
+Process Input
+```
+
+However, this is not what actually happens.
+
+Between the keyboard and your program is another important component: the **terminal**. As we learned in Chapter 3, the terminal is not merely a window that displays text. It is an active participant in the communication between the user and the application. Before your program receives any input, the terminal has already processed it.
+
+Understanding this hidden layer is essential because it explains why a newly written text editor behaves very differently from what you might expect.
+
+## A Simple Experiment
+
+Consider the following program:
+
+```c
+#include <stdio.h>
+
+int main(void)
+{
+    int ch;
+
+    while ((ch = getchar()) != EOF)
+    {
+        printf("Received: %c\n", ch);
+    }
+
+    return 0;
+}
+```
+
+Suppose you run it from a terminal.
+
+```
+$ ./input_demo
+```
+
+Now type the word:
+
+```
+hello
+```
+
+As you press each key, nothing happens.
+
+Even after typing the final **o**, the program still produces no output.
+
+Only when you press **Enter** does the screen suddenly display:
+
+```
+Received: h
+Received: e
+Received: l
+Received: l
+Received: o
+Received:
+```
+
+Notice something interesting.
+
+The program prints one character at a time, yet it did not receive those characters one at a time. Instead, it received the entire line only after the Enter key was pressed.
+
+This behavior often surprises beginners because the program appears to be reading individual characters, while in reality it is receiving them only after the terminal has finished processing the entire line.
+
+## Where Did the Characters Go?
+
+If the program did not receive the characters immediately, where were they?
+
+The answer is that the terminal temporarily stored them in an internal **line buffer**.
+
+As each key was pressed, the terminal accepted the input, displayed it on the screen, allowed the user to edit mistakes with Backspace, and continued collecting characters.
+
+Only when Enter was pressed did the terminal send the completed line to the program.
+
+The flow looks like this:
+
+```text
+Keyboard
+
+↓
+
+Terminal Driver
+
+↓
+
+Line Buffer
+
+↓
+
+Press Enter
+
+↓
+
+Program
+```
+
+The program never saw the intermediate key presses.
+
+From its perspective, all the characters arrived together.
+
+## The Terminal Is Doing More Than You Think
+
+This example reveals an important fact:
+
+> The terminal is actively processing keyboard input before your program ever sees it.
+
+While the user is typing, the terminal is performing several tasks automatically.
+
+- Collecting characters into a line buffer.
+- Displaying typed characters on the screen.
+- Allowing simple line editing with Backspace.
+- Waiting until Enter is pressed.
+- Delivering the completed line to the application.
+
+These features make interactive command-line programs pleasant to use because application developers do not have to implement them themselves.
+
+For example, when using a shell, you naturally expect to type an entire command before it is executed.
+
+```
+$ ls -l /home/user
+```
+
+You can correct typing mistakes, insert Backspaces, and review the command before pressing Enter. The shell only receives the command once you have finished editing it.
+
+Without this behavior, every key press would immediately reach the shell, making normal command-line interaction extremely difficult.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+It is easy to assume that functions like `getchar()` are waiting directly for keyboard events.
+
+In reality, they are usually reading from the terminal's input stream, which has already been processed by the operating system's terminal driver.
+
+The terminal acts as an intermediary, deciding **when** data should be delivered and **what** that data should look like.
+
+</Aside>
+
+## Why This Is a Problem for a Text Editor
+
+The default terminal behavior is excellent for shells, but it creates serious problems for a text editor.
+
+Imagine you are editing a document and press the Left Arrow key.
+
+What should happen?
+
+You expect the cursor to move immediately.
+
+Similarly, when you press:
+
+- Backspace
+- Delete
+- Tab
+- Escape
+- Ctrl+S
+- Ctrl+Q
+
+the editor should respond instantly.
+
+Waiting until the user presses Enter would make the editor unusable.
+
+Consider typing a single sentence.
+
+```
+Hello, World!
+```
+
+If the editor only received the input after Enter was pressed, none of the characters would appear while you were typing. The cursor would not move, shortcuts would not work, and navigation keys would become useless until the line was submitted.
+
+That is clearly not how modern text editors behave.
+
+Instead, editors must react to **every individual key press** as soon as it occurs.
+
+Their desired input flow looks like this:
+
+```text
+Keyboard
+
+↓
+
+Editor
+
+↓
+
+Immediate Response
+```
+
+Achieving this requires bypassing the terminal's normal line-processing behavior.
+
+Instead of allowing the terminal to buffer, edit, and echo input, the editor must take responsibility for these tasks itself.
+
+## A Shift in Responsibility
+
+This represents one of the most important architectural changes in the entire book.
+
+In the default terminal configuration:
+
+```text
+Terminal
+├── Collects input
+├── Edits input
+├── Echoes characters
+└── Delivers complete lines
+```
+
+In a text editor:
+
+```text
+Editor
+├── Reads every key
+├── Updates the document
+├── Moves the cursor
+├── Draws the screen
+└── Implements shortcuts
+```
+
+The responsibilities move from the terminal to the application.
+
+This shift gives the editor complete control over the user experience, but it also means the editor must implement functionality that the terminal previously provided for free.
+
+## Summary
+
+Standard terminal input is designed for command-line applications, not interactive editors. Before your program receives any input, the terminal buffers characters, echoes them to the screen, supports basic line editing, and waits until the Enter key is pressed before delivering the completed line.
+
+For a text editor, this behavior is unacceptable because every key press must be processed immediately. To achieve that level of responsiveness, we must disable the terminal's default input processing and take control ourselves.
+
+In the next section, we will examine the mechanism responsible for this default behavior by exploring **canonical mode**, the terminal's standard operating mode for interactive programs.

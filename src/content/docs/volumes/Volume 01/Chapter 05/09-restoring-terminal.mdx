@@ -1,0 +1,410 @@
+---
+title: 5.9 Restoring the Terminal
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+By now, we have seen how raw mode transforms the terminal.
+
+Instead of buffering input, echoing characters, and generating signals automatically, the terminal becomes a simple conduit that forwards keyboard input directly to the application.
+
+This gives our editor complete control over the user experience.
+
+However, this control comes with an equally important responsibility.
+
+> **When the editor finishes, it must leave the terminal exactly as it found it.**
+
+Failing to do so is one of the most common mistakes made by beginners learning terminal programming.
+
+A program that enables raw mode but forgets to restore the original terminal settings leaves the user's terminal in an unusable state.
+
+For this reason, restoring the terminal is not simply good practice—it is an essential part of every well-behaved terminal application.
+
+## What Happens If We Forget?
+
+Imagine a program that enables raw mode and then exits without restoring the terminal configuration.
+
+The program itself is gone.
+
+However, the terminal is still configured for raw mode.
+
+The next program started in that terminal inherits those settings.
+
+Suppose the user returns to the shell.
+
+Instead of seeing the familiar prompt:
+
+```text
+$
+```
+
+they begin typing.
+
+Nothing appears.
+
+Backspace no longer edits the command line.
+
+Pressing Enter behaves strangely.
+
+Arrow keys stop working as expected.
+
+The terminal now behaves more like this:
+
+```text
+No echo
+
+No line editing
+
+Raw keyboard input
+```
+
+The shell itself is not broken.
+
+The terminal configuration is.
+
+## A Broken User Experience
+
+Imagine this sequence of events.
+
+```bash
+$ ./editor
+
+(Editor crashes)
+
+$
+
+User types:
+
+ls
+```
+
+The user expects to see:
+
+```bash
+$ ls
+```
+
+Instead:
+
+```bash
+$
+```
+
+Nothing appears while typing because echo is still disabled.
+
+The user presses Backspace.
+
+Nothing happens because line editing is disabled.
+
+Pressing Ctrl+C may no longer interrupt the current command because signal generation has also been disabled.
+
+The shell suddenly feels broken, even though it is behaving exactly as instructed by the terminal's current configuration.
+
+## The Terminal Remembers Its State
+
+An important point is that **terminal settings belong to the terminal**, not to the application.
+
+When our editor modifies those settings, it is changing the configuration of a shared resource.
+
+The editor may terminate, but the terminal continues running.
+
+Conceptually:
+
+```text
+Terminal
+
+↓
+
+Configuration
+
+↓
+
+Application Starts
+
+↓
+
+Application Changes Settings
+
+↓
+
+Application Exits
+
+↓
+
+Configuration Remains
+```
+
+The operating system does not automatically restore the previous settings when a process exits.
+
+That responsibility belongs to the application.
+
+## Saving the Original Configuration
+
+Before changing anything, a well-designed editor first asks the operating system for the current terminal configuration.
+
+It stores a copy of these settings somewhere safe.
+
+Only then does it modify the terminal.
+
+The sequence is:
+
+```text
+Original Settings
+
+↓
+
+Save Copy
+
+↓
+
+Enable Raw Mode
+
+↓
+
+Run Editor
+
+↓
+
+Restore Original Settings
+```
+
+The saved copy acts as a snapshot.
+
+Instead of trying to reconstruct the original configuration manually, the editor simply restores the exact settings that existed before it started.
+
+This approach is both simpler and more reliable.
+
+## Why Not Create New Settings from Scratch?
+
+You might wonder why we cannot simply create a fresh `termios` structure containing the settings we want.
+
+The problem is that different systems have different default configurations.
+
+For example:
+
+- Linux distributions may enable different terminal features.
+- macOS may use different defaults.
+- Remote terminals may have custom configurations.
+- Users may intentionally customize their terminal settings.
+
+If the editor replaced everything with its own assumptions, it could accidentally overwrite important platform-specific or user-specific settings.
+
+Saving the original configuration avoids this problem entirely.
+
+Whatever settings existed before the editor started will be restored exactly.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+This approach follows an important systems programming principle:
+
+> **Preserve existing state whenever possible.**
+
+Instead of creating new configurations from scratch, modify only what you need and restore the original state afterward.
+
+This minimizes unintended side effects and makes software more portable across different systems.
+
+</Aside>
+
+## Normal Program Termination
+
+The simplest situation occurs when the editor exits normally.
+
+For example, the user presses:
+
+```text
+Ctrl+Q
+```
+
+The editor performs its shutdown sequence.
+
+```text
+Save work (if necessary)
+
+↓
+
+Restore terminal settings
+
+↓
+
+Exit process
+```
+
+By the time control returns to the shell, the terminal behaves exactly as it did before the editor was launched.
+
+The user never notices that the terminal was temporarily placed into raw mode.
+
+## Unexpected Termination
+
+Unfortunately, programs do not always exit cleanly.
+
+They may terminate because of:
+
+- a programming bug,
+- an unexpected error,
+- an assertion failure,
+- a segmentation fault,
+- an interrupt signal.
+
+For example:
+
+```text
+Enable Raw Mode
+
+↓
+
+Unexpected Crash
+
+↓
+
+Program Terminates
+```
+
+If nothing else happens, the terminal remains in raw mode.
+
+The next shell prompt appears with:
+
+```text
+No echo
+
+No line editing
+
+Broken shell
+```
+
+This is an unpleasant experience for users and can make debugging even more frustrating.
+
+## Cleaning Up During Errors
+
+Professional terminal applications therefore try to restore the terminal even when something goes wrong.
+
+Conceptually:
+
+```text
+Program Starts
+
+↓
+
+Save Original Settings
+
+↓
+
+Enable Raw Mode
+
+↓
+
+Run Application
+
+↓
+
+Unexpected Error
+
+↓
+
+Cleanup
+
+↓
+
+Restore Terminal
+
+↓
+
+Exit
+```
+
+This cleanup step is just as important as the application's main functionality.
+
+A program that leaves the user's terminal unusable is considered poorly behaved, regardless of how well the rest of the application works.
+
+## The Role of Cleanup Functions
+
+Many applications centralize this responsibility in a dedicated cleanup routine.
+
+Instead of restoring the terminal in many different places, they create a single function responsible for returning the terminal to its original state.
+
+Every exit path eventually calls that cleanup function.
+
+Conceptually:
+
+```text
+Normal Exit
+
+──────┐
+      │
+Error │
+Exit  │
+      ▼
+
+Cleanup
+
+↓
+
+Restore Terminal
+
+↓
+
+Exit Process
+```
+
+Centralizing cleanup reduces duplication and makes it much less likely that an exit path will accidentally leave the terminal configured for raw mode.
+
+## Restoring More Than Terminal Settings
+
+Restoring the terminal is one example of a broader engineering principle.
+
+Whenever a program acquires or modifies a resource, it should release or restore that resource before exiting.
+
+Examples include:
+
+- closing open files,
+- releasing allocated memory,
+- unlocking mutexes,
+- closing network connections,
+- restoring terminal settings.
+
+Good software leaves the system in a consistent state regardless of whether it succeeds or fails.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Experienced systems programmers often think of cleanup **before** writing the main functionality.
+
+Whenever you ask:
+
+> "How do I acquire this resource?"
+
+you should immediately ask:
+
+> "How will I release or restore it?"
+
+This mindset leads to software that is more reliable, easier to debug, and more respectful of the user's environment.
+
+</Aside>
+
+## Can the Terminal Be Recovered?
+
+If a program does leave the terminal in raw mode, the situation is usually recoverable.
+
+On Unix-like systems, users often restore the terminal manually using commands such as:
+
+```bash
+reset
+```
+
+or
+
+```bash
+stty sane
+```
+
+These commands reinitialize the terminal and restore sensible default settings.
+
+However, users should rarely need to do this.
+
+A properly written editor should always restore the terminal itself, making manual recovery unnecessary.
+
+## Summary
+
+Enabling raw mode changes the configuration of the terminal itself, not just the behavior of the running application. If a program exits without restoring the original settings, those changes remain in effect, leaving the user's shell without echo, line editing, and other expected features.
+
+To prevent this, editors save the terminal's original configuration before enabling raw mode and restore it before exiting. They also attempt to perform this cleanup during unexpected termination whenever possible. This approach preserves the user's environment and reflects a fundamental principle of systems programming: **leave shared resources exactly as you found them**.
+
+In the next section, we will look beyond the mechanics of raw mode and discuss the broader engineering considerations involved in taking control of the terminal, including why raw mode should always be used carefully and only for as long as necessary.

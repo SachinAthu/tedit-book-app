@@ -1,0 +1,306 @@
+---
+title: 5.4 The `termios` Interface
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we established that a text editor requires complete control over keyboard input. Instead of waiting for the terminal to deliver an entire line of text, the editor must receive every key press immediately.
+
+This raises an important question:
+
+> **How can a program change the terminal's behavior?**
+
+The answer lies in a POSIX interface called **`termios`**.
+
+The `termios` interface allows applications to inspect and modify the operating system's terminal settings. Through it, a program can enable or disable features such as canonical mode, character echoing, signal generation, and many other aspects of terminal behavior.
+
+Almost every interactive terminal application—including editors, shells, pagers, debuggers, and terminal-based user interfaces—uses `termios` to configure the terminal before interacting with the user.
+
+## The Terminal Has Configuration Settings
+
+It is tempting to think of the terminal as behaving the same way all the time.
+
+In reality, the terminal has a collection of configurable settings that determine how it processes input and output.
+
+These settings answer questions such as:
+
+- Should input be line-buffered?
+- Should typed characters be echoed?
+- Should Ctrl+C terminate the program?
+- Should carriage returns be translated?
+- Should output be processed before being displayed?
+
+Rather than hard-coding these behaviors, Unix stores them as configurable options.
+
+Your program can temporarily modify them while it is running.
+
+## Where Are These Settings Stored?
+
+From the application's perspective, terminal settings are represented by a data structure named `termios`.
+
+Conceptually, the relationship looks like this:
+
+```text
+Application
+
+↓
+
+termios Structure
+
+↓
+
+Operating System
+
+↓
+
+Terminal Driver
+
+↓
+
+Terminal
+```
+
+Your program does not directly manipulate the terminal hardware or the terminal emulator.
+
+Instead, it requests changes through the operating system, which updates the terminal driver's configuration.
+
+## The `termios` Structure
+
+POSIX defines a structure named:
+
+```c
+struct termios
+```
+
+Although the actual definition contains several fields and implementation-specific details, it can be thought of conceptually as a collection of configuration categories.
+
+```text
+struct termios
+
+├── Input Flags
+├── Output Flags
+├── Control Flags
+├── Local Flags
+└── Control Characters
+```
+
+Each category controls a different aspect of terminal behavior.
+
+At this stage, it is more important to understand **what these categories represent** than to memorize individual fields.
+
+We will examine the commonly used options later in this chapter.
+
+## Input Flags
+
+Input flags determine how incoming bytes from the keyboard are processed before reaching the application.
+
+For example, they can control whether:
+
+- certain characters are translated,
+- software flow control is enabled,
+- carriage returns are converted into newlines,
+- various input-processing features are active.
+
+Conceptually:
+
+```text
+Keyboard
+
+↓
+
+Input Processing
+
+↓
+
+Application
+```
+
+These flags affect the path from the keyboard to your program.
+
+## Output Flags
+
+Output flags influence how data written by the application is processed before being displayed by the terminal.
+
+For example, the terminal may automatically perform certain character translations when output is sent to the screen.
+
+The path looks like:
+
+```text
+Application
+
+↓
+
+Output Processing
+
+↓
+
+Terminal Display
+```
+
+Although our editor primarily focuses on input, output processing also plays an important role in terminal behavior.
+
+## Control Flags
+
+Control flags configure characteristics of the terminal device itself.
+
+Historically, these settings controlled hardware communication parameters such as character size and transmission behavior.
+
+Modern terminal emulators rarely require applications to modify these options directly, but they remain part of the POSIX interface for compatibility.
+
+## Local Flags
+
+Local flags control many of the interactive behaviors users experience while typing.
+
+These include features such as:
+
+- canonical mode,
+- character echo,
+- signal generation,
+- extended input processing.
+
+Most of the settings that distinguish canonical mode from raw mode belong to this category.
+
+Conceptually:
+
+```text
+Keyboard
+
+↓
+
+Local Processing
+
+├── Echo?
+├── Buffer Input?
+├── Generate Signals?
+
+↓
+
+Application
+```
+
+When we enable raw mode, many of these local processing features will be disabled.
+
+## Control Characters
+
+The `termios` structure also contains a collection of special control characters.
+
+These define which keyboard keys perform particular functions.
+
+Examples include characters used for:
+
+- interrupting a program,
+- suspending execution,
+- erasing input,
+- signaling end-of-file.
+
+Rather than being fixed forever, these keys are configurable.
+
+Although most systems use familiar defaults such as Ctrl+C for interruption, POSIX allows them to be changed if necessary.
+
+## Reading the Current Configuration
+
+Before changing terminal behavior, an application first asks the operating system for the terminal's current configuration.
+
+Conceptually:
+
+```text
+Current Terminal Settings
+
+↓
+
+Copy into
+
+struct termios
+
+↓
+
+Application
+```
+
+The application now has a copy of the existing settings.
+
+It can modify this copy without affecting the terminal immediately.
+
+## Applying New Settings
+
+Once the desired changes have been made, the modified configuration is sent back to the operating system.
+
+```text
+Application
+
+↓
+
+Modified termios
+
+↓
+
+Operating System
+
+↓
+
+Terminal Driver Updated
+```
+
+From that point onward, the terminal begins behaving according to the new configuration.
+
+For a text editor, this usually means disabling canonical mode, turning off echo, and modifying several other processing options.
+
+## Why Save the Original Settings?
+
+A text editor should never assume it owns the terminal permanently.
+
+When the program starts, the terminal already has a configuration chosen by the user's environment.
+
+The editor should preserve those settings before making any changes.
+
+The typical sequence is:
+
+```text
+Read Current Settings
+
+↓
+
+Save a Copy
+
+↓
+
+Modify the Copy
+
+↓
+
+Enable Raw Mode
+
+↓
+
+Run Editor
+
+↓
+
+Restore Original Settings
+```
+
+This ensures that when the editor exits, the terminal behaves exactly as it did before the program started.
+
+Failing to restore the original settings can leave the user's terminal in an unusable state, forcing them to manually reset it.
+
+This is one of the most important responsibilities of any terminal application.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Notice that applications rarely build a new `termios` structure from scratch.
+
+Instead, they begin with the terminal's existing configuration, modify only the options they need to change, and leave everything else untouched.
+
+This approach preserves platform-specific defaults and avoids unintentionally changing unrelated terminal behavior.
+
+It also makes applications more portable across different Unix-like systems.
+
+</Aside>
+
+## Summary
+
+The `termios` interface provides a standardized way for applications to configure terminal behavior. Rather than interacting directly with the terminal emulator, programs modify a `termios` structure and ask the operating system to apply the updated configuration.
+
+The structure organizes terminal settings into categories such as input flags, output flags, control flags, local flags, and control characters. Most of the changes required for a text editor involve modifying these settings to disable the terminal's default input processing.
+
+In the next section, we will examine one of the most important behaviors controlled by `termios`: **line buffering**, and see exactly how enabling raw mode changes the flow of keyboard input.

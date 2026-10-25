@@ -1,0 +1,18 @@
+---
+title: 5.12 Conclusion
+---
+
+By default, the terminal processes keyboard input before any program receives it. This behavior, known as canonical mode, provides conveniences such as line buffering, character echo, and signal generation — features that serve shells well but prevent a text editor from responding to individual key presses. To gain full control, editors use the `termios` interface to enable raw mode, which disables these default behaviors and delivers each key press directly to the application. Shifting from canonical to raw mode is not merely a configuration change; it transfers responsibility for input handling and screen rendering from the terminal to the program. With that control comes an obligation to save the original terminal settings before entering raw mode and restore them before exiting, ensuring the user's environment remains intact regardless of how the application terminates.
+
+## Exercises
+
+1. Explain why canonical mode is useful for command-line programs but unsuitable for text editors.
+2. Describe the difference between line-buffered input and character-by-character input.
+3. Why is echo disabled in raw mode?
+4. What happens when Ctrl+C is pressed in canonical mode versus raw mode?
+5. Why should an editor always restore the original terminal settings before exiting?
+6. Draw a diagram showing the flow of keyboard input in both canonical mode and raw mode.
+
+## Preview of the Next Chapter
+
+Chapter 6 shifts focus from _receiving_ keyboard input to _understanding_ it. Now that raw mode delivers every byte to our editor without preprocessing, each key press arrives as one or more bytes that the application must interpret. We will explore how keyboards encode input — from simple ASCII characters to multi-byte escape sequences for arrow keys, function keys, and control shortcuts — and how the editor's Input Parser translates raw bytes into meaningful Editor Commands.
