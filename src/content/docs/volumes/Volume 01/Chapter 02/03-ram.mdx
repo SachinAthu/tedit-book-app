@@ -1,6 +1,9 @@
-﻿---
+---
 title: 2.3 Main Memory (RAM)
 ---
+
+import { Aside } from '@astrojs/starlight/components';
+
 
 Imagine opening a 200-page text document in a text editor.
 
@@ -224,7 +227,7 @@ Almost every modern text editor—from Nano to Visual Studio Code—follows this
 
 Although the internal data structures differ, the fundamental idea remains the same: **edit the document in memory, then write the updated version to permanent storage when saving.**
 
-## Engineering Insight
+<Aside type="tip" title="Engineering Insights" icon="rocket">
 
 A beginner's instinct is often to imagine that a text editor changes the file directly.
 
@@ -235,6 +238,8 @@ Instead, applications almost always load data into memory, perform all modificat
 This pattern appears in many kinds of software beyond text editors. Image editors, spreadsheet applications, and database management systems all use memory as a workspace before committing changes to permanent storage.
 
 Understanding this design principle will help explain many architectural decisions throughout this book.
+
+</Aside>
 
 ## Common Mistakes
 

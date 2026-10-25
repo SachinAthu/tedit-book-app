@@ -1,6 +1,9 @@
-﻿---
+---
 title: 2.1 The Journey of a Character
 ---
+
+import { Aside } from '@astrojs/starlight/components';
+
 
 Imagine the following line of C code:
 
@@ -242,7 +245,7 @@ Instead, each layer specializes in one responsibility and passes the work to the
 
 This layered design makes computer systems easier to build, maintain, and extend.
 
-## Engineering Insight
+<Aside type="tip" title="Engineering Insights" icon="rocket">
 
 A common misconception is that terminal applications draw directly onto the screen.
 
@@ -251,6 +254,8 @@ They do not.
 A terminal application merely produces a stream of bytes. Another program—the terminal emulator—is responsible for interpreting those bytes and rendering them as visible text.
 
 This distinction is the reason why the same text editor can run inside GNOME Terminal, Windows Terminal, Kitty, Alacritty, or many other terminal emulators without changing its source code.
+
+</Aside>
 
 ## Common Mistakes
 

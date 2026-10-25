@@ -1,6 +1,9 @@
-﻿---
+---
 title: 2.11 Following One Character
 ---
+
+import { Aside } from '@astrojs/starlight/components';
+
 
 Throughout this chapter, we have examined many individual components of a terminal-based application.
 
@@ -401,11 +404,13 @@ Because every layer has a clearly defined responsibility, each component can be 
 
 This separation of concerns is one of the most powerful architectural principles in software engineering, and it appears repeatedly throughout the design of operating systems.
 
-## Engineering Insight
+<Aside type="tip" title="Engineering Insights" icon="rocket">
 
 One of the remarkable aspects of modern computing is how many independent technologies cooperate to display a single character. The C Standard Library, the operating system kernel, terminal protocols, font engines, graphics APIs, GPU drivers, and display hardware are often developed by entirely different organizations. They interoperate successfully because they communicate through standardized interfaces rather than relying on knowledge of each other's internal implementations.
 
 This principle—building complex systems from loosely coupled components—is a recurring theme throughout this book and professional software engineering in general.
+
+</Aside>
 
 ## Common Mistakes
 

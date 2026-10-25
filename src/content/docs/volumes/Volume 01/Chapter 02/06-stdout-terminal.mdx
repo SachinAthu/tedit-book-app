@@ -1,6 +1,9 @@
-﻿---
+---
 title: 2.6 From `stdout` to the Terminal
 ---
+
+import { Aside } from '@astrojs/starlight/components';
+
 
 In the previous section, we learned that `stdout` is the standard output stream through which a program sends textual output. However, a question remains unanswered:
 
@@ -310,7 +313,7 @@ No single component performs the entire job.
 
 This layered design makes the system easier to maintain, extend, and replace.
 
-## Engineering Insight
+<Aside type="tip" title="Engineering Insights" icon="rocket">
 
 A well-designed program communicates through standard streams rather than interacting directly with hardware.
 
@@ -326,6 +329,8 @@ Because the destination of `stdout` is determined by the operating system rather
 without requiring any changes to its source code.
 
 This philosophy—writing to an abstract stream instead of a specific device—is one of the fundamental design principles behind Unix and POSIX systems.
+
+</Aside>
 
 ## Common Mistakes
 

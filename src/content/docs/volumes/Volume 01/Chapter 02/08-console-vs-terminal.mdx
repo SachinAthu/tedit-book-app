@@ -1,6 +1,9 @@
-﻿---
+---
 title: 2.8 Console vs Terminal
 ---
+
+import { Aside } from '@astrojs/starlight/components';
+
 
 As you read books, documentation, or online discussions about command-line programming, you will frequently encounter the words **console** and **terminal**.
 
@@ -129,13 +132,15 @@ When discussing concepts that apply generally to text-based interaction—such a
 
 Maintaining this distinction helps avoid confusion as we explore more advanced topics such as TTYs, PTYs, and terminal sessions in the next chapter.
 
-## Engineering Insight
+<Aside type="tip" title="Engineering Insights" icon="rocket">
 
 Precise terminology becomes increasingly valuable as systems grow more complex.
 
 In everyday conversation, using _console_ and _terminal_ interchangeably rarely causes problems. However, when reading operating system documentation or debugging low-level software, understanding whether a discussion refers to physical hardware, a virtual console, or a terminal emulator can make technical explanations much easier to follow.
 
 For this reason, professional systems programmers tend to use the more specific term whenever the distinction matters.
+
+</Aside>
 
 ## Common Mistakes
 

@@ -1,6 +1,9 @@
-﻿---
+---
 title: 2.5 Standard Input and Standard Output
 ---
+
+import { Aside } from '@astrojs/starlight/components';
+
 
 Imagine writing the following program:
 
@@ -351,7 +354,7 @@ This consistent interface greatly simplifies software development.
 
 Instead of learning different APIs for every possible input and output device, programmers work with the same abstraction.
 
-## Engineering Insight
+<Aside type="tip" title="Engineering Insights" icon="rocket">
 
 The concepts of `stdin` and `stdout` are examples of **abstraction**.
 
@@ -362,6 +365,8 @@ Instead, it communicates through standard interfaces provided by the operating s
 This separation allows software to remain portable across different hardware and operating systems.
 
 As you'll see throughout this book, abstraction is one of the most powerful ideas in software engineering. By hiding unnecessary details behind well-defined interfaces, complex systems become easier to understand, maintain, and extend.
+
+</Aside>
 
 ## Common Mistakes
 

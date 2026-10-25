@@ -1,6 +1,9 @@
-﻿---
+---
 title: 2.2 The CPU
 ---
+
+import { Aside } from '@astrojs/starlight/components';
+
 
 Every computer program, from the simplest "Hello, World!" application to a modern operating system, ultimately depends on one physical component to execute its instructions: the **Central Processing Unit (CPU)**.
 
@@ -247,7 +250,7 @@ This sequence may involve thousands of machine instructions, yet it happens so q
 
 Understanding that the CPU is executing instructions—not "running the editor" as a single operation—helps explain why performance, algorithms, and data structures become important as software grows in complexity.
 
-## Engineering Insight
+<Aside type="tip" title="Engineering Insights" icon="rocket">
 
 A common misconception is that the CPU "runs a function."
 
@@ -256,6 +259,8 @@ In reality, the CPU has no concept of functions, variables, loops, or objects. T
 At the hardware level, the CPU executes one machine instruction at a time. Features such as functions, recursion, and loops are implemented by carefully arranging these instructions and manipulating the Program Counter.
 
 Recognizing the difference between **language abstractions** and **hardware reality** is one of the first steps toward becoming a systems programmer.
+
+</Aside>
 
 ## Common Mistakes
 

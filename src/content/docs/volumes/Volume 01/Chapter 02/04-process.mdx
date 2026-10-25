@@ -1,6 +1,9 @@
-﻿---
+---
 title: 2.4 Processes
 ---
+
+import { Aside } from '@astrojs/starlight/components';
+
 
 So far in this chapter, we have learned about two fundamental components of a computer system.
 
@@ -281,7 +284,7 @@ When the process terminates, the operating system releases its memory, closes it
 
 If the program is launched again later, an entirely new process is created.
 
-## Engineering Insight
+<Aside type="tip" title="Engineering Insights" icon="rocket">
 
 A common beginner misconception is to think of an application and a process as the same thing.
 
@@ -292,6 +295,8 @@ The executable file stored on disk is passive. It contains instructions but perf
 The process is the active execution of those instructions. It owns memory, open files, CPU state, and every other resource required while the program is running.
 
 This distinction explains why you can launch multiple independent copies of the same application without them interfering with each other.
+
+</Aside>
 
 ## Common Mistakes
 

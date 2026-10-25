@@ -1,6 +1,9 @@
-﻿---
+---
 title: 2.10 Character Encoding
 ---
+
+import { Aside } from '@astrojs/starlight/components';
+
 
 In the previous section, we learned how a terminal emulator displays characters using fonts, glyphs, and a character grid.
 
@@ -268,13 +271,15 @@ For this reason, professional text editors are designed with modern character en
 
 We will return to this topic in greater depth when discussing text storage and cursor movement later in the book.
 
-## Engineering Insight
+<Aside type="tip" title="Engineering Insights" icon="rocket">
 
 One of UTF-8's greatest strengths is that it balanced innovation with compatibility.
 
 Instead of replacing ASCII entirely, UTF-8 preserved every existing ASCII byte exactly as it was. This design allowed operating systems, programming languages, and applications to adopt Unicode support incrementally while continuing to work correctly with older software and documents.
 
 This careful attention to backward compatibility is one reason UTF-8 became the dominant text encoding worldwide.
+
+</Aside>
 
 ## Common Mistakes
 

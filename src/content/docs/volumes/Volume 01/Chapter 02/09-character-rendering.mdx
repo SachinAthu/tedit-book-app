@@ -1,6 +1,9 @@
-﻿---
+---
 title: 2.9 Character Rendering
 ---
+
+import { Aside } from '@astrojs/starlight/components';
+
 
 So far, we have followed a character from our program to the terminal emulator.
 
@@ -288,13 +291,15 @@ When the document changes, the renderer will determine which character should ap
 
 Everything—from the status bar to the cursor and the document itself—will ultimately be represented as characters placed into this grid.
 
-## Engineering Insight
+<Aside type="tip" title="Engineering Insights" icon="rocket">
 
 The character grid is one of the reasons terminal applications remain remarkably efficient.
 
 Instead of manipulating millions of individual pixels, terminal programs work with a comparatively small number of character cells. An 80×24 terminal, for example, contains only 1,920 cells. Updating the contents of these cells requires significantly less work than redrawing an entire graphical interface pixel by pixel.
 
 This abstraction allows terminal applications to remain lightweight while still providing responsive interactive interfaces.
+
+</Aside>
 
 ## Common Mistakes
 
