@@ -1,0 +1,37 @@
+---
+title: 8.12 Conclusion
+---
+
+This chapter introduced the **system architecture** of our terminal text editor — the high-level design that transforms the Software Requirements Specification into a concrete, workable structure.
+
+We defined architecture as the blueprint that identifies components, responsibilities, and interfaces. We bridged from Chapter 7 by mapping every requirement onto a module — the File Manager for file operations, the Cursor for navigation, and so on — and established the **architectural goals** (simplicity, readability, modularity, and educational value) that guide every subsequent decision. The high-level architecture diagram, tracing input from keyboard through the Input Handler, Input Parser, Input Engine, Command Engine, Editor State, Renderer, and File Manager, serves as the primary reference throughout the book.
+
+We examined each core component, traced data flow through concrete examples (pressing **A** and **Ctrl+S**), introduced the Editor State as the single source of truth, and defined dependency rules — the Renderer must never modify the Document directly, for example — that prevent tangled coupling.
+
+Finally, we reviewed the four **Architectural Decision Records** (ADR-001 through ADR-004) that document the major design choices behind the editor: C99, full-screen redraw, raw terminal mode, and a dedicated Input Parser. These decisions are not permanent; they were made with awareness of trade-offs and will evolve as the editor grows.
+
+With the static architecture now defined, the natural next question is: how do these components cooperate at runtime?
+
+## Exercises
+
+### Review Questions
+
+1. What is the difference between software requirements and software architecture?
+2. Why is modularity an important architectural goal?
+3. What is the purpose of the Editor State?
+4. Explain the concept of a **single source of truth**.
+5. What is the difference between **high cohesion** and **low coupling**?
+6. Why should circular dependencies be avoided?
+7. What information should an Architectural Decision Record contain?
+
+### Thought Experiments
+
+1. Suppose the Renderer was allowed to modify the document directly. What architectural problems might arise?
+2. Imagine replacing the full-screen redraw strategy with incremental rendering. Which components would likely be affected?
+3. Consider adding syntax highlighting to the editor. Which existing components would need to change, and which should remain unaffected if the architecture is properly modular?
+
+## Preview of the Next Chapter
+
+A well-designed architecture defines the components of a system, but it does not explain **when** those components execute or **how** they cooperate while the application is running.
+
+In the next chapter, we will explore the **event-driven architecture** of the editor. We will follow the application's execution from startup to shutdown, examining how the event loop processes user input, updates the Editor State, triggers rendering, and continuously responds to user interaction. By the end of the chapter, you will understand the runtime behavior that brings the static architecture introduced here to life.

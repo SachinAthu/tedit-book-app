@@ -1,0 +1,343 @@
+---
+title: 8.6 Core Components
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous sections, we examined the editor from a high-level perspective. We identified its major architectural layers and discussed how information flows through the system.
+
+We will now take a closer look at the individual components that make up the architecture.
+
+Each component exists to solve a specific problem. Rather than attempting to perform every task itself, the editor divides its functionality into specialized modules with clearly defined responsibilities.
+
+This approach follows one of the fundamental principles of software architecture:
+
+> **A component should have one primary responsibility and a well-defined purpose.**
+
+Understanding these responsibilities is more important than understanding their implementation. Throughout the remainder of the book, each of these components will eventually be implemented, but before writing code, we must first understand **why each one exists**.
+
+## Overview of the Core Components
+
+The architecture introduced in the previous section consists of several cooperating components.
+
+```text
+                 User
+                   │
+                   ▼
+              Keyboard Input
+                   │
+                   ▼
+          +------------------+
+          |  Input Handler   |
+          +------------------+
+                   │
+                   ▼
+          +------------------+
+          |   Input Parser   |
+          +------------------+
+                   │
+                   ▼
+          +------------------+
+          |   Input Engine   |
+          +------------------+
+                   │
+                   ▼
+          +------------------+
+          | Command Engine   |
+          +------------------+
+                   │
+                   ▼
+          +------------------+
+          |   Editor State   |
+          +------------------+
+             │            │
+             │            │
+             ▼            ▼
+      +-------------+  +--------------+
+      |  Renderer   |  | File Manager |
+      +-------------+  +--------------+
+             │
+             ▼
+          Terminal
+```
+
+Although these components cooperate closely, each one has a distinct responsibility.
+
+The following sections introduce each component individually.
+
+## Input Handler
+
+The **Input Handler** is responsible for communicating with the operating system to receive keyboard input.
+
+Its responsibilities include:
+
+- Reading bytes from the terminal.
+- Waiting for user input.
+- Handling low-level input operations.
+- Delivering raw input to the Input Parser.
+
+Importantly, the Input Handler does **not** attempt to understand what the input means.
+
+For example, if the user presses the **Left Arrow** key, the Input Handler simply receives a sequence of bytes.
+
+It does **not** determine that those bytes represent cursor movement.
+
+Likewise, it does not execute commands or modify the document.
+
+Its responsibility ends as soon as the raw bytes have been read.
+
+## Input Parser
+
+The terminal delivers keyboard input as a stream of bytes.
+
+Unfortunately, those bytes are not immediately useful to the editor.
+
+Some represent printable characters.
+
+Others represent control characters.
+
+Special keys such as arrow keys generate multi-byte escape sequences.
+
+The **Input Parser** converts these raw bytes into structured key events that the remainder of the editor can understand.
+
+For example:
+
+```text
+Raw Bytes
+    │
+    ▼
+'a'
+    │
+    ▼
+KEY_CHARACTER('a')
+```
+
+```text
+ESC [ A
+    │
+    ▼
+KEY_ARROW_UP
+```
+
+```text
+Ctrl + S
+    │
+    ▼
+KEY_CTRL_SAVE
+```
+
+The parser hides terminal-specific details from the rest of the application.
+
+Instead of working with raw byte sequences, higher-level components simply receive meaningful input events.
+
+This architectural decision was established earlier in **ADR-004**, which introduced a dedicated Input Parser to separate terminal protocols from editor logic.
+
+## Input Engine
+
+Once the Input Parser has produced a structured key event, the editor must decide which command that event represents. This is the responsibility of the **Input Engine**.
+
+The Input Engine receives a key event and maps it to the appropriate editor command.
+
+For example:
+
+```text
+KEY_ARROW_UP
+    │
+    ▼
+MOVE_CURSOR_UP
+```
+
+```text
+KEY_CTRL_S
+    │
+    ▼
+SAVE_DOCUMENT
+```
+
+The Input Engine does **not** read raw bytes, parse escape sequences, or modify the Document. It simply decides which command a key event represents and dispatches that command to the Command Engine.
+
+Separating the Input Engine from the Command Engine keeps keyboard bindings independent of editor behavior: a key can be remapped to a different command without changing how that command is executed. This decision is recorded as **ADR-015**, which is examined in detail in Chapter 15.
+
+## Command Engine
+
+Once the Input Engine has selected a command, that command is passed to the **Command Engine**.
+
+The Command Engine executes the command and coordinates the resulting changes to the editor's state.
+
+For example, it may:
+
+- Insert a character.
+- Delete a character.
+- Move the cursor.
+- Save the document.
+- Exit the editor.
+
+Notice that the Command Engine does not read keyboard input directly.
+
+It also does not draw the screen.
+
+Instead, it coordinates the editor's behavior by executing commands that modify the current state.
+
+It can be thought of as the decision-making component of the application.
+
+## Editor State
+
+The **Editor State** is the central repository for all information describing the current editing session.
+
+Rather than allowing each component to maintain its own copy of important data, the architecture stores this information in one shared location.
+
+The Editor State typically contains information such as:
+
+```text
+Editor State
+
+├── Document
+├── Cursor
+├── Viewport
+├── Current File
+├── Dirty Flag
+├── Screen Size
+├── Status Message
+└── Configuration
+```
+
+Every component interacts with the editor through this shared state.
+
+For example:
+
+- The Command Engine updates it.
+- The Renderer reads it.
+- The File Manager loads data into it.
+- The Cursor modifies part of it.
+
+This makes the Editor State the **single source of truth** for the entire application.
+
+## Renderer
+
+The **Renderer** is responsible for displaying the current state of the editor.
+
+Its responsibilities include:
+
+- Drawing visible lines.
+- Displaying the status bar.
+- Displaying the message bar.
+- Positioning the terminal cursor.
+- Refreshing the screen after changes.
+
+The Renderer performs **no editing operations**.
+
+It does not insert text.
+
+It does not move the cursor.
+
+It does not save files.
+
+Instead, it simply examines the current Editor State and produces a visual representation of that state.
+
+This separation ensures that rendering remains independent of editing logic.
+
+## File Manager
+
+The **File Manager** provides the editor's interface to the file system.
+
+Its responsibilities include:
+
+- Opening files.
+- Reading file contents.
+- Writing files.
+- Reporting file errors.
+
+Unlike the Renderer or Command Engine, the File Manager is not involved in most editing operations.
+
+It becomes active only when data must be transferred between memory and the file system.
+
+By isolating file operations within a dedicated component, the rest of the application remains independent of operating system file APIs.
+
+## Terminal Interface
+
+Although users interact with the editor through a terminal, the architecture keeps terminal-specific behavior isolated.
+
+The **Terminal Interface** provides the low-level communication between the editor and the terminal environment.
+
+Typical responsibilities include:
+
+- Enabling and disabling raw mode.
+- Querying terminal dimensions.
+- Writing ANSI escape sequences.
+- Managing cursor visibility.
+- Restoring the terminal when the editor exits.
+
+Because these operations depend on the underlying platform, isolating them within a dedicated component improves portability and keeps platform-specific code separate from the editor's core logic.
+
+## How the Components Work Together
+
+Although each component has a single responsibility, they are not isolated.
+
+They cooperate to accomplish the editor's overall behavior.
+
+For example, inserting a character follows this sequence:
+
+```text
+Keyboard
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Editor State
+    │
+    ▼
+Renderer
+    │
+    ▼
+Terminal
+```
+
+Notice that every component performs exactly one step before passing control to the next.
+
+No component attempts to perform another component's responsibility.
+
+This clear division of labor keeps the architecture organized and predictable.
+
+## Components Are Teams, Not Individuals
+
+One common misconception is to think of each component as a single function or source file.
+
+In practice, a component often consists of many related functions, structures, and helper routines working together to achieve a common goal.
+
+For example, the Renderer may include functions for:
+
+- Drawing text.
+- Drawing the status bar.
+- Drawing the message bar.
+- Positioning the cursor.
+- Refreshing the screen.
+
+Collectively, these functions form the **Renderer** component because they all contribute to the same architectural responsibility.
+
+Architecture defines logical responsibilities rather than prescribing the exact implementation.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+As software systems grow, the importance of clearly defined components increases. In a small project, combining several responsibilities into one module may seem convenient. However, as new features are added, such modules become difficult to understand and modify because every change risks affecting unrelated functionality.
+
+Professional software systems therefore emphasize **high cohesion**—keeping closely related functionality together—and **low coupling**—minimizing unnecessary dependencies between components. Our editor adopts these principles from the beginning, ensuring that each component has a focused purpose and interacts with others through well-defined boundaries.
+
+</Aside>
+
+## Summary
+
+The editor is composed of several specialized components, each responsible for a distinct aspect of the system. The Input Handler acquires raw keyboard input, the Input Parser converts it into meaningful events, the Input Engine maps those events to commands, the Command Engine executes those commands, the Editor State stores the application's data, the Renderer presents that state to the user, the File Manager handles persistent storage, and the Terminal Interface manages communication with the terminal.
+
+Together, these components form a modular architecture in which every part has a clear responsibility and contributes to the editor without becoming responsible for unrelated tasks.
+
+In the next section, we will trace the complete journey of a user action through these components, following the flow of data from the initial key press to the final screen update.

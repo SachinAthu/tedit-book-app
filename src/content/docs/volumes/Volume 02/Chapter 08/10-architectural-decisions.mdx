@@ -1,0 +1,272 @@
+---
+title: 8.10 Architectural Decisions
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Throughout this chapter, we have gradually built the architecture of our terminal text editor.
+
+We began by discussing what software architecture is, transformed the requirements defined in the Software Requirements Specification into architectural components, established the goals that guide our design, introduced the major components of the system, examined how data flows through the editor, defined ownership of application state, and finally explored how modules depend on one another.
+
+These topics collectively explain **how the editor is organized**.
+
+However, an architecture is more than a collection of diagrams and components.
+
+Every architecture is the result of a series of **design decisions**.
+
+Some decisions have many possible solutions.
+
+Others involve trade-offs between simplicity, performance, maintainability, and extensibility.
+
+Professional software development recognizes the importance of documenting these decisions because they explain **why the system is designed the way it is**, not merely **what the design looks like**.
+
+These documented choices are known as **Architectural Decision Records (ADRs)**.
+
+## What Is an Architectural Decision?
+
+An architectural decision is a significant design choice that has a lasting impact on the structure of a software system.
+
+Unlike implementation details, architectural decisions are not made repeatedly throughout development.
+
+Instead, they establish the foundation upon which the remainder of the project is built.
+
+Examples include:
+
+- Choosing the programming language.
+- Selecting a rendering strategy.
+- Deciding how keyboard input is processed.
+- Determining how documents are represented.
+- Defining module boundaries.
+
+Once these decisions have been made, changing them later often requires substantial modifications throughout the system.
+
+For this reason, important architectural decisions should be made deliberately and documented clearly.
+
+## Why Document Architectural Decisions?
+
+Imagine joining a software project several years after it was created.
+
+You discover that the renderer redraws the entire screen after every key press.
+
+You might naturally ask:
+
+> _Why wasn't incremental rendering used?_
+
+Or perhaps you notice that the editor stores the entire document in memory.
+
+Again, an obvious question arises:
+
+> _Why was this approach chosen?_
+
+Without documentation, future developers must guess the reasoning behind these decisions.
+
+This often leads to incorrect assumptions and unnecessary redesigns.
+
+Architectural Decision Records preserve this reasoning.
+
+Rather than documenting only **what** the architecture is, they explain:
+
+- Why the decision was made.
+- Which alternatives were considered.
+- What trade-offs were accepted.
+- When the decision should be reconsidered.
+
+This context is often more valuable than the decision itself.
+
+## Architectural Decisions in This Book
+
+Earlier chapters introduced several Architectural Decision Records that define the foundation of our editor.
+
+These decisions guide every implementation presented throughout the remainder of the book.
+
+### ADR-001 — Programming Language
+
+**Decision**
+
+Implement the editor using **C (C99)**.
+
+**Reason**
+
+C provides minimal abstraction while allowing direct interaction with POSIX APIs and terminal interfaces.
+
+Readers gain a deeper understanding of systems programming because very little is hidden behind language features.
+
+This decision also aligns with one of the primary educational goals of the book: understanding the underlying mechanisms rather than relying on high-level abstractions.
+
+### ADR-002 — Rendering Strategy
+
+**Decision**
+
+Redraw the entire visible screen after each editing operation.
+
+**Reason**
+
+A full-screen redraw is considerably simpler than tracking incremental updates.
+
+Although incremental rendering can improve performance, it introduces additional complexity, including dirty region tracking and partial screen updates.
+
+For a lightweight terminal editor, a complete redraw provides an excellent balance between simplicity and performance.
+
+This decision directly supports one of the architectural goals discussed earlier in this chapter: favoring simplicity over premature optimization.
+
+### ADR-003 — Terminal Input Mode
+
+**Decision**
+
+Operate the terminal in **raw (non-canonical) mode**.
+
+**Reason**
+
+Interactive text editing requires immediate access to every key press.
+
+Canonical mode buffers input until the user presses Enter and performs automatic line editing, making it unsuitable for a text editor.
+
+The decision also requires the editor to save the terminal's original settings before enabling raw mode and restore them before exiting, ensuring the user's terminal is left in a usable state.
+
+### ADR-004 — Input Parsing Architecture
+
+**Decision**
+
+Separate raw byte processing from editor logic by introducing a dedicated **Input Parser**.
+
+**Reason**
+
+Terminal input consists of printable characters, control characters, UTF-8 sequences, and ANSI escape sequences.
+
+Allowing every part of the editor to interpret these byte streams would tightly couple the application to terminal protocols.
+
+Instead, the Input Parser translates terminal-specific input into abstract key events such as:
+
+```text
+ESC [ A
+
+↓
+
+KEY_ARROW_UP
+```
+
+Higher-level components operate entirely on these structured events, remaining independent of terminal-specific details.
+
+## Decisions Shape the Architecture
+
+Each architectural decision influences multiple parts of the system.
+
+For example, choosing raw mode affects:
+
+- The Terminal Interface
+- The Input Handler
+- The Input Parser
+
+Choosing a full-screen redraw affects:
+
+- The Renderer
+- The Event Loop
+- Performance characteristics
+
+Choosing a dedicated Input Parser affects:
+
+- Module boundaries
+- Data flow
+- Dependency structure
+
+These relationships can be visualized as follows.
+
+```text
+Architectural Decision
+
+        │
+
+        ▼
+
+Architecture
+
+        │
+
+        ▼
+
+Implementation
+
+        │
+
+        ▼
+
+Runtime Behavior
+```
+
+Notice that implementation is a consequence of architectural decisions rather than an independent activity.
+
+## Decisions Involve Trade-offs
+
+There is rarely a single "correct" architectural decision.
+
+Every choice involves advantages and disadvantages.
+
+For example, consider the rendering strategy.
+
+| Full-Screen Redraw          | Incremental Rendering                     |
+| --------------------------- | ----------------------------------------- |
+| Simpler implementation      | More complex implementation               |
+| Easier to understand        | Requires change tracking                  |
+| Excellent educational value | Better performance for large displays     |
+| Ideal for this project      | Better suited to high-performance editors |
+
+Neither approach is universally superior.
+
+The appropriate choice depends on the project's goals.
+
+Because our primary objectives are simplicity, readability, and education, the full-redraw strategy is the better architectural decision.
+
+Similarly, later volumes will examine alternative document data structures such as gap buffers, piece tables, and ropes.
+
+Each has its own strengths and weaknesses.
+
+Understanding these trade-offs is an essential part of software engineering.
+
+## Architectural Decisions Are Not Permanent
+
+An important characteristic of Architectural Decision Records is that they document decisions **at a particular point in time**.
+
+As software evolves, some decisions may eventually be revisited.
+
+For example:
+
+- A simple renderer might later be replaced by incremental rendering.
+- A vector of lines might later become a piece table.
+- A single-document editor might later support multiple open documents.
+
+When such changes occur, the architecture evolves by introducing new ADRs that explain why the previous decision is no longer appropriate.
+
+The history of these decisions provides valuable context for future developers and maintainers.
+
+## Common Mistakes
+
+When designing software architecture, beginners often make several recurring mistakes.
+
+- Combining unrelated responsibilities into a single component.
+- Allowing multiple modules to modify the same state.
+- Creating circular dependencies between components.
+- Letting platform-specific code spread throughout the application.
+- Optimizing prematurely before establishing a clear architecture.
+- Treating architectural decisions as implementation details instead of documenting the reasoning behind them.
+
+Recognizing and avoiding these mistakes leads to software that is easier to understand, maintain, and extend.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+One of the distinguishing characteristics of professional software engineering is that important design decisions are made **explicitly** rather than implicitly.
+
+Instead of allowing architecture to emerge accidentally from implementation, experienced engineers identify the significant decisions early, evaluate alternatives, document their reasoning, and communicate those decisions to the rest of the team.
+
+Architectural Decision Records are a practical way to achieve this. They transform architecture from a collection of assumptions into a documented body of engineering knowledge that can guide development for years to come.
+
+</Aside>
+
+## Summary
+
+An architecture is the product of a series of deliberate design decisions, each involving trade-offs between competing goals such as simplicity, performance, maintainability, and educational value.
+
+Architectural Decision Records preserve these choices by documenting not only what was decided, but also why it was decided, which alternatives were considered, and when the decision should be revisited.
+
+For our editor, the foundational decisions — C99 as the implementation language, full-screen redraw rendering, raw terminal mode, and a dedicated Input Parser — define the module boundaries, data flow, and dependency structure that shape every component described in this chapter.
+
+These decisions are not permanent; as the editor evolves, future ADRs will explain how and why the architecture changes. The complete **System Architecture** for our terminal text editor is provided in [Appendix J](/appendices/system-architecture/) as a single reference document.

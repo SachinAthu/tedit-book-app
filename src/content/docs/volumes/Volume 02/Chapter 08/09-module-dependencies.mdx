@@ -1,0 +1,334 @@
+---
+title: 8.9 Module Dependencies
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we introduced the concept of **state ownership**, where each piece of data has a clearly defined owner responsible for maintaining its correctness.
+
+State ownership solves one important problem: **who owns the data**.
+
+The next question is equally important:
+
+> **How are the modules allowed to communicate with one another?**
+
+This question concerns **module dependencies**.
+
+A dependency exists whenever one component relies on another component to perform its work.
+
+Managing these dependencies carefully is one of the defining characteristics of good software architecture.
+
+Poorly managed dependencies produce tightly coupled systems that become increasingly difficult to understand, modify, and extend.
+
+Well-managed dependencies create modular software in which components can evolve independently.
+
+## What Is a Dependency?
+
+A module depends on another module whenever it requires that module's services or information.
+
+For example, consider the Renderer.
+
+The Renderer cannot display the document unless it can access:
+
+- The current document
+- The cursor position
+- The viewport
+- Screen dimensions
+
+Therefore, the Renderer depends on the **Editor State**.
+
+Likewise, the File Manager cannot save a document unless it can access the current document stored in memory.
+
+Again, it depends on the Editor State.
+
+A dependency simply means:
+
+> **One module requires another module in order to perform its responsibility.**
+
+Dependencies themselves are not bad.
+
+Every non-trivial software system contains them.
+
+The challenge is ensuring that they remain **simple, predictable, and well organized**.
+
+## Why Dependencies Matter
+
+Imagine an editor where every component communicates directly with every other component.
+
+```text
+Input Handler ◄────────────► Renderer
+      ▲                         │
+      │                         ▼
+Document ◄──────────────► Cursor
+      ▲                         │
+      │                         ▼
+File Manager ◄──────────► Status Bar
+```
+
+Although this design may initially appear flexible, it quickly becomes problematic.
+
+Changing one component may require modifications to several others.
+
+Understanding the system becomes increasingly difficult because every module can potentially affect every other module.
+
+This is an example of **tight coupling**.
+
+As software grows, tightly coupled systems become expensive to maintain.
+
+## A Better Approach
+
+Instead of allowing unrestricted communication, our architecture limits dependencies.
+
+Each module communicates only with the components necessary to perform its own responsibility.
+
+The overall dependency structure is much simpler.
+
+```text
+Input Handler
+       │
+       ▼
+Input Parser
+       │
+       ▼
+Input Engine
+       │
+       ▼
+Command Engine
+       │
+       ▼
+Editor State
+   │          │
+   ▼          ▼
+Renderer   File Manager
+```
+
+Notice that communication follows a clear direction.
+
+Each module depends only on the components immediately related to its work.
+
+This predictable structure greatly improves readability.
+
+## Depending on Abstractions
+
+Another important architectural principle is that modules should depend on **responsibilities**, not implementation details.
+
+Consider the Renderer.
+
+The Renderer needs access to the document so that it can display text.
+
+However, it should not care:
+
+- How the document stores its text.
+- Which data structure is used.
+- How editing operations are implemented.
+
+The Renderer simply requests the current document and draws what it receives.
+
+Whether the document is represented as:
+
+- A vector of lines
+- A gap buffer
+- A piece table
+- A rope
+
+should not affect the Renderer.
+
+This separation allows the document implementation to evolve without requiring changes to the rendering system.
+
+Throughout later volumes, we will explore several document representations while keeping the surrounding architecture largely unchanged.
+
+## Dependency Direction
+
+One of the most important architectural rules in this book is:
+
+> **Dependencies should flow toward the core of the application.**
+
+The Core Layer contains the Editor State and the application's fundamental concepts.
+
+Higher-level components depend on this shared state.
+
+Lower-level platform components provide services but should not control application behavior.
+
+The dependency structure looks like this.
+
+```text
+Application Layer
+(Input Engine,
+ Command Engine)
+        │
+        ▼
+Core Layer
+(Editor State)
+        ▲
+        │
+Platform Layer
+(Renderer,
+File Manager,
+Input Handler)
+```
+
+Notice something important.
+
+The Renderer depends on the Editor State.
+
+The Editor State does **not** depend on the Renderer.
+
+Likewise:
+
+- The File Manager depends on the Document.
+- The Document does not depend on the File Manager.
+
+The dependency always points inward toward the core application state.
+
+## Avoiding Circular Dependencies
+
+One of the most common architectural problems is the **circular dependency**.
+
+A circular dependency occurs when two modules depend on each other.
+
+For example:
+
+```text
+Renderer
+    ▲
+    │
+    ▼
+Document
+```
+
+Now suppose:
+
+- The Renderer cannot operate without the Document.
+- The Document cannot operate without the Renderer.
+
+Neither module is independent.
+
+Changing one almost always requires changing the other.
+
+Testing becomes difficult.
+
+Maintenance becomes risky.
+
+Understanding the architecture becomes much harder.
+
+Instead, our architecture avoids this situation.
+
+```text
+Document
+
+▲
+
+Renderer
+reads
+```
+
+The Renderer depends on the Document.
+
+The Document knows nothing about the Renderer.
+
+This one-way relationship is much easier to maintain.
+
+## Examples of Dependencies in Our Editor
+
+The following table summarizes the primary dependencies between the editor's major components.
+
+| Module             | Depends On                 | Reason                                                                    |
+| ------------------ | -------------------------- | ------------------------------------------------------------------------- |
+| Input Handler      | Terminal Interface         | Reads raw keyboard input from the operating system.                       |
+| Input Parser       | Input Handler              | Interprets the raw byte stream into key events.                           |
+| Input Engine       | Input Parser, Command Engine | Maps key events to commands and dispatches them for execution.         |
+| Command Engine     | Editor State               | Executes commands and updates the application state.                      |
+| Renderer           | Editor State               | Reads the current state to generate the display.                          |
+| File Manager       | Editor State               | Reads and writes the current document during file operations.             |
+| Terminal Interface | Operating System           | Provides low-level terminal services such as raw mode and screen control. |
+
+Notice that each dependency directly supports the module's responsibility.
+
+There are no unnecessary relationships.
+
+For example:
+
+- The Renderer does not depend on the Input Handler.
+- The File Manager does not depend on the Renderer.
+- The Input Parser does not depend on the File Manager.
+
+Each module interacts only with the components it genuinely requires.
+
+## Low Coupling
+
+The architectural goal behind careful dependency management is known as **low coupling**.
+
+Coupling describes the degree to which modules depend on one another.
+
+A system with **high coupling** has many interconnected components.
+
+```text
+A ◄──► B ◄──► C
+▲      ▲      ▲
+│      │      │
+└──────┴──────┘
+```
+
+Changing one component often requires modifying several others.
+
+A system with **low coupling** minimizes unnecessary relationships.
+
+```text
+A ──► B ──► C
+```
+
+Each component performs its own work with minimal knowledge of the rest of the application.
+
+Low coupling makes software:
+
+- Easier to understand
+- Easier to test
+- Easier to debug
+- Easier to extend
+- Easier to replace
+
+Combined with the **high cohesion** introduced previously, low coupling forms one of the fundamental principles of modular software architecture.
+
+## Thinking in Terms of Responsibility
+
+When designing software, a useful question to ask is not:
+
+> _Can this module access that module?_
+
+Instead, ask:
+
+> **Should this module need to know about that module?**
+
+For example, should the Renderer know how keyboard input is processed?
+
+No.
+
+Its responsibility is displaying the current Editor State.
+
+Should the File Manager know how escape sequences are parsed?
+
+Again, no.
+
+Its responsibility is transferring data between memory and the file system.
+
+Whenever a module begins depending on unrelated parts of the system, it is often a sign that responsibilities are becoming mixed.
+
+Good architecture resists this tendency by keeping dependencies focused and intentional.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+One of the defining characteristics of maintainable software is that developers can understand a module without first understanding the entire application. This is only possible when dependencies are carefully controlled.
+
+A module with few, well-defined dependencies is easier to read, easier to test in isolation, and less likely to be affected by changes elsewhere in the system. Conversely, modules that depend on many unrelated parts of the application often become fragile because every modification has the potential to produce unexpected side effects.
+
+Professional software architecture therefore treats dependency management as a first-class design concern rather than an implementation detail.
+
+</Aside>
+
+## Summary
+
+Module dependencies define how the components of the editor communicate with one another. Rather than allowing unrestricted interaction, the architecture limits each module to the dependencies required by its specific responsibility. This produces a system with **low coupling**, where components remain focused, independent, and easier to maintain.
+
+Dependencies should always flow in a clear direction toward the application's core state, while circular dependencies are deliberately avoided. By combining well-defined responsibilities with carefully managed dependencies, the editor achieves an architecture that is modular, predictable, and scalable.
+
+In the next section, we will conclude this chapter by reviewing the major **architectural decisions** that shape the editor and explaining how these decisions influence the implementation presented throughout the remainder of the book.

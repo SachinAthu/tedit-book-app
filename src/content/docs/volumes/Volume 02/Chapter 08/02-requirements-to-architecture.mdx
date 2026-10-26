@@ -1,0 +1,224 @@
+---
+title: 8.2 From Requirements to Architecture
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In Chapter 7, we defined **what** our terminal text editor must accomplish by creating a Software Requirements Specification (SRS). The requirements describe the editor's expected behavior from the user's perspective, such as opening files, editing text, moving the cursor, and saving documents.
+
+However, the SRS deliberately avoids describing **how** these capabilities should be implemented. That responsibility belongs to the software architecture.
+
+This transition—from requirements to architecture—is one of the most important steps in software engineering. Requirements describe the destination; architecture provides the roadmap for reaching it.
+
+## Why Requirements Are Not Enough
+
+Imagine being given the following requirement:
+
+> **FR-004** – The editor shall save the current document to its associated file.
+
+The requirement tells us **what** the system must do, but it leaves many questions unanswered.
+
+- Which part of the program performs the save operation?
+- Where is the document stored before saving?
+- How does the save operation know which file to write?
+- What happens if the operation fails?
+- Should the rendering system know anything about file saving?
+
+The requirement intentionally avoids these implementation concerns. Instead, it simply establishes an expected capability.
+
+The architecture answers the remaining questions by assigning responsibilities to appropriate components.
+
+## Transforming Requirements into Components
+
+Software architecture begins by examining the requirements and identifying the logical responsibilities needed to satisfy them.
+
+For example, consider several requirements from the SRS.
+
+| Requirement                | Architectural Responsibility |
+| -------------------------- | ---------------------------- |
+| Open a file                | File Manager                 |
+| Save a file                | File Manager                 |
+| Insert characters          | Command Engine and Document  |
+| Move the cursor            | Cursor                       |
+| Display text               | Renderer                     |
+| Read keyboard input        | Input Handler                |
+| Interpret key sequences    | Input Parser                 |
+| Maintain document contents | Document                     |
+| Display status information | Renderer                     |
+
+Notice that a single component may satisfy several related requirements.
+
+For example, both opening and saving files naturally belong to the **File Manager**, while all cursor movement requirements belong to the **Cursor** component.
+
+Grouping related responsibilities together is one of the primary goals of architectural design.
+
+## From "What" to "Who"
+
+One useful way to think about architecture is to ask a simple question for every requirement:
+
+> **Who is responsible for this?**
+
+Suppose the user presses the **Left Arrow** key.
+
+The requirements tell us that the cursor should move left.
+
+Architecture asks a different question:
+
+> Which component should make that happen?
+
+The answer might look like this:
+
+```text
+Requirement
+
+Move cursor left
+
+        │
+        ▼
+
+Input Handler
+reads key press
+
+        │
+        ▼
+
+Input Parser
+identifies Left Arrow
+
+        │
+        ▼
+
+Input Engine
+maps to a move-cursor command
+
+        │
+        ▼
+
+Command Engine
+requests cursor movement
+
+        │
+        ▼
+
+Cursor
+updates its position
+
+        │
+        ▼
+
+Renderer
+updates the display
+```
+
+The requirement remains exactly the same, but architecture defines how the responsibility is divided among multiple cooperating components.
+
+## One Requirement, Multiple Components
+
+It is important to recognize that individual requirements rarely map to a single module.
+
+Consider the requirement:
+
+> The editor shall insert printable characters at the current cursor position.
+
+Although this appears to describe one operation, several components must cooperate to satisfy it.
+
+```text
+User presses 'A'
+        │
+        ▼
+Input Handler
+        │
+        ▼
+Input Parser
+        │
+        ▼
+Input Engine
+        │
+        ▼
+Command Engine
+        │
+        ▼
+Document
+        │
+        ▼
+Renderer
+```
+
+Each component performs only its own responsibility.
+
+- The **Input Handler** reads bytes from the terminal.
+- The **Input Parser** determines that the bytes represent the character `'A'`.
+- The **Input Engine** maps that key event to an insert-character command.
+- The **Command Engine** executes that command.
+- The **Document** updates the stored text.
+- The **Renderer** redraws the screen.
+
+No single component performs the entire operation.
+
+This separation of responsibilities makes the system easier to understand, test, and modify.
+
+## One Component, Many Requirements
+
+The opposite is also true.
+
+A single component often satisfies many different requirements.
+
+For example, the **Renderer** is responsible for several requirements defined in the SRS.
+
+It must:
+
+- Render the visible document.
+- Refresh the display after changes.
+- Position the terminal cursor.
+- Display the status bar.
+- Display the message bar.
+
+Rather than creating a separate module for each of these requirements, architecture groups closely related responsibilities into a single cohesive component.
+
+This principle is known as **high cohesion**—keeping related functionality together within the same module.
+
+## Architecture Is a Bridge
+
+The relationship between requirements, architecture, and implementation can be visualized as a three-stage process.
+
+```text
++------------------------------+
+| Software Requirements (SRS)  |
++------------------------------+
+              │
+              │ Defines what
+              ▼
++------------------------------+
+| System Architecture          |
++------------------------------+
+              │
+              │ Organizes how
+              ▼
++------------------------------+
+| Implementation               |
++------------------------------+
+```
+
+Each stage builds upon the previous one.
+
+- **Requirements** define the capabilities the system must provide.
+- **Architecture** organizes those capabilities into cooperating components.
+- **Implementation** turns each architectural component into working source code.
+
+Skipping the architectural stage often leads to software where responsibilities become mixed together, making future maintenance increasingly difficult.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Professional software projects rarely begin by writing code.
+
+Instead, engineers first establish the system's requirements, then design an architecture capable of satisfying those requirements, and only afterward begin implementation.
+
+This sequence reduces uncertainty, exposes design problems early, and provides a shared blueprint that guides development. Even relatively small systems benefit from this disciplined approach, as it leads to software that is easier to understand, maintain, and extend.
+
+</Aside>
+
+## Summary
+
+Software requirements describe **what** a system must do, while software architecture determines **how the responsibilities for those requirements are organized**. By examining each requirement and assigning it to one or more logical components, the architecture transforms a list of expected behaviors into a structured system design.
+
+In the next section, we will examine the design goals that influenced our architecture and explain why the editor is organized the way it is.

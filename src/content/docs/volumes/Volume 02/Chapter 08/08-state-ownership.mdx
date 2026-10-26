@@ -1,0 +1,342 @@
+---
+title: 8.8 State Ownership
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+As we have seen throughout this chapter, every component in the editor performs a specific responsibility. The Input Handler reads keyboard input, the Input Parser interprets key sequences, the Input Engine maps those events to commands, the Command Engine executes those commands, and the Renderer displays the current state of the editor.
+
+One question still remains:
+
+> **Where does the editor actually store all of its information?**
+
+The answer is the **Editor State**.
+
+However, simply having an Editor State is not enough. We must also decide **who owns each piece of information** and **which components are allowed to modify it**.
+
+This concept is known as **state ownership**, and it is one of the most important principles in software architecture.
+
+Without clear ownership, software quickly becomes difficult to understand because multiple components begin modifying the same information in different ways.
+
+## What Is State?
+
+Before discussing ownership, we must first understand what we mean by **state**.
+
+The **state** of a program is the collection of all information that describes the program at a particular moment.
+
+For our editor, that includes information such as:
+
+- The document currently being edited
+- The cursor position
+- The current filename
+- Whether the document has unsaved changes
+- The current scroll position
+- The terminal dimensions
+- Messages shown in the status bar
+
+If we paused the editor and recorded all of this information, we would have a complete description of its current state.
+
+For example:
+
+```text
+Document:
+Hello World
+
+Cursor:
+Row = 0
+Column = 5
+
+Current File:
+notes.txt
+
+Modified:
+Yes
+
+Scroll:
+Top Row = 0
+Left Column = 0
+
+Screen Size:
+80 × 24
+```
+
+If another copy of the editor contained exactly the same information, both editors would appear identical to the user.
+
+## The Editor State
+
+Rather than storing this information in many unrelated global variables, our architecture groups it into a single logical object called the **Editor State**.
+
+Conceptually, it looks something like this.
+
+```text
+Editor State
+
+├── Document
+├── Cursor
+├── Viewport
+├── Current File
+├── Dirty Flag
+├── Screen Size
+├── Status Message
+└── Configuration
+```
+
+Every major subsystem interacts with this shared state.
+
+Some components update it.
+
+Others read from it.
+
+Together, these components cooperate through the Editor State rather than communicating directly with one another.
+
+This makes the Editor State the **central source of truth** for the application.
+
+## What Is State Ownership?
+
+Having one shared state introduces an important question.
+
+If every component can freely modify every field, how do we prevent inconsistent behavior?
+
+The answer is **ownership**.
+
+A component **owns** a piece of state if it is responsible for maintaining its correctness.
+
+Ownership answers questions such as:
+
+- Who is allowed to modify this value?
+- Who ensures that it remains valid?
+- Which component is responsible when something goes wrong?
+
+For example, consider the cursor position.
+
+Although many components need to know where the cursor is located, only one component should be responsible for changing it.
+
+That component is the **Cursor** subsystem.
+
+Likewise, the document itself should only be modified through document editing operations.
+
+The Renderer may display the document, but it should never edit it.
+
+## One Owner, Many Readers
+
+One of the simplest and most effective architectural rules is:
+
+> **Each piece of state should have one owner, but many readers.**
+
+This means:
+
+- Exactly one component is responsible for modifying a particular piece of state.
+- Any number of components may read that state when necessary.
+
+For example:
+
+```text
+                Document
+                    ▲
+                    │
+             Command Engine
+                    │
+                    ▼
+             Updates Document
+
+Renderer ───────────────► Reads
+
+File Manager ───────────► Reads
+
+Status Bar ─────────────► Reads
+```
+
+Notice that several components can access the document.
+
+However, only the editing logic is responsible for changing it.
+
+This greatly reduces the chance of accidental inconsistencies.
+
+## Why Multiple Owners Cause Problems
+
+Imagine a poorly designed editor where several components are allowed to modify the cursor position.
+
+```text
+Renderer
+
+↓
+
+Cursor = 10
+
+Input Handler
+
+↓
+
+Cursor = 12
+
+Command Engine
+
+↓
+
+Cursor = 8
+```
+
+Now imagine trying to determine why the cursor suddenly appears in the wrong location.
+
+Any one of these components could have caused the problem.
+
+Debugging becomes difficult because there is no clear owner.
+
+The same problem occurs with the document itself.
+
+If the Renderer, File Manager, and Command Engine can all modify the document independently, it becomes almost impossible to predict the final state of the application.
+
+This kind of design often leads to subtle bugs that are difficult to reproduce and even harder to fix.
+
+## Ownership in Our Editor
+
+Our editor assigns ownership carefully.
+
+A simplified view is shown below.
+
+```text
+Editor State
+
+├── Document
+│     Owner:
+│     Command Engine / Document
+│
+├── Cursor
+│     Owner:
+│     Cursor
+│
+├── Viewport
+│     Owner:
+│     Command Engine
+│
+├── Current File
+│     Owner:
+│     File Manager
+│
+├── Dirty Flag
+│     Owner:
+│     Command Engine
+│
+├── Status Message
+│     Owner:
+│     Renderer
+│
+└── Screen Size
+      Owner:
+      Terminal Interface
+```
+
+Other components may read these values whenever necessary, but ownership remains clearly defined.
+
+This division of responsibility keeps the architecture organized and predictable.
+
+## State Changes Over Time
+
+The Editor State is not static.
+
+It changes continuously as the user interacts with the editor.
+
+For example, suppose the user types the letter **A**.
+
+Before:
+
+```text
+Document:
+Hell|
+
+Modified:
+No
+```
+
+After:
+
+```text
+Document:
+HellA|
+
+Modified:
+Yes
+```
+
+Only two pieces of state changed:
+
+- The document.
+- The modified flag.
+
+Everything else remained exactly the same.
+
+Likewise, pressing the **Left Arrow** changes only the cursor position.
+
+Saving the document changes only the dirty flag and possibly the status message.
+
+Good architectural design minimizes the amount of state that changes during each operation.
+
+## Components Cooperate Through State
+
+An important consequence of this design is that components rarely communicate directly.
+
+Instead, they cooperate through the Editor State.
+
+For example:
+
+```text
+Command Engine
+
+↓
+
+Updates Document
+
+↓
+
+Editor State
+
+↓
+
+Renderer Reads
+
+↓
+
+Screen Updated
+```
+
+Notice that the Command Engine never instructs the Renderer _how_ to draw the screen.
+
+It simply updates the state.
+
+The Renderer examines the latest state and determines what should be displayed.
+
+This separation keeps both components independent.
+
+## State Is the Single Source of Truth
+
+Throughout this book, we will repeatedly refer to the Editor State as the **single source of truth**.
+
+This means that whenever a component needs information about the editor, it should obtain that information from the Editor State rather than maintaining its own copy.
+
+For example, the Renderer should not maintain a separate copy of the document.
+
+The File Manager should not maintain its own cursor position.
+
+The Status Bar should not store another copy of the filename.
+
+Instead, every component reads the current values from the Editor State.
+
+This guarantees that every part of the application works with the same information.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Many software bugs are caused not by incorrect algorithms, but by **inconsistent state**.
+
+When multiple copies of the same information exist, they inevitably fall out of sync. One component updates its copy while another continues using outdated data, leading to behavior that appears random and is often difficult to diagnose.
+
+Professional software architectures avoid this problem by establishing a **single source of truth**. Each piece of state has one clearly defined owner responsible for maintaining its correctness, while all other components simply read the current value. This principle is widely used in modern user interface frameworks, databases, operating systems, and distributed systems because it keeps software predictable as it grows.
+
+</Aside>
+
+## Summary
+
+State ownership defines which component is responsible for maintaining each piece of information within the editor. By assigning a single owner to every part of the Editor State, the architecture avoids conflicting updates, reduces bugs, and makes the system easier to understand.
+
+The Editor State serves as the application's single source of truth, allowing components to cooperate through shared data rather than direct dependencies. Each subsystem is responsible only for the state it owns, while other components access that state in a read-only manner whenever they need it.
+
+In the next section, we will examine **module dependencies**, exploring how components communicate with one another and why carefully controlling those dependencies is essential for maintaining a clean and scalable architecture.

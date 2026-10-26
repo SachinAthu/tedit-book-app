@@ -1,0 +1,167 @@
+---
+title: 8.1 What Is Software Architecture?
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Before writing a single line of code, professional software engineers spend time designing the structure of the software they intend to build. This structure is known as the **software architecture**. It describes how a system is organized, how its major components interact, and how responsibilities are divided among those components.
+
+Software architecture is not concerned with the implementation details of individual functions or algorithms. Instead, it focuses on the system as a whole. It answers questions such as:
+
+- What are the major parts of the system?
+- What is the responsibility of each part?
+- How do these parts communicate?
+- What information does each part own?
+- How can the system be modified without affecting unrelated components?
+
+These decisions form the blueprint that guides the entire development process.
+
+A well-designed architecture allows developers to understand a system at a high level before becoming concerned with implementation details. This is particularly important for large software projects, where hundreds or even thousands of source files may work together to produce a single application.
+
+Although the terminal text editor developed throughout this book is relatively small, it still benefits greatly from a well-defined architecture. Organizing the editor into clearly defined modules makes the code easier to understand, test, maintain, and extend.
+
+## Architecture Versus Implementation
+
+One of the most common misconceptions among new programmers is treating software architecture and implementation as the same thing. They are closely related, but they represent different stages of software development.
+
+Architecture defines **what components exist and how they work together**. Implementation defines **how each component is built**.
+
+Consider the process of constructing a house. Before construction begins, an architect prepares a set of blueprints that define the rooms, walls, doors, plumbing, and electrical systems. These blueprints do not specify the exact sequence of hammer strikes or how each brick is laid. Those details belong to the construction process.
+
+Software development follows the same principle.
+
+```text
+Architecture
+     │
+     ▼
+Defines the structure
+
+     │
+     ▼
+Implementation
+     │
+     ▼
+Builds the structure
+```
+
+Without a blueprint, construction becomes disorganized. Similarly, beginning implementation without first designing the architecture often results in tightly coupled code, duplicated responsibilities, and systems that become increasingly difficult to maintain.
+
+## The Purpose of Software Architecture
+
+A software architecture serves several important purposes throughout the lifetime of a project.
+
+### Organizes Complexity
+
+Even a simple text editor performs many different tasks simultaneously. It must read keyboard input, interpret key presses, modify the document, update the cursor position, redraw the screen, and save files to disk.
+
+Attempting to place all of this logic into a single source file or function quickly produces code that is difficult to understand.
+
+Architecture divides the system into smaller, manageable components, each responsible for a specific part of the overall problem.
+
+### Defines Responsibilities
+
+Every component should have a clearly defined responsibility.
+
+For example:
+
+- The **Input Handler** reads data from the terminal.
+- The **Input Parser** interprets raw bytes as keyboard events.
+- The **Input Engine** maps keyboard events to editor commands.
+- The **Command Engine** executes editor commands.
+- The **Renderer** updates the display.
+- The **File Manager** loads and saves documents.
+
+When each component has one well-defined responsibility, the overall system becomes easier to reason about and maintain.
+
+### Reduces Coupling
+
+Components should interact only through well-defined interfaces rather than depending on each other's internal implementation.
+
+This principle reduces **coupling**, meaning that changes made to one component are less likely to require modifications elsewhere in the system.
+
+For example, if the method used to render the screen changes in the future, the document management code should remain unaffected because it does not depend on the renderer's internal implementation.
+
+Reducing coupling makes software easier to modify, debug, and extend.
+
+### Improves Maintainability
+
+Software often evolves long after the initial implementation is complete.
+
+New features are added.
+
+Bugs are corrected.
+
+Performance improvements are introduced.
+
+A modular architecture allows these changes to be made with minimal impact on unrelated parts of the system. Instead of understanding the entire application, a developer can focus on the specific component being modified.
+
+### Supports Future Growth
+
+Although the editor implemented in this book intentionally remains small, later volumes introduce advanced features such as syntax highlighting, search, undo and redo, multiple documents, and plugin systems.
+
+A well-designed architecture makes it possible to incorporate these capabilities without redesigning the entire application.
+
+This is one of the primary reasons architecture is planned before implementation.
+
+## Components and Their Relationships
+
+Software architecture describes a system as a collection of cooperating components rather than one large program.
+
+A component is a logical unit responsible for performing a specific task.
+
+These components communicate with one another to achieve the overall behavior of the application.
+
+A simplified view of a terminal text editor might look like this:
+
+```text
++---------------+
+| Input Handler |
++---------------+
+        │
+        ▼
++---------------+
+| Input Parser  |
++---------------+
+        │
+        ▼
++---------------+
+| Input Engine  |
++---------------+
+        │
+        ▼
++---------------+
+| Command Engine|
++---------------+
+        │
+        ▼
++---------------+
+| Editor State  |
++---------------+
+      │      │
+      ▼      ▼
++---------+ +-------------+
+|Renderer | |File Manager |
++---------+ +-------------+
+```
+
+Each box represents a distinct responsibility within the editor.
+
+At this stage, the internal workings of these components are not important. The goal is simply to understand how the system is divided into logical parts. Subsequent chapters will explore each component in detail.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A common characteristic of well-designed software is that its architecture remains understandable even as the implementation grows.
+
+If a new developer can examine the architecture diagram and quickly explain the responsibility of each component, the architecture is likely serving its purpose well.
+
+Conversely, if understanding the system requires reading thousands of lines of source code, the architecture has failed to communicate the system's design effectively.
+
+</Aside>
+
+## Summary
+
+Software architecture is the high-level organization of a software system. It defines the major components, their responsibilities, and the relationships between them before implementation begins.
+
+A well-designed architecture simplifies complex systems by dividing them into smaller, focused components. This separation of responsibilities reduces coupling, improves maintainability, and provides a stable foundation for future enhancements.
+
+In the next section, we will examine how the software requirements defined in Chapter 7 naturally lead to the architectural components that make up our terminal text editor.

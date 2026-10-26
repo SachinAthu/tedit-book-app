@@ -1,0 +1,195 @@
+---
+title: 8.3 Architectural Goals
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Every software architecture is shaped by a set of design goals. These goals influence how the system is organized, how components interact, and which trade-offs are accepted during development.
+
+Different software projects often have different architectural priorities. A real-time operating system may prioritize predictable execution times. A web application may prioritize scalability. A video game engine may prioritize rendering performance.
+
+Our terminal text editor has a different purpose.
+
+The primary objective of this project is not to build the fastest or most feature-rich text editor. Instead, it is to create an implementation that clearly demonstrates the fundamental principles of systems programming and software architecture while remaining practical enough to serve as a usable editor.
+
+This objective influences every architectural decision made throughout the remainder of the book.
+
+## Simplicity
+
+The most important design goal is **simplicity**.
+
+Complex software is difficult to understand, difficult to debug, and difficult to extend. Since this book is intended to teach software architecture rather than showcase advanced optimization techniques, the design deliberately favors simple solutions whenever they adequately satisfy the project requirements.
+
+For example, the editor redraws the entire screen after each operation rather than tracking only the portions that have changed. Although more sophisticated rendering strategies exist, a full redraw greatly simplifies the rendering pipeline while remaining sufficiently efficient for a lightweight terminal editor.
+
+Likewise, the editor maintains the entire document in memory instead of performing incremental disk updates after every modification. This approach simplifies editing operations and avoids unnecessary file input/output during normal editing.
+
+Simple designs are often easier to reason about, making them excellent teaching tools.
+
+## Modularity
+
+The editor is divided into independent components, each responsible for a specific aspect of the system.
+
+Examples include:
+
+- Input handling
+- Command processing
+- Document management
+- Cursor management
+- Rendering
+- File operations
+
+Each component performs one primary role and exposes only the functionality needed by other parts of the system.
+
+This modular organization offers several advantages:
+
+- Components can be understood independently.
+- Bugs are easier to isolate.
+- Future enhancements affect fewer parts of the system.
+- Individual modules can be tested separately.
+
+Modularity is one of the fundamental characteristics of well-designed software systems.
+
+## Separation of Concerns
+
+Closely related to modularity is the principle of **separation of concerns**.
+
+A concern is a particular aspect of a system's behavior or responsibility.
+
+Rather than allowing every component to perform every task, each concern is isolated within the component best suited to handle it.
+
+For example:
+
+- Reading bytes from the terminal belongs to the **Input Handler**.
+- Interpreting escape sequences belongs to the **Input Parser**.
+- Mapping key events to commands belongs to the **Input Engine**.
+- Executing editing operations belongs to the **Command Engine**.
+- Storing text belongs to the **Document**.
+- Drawing the screen belongs to the **Renderer**.
+
+```text
+Keyboard Input
+        │
+        ▼
+Input Handler
+        │
+        ▼
+Input Parser
+        │
+        ▼
+Input Engine
+        │
+        ▼
+Command Engine
+        │
+        ▼
+Editor State
+        │
+        ▼
+Renderer
+```
+
+Notice that each component performs a distinct responsibility without becoming involved in unrelated tasks.
+
+This separation reduces coupling and makes the system significantly easier to understand.
+
+## Maintainability
+
+Software rarely remains unchanged after its first release.
+
+New features are added.
+
+Defects are corrected.
+
+Existing functionality is improved.
+
+A maintainable architecture allows these changes to be made with minimal impact on the rest of the system.
+
+For example, suppose we later decide to display additional information in the status bar. Ideally, only the rendering subsystem should require modification. The document management and input handling components should continue to operate exactly as before.
+
+Maintaining this independence between components reduces the cost and risk of future development.
+
+## Extensibility
+
+Although the baseline editor intentionally excludes advanced capabilities such as syntax highlighting, undo and redo, search, and plugin support, the architecture should not prevent these features from being added later.
+
+Instead, the architecture should provide a stable foundation upon which future functionality can be built.
+
+For example, the renderer may later support syntax highlighting, or the command engine may later support undo and redo commands.
+
+Because responsibilities are clearly separated, these enhancements can often be introduced by extending existing components rather than redesigning the entire application.
+
+This reflects one of the non-functional requirements established in the Software Requirements Specification: the editor should be extensible without requiring fundamental architectural changes.
+
+## Readability
+
+The architecture should be understandable by readers who are learning systems programming for the first time.
+
+This goal influences not only the source code but also the architectural design itself.
+
+Whenever multiple solutions are available, preference is given to the one that is easier to explain, visualize, and reason about.
+
+For example, a single-threaded event loop is easier to understand than a multi-threaded architecture involving synchronization primitives, race conditions, and shared memory.
+
+Similarly, clearly named components with well-defined responsibilities are easier to comprehend than large, multifunctional modules.
+
+Readable architecture leads to readable code.
+
+## Educational Value
+
+Unlike production software, this project is designed primarily as a learning resource.
+
+Every architectural decision should help readers develop a deeper understanding of software engineering principles.
+
+For this reason, the architecture intentionally exposes concepts that are often hidden by higher-level frameworks, including:
+
+- Terminal input processing
+- Rendering pipelines
+- State management
+- Module boundaries
+- Data flow
+- Component interactions
+
+By understanding these foundations, readers will be better prepared to study more sophisticated software systems.
+
+## What We Are _Not_ Optimizing
+
+Every engineering decision involves trade-offs.
+
+Choosing one objective often means accepting compromises elsewhere.
+
+For this project, we intentionally avoid optimizing for several characteristics that are common priorities in production-grade editors.
+
+These include:
+
+- Maximum rendering performance
+- Extremely large document support
+- Parallel processing
+- Minimal memory consumption
+- Rich graphical interfaces
+- Extensive plugin ecosystems
+- Enterprise-scale feature sets
+
+For example, modern editors may redraw only the portions of the screen that have changed, store documents using advanced data structures such as piece tables or ropes, or distribute work across multiple threads.
+
+While these techniques improve performance and scalability, they also introduce substantial complexity.
+
+Our objective is first to understand the underlying principles using an architecture that is clear, predictable, and easy to follow. More advanced approaches will be explored in later volumes when readers have developed a solid architectural foundation.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A common misconception is that the "best" architecture is always the one with the highest performance.
+
+In reality, the best architecture is the one that most effectively satisfies the project's goals and constraints.
+
+For this project, clarity, modularity, maintainability, and educational value are more important than maximizing performance. An architecture that readers can fully understand is ultimately more valuable than one that is highly optimized but difficult to explain.
+
+</Aside>
+
+## Summary
+
+Architectural goals provide the guiding principles that shape every design decision in the editor. Rather than optimizing for maximum performance or feature completeness, the architecture emphasizes simplicity, modularity, separation of concerns, maintainability, extensibility, readability, and educational value.
+
+These goals ensure that the editor remains small enough to understand while still demonstrating the architectural practices used in much larger software systems.
+
+In the next section, we will assemble these principles into the complete high-level architecture of the editor and examine how the major components cooperate to form a cohesive system.

@@ -1,0 +1,248 @@
+---
+title: 8.4 High-Level Architecture
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Now that we have established the goals that guide our design, we can assemble them into a complete architectural view of the editor.
+
+A **high-level architecture** describes the major components of a system and the relationships between them. It intentionally ignores implementation details, data structures, and algorithms. Instead, it answers a much simpler question:
+
+> **What are the major parts of the editor, and how do they work together?**
+
+This architectural view provides a mental model that readers can use throughout the remainder of the book. Every subsystem introduced in later chapters will fit into this overall structure.
+
+## Looking at the Editor as a System
+
+When using a text editor, the interaction appears straightforward.
+
+The user presses a key.
+
+The text changes.
+
+The cursor moves.
+
+The screen updates.
+
+However, internally, these seemingly simple actions require multiple components working together.
+
+For example, typing a single character involves several distinct steps.
+
+1. The terminal delivers keyboard input.
+2. The input is interpreted.
+3. The appropriate editing command is determined.
+4. The document stored in memory is updated.
+5. The display is redrawn.
+6. The cursor is repositioned.
+
+Rather than allowing one large function to perform all of these tasks, the editor divides the work among specialized components.
+
+## The Complete Architecture
+
+The overall architecture of our editor is shown below.
+
+```text
+                 User
+                   │
+                   ▼
+              Keyboard Input
+                   │
+                   ▼
+          +------------------+
+          |  Input Handler   |
+          +------------------+
+                   │
+                   ▼
+          +------------------+
+          |   Input Parser   |
+          +------------------+
+                   │
+                   ▼
+          +------------------+
+          |   Input Engine   |
+          +------------------+
+                   │
+                   ▼
+          +------------------+
+          | Command Engine   |
+          +------------------+
+                   │
+                   ▼
+          +------------------+
+          |   Editor State   |
+          +------------------+
+             │            │
+             │            │
+             ▼            ▼
+      +-------------+  +--------------+
+      |  Renderer   |  | File Manager |
+      +-------------+  +--------------+
+             │
+             ▼
+          Terminal
+```
+
+Although the diagram is relatively small, it represents the complete flow of information through the editor.
+
+Each component has one primary responsibility.
+
+The components cooperate to produce the behavior expected by the user.
+
+## Understanding the Flow
+
+The architecture can be understood by following the path of information.
+
+### Step 1 — Input Arrives
+
+Every editing operation begins with user input.
+
+The terminal delivers bytes representing key presses to the application.
+
+These bytes are received by the **Input Handler**, whose only responsibility is to obtain raw input from the operating system.
+
+At this stage, the editor does not yet know whether the user typed the letter **A**, pressed **Ctrl+S**, or pressed the **Left Arrow** key.
+
+The input is simply a stream of bytes.
+
+### Step 2 — Input Is Interpreted
+
+The **Input Parser** examines the incoming bytes and determines what they represent.
+
+For example:
+
+- `'A'` becomes a printable character event.
+- `Ctrl+S` becomes a control key event (`KEY_CTRL_S`).
+- An escape sequence becomes an arrow key event.
+
+The parser transforms terminal-specific byte sequences into structured events that the rest of the editor can understand.
+
+This separation allows the remainder of the editor to remain independent of terminal protocols.
+
+### Step 3 — Events Are Mapped to Commands
+
+Once an input event has been identified, it is passed to the **Input Engine**.
+
+The Input Engine decides which command the event represents.
+
+Examples include:
+
+- `KEY_ARROW_LEFT` becomes **Move Cursor Left**.
+- `KEY_BACKSPACE` becomes **Delete Character**.
+- `KEY_CTRL_S` becomes **Save Document**.
+
+The Input Engine does **not** read raw bytes or modify the editor's state. Its only responsibility is to map each key event to the appropriate command and hand that command to the Command Engine.
+
+### Step 4 — Commands Are Executed
+
+Once a command has been selected, it is passed to the **Command Engine**.
+
+The Command Engine executes the command, coordinating the appropriate modifications to the editor's state.
+
+Examples include:
+
+- Insert a character.
+- Delete a character.
+- Move the cursor.
+- Save the document.
+- Exit the editor.
+
+It does **not** draw the screen or communicate directly with the terminal.
+
+### Step 5 — State Is Updated
+
+All editing operations ultimately modify the **Editor State**.
+
+The Editor State represents the complete state of the application at a particular moment.
+
+It contains information such as:
+
+- The current document
+- Cursor position
+- Scroll position
+- Current filename
+- Modified status
+- Screen dimensions
+
+Every component that needs information about the editor obtains it from this shared state rather than maintaining independent copies.
+
+The Editor State serves as the central source of truth for the entire application.
+
+### Step 6 — The Screen Is Redrawn
+
+After the state changes, the **Renderer** generates a new frame.
+
+The renderer examines the current Editor State and produces the complete visual representation shown in the terminal.
+
+Importantly, the renderer does **not** modify the document or execute editor commands.
+
+Its only responsibility is displaying the current state of the editor.
+
+This follows the rendering strategy established earlier in the book, where each update redraws the entire visible screen rather than attempting incremental updates (ADR-002).
+
+### Step 7 — Files Are Accessed When Needed
+
+Most editing operations do not interact with the file system.
+
+The **File Manager** is only involved when a document needs to be loaded or saved.
+
+During these operations, the File Manager reads data from disk into the document or writes the current document back to disk.
+
+Keeping file operations isolated prevents unrelated components from becoming dependent on operating system file APIs.
+
+## Why This Architecture Works
+
+One of the strengths of this design is that each component performs exactly one primary responsibility.
+
+Consider what would happen if the Renderer were also responsible for loading files.
+
+Every screen update would require knowledge of file system operations.
+
+Likewise, if the File Manager were allowed to interpret keyboard input, file handling would become unnecessarily dependent on terminal behavior.
+
+By keeping responsibilities separate, each component remains focused on solving one problem.
+
+This design is often described using the **Single Responsibility Principle**:
+
+> A component should have one primary reason to change.
+
+If rendering requirements change, only the Renderer should require modification.
+
+If keyboard input handling changes, only the Input Handler and Input Parser should require modification. If the mapping from keys to commands changes, only the Input Engine should require modification.
+
+Changes remain localized rather than spreading throughout the entire application.
+
+## A Blueprint, Not an Implementation
+
+It is important to remember that this architecture describes the organization of the system—not its implementation.
+
+The diagram does **not** specify:
+
+- How the document is represented in memory.
+- How cursor movement is implemented.
+- How rendering is performed.
+- Which data structures are used.
+- Which functions call one another.
+
+Those decisions are introduced gradually in later chapters.
+
+At this stage, the architecture simply establishes the major building blocks and the responsibilities assigned to each of them.
+
+Once this foundation is understood, the implementation becomes much easier to follow because every piece of code has an obvious place within the overall system.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Many beginners begin programming by creating one large source file that gradually accumulates more and more functionality. Initially, this approach appears faster because everything is in one place.
+
+As the project grows, however, responsibilities become intertwined. Functions begin performing unrelated tasks, modules become tightly coupled, and even small changes require understanding large portions of the codebase.
+
+Designing a high-level architecture first prevents this gradual loss of structure. By assigning clear responsibilities before implementation begins, the system remains organized as it evolves.
+
+</Aside>
+
+## Summary
+
+The high-level architecture provides a blueprint for the entire editor. It identifies the major components, defines their responsibilities, and illustrates how information flows from keyboard input to the rendered display.
+
+At the center of this architecture is the **Editor State**, which serves as the single source of truth for the application. Around it are specialized components responsible for input handling, command execution, rendering, and file operations.
+
+In the next section, we will examine how these components are organized into architectural layers and why layered designs help produce software that is easier to understand, maintain, and extend.

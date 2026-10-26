@@ -1,0 +1,383 @@
+---
+title: 8.7 Data Flow Through the Editor
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we introduced the major components of our editor and examined the responsibility of each one individually.
+
+Understanding these components is an important first step, but software systems are more than a collection of independent modules. Their true behavior emerges from the way those modules cooperate.
+
+This cooperation is known as **data flow**.
+
+Data flow describes how information moves through the system as the editor responds to user actions. Every key press, file operation, and screen update follows a predictable path through the architecture.
+
+Understanding this flow is essential because it explains **how independent components work together without becoming tightly coupled**.
+
+## Thinking in Terms of Events
+
+Unlike a traditional program that performs a fixed sequence of operations and then exits, a text editor is **interactive**.
+
+It continuously waits for user input.
+
+Every action performed by the user becomes an **event** that the editor must process.
+
+Examples include:
+
+- Typing a character
+- Pressing an arrow key
+- Pressing Backspace
+- Saving a file
+- Exiting the editor
+
+Each event enters the architecture, passes through several components, updates the editor's state, and eventually produces a visible result.
+
+This process repeats continuously throughout the lifetime of the application.
+
+## A General View of Data Flow
+
+Although different operations perform different tasks, almost all user interactions follow the same overall pattern.
+
+```text
+User Action
+      │
+      ▼
+Input Handler
+      │
+      ▼
+Input Parser
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command Engine
+      │
+      ▼
+Editor State
+      │
+      ▼
+Renderer
+      │
+      ▼
+Terminal Display
+```
+
+Notice that the information always moves **forward** through the system.
+
+Each component performs its own work before passing control to the next.
+
+No component attempts to perform another component's responsibility.
+
+This predictable flow is one of the reasons the architecture remains easy to understand.
+
+## Example 1 — Typing a Character
+
+The simplest editing operation is inserting a printable character.
+
+Suppose the user presses the letter **A**.
+
+Although this appears to be a single action, several components participate.
+
+### Step 1 — Keyboard Input
+
+The terminal detects the key press and delivers the corresponding byte to the application.
+
+```text
+Keyboard
+
+↓
+
+'a'
+```
+
+At this point, the editor has only received raw input.
+
+### Step 2 — Input Handler
+
+The Input Handler reads the byte from the terminal.
+
+```text
+Raw Byte
+
+↓
+
+Input Handler
+
+↓
+
+'a'
+```
+
+The Input Handler does not determine whether the byte represents text, a shortcut, or part of an escape sequence.
+
+It simply delivers the data to the next stage.
+
+### Step 3 — Input Parser
+
+The Input Parser examines the byte.
+
+Since `'A'` is a printable character, it generates an abstract key event.
+
+```text
+'a'
+
+↓
+
+Input Parser
+
+↓
+
+KEY_CHARACTER('A')
+```
+
+From this point onward, the remainder of the editor no longer deals with raw terminal bytes.
+
+### Step 4 — Input Engine
+
+The Input Engine receives the key event and maps it to a command.
+
+```text
+KEY_CHARACTER('A')
+
+↓
+
+Insert Character
+```
+
+### Step 5 — Command Engine
+
+The Command Engine receives the **Insert Character** command and executes it.
+
+Rather than modifying the terminal directly, it requests a modification to the document stored in the Editor State.
+
+### Step 6 — Editor State
+
+The document stored in memory is updated.
+
+For example:
+
+Before:
+
+```text
+Hell|
+o
+```
+
+After inserting **A**:
+
+```text
+HellA|
+o
+```
+
+The cursor position is updated.
+
+The document is marked as modified.
+
+The Editor State now reflects the new state of the application.
+
+### Step 7 — Renderer
+
+The Renderer examines the updated Editor State.
+
+It generates a new frame containing the modified document.
+
+```text
+Renderer
+
+↓
+
+Generate New Screen
+
+↓
+
+Move Cursor
+
+↓
+
+Display Frame
+```
+
+The terminal receives the updated output.
+
+The user now sees the inserted character.
+
+## Example 2 — Moving the Cursor
+
+Not every event changes the document.
+
+Suppose the user presses the **Left Arrow** key.
+
+The processing pipeline remains largely the same.
+
+```text
+Left Arrow
+
+↓
+
+Input Handler
+
+↓
+
+Input Parser
+
+↓
+
+KEY_ARROW_LEFT
+
+↓
+
+Input Engine
+
+↓
+
+Command Engine
+
+↓
+
+Cursor Updated
+
+↓
+
+Renderer
+
+↓
+
+Screen Updated
+```
+
+Notice the difference.
+
+The document itself remains unchanged.
+
+Only the cursor position within the Editor State changes.
+
+Because the Renderer always works from the current Editor State, it automatically displays the cursor in its new position.
+
+## Example 3 — Saving a File
+
+Some operations require communication with the operating system.
+
+Saving a file introduces one additional component into the data flow.
+
+```text
+Ctrl + S
+      │
+      ▼
+Input Handler
+      │
+      ▼
+Input Parser
+      │
+      ▼
+KEY_CTRL_SAVE
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command Engine
+      │
+      ▼
+File Manager
+      │
+      ▼
+Read Document
+(Editor State)
+      │
+      ▼
+Write File
+      │
+      ▼
+Editor State
+(Update Dirty Flag)
+      │
+      ▼
+Renderer
+```
+
+The File Manager first reads the current document from the Editor State.
+
+It then performs the actual file operation, writing the document contents to disk.
+
+Once the save succeeds, the Editor State is updated to indicate that the document no longer contains unsaved changes.
+
+Finally, the Renderer updates the status bar to reflect the successful save.
+
+## Why the Data Always Passes Through the Editor State
+
+One of the defining characteristics of our architecture is that every meaningful operation updates or consults the **Editor State**.
+
+The Editor State acts as the central point through which components cooperate.
+
+Instead of communicating directly with one another, components exchange information through the shared application state.
+
+```text
+             Editor State
+           ┌──────┼──────┐
+           │      │      │
+           ▼      ▼      ▼
+     Renderer  Cursor  File Manager
+           ▲
+           │
+     Command Engine
+```
+
+This design provides several advantages:
+
+- A single source of truth.
+- Consistent application state.
+- Reduced duplication.
+- Easier debugging.
+- Predictable behavior.
+
+Because every component works with the same shared state, inconsistencies are much less likely to occur.
+
+## The Flow Is Predictable
+
+One of the strengths of this architecture is its consistency.
+
+Whether the user inserts text, deletes a line, moves the cursor, or saves a file, the overall flow remains remarkably similar.
+
+```text
+Input
+
+↓
+
+Interpret
+
+↓
+
+Execute
+
+↓
+
+Update State
+
+↓
+
+Render
+```
+
+Only the details of the operation change.
+
+The architecture itself remains unchanged.
+
+This consistency greatly simplifies both implementation and debugging because every feature follows the same general processing pipeline.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Many modern software systems—including graphical applications, game engines, and web frameworks—follow a similar processing model. User input is transformed into high-level events, application state is updated, and the user interface is regenerated from the latest state.
+
+By adopting the same pattern in our editor, we gain a design that is both modular and predictable. New features rarely require inventing new architectural pathways; instead, they simply introduce new commands or state changes into an already established flow. This consistency makes the software easier to reason about as it grows.
+
+</Aside>
+
+## Summary
+
+Data flow describes how information moves through the editor as it responds to user actions. Regardless of the specific operation being performed, the architecture follows a consistent sequence: input is received, interpreted, translated into commands, applied to the Editor State, and finally rendered to the terminal.
+
+This predictable flow allows each component to remain focused on its own responsibility while cooperating through a shared application state. As a result, the editor achieves a modular design in which behavior emerges from the interaction of well-defined components rather than from a single monolithic program.
+
+In the next section, we will examine the **Editor State** in greater detail, exploring the concept of **state ownership** and why maintaining a single source of truth is one of the most important architectural principles in software design.
