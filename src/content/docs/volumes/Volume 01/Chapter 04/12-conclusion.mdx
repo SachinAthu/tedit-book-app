@@ -1,5 +1,6 @@
 ---
 title: 4.12 Conclusion
+description: A recap of ANSI control and the terminal features the renderer must handle.
 ---
 
 ANSI escape sequences are a standardized command language for terminals, beginning with the Escape character (`ESC`, `0x1B`) and followed by a structured sequence that the terminal interprets as instructions rather than printable text. These sequences allow programs to control the cursor, clear the screen, format text, and manage screen buffers. A terminal text editor relies on these capabilities to redraw its entire interface on every frame, forming the foundation of our rendering system.

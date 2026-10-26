@@ -1,5 +1,6 @@
 ---
 title: 5.12 Conclusion
+description: A summary of raw mode and its role in the editor.
 ---
 
 By default, the terminal processes keyboard input before any program receives it. This behavior, known as canonical mode, provides conveniences such as line buffering, character echo, and signal generation — features that serve shells well but prevent a text editor from responding to individual key presses. To gain full control, editors use the `termios` interface to enable raw mode, which disables these default behaviors and delivers each key press directly to the application. Shifting from canonical to raw mode is not merely a configuration change; it transfers responsibility for input handling and screen rendering from the terminal to the program. With that control comes an obligation to save the original terminal settings before entering raw mode and restore them before exiting, ensuring the user's environment remains intact regardless of how the application terminates.

@@ -1,5 +1,6 @@
 ---
 title: Chapter 5 — Raw Terminal Mode
+description: How raw mode disables line buffering and echo so the editor can read every key press.
 ---
 
 The terminal is more than a display—it is also responsible for processing keyboard input before your program ever sees it. By default, the terminal provides a user-friendly interface designed for shells and command-line programs. A text editor, however, needs direct access to every key the user presses. This chapter explores how to temporarily disable the terminal's default behavior and place it into **raw mode**, giving our editor complete control over keyboard input.

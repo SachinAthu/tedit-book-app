@@ -1,5 +1,6 @@
 ---
 title: Chapter 6 — Keyboard Input
+description: How keyboard input becomes characters, key events, and eventually editor commands.
 ---
 
 Now that we've enabled raw mode, every key press reaches our program immediately. However, receiving bytes is only the first step. A text editor must determine _what those bytes represent_. Some keys correspond to a single byte, while others produce sequences of multiple bytes. Understanding this encoding is essential before we can design an input handling system.
