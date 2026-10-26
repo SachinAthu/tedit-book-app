@@ -1,0 +1,206 @@
+---
+title: 9.7 Commands vs. Events
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The terms **event** and **command** are often used interchangeably in casual discussions, but they represent two different concepts within the architecture of our editor. Understanding the distinction between them is important because it explains why the Input Parser, the Input Engine, and the Command Engine are implemented as separate components.
+
+An **event** describes **what happened**, while a **command** describes **what the editor should do** in response.
+
+Although an event often results in a command, the two are not the same thing.
+
+## Events Describe Input
+
+An event is simply a notification that something has occurred.
+
+Examples include:
+
+- The user pressed the **A** key.
+- The user pressed the **Left Arrow** key.
+- The user pressed **Ctrl+S**.
+- The terminal window was resized.
+
+Events do not describe editing operations. They merely report that something happened.
+
+For example:
+
+```text
+KEY_CHARACTER('A')
+
+KEY_ARROW_LEFT
+
+KEY_CTRL_S
+
+WINDOW_RESIZED
+```
+
+These are all events because they describe observations, not actions.
+
+## Commands Describe Intent
+
+A command represents an operation that changes the behavior or state of the editor.
+
+Examples include:
+
+- Insert a character.
+- Move the cursor left.
+- Save the current document.
+- Resize the viewport.
+
+Commands describe **what the editor intends to do**, regardless of how that decision was made.
+
+For example:
+
+```text
+Insert Character
+
+Move Cursor Left
+
+Save Document
+
+Update Viewport
+```
+
+Unlike events, commands express actions that modify the Editor State or perform another operation.
+
+## From Event to Command
+
+The Input Engine acts as the bridge between events and commands.
+
+It receives an event from the Input Parser, determines its meaning, and selects the appropriate command.
+
+For example:
+
+```text
+KEY_CHARACTER('A')
+        │
+        ▼
+Insert Character
+```
+
+Or:
+
+```text
+KEY_ARROW_UP
+        │
+        ▼
+Move Cursor Up
+```
+
+Likewise:
+
+```text
+KEY_CTRL_S
+        │
+        ▼
+Save Document
+```
+
+The event itself never modifies the document. It is merely the input that causes the Input Engine to select a command, which the Command Engine then executes.
+
+## Why Separate Events from Commands?
+
+At first, it might seem simpler to let the Input Parser perform editing operations directly.
+
+For example:
+
+```text
+Read Ctrl+S
+
+↓
+
+Save File
+```
+
+However, this approach tightly couples input handling to editor behavior.
+
+Suppose we later decide to support multiple ways of saving a document:
+
+- **Ctrl+S**
+- Selecting **Save** from a future menu
+- An automatic save feature
+- A scripting or plugin system
+
+Each of these generates a different event, but they all represent the same underlying operation:
+
+```text
+Ctrl+S ───────────────┐
+                      │
+Menu Selection ───────┤
+                      ▼
+               Save Document
+                      ▲
+Auto Save Timer ──────┤
+                      │
+Plugin Request ───────┘
+```
+
+If every event performed the save operation directly, the saving logic would be duplicated throughout the application.
+
+Instead, every event is translated into the same **Save Document** command. The save operation is implemented once, while different events simply determine **when** that command should be executed.
+
+## Separation of Responsibilities
+
+Separating events from commands reinforces the architecture established in the previous chapter.
+
+Each component has a single responsibility:
+
+| Component          | Responsibility                          |
+| ------------------ | --------------------------------------- |
+| **Input Handler**  | Reads raw bytes from the terminal.      |
+| **Input Parser**   | Converts bytes into key events.         |
+| **Input Engine**   | Maps key events to editor commands.     |
+| **Command Engine** | Executes editor commands.               |
+| **Editor State**   | Stores the current application state.   |
+| **Renderer**       | Displays the updated state.             |
+
+Each component performs one step before passing control to the next, producing a clean and maintainable processing pipeline. This follows the architectural principle that every component should have a single primary responsibility and that terminal-specific input parsing should remain separate from editor logic.
+
+## A Practical Example
+
+Consider what happens when the user presses the **Backspace** key.
+
+The processing sequence looks like this:
+
+```text
+User Presses Backspace
+          │
+          ▼
+KEY_BACKSPACE
+          │
+          ▼
+Delete Character Command
+          │
+          ▼
+Editor State Updated
+          │
+          ▼
+Renderer Updates Screen
+```
+
+Notice that the event (`KEY_BACKSPACE`) and the command (**Delete Character**) are different concepts.
+
+The event reports the user's input.
+
+The command describes the editing operation.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+This distinction may seem subtle, but it becomes increasingly valuable as software grows in complexity.
+
+Professional software systems frequently separate **events**, **commands**, and **state changes** because each represents a different level of abstraction:
+
+- **Events** describe what happened.
+- **Commands** describe what should be done.
+- **State changes** describe the result of executing those commands.
+
+Keeping these concepts separate reduces coupling, improves maintainability, and makes it easier to extend the application with new input methods or features without modifying existing editing logic.
+
+</Aside>
+
+## Summary
+
+An event is a notification that something has occurred, while a command is an instruction telling the editor what action to perform. The Input Engine bridges these two concepts by translating events produced by the Input Parser into commands, which the Command Engine then executes to update the Editor State.
+
+This separation allows the editor to remain modular, flexible, and easy to extend. In the next section, we will examine how commands modify the **Editor State** and why maintaining a single source of truth is central to the editor's design.

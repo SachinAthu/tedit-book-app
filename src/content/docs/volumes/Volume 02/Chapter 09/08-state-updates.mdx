@@ -1,0 +1,301 @@
+---
+title: 9.8 State Updates
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we saw how the Input Engine translates events into commands. Once a command has been selected and executed by the Command Engine, the next step is to apply its effects to the application. This is accomplished by updating the **Editor State**.
+
+The Editor State is the central repository for all data managed by the editor. As discussed in Chapter 8, it acts as the **single source of truth**, ensuring that every component works with the same consistent view of the application. Rather than modifying the display directly, commands modify the Editor State, and the Renderer later uses that state to generate the next frame.
+
+The overall flow is therefore:
+
+```text
+Event
+
+↓
+
+Command
+
+↓
+
+Update Editor State
+
+↓
+
+Render New Frame
+```
+
+This separation is one of the most important architectural principles in the editor.
+
+## The Editor State Is the Source of Truth
+
+The editor maintains many pieces of information while it is running.
+
+For example:
+
+- the document contents,
+- the cursor position,
+- the current viewport,
+- the active filename,
+- the modified (dirty) flag,
+- the current status message,
+- and the terminal dimensions.
+
+Together, these values describe the complete state of the application at a particular moment in time.
+
+Whenever something changes, the Editor State is updated first.
+
+For example, suppose the user types the letter **A**.
+
+Before the key is pressed:
+
+```text
+Document
+
+Hello|
+
+Cursor
+
+Row = 0
+Column = 5
+```
+
+After executing the **Insert Character** command:
+
+```text
+Document
+
+HelloA|
+
+Cursor
+
+Row = 0
+Column = 6
+```
+
+The document and cursor stored inside the Editor State have changed.
+
+Nothing has yet been drawn on the screen.
+
+## Commands Modify State, Not the Display
+
+A common mistake when designing interactive applications is to think of commands as drawing directly to the screen.
+
+For example, it may seem natural to imagine the following sequence:
+
+```text
+User Presses 'A'
+
+↓
+
+Draw 'A' on Screen
+```
+
+However, this is **not** how our editor works.
+
+Instead, the sequence is:
+
+```text
+User Presses 'A'
+
+↓
+
+Insert Character
+
+↓
+
+Update Editor State
+
+↓
+
+Renderer Draws Updated State
+```
+
+This distinction is important because the screen is **not** the application's data. It is merely a visual representation of the current Editor State.
+
+If the display ever needs to be refreshed—for example, after a terminal resize—the Renderer simply redraws the current state. No editing logic needs to be repeated because the Editor State already contains the correct information.
+
+## Every Command Follows the Same Pattern
+
+Regardless of which command is executed, the same sequence always occurs.
+
+### Insert Character
+
+```text
+Insert Character
+
+↓
+
+Modify Document
+
+↓
+
+Move Cursor
+
+↓
+
+Mark Document Modified
+```
+
+### Move Cursor
+
+```text
+Move Cursor
+
+↓
+
+Update Cursor Position
+
+↓
+
+Update Viewport (if necessary)
+```
+
+### Save Document
+
+```text
+Save Document
+
+↓
+
+Write File
+
+↓
+
+Clear Dirty Flag
+
+↓
+
+Update Status Message
+```
+
+Although the details differ, every command updates one or more parts of the Editor State before rendering occurs.
+
+## One Change Can Affect Multiple Pieces of State
+
+A single command rarely modifies only one value.
+
+Consider pressing the **Enter** key.
+
+The editor may need to:
+
+- split the current line,
+- move the cursor to the next line,
+- adjust the viewport,
+- mark the document as modified,
+- and update the preferred cursor column.
+
+Conceptually:
+
+```text
+Enter Key
+
+↓
+
+Split Document Line
+
+↓
+
+Move Cursor
+
+↓
+
+Update Viewport
+
+↓
+
+Set Dirty Flag
+```
+
+All of these changes occur before the Renderer generates the next frame.
+
+This ensures that every component observes a consistent application state.
+
+## Why Update State Before Rendering?
+
+Suppose the Renderer were allowed to execute before the Editor State had been fully updated.
+
+For example:
+
+```text
+Insert Character
+
+↓
+
+Render Screen
+
+↓
+
+Move Cursor
+```
+
+The displayed document would contain the newly inserted character, but the cursor would still appear in its previous position.
+
+The screen would represent an inconsistent state.
+
+By updating the entire Editor State first, the Renderer always works with a complete and internally consistent representation of the application.
+
+The correct sequence is therefore:
+
+```text
+Command
+
+↓
+
+Complete State Update
+
+↓
+
+Render Screen
+```
+
+This guarantees that every frame accurately reflects the current state of the editor.
+
+## Predictable and Consistent Behavior
+
+Because every command updates the Editor State before rendering, the editor behaves predictably.
+
+No matter whether the user:
+
+- types a character,
+- deletes text,
+- moves the cursor,
+- saves a file,
+- or resizes the terminal,
+
+the same high-level process always occurs:
+
+```text
+Receive Command
+
+↓
+
+Update Editor State
+
+↓
+
+Render New Frame
+```
+
+This consistency makes the architecture easier to understand, easier to debug, and easier to extend.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Separating **state updates** from **rendering** is a common architectural principle found in many types of software, not just text editors.
+
+Graphical user interfaces, game engines, web applications, and terminal applications often follow the same pattern:
+
+1. Receive input.
+2. Update the application's state.
+3. Render a view of that state.
+
+Keeping state management independent from rendering allows each concern to evolve separately. New rendering techniques can be introduced without changing editing logic, and new editing features can be added without modifying the Renderer.
+
+</Aside>
+
+## Summary
+
+Commands do not modify the display directly. Instead, they update the Editor State, which serves as the application's single source of truth. Once the state has been fully updated, the Renderer generates a new frame that reflects those changes.
+
+This separation between **state management** and **rendering** produces a predictable execution model and ensures that every frame represents a complete and consistent view of the editor. In the next section, we will examine the **Rendering Cycle** in greater detail and see how the Renderer transforms the Editor State into the visual interface displayed in the terminal.

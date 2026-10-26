@@ -1,0 +1,31 @@
+---
+title: 9.14 Conclusion
+---
+
+This chapter introduced the **event-driven architecture** that governs how our editor operates at runtime. While Chapter 8 defined the static structure of the system—its components, responsibilities, and dependencies—this chapter explained how those components cooperate moment by moment as the application runs.
+
+We began by defining what an event-driven system is: an application whose behavior is determined by events rather than a fixed sequence of operations. We saw why this model is a natural fit for a text editor, which has nothing to do until the user presses a key or the environment changes. We then walked through the complete lifecycle of the editor, from startup through the initialization phase (parsing arguments, enabling raw mode, loading the document, and rendering the first frame) to the **Event Loop**—the central mechanism that reads input, processes events, updates state, renders each frame, and repeats until exit.
+
+We examined the different types of events the editor handles (keyboard, system, and internal), traced how a single key press flows through the entire pipeline from the terminal through the Input Parser, Input Engine, Command Engine, Editor State, and Renderer, and clarified the important distinction between raw events and semantic commands. We saw that the Editor State acts as the single source of truth and that the Renderer is a pure, read-only transformation from state to screen. We explored why a **full-screen redraw** strategy, sequential single-threaded execution, and lightweight command processing together keep the editor responsive without requiring concurrency or incremental rendering. Finally, we discussed how runtime errors are handled within the loop without crashing the editor or leaving it in an inconsistent state.
+
+With both the static architecture and the runtime behavior now thoroughly understood, we are ready to begin translating this design into working code.
+
+## Exercises
+
+### Review Questions
+
+1. What is an event-driven system, and why is this architecture a natural fit for a text editor?
+2. Describe the purpose of the event loop. What happens during each iteration?
+3. What is the difference between an **event** and a **command**? Which component is responsible for translating one into the other?
+4. Why does the Renderer produce a full frame from scratch rather than updating only the parts of the screen that changed?
+5. Explain why a single-threaded architecture simplifies the editor's design. What problems does it avoid?
+
+### Thought Experiments
+
+1. Imagine the editor needed to support an auto-save feature that periodically writes the document to disk without user intervention. How would you integrate this into the event-driven architecture without blocking the event loop or introducing threads?
+
+## Preview of the Next Chapter
+
+We have now designed what the editor is made of and how it behaves at runtime. The next logical step is to organize these concepts into a concrete, maintainable source tree.
+
+In the next chapter, we will design the **project structure**. We will define the directory layout, organize header files, establish module interfaces that reflect the architectural boundaries from Chapter 8, and set up the build system so that every piece of the editor can be compiled, tested, and extended cleanly. By the end of the chapter, you will have a clear map of the source tree and a foundation for the implementation chapters that follow.

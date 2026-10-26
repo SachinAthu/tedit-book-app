@@ -1,0 +1,180 @@
+---
+title: 9.4 The Event Loop
+---
+
+Once initialization is complete, the editor enters the **Event Loop**. This is the heart of the application and the place where it spends almost its entire lifetime. From this point until the user exits the editor, every interaction follows the same repeating cycle.
+
+The Event Loop continuously waits for events, processes them, updates the Editor State, and refreshes the display. This repetitive execution model allows the editor to remain responsive while maintaining a simple and predictable control flow.
+
+The overall structure of the Event Loop can be represented as follows:
+
+```text
+while (editor_is_running)
+{
+    Wait for an Event
+
+    Process the Event
+
+    Update the Editor State
+
+    Render a New Frame
+}
+```
+
+Although this resembles a conventional `while` loop, it represents much more than a programming construct. It defines the runtime behavior of the entire editor.
+
+## Why an Event Loop?
+
+As we saw in Section 9.1, a text editor differs fundamentally from sequential programs: it cannot predict what the user will do next, so it must remain active and respond whenever something happens rather than executing a fixed sequence of operations and terminating. The Event Loop is the mechanism that provides this behavior.
+
+## Waiting for Events
+
+One of the most important responsibilities of the Event Loop is waiting for the next event.
+
+At first glance, this might seem inefficient. If the editor is waiting, isn't it wasting time?
+
+The answer is no.
+
+When the editor waits for input, it is not repeatedly checking the keyboard in a tight loop. Instead, it asks the operating system to notify it when new input becomes available. During this waiting period, the operating system can schedule other processes to run, allowing the CPU to perform useful work elsewhere.
+
+Conceptually, the process looks like this:
+
+```text
+Editor
+
+↓
+
+Wait for Event
+
+↓
+
+Operating System
+
+↓
+
+User Presses Key
+
+↓
+
+Operating System Wakes Editor
+
+↓
+
+Continue Execution
+```
+
+From the user's perspective, the response appears instantaneous. Behind the scenes, however, the operating system efficiently manages when the editor should execute.
+
+## Processing One Event at a Time
+
+Our editor is designed as a **single-threaded** application. It processes one event completely before moving on to the next. This design keeps the execution model simple and predictable, avoiding the additional complexity of synchronization and concurrent access to shared data. This architectural constraint was established in the Software Requirements Specification and ensures that all input processing, state updates, rendering, and file operations occur within a single Event Loop.
+
+For example, suppose the user presses the **A** key.
+
+The Event Loop performs the following sequence:
+
+```text
+Receive Key Event
+
+↓
+
+Interpret Input
+
+↓
+
+Insert Character
+
+↓
+
+Update Cursor
+
+↓
+
+Render Screen
+
+↓
+
+Wait for Next Event
+```
+
+Only after this sequence is complete does the editor begin processing another event.
+
+This sequential execution guarantees that the Editor State remains consistent throughout each operation.
+
+## The Event Loop Coordinates the Entire System
+
+The Event Loop is not responsible for performing every operation itself. Instead, it coordinates the work performed by the editor's components.
+
+A simplified view of this coordination is shown below:
+
+```text
+             Event Loop
+                  │
+     ┌────────────┼────────────┐
+     ▼            ▼            ▼
+Input Parser  Input Engine  Command Engine
+                                │
+                                ▼
+                           Editor State
+                                ▲
+                                │
+                             Renderer
+```
+
+Each component performs a specific task:
+
+- The **Input Parser** interprets incoming input events.
+- The **Input Engine** maps each key event to an editor command.
+- The **Command Engine** executes that command.
+- The **Editor State** stores the current state of the application.
+- The **Renderer** generates the next visual frame.
+
+The Event Loop simply ensures that these components execute in the correct order.
+
+## A Continuous Cycle
+
+From the user's perspective, editing feels like a series of independent actions. Internally, however, every action follows the same repeating pattern.
+
+```text
+Wait
+
+↓
+
+Event Arrives
+
+↓
+
+Process Event
+
+↓
+
+Update State
+
+↓
+
+Render
+
+↓
+
+Wait Again
+```
+
+Whether the user inserts a character, deletes a line, moves the cursor, saves a file, or exits the application, the Event Loop follows this same cycle. The only difference is the type of event being processed.
+
+This consistency is one of the greatest strengths of an event-driven architecture. Every feature in the editor is implemented within the same execution model, making the system easier to understand, extend, and maintain.
+
+## Event Loop vs. Game Loop
+
+Readers who have experience with game development may notice that the Event Loop resembles a **game loop**.
+
+Both repeatedly process input, update application state, and render a new frame. However, there is an important distinction.
+
+A game loop typically runs continuously at a fixed frame rate—such as 60 frames per second—regardless of whether the user provides any input. It updates animations, physics simulations, and game logic every frame.
+
+Our editor behaves differently. It spends most of its time waiting for events and performs work only when an event occurs. This event-driven approach avoids unnecessary processing and is well suited to interactive applications where user input determines almost all activity.
+
+## Summary
+
+The Event Loop is the central mechanism that drives the editor throughout its lifetime. Rather than executing a fixed sequence of operations, it repeatedly waits for events, coordinates the processing of those events, updates the Editor State, and renders the resulting changes to the terminal.
+
+In the next section, we will examine the different types of events that the editor processes and see how each contributes to the application's overall behavior.

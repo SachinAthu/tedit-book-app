@@ -1,0 +1,214 @@
+---
+title: 9.6 Event Processing Pipeline
+---
+
+In the previous section, we examined the three categories of events the editor processes—keyboard, system, and internal. While knowing what kinds of events exist is useful, it does not explain what actually happens inside the **"Process the Event"** step of the Event Loop.
+
+When the user presses a key, the editor does not immediately insert text or move the cursor. Instead, the event travels through a series of specialized components, each responsible for performing a single task. This sequence of processing stages is known as the **Event Processing Pipeline**.
+
+By dividing event processing into multiple stages, the editor maintains a modular architecture where each component has a clear responsibility. Rather than allowing every module to interact directly with every other module, each component performs its assigned task and passes the result to the next stage.
+
+The complete pipeline is illustrated below.
+
+```text
+Keyboard
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Editor State
+    │
+    ▼
+Renderer
+    │
+    ▼
+Terminal
+```
+
+This pipeline should already look familiar. Every component was introduced in the previous chapter when we discussed the system architecture. The difference is that we are now examining how these components collaborate during program execution rather than simply identifying their responsibilities.
+
+## Step 1 — Keyboard Input
+
+The pipeline begins when the user presses a key.
+
+This action generates a keyboard event that eventually reaches the terminal. Depending on the key that was pressed, the terminal may produce:
+
+- a printable character,
+- a control character,
+- or an escape sequence representing a special key.
+
+At this stage, the editor has not yet received any input.
+
+## Step 2 — Input Handler
+
+The **Input Handler** is the first component inside the editor to receive input from the terminal.
+
+Its responsibility is intentionally simple:
+
+- read the incoming bytes,
+- and deliver them to the Input Parser.
+
+The Input Handler does **not** attempt to determine what the bytes mean.
+
+For example, if the terminal sends the byte sequence representing the Up Arrow key, the Input Handler merely forwards those bytes without interpretation.
+
+## Step 3 — Input Parser
+
+The **Input Parser** converts the raw byte stream into structured key events.
+
+For example:
+
+```text
+Raw Bytes
+
+↓
+
+ESC [ A
+
+↓
+
+KEY_ARROW_UP
+```
+
+Or:
+
+```text
+Raw Byte
+
+↓
+
+'A'
+
+↓
+
+KEY_CHARACTER('A')
+```
+
+This abstraction hides terminal-specific details from the rest of the editor.
+
+As established by **ADR-004**, separating byte-level parsing from editor logic prevents the Command Engine from becoming coupled to terminal protocols and creates a clean boundary between platform-specific input handling and editor behavior.
+
+## Step 4 — Input Engine
+
+Once a structured key event has been produced, it is passed to the **Input Engine**.
+
+The Input Engine maps each key event to the editor command it represents.
+
+For example:
+
+| Key Event            | Command                   |
+| -------------------- | ------------------------- |
+| `KEY_CHARACTER('A')` | Insert character          |
+| `KEY_ARROW_LEFT`     | Move cursor left          |
+| `KEY_BACKSPACE`      | Delete previous character |
+| `KEY_CTRL_S`         | Save document             |
+| `KEY_CTRL_Q`         | Exit editor               |
+
+Notice that the Input Engine does not care how the key event was produced. It simply receives an abstract event and decides which command should be executed.
+
+## Step 5 — Command Engine
+
+Once a command has been selected, it is passed to the **Command Engine**.
+
+The Command Engine executes the command, coordinating the changes that update the Editor State.
+
+## Step 6 — Update the Editor State
+
+After the command has been executed, the editor modifies the **Editor State**.
+
+Depending on the operation, this may involve:
+
+- inserting text,
+- deleting characters,
+- moving the cursor,
+- updating the viewport,
+- changing the Dirty Flag,
+- or modifying another part of the editor's state.
+
+The Editor State remains the **single source of truth** for the entire application. Every modification made by the Command Engine is reflected here before any rendering occurs.
+
+## Step 7 — Render the Updated State
+
+Once the Editor State has been updated, the **Renderer** generates a new visual frame.
+
+It reads the current state and redraws the visible interface, including:
+
+- the document,
+- the status bar,
+- the message bar,
+- the cursor,
+- and the viewport.
+
+Importantly, the Renderer does not decide _what_ changed. It simply displays the current Editor State exactly as it exists.
+
+## An Example: Typing a Character
+
+Suppose the user presses the **A** key.
+
+The complete processing pipeline looks like this:
+
+```text
+User Presses 'A'
+        │
+        ▼
+Keyboard
+        │
+        ▼
+Input Handler
+        │
+        ▼
+Input Parser
+        │
+        ▼
+KEY_CHARACTER('A')
+        │
+        ▼
+Input Engine
+        │
+        ▼
+Insert Character
+        │
+        ▼
+Command Engine
+        │
+        ▼
+Editor State Updated
+        │
+        ▼
+Renderer
+        │
+        ▼
+Updated Screen
+```
+
+Although this operation appears instantaneous to the user, it passes through every stage of the pipeline in exactly this order.
+
+## Why Use a Pipeline?
+
+It might seem simpler for the Input Handler to modify the document directly whenever a key is pressed. However, doing so would mix input handling, command execution, state management, and rendering into a single component.
+
+A processing pipeline provides several important advantages:
+
+- Each component has a single, well-defined responsibility.
+- Components remain loosely coupled and easier to maintain.
+- Platform-specific input handling is isolated from editor logic.
+- The Editor State remains the central point of coordination.
+- Individual components can be tested and modified independently.
+
+This design closely follows the layered architecture established in Chapter 8, where responsibilities are intentionally separated to produce a modular and maintainable system.
+
+## Summary
+
+Every event processed by the editor follows the same pipeline. Input enters the system through the Input Handler, is translated into structured events by the Input Parser, mapped to commands by the Input Engine, executed by the Command Engine, applied to the Editor State, and finally rendered to the terminal.
+
+By ensuring that every event follows the same path, the editor achieves a predictable execution model that is easy to understand, debug, and extend. In the next section, we will look more closely at the relationship between **events** and **commands**, and why treating them as separate concepts leads to a cleaner architecture.

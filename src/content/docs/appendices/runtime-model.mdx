@@ -1,0 +1,216 @@
+---
+title: Appendix K — Runtime Model
+description: The complete runtime execution model for the terminal text editor.
+sidebar:
+  label: K — Runtime Model
+  order: 11
+---
+
+## Purpose
+
+This document defines the canonical runtime execution model of the editor. It describes how the application behaves from startup to shutdown and serves as the reference for all implementation chapters.
+
+## Application Lifecycle
+
+```text
+Program Start
+      │
+      ▼
+Initialization
+      │
+      ▼
+Event Loop
+      │
+      ▼
+Exit & Cleanup
+```
+
+The editor spends almost its entire lifetime executing the Event Loop.
+
+## Initialization
+
+Initialization prepares the application before normal execution begins.
+
+Responsibilities:
+
+- Enable terminal raw mode
+- Query terminal dimensions
+- Initialize Editor State
+- Load document (if provided)
+- Initialize Viewport
+- Render initial frame
+
+After successful initialization, control transfers to the Event Loop.
+
+## Event Loop
+
+The editor follows a single-threaded event-driven architecture.
+
+```text
+while (running)
+    Wait for Event
+    Parse Input
+    Execute Command
+    Update Editor State
+    Render Frame
+```
+
+One complete iteration processes exactly one event.
+
+## Event Processing Pipeline
+
+All user interactions follow the same processing pipeline.
+
+```text
+Keyboard
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Editor State
+    │
+    ▼
+Renderer
+    │
+    ▼
+Terminal
+```
+
+Component responsibilities:
+
+| Component      | Responsibility                             |
+| -------------- | ------------------------------------------ |
+| Input Handler  | Read raw terminal input                    |
+| Input Parser   | Convert raw bytes into abstract key events |
+| Input Engine   | Map key events to editor commands          |
+| Command Engine | Execute editor commands                    |
+| Editor State   | Single source of truth                     |
+| Renderer       | Produce the visual frame                   |
+| File Manager   | Perform file I/O when requested            |
+
+## State Update Model
+
+Commands never modify the terminal directly.
+
+Execution order:
+
+```text
+Event
+    │
+    ▼
+Execute Command
+    │
+    ▼
+Update Editor State
+    │
+    ▼
+Render Frame
+```
+
+Rendering always occurs after all state updates have completed.
+
+## Rendering Cycle
+
+The renderer performs a full-screen redraw.
+
+Each frame consists of:
+
+- Document Area
+- Status Bar
+- Message Bar
+- Cursor
+
+The Renderer:
+
+- Reads Editor State
+- Does not modify Editor State
+- Produces a complete frame every iteration
+
+## Error Handling
+
+Most runtime errors are recoverable.
+
+Examples:
+
+- Save failed
+- File not found
+- Invalid input
+- Terminal resize
+
+Recoverable errors:
+
+- Update the Message Bar
+- Continue the Event Loop
+
+Fatal errors:
+
+- Prevent initialization or safe execution
+- Terminate the application after restoring terminal state
+
+## Responsiveness
+
+The editor remains responsive by keeping each Event Loop iteration short.
+
+Design principles:
+
+- One event per iteration
+- Sequential execution
+- No blocking work during normal editing
+- Render once after state updates
+- Return immediately to waiting for the next event
+
+## Execution Model
+
+The complete runtime model is:
+
+```text
+Program Starts
+      │
+      ▼
+Initialization
+      │
+      ▼
++----------------------+
+|     Event Loop       |
+|                      |
+|  Wait for Event      |
+|         │            |
+|         ▼            |
+|  Parse Input         |
+|         │            |
+|         ▼            |
+| Execute Command      |
+|         │            |
+|         ▼            |
+| Update State         |
+|         │            |
+|         ▼            |
+| Render Frame         |
++----------------------+
+      │
+      ▼
+Exit & Cleanup
+```
+
+## Runtime Principles
+
+- Event-driven architecture
+- Single-threaded execution
+- Sequential event processing
+- Editor State is the single source of truth
+- Renderer is read-only
+- Full-screen redraw rendering
+- One complete frame per event
+- Recoverable errors do not terminate the editor
+- Components communicate through the Editor State
+- All execution is coordinated by the Event Loop

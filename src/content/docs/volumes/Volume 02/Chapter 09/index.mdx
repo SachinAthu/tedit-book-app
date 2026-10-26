@@ -1,0 +1,39 @@
+---
+title: Chapter 9 — Event Driven Architecture
+description: The runtime behavior of the editor—initialization, the event loop, state updates, rendering, and error handling.
+---
+
+In the previous chapter, we designed the architecture of the editor by identifying its major components, defining their responsibilities, and establishing how they depend on one another. While that architecture describes the structure of the system, it does not explain how the editor actually operates once it starts running.
+
+A text editor is an **event-driven application**. Rather than executing a fixed sequence of operations and terminating, it continuously waits for events, responds to user input, updates its internal state, and refreshes the display. This cycle repeats throughout the lifetime of the application, allowing the editor to remain interactive and responsive.
+
+In this chapter, we examine the runtime behavior of the editor. We will explore the event loop, follow the flow of an event through the system, and see how the editor's components work together to process input, update the editor state, and render each frame. Understanding this execution model provides the foundation for the implementation chapters that follow.
+
+## Learning Objectives
+
+By the end of this chapter, you will be able to:
+
+- Explain what an event-driven application is and why text editors use this architecture.
+- Describe the purpose and structure of the event loop.
+- Identify the different types of events processed by the editor.
+- Trace the flow of an event from keyboard input to screen rendering.
+- Explain how the editor state is updated in response to events.
+- Understand the relationship between event processing, state management, and rendering.
+- Recognize why this execution model results in a responsive and maintainable editor design.
+
+## Sections
+
+- [9.1 What Is an Event-Driven System?](/volumes/volume-02/chapter-09/01-what-is-an-event-driven-system/)
+- [9.2 The Life of an Editor](/volumes/volume-02/chapter-09/02-life-of-an-editor/)
+- [9.3 Initialization Phase](/volumes/volume-02/chapter-09/03-initialization-phase/)
+- [9.4 The Event Loop](/volumes/volume-02/chapter-09/04-event-loop/)
+- [9.5 Events in Our Editor](/volumes/volume-02/chapter-09/05-events-in-our-editor/)
+- [9.6 Event Processing Pipeline](/volumes/volume-02/chapter-09/06-event-processing-pipeline/)
+- [9.7 Commands vs. Events](/volumes/volume-02/chapter-09/07-commands-vs-events/)
+- [9.8 State Updates](/volumes/volume-02/chapter-09/08-state-updates/)
+- [9.9 The Rendering Cycle](/volumes/volume-02/chapter-09/09-rendering-cycle/)
+- [9.10 Maintaining Responsiveness](/volumes/volume-02/chapter-09/10-maintaining-responsiveness/)
+- [9.11 Error Handling Within the Loop](/volumes/volume-02/chapter-09/11-error-handling-within-the-loop/)
+- [9.12 Putting It All Together](/volumes/volume-02/chapter-09/12-all-together/)
+- [9.13 The Final Runtime Model](/volumes/volume-02/chapter-09/13-ref-runtime-modal/)
+- [9.14 Conclusion](/volumes/volume-02/chapter-09/14-conclusion/)

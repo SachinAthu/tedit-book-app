@@ -1,0 +1,126 @@
+---
+title: 9.3 Initialization Phase
+---
+
+Before the editor can begin processing events, it must first prepare its execution environment. This preparation is known as the **initialization phase**. It occurs exactly once during the lifetime of the application, immediately after the program starts and before the Event Loop begins.
+
+The purpose of initialization is to ensure that every component starts in a valid and consistent state. When the Event Loop begins, the editor should already know the current terminal size, have an initialized Editor State, be operating in raw mode, and have loaded the requested document if one was specified.
+
+The overall initialization process can be summarized as follows:
+
+```text
+Program Starts
+        │
+        ▼
+Parse Command-Line Arguments
+        │
+        ▼
+Initialize Editor State
+        │
+        ▼
+Enable Raw Mode
+        │
+        ▼
+Determine Terminal Size
+        │
+        ▼
+Load Document (Optional)
+        │
+        ▼
+Render Initial Frame
+        │
+        ▼
+Enter Event Loop
+```
+
+Although these steps are presented sequentially, each has a distinct responsibility. Together, they prepare the application for interactive editing.
+
+## Parsing Command-Line Arguments
+
+The first task is to examine the arguments supplied when launching the program.
+
+For example:
+
+```bash
+editor
+```
+
+starts the editor with a new empty document, while
+
+```bash
+editor notes.txt
+```
+
+requests that the editor open an existing file named `notes.txt`.
+
+At this stage, the editor simply determines how it should start. It does not yet perform any editing or rendering.
+
+## Initializing the Editor State
+
+Next, the editor creates its central **Editor State**, which serves as the application's single source of truth. As discussed in the previous chapter, all major components share and operate on this state rather than maintaining independent copies.
+
+During initialization, the Editor State is populated with sensible default values.
+
+For example:
+
+- an empty document is created,
+- the cursor is positioned at the beginning of the document,
+- the viewport is initialized,
+- the current filename is set to an empty or placeholder value,
+- the document is marked as unmodified,
+- and the status message is cleared.
+
+At the end of this step, the editor has a valid internal representation of its current state.
+
+## Enabling Raw Mode
+
+Before keyboard input can be processed interactively, the terminal must be switched from **canonical mode** to **raw mode**.
+
+As explained in Chapter 5, canonical mode buffers input until the user presses Enter, making it unsuitable for an interactive text editor. Raw mode delivers each key press immediately, allowing the editor to respond to individual characters, arrow keys, and keyboard shortcuts as they are typed.
+
+This change is temporary and remains in effect only while the editor is running.
+
+## Determining the Terminal Size
+
+The editor must know how much screen space is available before it can render the document.
+
+During initialization, it queries the terminal to determine:
+
+- the number of rows,
+- the number of columns,
+- and the resulting size of the editable viewport.
+
+These values become part of the Editor State and are later used by the Renderer to determine which portion of the document should be displayed.
+
+## Loading the Document
+
+If the user specified a filename when launching the editor, the File Manager reads the file from disk and loads its contents into the document stored in the Editor State.
+
+If no filename was provided, this step is skipped, and the editor begins with a new empty document instead.
+
+Regardless of how the document is created, the remainder of the editor operates on the in-memory representation rather than directly on the file stored on disk.
+
+## Rendering the Initial Frame
+
+Once initialization is complete, the editor has enough information to generate its first screen.
+
+The Renderer reads the current Editor State and draws:
+
+- the visible portion of the document,
+- the status bar,
+- the message bar,
+- and the cursor.
+
+This first frame establishes the initial user interface before any interaction occurs.
+
+## Ready for Interactive Execution
+
+After the first frame has been rendered, initialization is complete. The editor has prepared its internal state, configured the terminal, loaded the document if necessary, and displayed the initial interface.
+
+At this point, the application transitions into its normal operating mode by entering the **Event Loop**. From then on, nearly all of the editor's execution consists of repeatedly waiting for events, processing them, updating the Editor State, and rendering new frames.
+
+## Summary
+
+In this section, we examined the initialization phase. We saw that before the editor can process events, it must parse its command-line arguments, initialize the Editor State, enable raw mode, determine the terminal size, load the requested document, and render the initial frame. These steps occur exactly once and ensure that every component starts in a valid, consistent state.
+
+In the next section, we will examine the **Event Loop**—the central mechanism that keeps the editor running and coordinates every interaction with the user.

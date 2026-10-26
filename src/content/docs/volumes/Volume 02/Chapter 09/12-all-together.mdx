@@ -1,0 +1,435 @@
+---
+title: 9.12 Putting It All Together
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Throughout this chapter, we have examined the individual components of the editor's event-driven architecture. We began with the concept of events, explored the structure of the **Event Loop**, followed the journey of keyboard input through the system, examined how the **Editor State** changes, and concluded by discussing rendering, responsiveness, and error handling.
+
+At this point, it is useful to step back and view the editor as a complete system.
+
+Rather than thinking of the **Input Handler**, **Input Parser**, **Input Engine**, **Command Engine**, **Renderer**, and **File Manager** as isolated components, we can now understand how they cooperate to create a continuous editing experience. This complete execution model serves as the conceptual foundation for the implementation chapters that follow later in the book.
+
+## The Complete Runtime Lifecycle
+
+From the moment the editor starts until it eventually exits, the application's execution follows a remarkably simple pattern.
+
+```text
+Program Starts
+      │
+      ▼
+Initialization
+      │
+      ▼
++----------------------+
+|     Event Loop       |
+|                      |
+|  Wait for Event      |
+|         │            |
+|         ▼            |
+|  Parse Input         |
+|         │            |
+|         ▼            |
+| Execute Command      |
+|         │            |
+|         ▼            |
+| Update State         |
+|         │            |
+|         ▼            |
+| Render Frame         |
++----------------------+
+      │
+      ▼
+Exit & Cleanup
+```
+
+Although the editor performs many different tasks—opening files, editing text, scrolling, rendering the display, and saving documents—they all occur within this single execution model.
+
+Everything begins with initialization, proceeds through repeated iterations of the **Event Loop**, and concludes with orderly cleanup.
+
+## Phase 1: Initialization
+
+Before the editor can process a single key press, it must prepare its environment.
+
+Initialization is responsible for creating the foundation upon which the rest of the application operates.
+
+Typical initialization tasks include:
+
+- enabling terminal raw mode,
+- determining the terminal dimensions,
+- initializing the **Editor State**,
+- loading an existing document (if one was specified),
+- preparing the **Viewport**,
+- displaying the initial frame.
+
+Conceptually:
+
+```text
+Start Program
+
+↓
+
+Initialize Terminal
+
+↓
+
+Initialize Editor State
+
+↓
+
+Load Document
+
+↓
+
+Render Initial Screen
+
+↓
+
+Enter Event Loop
+```
+
+Once initialization completes successfully, the editor transitions into its normal operating mode.
+
+From this point onward, nearly all application behavior is governed by the **Event Loop**.
+
+## Phase 2: Waiting for Events
+
+Unlike applications that continuously perform background work, a terminal text editor spends much of its lifetime waiting.
+
+After completing one iteration of the loop, it pauses until something happens.
+
+That "something" is an event.
+
+Examples include:
+
+- a printable character,
+- an arrow key,
+- a keyboard shortcut,
+- a terminal resize,
+- a request to exit.
+
+Conceptually:
+
+```text
+Event Loop
+
+↓
+
+Wait
+
+↓
+
+Event Arrives
+
+↓
+
+Process Event
+```
+
+This waiting period is not wasted time.
+
+It simply reflects the interactive nature of the application.
+
+The editor performs work only when the user—or the operating environment—requests it.
+
+## Phase 3: Interpreting Input
+
+Once an event arrives, the editor begins processing it.
+
+The first responsibility is to convert raw terminal input into meaningful editor events.
+
+The processing pipeline remains exactly as introduced earlier in the chapter:
+
+```text
+Keyboard
+
+↓
+
+Input Handler
+
+↓
+
+Input Parser
+
+↓
+
+Key Event
+```
+
+The **Input Handler** reads bytes from the operating system.
+
+The **Input Parser** interprets those bytes and produces abstract key events such as:
+
+- `KEY_CHARACTER('A')`
+- `KEY_ARROW_UP`
+- `KEY_CTRL_S`
+- `KEY_CTRL_Q`
+
+By the time processing reaches the **Input Engine**, terminal-specific details have already been removed.
+
+## Phase 4: Mapping Events to Commands
+
+The **Input Engine** determines which command each key event represents.
+
+For example:
+
+```text
+KEY_CHARACTER
+
+↓
+
+Insert Character
+```
+
+or
+
+```text
+KEY_ARROW_UP
+
+↓
+
+Move Cursor
+```
+
+or
+
+```text
+KEY_CTRL_S
+
+↓
+
+Save Document
+```
+
+The selected command is then passed to the **Command Engine**, which executes it.
+
+Each command has a clearly defined responsibility.
+
+Some commands modify the document.
+
+Others move the cursor.
+
+Some interact with the **File Manager**.
+
+Regardless of the operation, the command completes before the next event is processed.
+
+## Phase 5: Updating the Editor State
+
+Commands do not modify the display directly.
+
+Instead, they update the **Editor State**, which serves as the application's single source of truth.
+
+Depending on the event, different parts of the state may change.
+
+For example:
+
+```text
+Character Inserted
+
+↓
+
+Document Updated
+
+↓
+
+Cursor Advanced
+
+↓
+
+Dirty Flag Set
+```
+
+or
+
+```text
+Cursor Movement
+
+↓
+
+Cursor Updated
+
+↓
+
+Viewport Adjusted
+```
+
+Every modification passes through this centralized state.
+
+Because all components observe the same source of truth, the editor remains internally consistent throughout its execution.
+
+## Phase 6: Rendering the Current State
+
+Once all state updates are complete, the **Renderer** generates a new frame.
+
+The renderer examines the current **Editor State** and constructs the complete visual representation of the editor.
+
+```text
+Editor State
+
+↓
+
+Renderer
+
+↓
+
+Terminal
+```
+
+This frame includes:
+
+- the visible document,
+- the **Status Bar**,
+- the **Message Bar**,
+- the cursor position.
+
+Because the renderer performs a full-screen redraw, every frame completely represents the current state of the application.
+
+No partial updates or incremental modifications are required.
+
+## Phase 7: Returning to the Event Loop
+
+After rendering completes, the editor has finished processing the current event.
+
+The cycle then repeats.
+
+```text
+Render Complete
+
+↓
+
+Return to Event Loop
+
+↓
+
+Wait for Next Event
+```
+
+This continuous repetition gives the impression that the editor is constantly active.
+
+In reality, it alternates rapidly between waiting for events and processing them.
+
+Every key press initiates another journey through exactly the same pipeline.
+
+## Error Handling Within the Flow
+
+The runtime model also incorporates the error handling strategy discussed in the previous section.
+
+If an operation encounters a recoverable error, the event-processing pipeline changes only slightly.
+
+```text
+Execute Command
+        │
+        ▼
+Operation Fails
+        │
+        ▼
+Update Message Bar
+        │
+        ▼
+Render Frame
+        │
+        ▼
+Continue Event Loop
+```
+
+Notice what does **not** happen.
+
+The editor does not terminate.
+
+The **Event Loop** does not stop.
+
+The **Editor State** remains valid.
+
+Instead, the failure is reflected in the **Message Bar**, and the application immediately becomes ready to process the next event.
+
+This behavior contributes significantly to the reliability of the editor.
+
+## The Runtime Model in Context
+
+We can now combine all architectural components introduced throughout Chapters 8 and 9 into a single conceptual diagram.
+
+```text
+                     User
+                      │
+                      ▼
+                 Keyboard Input
+                      │
+                      ▼
+             +------------------+
+             |  Input Handler   |
+             +------------------+
+                      │
+                      ▼
+             +------------------+
+             |  Input Parser    |
+             +------------------+
+                      │
+                      ▼
+             +------------------+
+             |   Input Engine   |
+             +------------------+
+                      │
+                      ▼
+             +------------------+
+             | Command Engine   |
+             +------------------+
+                      │
+                      ▼
+             +------------------+
+             |   Editor State   |
+             +------------------+
+                 │          │
+                 │          │
+                 ▼          ▼
+          +-------------+  +--------------+
+          |  Renderer   |  | File Manager |
+          +-------------+  +--------------+
+                 │
+                 ▼
+              Terminal
+                 │
+                 ▼
+          Wait for Next Event
+```
+
+Several important architectural principles are visible in this diagram:
+
+- information flows in one direction,
+- the **Editor State** remains the central source of truth,
+- each component has a single, clearly defined responsibility,
+- rendering occurs only after state updates are complete,
+- the **Event Loop** coordinates the entire application.
+
+This is the unifying model for the editor's runtime behavior.
+
+Every editing operation—from inserting a character to saving a file—travels through this same architectural pipeline.
+
+## Why This Model Scales
+
+One of the strengths of this architecture is that it remains stable even as additional features are introduced.
+
+Suppose future chapters add:
+
+- search,
+- undo and redo,
+- syntax highlighting,
+- multiple documents,
+- configuration management.
+
+Although these features increase the editor's capabilities, they do not fundamentally alter the runtime model.
+
+Instead, they become additional commands, additional state, or additional rendering responsibilities.
+
+The **Event Loop** itself remains unchanged.
+
+This stability is a hallmark of good software architecture.
+
+Rather than redesigning the application's execution model whenever new functionality is added, the architecture provides a flexible framework into which new components naturally fit.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Well-designed software often appears more complicated than it really is because it performs many different tasks. However, beneath that functionality is usually a surprisingly small execution model. Our editor is built around a single repeating cycle: receive an event, interpret it, update the **Editor State**, render the result, and wait for the next event. Every feature introduced later in the book builds upon this same foundation. Once this runtime model is understood, the behavior of the entire editor becomes significantly easier to reason about.
+
+</Aside>
+
+The complete **Runtime Model** for our terminal text editor is provided in [Appendix K](/appendices/runtime-model/) as a single reference document.

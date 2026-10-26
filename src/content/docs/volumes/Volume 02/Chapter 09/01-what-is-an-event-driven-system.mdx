@@ -1,0 +1,126 @@
+---
+title: 9.1 What Is an Event-Driven System?
+---
+
+Every computer program follows some form of execution model—a pattern that determines how the program performs its work. Some programs execute a sequence of operations from beginning to end and then terminate. Others remain active, continuously waiting for external input and responding whenever something happens. This latter approach is known as **event-driven programming**.
+
+An **event-driven system** is a system whose behavior is determined by events. Rather than executing a fixed sequence of tasks, the application spends most of its lifetime waiting for an event to occur. When an event is received, the application processes it, updates its internal state if necessary, performs any required actions, and then returns to waiting for the next event.
+
+For a terminal text editor, this execution model is a natural fit. The editor has nothing to do until the user presses a key or the operating environment changes. Instead of repeatedly performing unnecessary work, it reacts only when an event requires attention.
+
+## What Is an Event?
+
+An **event** is any occurrence that the application recognizes as something requiring a response. Events may originate from the user, the operating system, or the application itself.
+
+Some common events in our editor include:
+
+- Pressing a printable key to insert text
+- Pressing an arrow key to move the cursor
+- Pressing **Backspace** or **Delete**
+- Pressing a keyboard shortcut such as **Ctrl+S** to save the document
+- Resizing the terminal window
+- Starting or exiting the application
+
+Each event represents a request for the editor to perform a specific action.
+
+## Producers and Consumers of Events
+
+Every event has two participants:
+
+- The **event producer**, which generates the event.
+- The **event consumer**, which receives and processes the event.
+
+For example, when the user presses the **A** key, the keyboard generates electrical signals that are interpreted by the operating system and delivered to the terminal. The terminal passes the corresponding bytes to our editor, which ultimately interprets them as a keyboard event.
+
+The overall flow can be visualized as follows:
+
+```text
+User
+
+↓
+
+Keyboard
+
+↓
+
+Operating System
+
+↓
+
+Terminal
+
+↓
+
+Editor
+```
+
+In this example, the keyboard and operating system act as the producers of the input event, while the editor is the consumer that responds to it.
+
+## Event-Driven vs. Sequential Programs
+
+Not all programs are event-driven. Many utilities execute a predefined sequence of operations and then terminate.
+
+For example, consider a simple file-copy utility:
+
+```text
+Read Source File
+
+↓
+
+Copy Contents
+
+↓
+
+Write Destination File
+
+↓
+
+Exit
+```
+
+Once the copy operation is complete, the program has no further work to perform.
+
+A text editor behaves very differently. It cannot predict what the user will do next, so it must remain active and respond whenever an event occurs.
+
+Its execution is better represented as:
+
+```text
+Wait for Event
+
+↓
+
+Process Event
+
+↓
+
+Update Editor State
+
+↓
+
+Render Screen
+
+↓
+
+Wait for Next Event
+```
+
+This cycle continues until the user chooses to exit the editor.
+
+## Why Text Editors Are Event-Driven
+
+A text editor is fundamentally an interactive application. Every action performed by the user—typing a character, moving the cursor, deleting text, saving a file, or resizing the terminal—requires an immediate response from the program.
+
+An event-driven architecture provides several important advantages:
+
+- The editor remains responsive to user input.
+- Processing occurs only when an event requires it, avoiding unnecessary work.
+- Different types of events can be handled using a consistent execution model.
+- The runtime behavior remains predictable and easy to understand.
+
+Rather than attempting to anticipate future actions, the editor simply reacts to each event as it occurs. This reactive design forms the foundation of the event loop.
+
+## Summary
+
+In this section, we learned that an event-driven system is one whose behavior is determined by events. We defined what an event is, identified producers and consumers, and contrasted the editor's reactive execution model with the fixed sequences of a sequential program. Finally, we saw why this architecture is a natural fit for a text editor: it stays responsive by doing work only when an event requires it.
+
+In the next section, we will follow the **Life of an Editor**—a high-level walkthrough of the entire runtime cycle, from startup to shutdown.

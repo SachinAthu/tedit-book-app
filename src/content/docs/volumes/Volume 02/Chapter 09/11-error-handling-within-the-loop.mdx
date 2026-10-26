@@ -1,0 +1,355 @@
+---
+title: 9.11 Error Handling Within the Loop
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+No software operates under perfect conditions indefinitely. Files may disappear, storage devices may become unavailable, terminals can be resized unexpectedly, and users may provide input the application does not recognize. A well-designed text editor must anticipate these situations and respond gracefully.
+
+One of the strengths of an event-driven architecture is that it provides a natural place to detect, report, and recover from runtime errors. Rather than causing the application to terminate unexpectedly, most errors are treated as events that the editor can handle while continuing normal operation.
+
+In this section, we examine how errors are processed within the **Event Loop**, why most errors should result in informative messages instead of program termination, and how this approach contributes to a robust and user-friendly editor.
+
+## Errors Are Part of Normal Operation
+
+When people hear the word _error_, they often imagine a catastrophic failure.
+
+In practice, however, many runtime errors are simply situations that prevent one specific operation from succeeding.
+
+For example:
+
+- a file cannot be saved,
+- a requested file does not exist,
+- the terminal window changes size,
+- an unsupported key sequence is received.
+
+These situations do not necessarily indicate that the editor itself is broken.
+
+Instead, they represent conditions that require an appropriate response.
+
+The editor should therefore distinguish between:
+
+- **recoverable errors**, where normal operation can continue, and
+- **fatal errors**, where the application cannot safely proceed.
+
+Fortunately, the vast majority of errors encountered during normal editing are recoverable.
+
+## The Event Loop Continues Running
+
+One of the most important characteristics of the **Event Loop** is that it is designed to continue processing events even after an individual operation fails.
+
+Conceptually, the loop behaves like this:
+
+```text
+Read Input
+      │
+      ▼
+Process Event
+      │
+      ▼
+Did an Error Occur?
+      │
+ ┌────┴────┐
+ │         │
+No        Yes
+ │         │
+ ▼         ▼
+Render   Record Error
+ │         │
+ └────┬────┘
+      ▼
+Continue Loop
+```
+
+Notice that an error affects only the current event.
+
+Once the error has been handled, the editor immediately returns to waiting for the next user action.
+
+The application remains responsive and usable.
+
+## Reporting Errors to the User
+
+Since the editor continues running after most failures, the user still needs to know what happened.
+
+Rather than terminating the application or printing debugging information directly to the terminal, the editor communicates problems through the **Message Bar**.
+
+For example:
+
+```text
+File saved successfully.
+```
+
+or
+
+```text
+Unable to save file.
+```
+
+or
+
+```text
+Unknown key sequence.
+```
+
+The **Message Bar** provides immediate feedback while allowing the user to continue editing.
+
+This approach is considerably less disruptive than abruptly exiting the application.
+
+## Example: Save Failed
+
+Saving a document is one of the few operations that interacts directly with the file system.
+
+Numerous problems may prevent a successful save:
+
+- insufficient permissions,
+- a full storage device,
+- an unavailable file system,
+- an invalid file path.
+
+Suppose the user presses the save shortcut.
+
+The processing pipeline might look like this:
+
+```text
+Keyboard
+      │
+      ▼
+Input Handler
+      │
+      ▼
+Input Parser
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command Engine
+      │
+      ▼
+File Manager
+      │
+      ▼
+Write File
+      │
+      ▼
+Failure
+      │
+      ▼
+Message Bar
+
+"Unable to save file."
+```
+
+Importantly, the failure affects only the save operation.
+
+The document remains safely stored in the **Editor State**.
+
+The user can continue editing or attempt another save later.
+
+No work is lost simply because one file operation failed.
+
+## Example: File Not Found
+
+Another common situation occurs when the user attempts to open a file that does not exist.
+
+Conceptually:
+
+```text
+Open File
+
+↓
+
+Locate File
+
+↓
+
+Not Found
+
+↓
+
+Display Message
+
+↓
+
+Continue Editing
+```
+
+Again, there is no reason to terminate the editor.
+
+The requested operation failed, but the application itself remains perfectly functional.
+
+A clear message allows the user to understand the problem and choose an appropriate next action.
+
+## Example: Terminal Resize
+
+Not every runtime event represents an error in the traditional sense.
+
+Consider what happens when the user resizes the terminal window.
+
+The available screen dimensions change unexpectedly.
+
+```text
+Before Resize
+
++-------------------+
+|                      |
+|                      |
++----------------------+
+
+↓
+
+Terminal Resize
+
+↓
+
+New Screen Size
+
++--------------+
+|              |
+|              |
++--------------+
+```
+
+From the editor's perspective, this is an external event that requires immediate attention.
+
+The terminal dimensions stored in the **Editor State** must be updated, the **Viewport** may need adjustment, and a new frame must be rendered.
+
+Although nothing has gone wrong, the application must still react correctly to maintain a consistent display.
+
+The event-driven architecture handles this naturally because the resize event simply becomes another event processed within the **Event Loop**.
+
+## Example: Invalid Input
+
+Terminal input is ultimately a stream of bytes.
+
+Most input corresponds to valid characters or recognized control sequences.
+
+Occasionally, however, the editor may encounter input that it does not understand.
+
+For example:
+
+```text
+Raw Bytes
+
+↓
+
+Input Parser
+
+↓
+
+Unknown Sequence
+
+↓
+
+Ignore or Report
+
+↓
+
+Continue
+```
+
+The **Input Parser** should recognize that the sequence is unsupported and communicate this appropriately.
+
+Depending on the design, the editor may simply ignore the input or display a brief informational message.
+
+In either case, processing continues normally.
+
+An unexpected key sequence should never compromise the stability of the application.
+
+## Recovering Without Losing State
+
+One reason the editor can recover gracefully is that the **Editor State** remains the single source of truth.
+
+Suppose a save operation fails.
+
+The document stored in memory remains unchanged.
+
+```text
+Editor State
+
+Document
+Cursor
+Viewport
+Dirty Flag
+Current File
+```
+
+Nothing about the document itself has been damaged.
+
+Only the attempt to write the document to disk was unsuccessful.
+
+This separation between the in-memory representation and the external file system allows the editor to recover from many failures without risking data loss.
+
+The user retains full control over the document and can attempt another save once the underlying problem has been resolved.
+
+## Fatal Errors Are Different
+
+While most runtime errors are recoverable, some situations prevent the editor from continuing safely.
+
+Examples might include:
+
+- failure to initialize the terminal,
+- inability to enter raw mode,
+- failure to allocate essential resources during startup.
+
+These errors occur before normal editing can begin or make continued execution impossible.
+
+In such cases, terminating the application is appropriate.
+
+However, once the editor has successfully entered its normal operating state, runtime errors encountered during everyday editing should rarely require the application to exit.
+
+This distinction helps produce software that feels reliable and resilient.
+
+## Error Handling Supports User Confidence
+
+Users expect occasional operations to fail.
+
+What they do not expect is for the application itself to disappear because of a routine problem.
+
+Consider these two experiences:
+
+```text
+Press Save
+
+↓
+
+Permission Denied
+
+↓
+
+Editor Closes
+```
+
+versus
+
+```text
+Press Save
+
+↓
+
+Permission Denied
+
+↓
+
+"Unable to save file."
+
+↓
+
+Continue Editing
+```
+
+The second behavior inspires confidence.
+
+The user understands what happened, retains access to their work, and remains in control of the editing session.
+
+This philosophy is reflected in many professional editors, where most runtime problems generate informative messages while allowing the application to continue operating.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Robust software distinguishes between an operation that has failed and an application that has failed. A save operation can fail without compromising the integrity of the **Editor State**. An unsupported input sequence can be ignored without interrupting the editing session. By treating most runtime problems as recoverable events rather than fatal conditions, the **Event Loop** remains active, the editor stays responsive, and the user's work remains protected.
+
+</Aside>
+
+## Summary
+
+At this point, we have examined every major stage of the event-driven architecture: initialization, event processing, state updates, rendering, responsiveness, and runtime error handling. In the next section, we will bring these individual concepts together to see how a complete editing session flows through the architecture from startup to shutdown.

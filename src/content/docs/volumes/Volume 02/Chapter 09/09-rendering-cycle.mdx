@@ -1,0 +1,453 @@
+---
+title: 9.9 The Rendering Cycle
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we examined how events modify the **Editor State**. At the conclusion of each iteration of the **Event Loop**, the editor possesses an updated representation of the document, cursor position, viewport, status information, and other application data. However, none of these changes are visible to the user until they are rendered.
+
+This section focuses on the **Rendering Cycle**—the process of transforming the current **Editor State** into a complete visual representation on the terminal. Although rendering may appear to be the final step in the event-processing pipeline, it is just as fundamental as input handling or command execution. Without rendering, the editor's internal state would evolve correctly while the user would see no evidence of those changes.
+
+As established in the system architecture, the **Renderer** is a Platform Layer component responsible solely for producing output. It does not interpret keyboard input, execute commands, or modify the document. Instead, it observes the **Editor State**, constructs a new frame, and presents that frame to the terminal. This separation of responsibilities is a direct consequence of the layered architecture introduced in Chapter 8 and the full-screen redraw strategy defined by ADR-002.
+
+## From State to Screen
+
+Every iteration of the **Event Loop** follows the same high-level pattern:
+
+```text
+Read Input
+      │
+      ▼
+Parse Event
+      │
+      ▼
+Execute Command
+      │
+      ▼
+Update Editor State
+      │
+      ▼
+Render Screen
+```
+
+Notice an important characteristic of this sequence:
+
+The **Renderer** is always the final consumer of the application's state.
+
+Every previous stage exists to determine _what the state should become_. The renderer answers a different question:
+
+> "Given the current state, what should the user see?"
+
+This distinction is one of the most important architectural principles in the entire editor.
+
+## Rendering Is a Pure Transformation
+
+One useful way to think about the renderer is as a transformation function.
+
+Conceptually, it behaves like this:
+
+```text
+Editor State
+      │
+      ▼
++----------------+
+|   Renderer     |
++----------------+
+      │
+      ▼
+Visual Frame
+```
+
+The renderer does not decide what should happen.
+
+It simply translates existing information into a visual representation.
+
+If the document contains ten lines, it draws ten lines.
+
+If the cursor is on row eight, it positions the terminal cursor accordingly.
+
+If the document has unsaved changes, it displays the modified indicator in the **Status Bar**.
+
+Nothing more.
+
+Nothing less.
+
+This makes the renderer predictable because identical **Editor State** values always produce identical visual output.
+
+## The Renderer Does Not Own State
+
+Earlier chapters introduced the principle that every piece of state has a single owner.
+
+The renderer follows this rule rigorously.
+
+It reads information but does not modify it.
+
+For example:
+
+```text
+                 Editor State
+
+Document
+Cursor
+Viewport
+Status Bar
+Message Bar
+Current File
+Dirty Flag
+Screen Size
+        │
+        ▼
++----------------+
+|   Renderer     |
++----------------+
+        │
+        ▼
+     Terminal
+```
+
+Notice that every arrow points toward the renderer.
+
+No arrows point back.
+
+If the renderer were allowed to modify the **Editor State**, responsibilities would become blurred.
+
+For example, imagine the renderer deciding to move the cursor while drawing the screen.
+
+Now two different components could change cursor position:
+
+- the **Command Engine**
+- the **Renderer**
+
+Eventually these components would disagree.
+
+Unexpected bugs would appear.
+
+By keeping rendering read-only, the architecture remains deterministic and easy to reason about.
+
+## Constructing a Complete Frame
+
+Our editor adopts a **full-screen redraw** strategy rather than updating only the portions of the screen that changed.
+
+Instead of asking:
+
+> Which characters changed?
+
+the renderer asks:
+
+> What should the entire screen look like right now?
+
+Suppose the document currently contains:
+
+```text
+Line one
+Line two
+Line three
+```
+
+The renderer does not compare this frame with the previous one.
+
+Instead, it constructs a brand-new frame representing the complete display.
+
+Conceptually:
+
+```text
+Old Frame
+───────────────
+
+Line one
+Line two
+Line three
+
+↓
+
+Discard
+
+↓
+
+New Frame
+───────────────
+
+Line one
+Line two!
+Line three
+```
+
+Only after the complete frame has been prepared is it written to the terminal.
+
+This approach greatly simplifies the rendering logic because every frame is produced using exactly the same procedure.
+
+ADR-002 intentionally selected this strategy because simplicity, correctness, and educational value outweigh the performance gains of incremental rendering for a small editor.
+
+## What Must Be Rendered?
+
+The visible interface contains considerably more than the document itself.
+
+Every frame typically includes multiple regions.
+
+```text
++--------------------------------------+
+|                                      |
+|                                      |
+|          Document Area               |
+|                                      |
+|                                      |
++--------------------------------------+
+| Status Bar                           |
++--------------------------------------+
+| Message Bar                          |
++--------------------------------------+
+```
+
+Each of these areas is generated independently.
+
+### Document Area
+
+The document area displays only the portion of the document currently visible through the **Viewport**.
+
+The renderer must determine:
+
+- which document lines are visible,
+- where each visible line begins,
+- which characters fit within the current screen width.
+
+The renderer never displays the entire document unless the document itself fits entirely within the viewport.
+
+### Status Bar
+
+The **Status Bar** communicates important information about the editing session.
+
+Typical information includes:
+
+- current filename,
+- modification indicator,
+- cursor position,
+- document statistics.
+
+Unlike the document area, the status bar is regenerated every frame, regardless of whether its contents changed.
+
+This keeps rendering logic uniform.
+
+### Message Bar
+
+The **Message Bar** displays temporary information for the user.
+
+Examples include:
+
+```text
+File saved.
+
+Read-only file.
+
+Unknown command.
+```
+
+These messages originate elsewhere in the application.
+
+The renderer merely displays the current message stored in the **Editor State**.
+
+### Cursor
+
+Finally, the renderer positions the terminal cursor.
+
+This step is surprisingly important.
+
+Drawing text alone is insufficient.
+
+The terminal maintains its own cursor position independently of the editor's logical cursor.
+
+After drawing every visible element, the renderer converts the logical cursor position into screen coordinates and instructs the terminal where the cursor should appear.
+
+Only then does the display accurately represent the application's state.
+
+## The Role of the Viewport
+
+Earlier chapters introduced the **Viewport** as the visible window onto the document.
+
+Rendering depends heavily upon it.
+
+Consider a document containing one hundred lines.
+
+The terminal may only display twenty-five.
+
+```text
+Document
+
+1
+2
+3
+4
+5
+...
+100
+```
+
+If the viewport begins at line forty:
+
+```text
+Viewport
+
+40
+41
+42
+43
+44
+...
+64
+```
+
+Only these lines are rendered.
+
+The renderer ignores everything outside the visible region.
+
+This dramatically reduces the amount of work performed during each frame while preserving the illusion that the user is viewing the entire document.
+
+## Rendering Is Deterministic
+
+A valuable property of the rendering cycle is determinism.
+
+Suppose two independent editor instances contain identical state:
+
+```text
+Document
+Cursor
+Viewport
+Status Bar
+Message Bar
+```
+
+Their rendered output will also be identical.
+
+This is true regardless of:
+
+- previous commands,
+- editing history,
+- keyboard input,
+- timing.
+
+Only the present state matters.
+
+This property greatly simplifies debugging.
+
+If the screen appears incorrect, developers need only inspect the current **Editor State**.
+
+There is no hidden rendering history to reconstruct.
+
+## Rendering as the Final Stage of the Event Loop
+
+The rendering cycle completes each iteration of the **Event Loop**.
+
+Viewed as a complete system, the flow becomes:
+
+```text
+Keyboard
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Editor State
+    │
+    ▼
+Renderer
+    │
+    ▼
+Terminal
+```
+
+This pipeline demonstrates one of the defining characteristics of event-driven software.
+
+Information always flows in one direction.
+
+Input enters the system.
+
+State changes occur.
+
+Output is generated.
+
+No component needs to know how the others perform their work internally.
+
+Each simply fulfills its own responsibility.
+
+## Why Rendering Comes Last
+
+It may seem tempting to redraw the screen immediately after every small change.
+
+For example:
+
+```text
+Insert character
+
+↓
+
+Render
+
+↓
+
+Move cursor
+
+↓
+
+Render
+
+↓
+
+Update status
+
+↓
+
+Render
+```
+
+Although this approach appears straightforward, it introduces unnecessary work.
+
+Multiple frames may be produced while processing a single event.
+
+Instead, modern event-driven applications typically perform all state updates first and render once.
+
+Our editor therefore follows this sequence:
+
+```text
+Process Event
+
+↓
+
+Complete All State Updates
+
+↓
+
+Render One Frame
+```
+
+This has several advantages:
+
+- every frame represents a consistent application state,
+- intermediate states are never displayed,
+- rendering occurs exactly once per event,
+- overall architecture remains easier to understand.
+
+Even though our editor is relatively small, adopting this discipline prepares readers for larger interactive systems such as graphical user interfaces, games, integrated development environments, and terminal user interface frameworks.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The renderer is intentionally one of the least "intelligent" components in the editor.
+
+Its responsibility is not to interpret user intent or make decisions. Instead, it faithfully translates the current **Editor State** into a complete visual frame. This separation is a hallmark of well-designed software architectures. When rendering is treated as a pure, read-only transformation, the **Command Engine** can focus entirely on application behavior while the **Renderer** concentrates solely on presentation. The result is lower coupling, improved testability, and a system whose behavior is easier to predict and maintain.
+
+</Aside>
+
+## Summary
+
+In this section, we examined the rendering cycle, the final stage of the **Event Loop** that transforms the current **Editor State** into a complete visual frame. We saw that the **Renderer** is a pure, read-only transformation: it observes the state and produces output but never modifies state, owns no data, and makes no decisions. Because every frame is drawn from scratch using a **full-screen redraw** strategy, rendering remains deterministic—identical state always produces identical output—which simplifies debugging and testing.
+
+We also reviewed what must be rendered in each frame: the visible portion of the document, the status bar, the message bar, and the terminal cursor position, all guided by the viewport. Finally, we saw why rendering comes last in the event loop: performing all state updates before drawing a single frame ensures every displayed frame is consistent and avoids wasted intermediate redraws.
+
+An interactive editor must do more than produce correct output, however—it must produce it quickly enough that users perceive the application as responsive. In the next section, we examine how a single-threaded editor maintains smooth, immediate interaction despite continuously processing input, updating state, and redrawing the screen.
