@@ -1,0 +1,93 @@
+---
+title: 7.1 Why We Need Requirements
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+By the end of Chapter 6, we have learned how to communicate with the terminal. We know how to enable Raw Mode, receive keyboard input immediately, and interpret everything from ordinary characters to multi-byte escape sequences. We now understand _how_ the terminal and our program exchange information.
+
+However, knowing how to receive keyboard input does not mean we know how to build a text editor.
+
+Imagine sitting down to write the program today. Where would you begin? Should you start with the renderer? The Text Buffer? The File Manager? The Input Handler? Which features are essential, and which can wait until later? Without answering these questions first, implementation quickly becomes a series of disconnected decisions rather than a coherent design.
+
+Professional software projects avoid this problem by planning before they code. They begin by defining the software's requirements: a clear description of what the system is expected to do, what limitations it must operate within, and what goals it should achieve. This process establishes a shared understanding of the project before a single line of implementation code is written. This approach reflects the philosophy of this book: **explain before implementing** and **architecture before implementation**.
+
+## The Problem with Jumping Straight into Code
+
+Many beginners approach software development like this:
+
+```text
+Idea
+
+↓
+
+Start Writing Code
+
+↓
+
+Keep Adding Features
+
+↓
+
+Eventually Finish
+```
+
+This approach may work for very small programs, but it rarely scales well. As the project grows, new features begin to interact with existing ones in unexpected ways. Code that seemed reasonable early on may become difficult to extend or maintain because it was written without an overall plan.
+
+Consider the following questions:
+
+- Should the editor support multiple open files?
+- How should unsaved changes be tracked?
+- Should scrolling be implemented before file loading?
+- Will the editor support mouse input?
+- Should syntax highlighting be included?
+
+Without clearly defining the project's objectives, there is no objective way to answer these questions. Every new feature becomes an ad hoc decision, often increasing complexity without improving the overall design.
+
+This uncontrolled expansion of features is commonly known as **feature creep**. Small projects gradually grow into much larger ones because new capabilities are continually added without evaluating whether they belong within the original scope.
+
+## Defining the Destination Before the Journey
+
+Imagine being asked to build a house with only one instruction:
+
+> "Build a nice house."
+
+You might begin laying bricks immediately, but before long, important questions would arise.
+
+- How many rooms should it have?
+- How many floors?
+- Where should the doors and windows be placed?
+- What materials should be used?
+- What is the available budget?
+
+Without answering these questions first, different builders would produce completely different houses.
+
+Software projects face the same challenge. Before implementation begins, everyone involved should have a common understanding of what is being built. Otherwise, every design decision becomes a guess.
+
+Requirements serve as this blueprint. They define the destination before the implementation journey begins.
+
+## Planning Our Editor
+
+Throughout the remainder of this book, we will design and implement a Nano-like terminal text editor. Although the finished application is intentionally modest compared to professional editors, it is still large enough to benefit from careful planning. Our editor will eventually consist of multiple interacting subsystems, including the Input Handler, Command Engine, Text Buffer, Renderer, Cursor, and File Manager. Defining the requirements first allows these components to be designed around a common set of goals instead of evolving independently.
+
+At this stage, we are not concerned with _how_ these components will work internally. Instead, we want to answer more fundamental questions.
+
+- What should the editor be capable of?
+- What features are essential?
+- What features are intentionally excluded?
+- What constraints must the design satisfy?
+- How will we know when the project is complete?
+
+These questions form the foundation of a Software Requirements Specification.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+One of the most valuable skills a software engineer can develop is knowing when **not** to start coding. Taking the time to define the problem often saves far more time than rushing into implementation. A well-defined set of requirements reduces unnecessary redesign, prevents feature creep, and provides a stable foundation for every architectural decision that follows.
+
+</Aside>
+
+## Summary
+
+Before we can decide how to build our editor, we must first decide exactly what we intend to build. A Software Requirements Specification provides this foundation by defining the project's objectives, scope, constraints, and expected behavior. With these requirements established, we can move confidently into designing an architecture that satisfies them.
+
+In the next section, we'll examine what a **Software Requirements Specification (SRS)** is, what information it contains, and why it plays such an important role in professional software development.

@@ -29,12 +29,12 @@ export default defineConfig({
         },
         {
           label: "Volumes",
-          items: [{ autogenerate: { directory: "volumes" } }],
+          items: [{ autogenerate: { directory: "volumes", collapsed: true } }],
           collapsed: true,
         },
         {
           label: "Appendices",
-          items: [{ autogenerate: { directory: "appendices" } }],
+          items: [{ autogenerate: { directory: "appendices", collapsed: true } }],
           collapsed: true,
         },
       ],

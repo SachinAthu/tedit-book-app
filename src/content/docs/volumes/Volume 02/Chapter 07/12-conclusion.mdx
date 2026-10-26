@@ -1,0 +1,55 @@
+---
+title: 7.12 Conclusion
+---
+
+This chapter introduced the **Software Requirements Specification (SRS)**—the document that defines what our editor must accomplish before any implementation begins. An SRS describes **what** the software should do rather than **how** it will be implemented, keeping requirements stable even as the internal design evolves.
+
+We defined the project scope, identifying the core features of our Minimum Viable Editor—document management, text editing, cursor navigation, screen rendering, and file operations—and explicitly listing what is excluded, such as syntax highlighting, plugins, and multiple documents. We then identified the project's stakeholders: the **user**, who expects a reliable editing experience, and the **developer**, who values a maintainable codebase.
+
+Functional requirements described the editor's capabilities in concrete, testable terms, organized into logical categories and identified by unique labels (FR-001, FR-002, ...). Non-functional requirements addressed quality attributes—performance, reliability, usability, maintainability, and portability—that shape the overall architecture.
+
+We enumerated the constraints under which the editor operates: C99, POSIX APIs, Linux, a terminal interface, single-threaded execution, and single-document editing. Assumptions captured the expected operating environment: an ANSI-compatible terminal, UTF-8 text files, keyboard input, file system access, and a reasonable terminal size.
+
+Use cases demonstrated how individual requirements combine into realistic workflows—creating documents, opening files, editing, saving, and exiting. Finally, success criteria established ten measurable standards that determine when the editor satisfies its intended purpose.
+
+Every architectural decision in the chapters ahead will trace back to the requirements, constraints, assumptions, and success criteria established here.
+
+## Exercises
+
+### Review Questions
+
+1. What is the purpose of a Software Requirements Specification, and why is it written before implementation begins?
+
+2. Explain the difference between describing **what** software should do and describing **how** it should be implemented. Why is this separation important?
+
+3. Why is it valuable to explicitly list features that will **not** be included in a project? What problem does this help prevent?
+
+4. Describe the difference between a **functional requirement** and a **non-functional requirement**. Provide one example of each for a text editor.
+
+5. How do constraints differ from assumptions? Give an example of each from our editor project.
+
+6. What information does a use case provide that individual functional requirements do not capture?
+
+7. Why are unique requirement identifiers (such as FR-001) useful in professional software projects?
+
+8. How do success criteria differ from functional requirements, and why is it important to define them before development begins?
+
+### Thought Experiments
+
+1. **Changing the Scope**: Suppose we added syntax highlighting to the project scope. Identify at least three additional requirements, two new constraints, and one assumption that would need to be reconsidered.
+
+2. **Missing Use Case**: Imagine a user opens a 10,000-line file, scrolls to line 5,000, makes a single edit, saves, and exits. Is this workflow adequately covered by the use cases in this chapter? What additional requirements does it imply about cursor state, viewport management, and file operations?
+
+3. **Conflicting Requirements**: When might a non-functional requirement—such as maximum rendering performance—conflict with another non-functional requirement, such as maintainability? How would you resolve that conflict for an educational project?
+
+4. **Broken Assumptions**: If the user runs our editor on a terminal that does **not** support ANSI escape sequences, how should the editor behave? Propose a graceful degradation strategy and identify which success criteria would be affected.
+
+5. **Stakeholders in Practice**: Beyond the user and the developer, identify one additional stakeholder that might exist for a commercial text editor (such as Vim or VS Code). What requirements would that stakeholder introduce?
+
+## Preview of the Next Chapter
+
+With the Software Requirements Specification complete, we have established a clear definition of **what** our editor must accomplish. The natural next question is: **how** should the software be organized to meet those requirements?
+
+Chapter 8 introduces **System Architecture**—the high-level design that divides our editor into modules, assigns clear responsibilities to each component, and defines the interfaces through which they communicate. We will explore layered architecture, examine how module boundaries prevent unnecessary coupling, and establish the principles of state ownership that ensure every piece of data has a single authoritative source.
+
+This chapter laid the blueprint. The next chapter begins drawing the structure that will turn that blueprint into software.

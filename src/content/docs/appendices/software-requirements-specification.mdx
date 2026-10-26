@@ -1,0 +1,409 @@
+---
+title: Appendix I — Software Requirements Specification
+description: The complete Software Requirements Specification for the terminal text editor.
+sidebar:
+  label: I — Software Requirements Specification
+  order: 11
+---
+
+## 1. Introduction
+
+This Software Requirements Specification (SRS) defines the functional and non-functional requirements for the terminal-based text editor developed throughout this book. It serves as the primary reference for the editor's expected behavior, performance characteristics, architectural constraints, and overall project scope.
+
+The purpose of this document is to establish a clear and verifiable set of requirements before any implementation begins. By defining what the editor must do—and equally important, what it is not intended to do—the SRS provides a foundation for the architectural decisions presented in the following chapters and ensures that every implementation milestone can be traced back to an explicit requirement.
+
+The editor described by this specification is intentionally limited to the functionality of a small, single-document terminal text editor. Advanced capabilities such as syntax highlighting, plugin systems, multiple documents, and undo/redo are considered outside the scope of the initial implementation and are introduced as optional extensions in later volumes of this book.
+
+This specification is intended for readers, developers, and contributors who wish to understand the project's objectives, evaluate its completeness, or implement the editor according to a well-defined set of engineering requirements.
+
+## 2. Scope
+
+This Software Requirements Specification defines the requirements for a lightweight, terminal-based text editor implemented in the C programming language for POSIX-compatible operating systems, with Linux serving as the primary target platform. The editor is intended to demonstrate the fundamental principles of terminal programming, software architecture, and text editing while remaining sufficiently small to be understood and implemented from first principles.
+
+The scope of the project includes the functionality required to create, open, edit, navigate, and save plain text documents within a terminal environment. The editor shall support interactive text editing through keyboard input, cursor movement, scrolling, file operations, and a simple user interface consisting of a text editing area, status bar, and message bar. The editor shall maintain an in-memory representation of the document and render the visible portion of the document to the terminal using ANSI escape sequences.
+
+This specification focuses on a single-document editor designed for educational purposes. The architecture emphasizes simplicity, modularity, and maintainability rather than feature completeness. Design decisions prioritize clarity of implementation and ease of understanding over advanced optimization techniques.
+
+The initial implementation defined by this specification does **not** include advanced features commonly found in modern text editors, such as syntax highlighting, undo and redo, search and replace, multiple open documents, plugin systems, auto-completion, mouse support, soft word wrapping, collaborative editing, split windows, code folding, Language Server Protocol (LSP) integration, or version control integration. These features are intentionally excluded from the project's scope and are discussed as possible extensions in later volumes of this book.
+
+The requirements contained in this document apply only to the core editor implementation presented throughout the book. Future enhancements and experimental features may build upon this foundation but are not considered part of the baseline requirements defined by this specification.
+
+## 3. Stakeholders
+
+The following stakeholders have an interest in the successful development and use of the terminal text editor described by this Software Requirements Specification.
+
+### 3.1 End User
+
+The primary stakeholder is the end user who interacts directly with the editor to create, view, modify, and save plain text documents. The editor should provide a responsive and intuitive editing experience within a terminal environment while requiring minimal system resources.
+
+### 3.2 Developer
+
+The developer is responsible for implementing the editor according to the requirements defined in this specification. The implementation should follow the prescribed software architecture, coding standards, and design decisions presented throughout this book. The developer uses this document as the authoritative source for expected system behavior and functionality.
+
+### 3.3 Maintainer
+
+The maintainer is responsible for correcting defects, improving the implementation, and extending the editor over time. A well-defined architecture, modular design, and clearly documented requirements enable future enhancements without compromising the stability of the existing system.
+
+### 3.4 Reader
+
+As this project is developed as part of an educational book, the reader is also considered a stakeholder. The editor serves as a practical vehicle for learning systems programming, terminal programming, software architecture, and software engineering principles. The requirements therefore prioritize clarity, consistency, and educational value in addition to functional correctness.
+
+### 3.5 Future Contributors
+
+Future contributors may extend the editor by implementing additional features or experimenting with alternative algorithms and data structures. The modular architecture and clearly defined requirements are intended to provide a stable foundation for future development while preserving compatibility with the core system defined by this specification.
+
+## 4. Functional Requirements
+
+The following functional requirements define the expected behavior of the terminal text editor. Each requirement describes a capability that the system shall provide.
+
+### File Management
+
+**FR-001** – The editor shall allow a user to create a new empty document.
+
+**FR-002** – The editor shall open an existing plain text file from the file system.
+
+**FR-003** – The editor shall load the contents of an opened file into the in-memory text buffer.
+
+**FR-004** – The editor shall save the current document to its associated file.
+
+**FR-005** – The editor shall create a new file when saving a document that does not already exist.
+
+**FR-006** – The editor shall notify the user when a file operation succeeds or fails.
+
+---
+
+### Text Editing
+
+**FR-007** – The editor shall insert printable characters at the current cursor position.
+
+**FR-008** – The editor shall delete the character preceding the cursor when the Backspace key is pressed.
+
+**FR-009** – The editor shall delete the character at the cursor position when the Delete key is pressed.
+
+**FR-010** – The editor shall split the current line at the cursor position when the Enter key is pressed.
+
+**FR-011** – The editor shall merge adjacent lines when deleting a line boundary.
+
+**FR-012** – The editor shall maintain all document modifications in memory until explicitly saved.
+
+---
+
+### Cursor Management
+
+**FR-013** – The editor shall allow the cursor to move left, right, up, and down using the corresponding arrow keys.
+
+**FR-014** – The editor shall prevent the cursor from moving beyond the boundaries of the document.
+
+**FR-015** – The editor shall preserve the preferred horizontal cursor position when moving vertically whenever possible.
+
+**FR-016** – The editor shall update the cursor position immediately after every editing operation.
+
+---
+
+### Rendering
+
+**FR-017** – The editor shall render the visible portion of the document within the terminal window.
+
+**FR-018** – The editor shall refresh the display after every operation that changes the editor state.
+
+**FR-019** – The editor shall position the terminal cursor to match the logical cursor location after each screen refresh.
+
+**FR-020** – The editor shall display a status bar containing document information.
+
+**FR-021** – The editor shall display a message bar for informational and error messages.
+
+---
+
+### Navigation
+
+**FR-022** – The editor shall support vertical scrolling when the cursor moves beyond the visible window.
+
+**FR-023** – The editor shall support horizontal scrolling when a line extends beyond the visible width of the terminal.
+
+**FR-024** – The editor shall update the viewport automatically to keep the cursor visible.
+
+---
+
+### User Interaction
+
+**FR-025** – The editor shall interpret keyboard input received from the terminal and translate it into editor commands.
+
+**FR-026** – The editor shall recognize keyboard shortcuts for supported editor commands.
+
+**FR-027** – The editor shall allow the user to exit the application using the designated keyboard shortcut.
+
+---
+
+### Document State
+
+**FR-028** – The editor shall maintain a modified state indicating whether the current document contains unsaved changes.
+
+**FR-029** – The editor shall display the current document name or an appropriate placeholder for unnamed documents.
+
+**FR-030** – The editor shall display the current cursor position within the document.
+
+## 5. Non-Functional Requirements
+
+The following non-functional requirements define the quality attributes and operational characteristics of the terminal text editor. These requirements describe how the system should perform rather than the specific functionality it provides.
+
+### Performance
+
+**NFR-001** – The editor shall respond to user input with no perceptible delay during normal editing operations.
+
+**NFR-002** – The editor shall redraw the terminal display after each editing operation to reflect the current editor state.
+
+**NFR-003** – The editor shall efficiently support editing of typical plain text files without excessive memory or processor usage.
+
+---
+
+### Reliability
+
+**NFR-004** – The editor shall preserve document contents in memory until the user explicitly saves or discards changes.
+
+**NFR-005** – The editor shall restore the terminal to its original operating state before exiting under normal execution.
+
+**NFR-006** – The editor shall report file input/output errors without terminating unexpectedly.
+
+---
+
+### Usability
+
+**NFR-007** – The editor shall provide keyboard-driven interaction without requiring a pointing device.
+
+**NFR-008** – The editor shall present a consistent user interface throughout the application.
+
+**NFR-009** – The editor shall provide clear status and error messages for significant user actions and system events.
+
+---
+
+### Maintainability
+
+**NFR-010** – The editor shall be organized into modular components with clearly defined responsibilities.
+
+**NFR-011** – The implementation shall separate terminal interaction, input handling, command processing, document management, and rendering into independent modules.
+
+**NFR-012** – The source code shall follow consistent naming conventions, formatting standards, and coding practices to improve readability and maintainability.
+
+---
+
+### Portability
+
+**NFR-013** – Platform-specific behavior shall be isolated where practical to simplify future portability.
+
+---
+
+### Extensibility
+
+**NFR-014** – The editor architecture shall allow additional features to be incorporated without requiring fundamental changes to the core design.
+
+**NFR-015** – The editor shall maintain a clear separation between core editing functionality and optional future enhancements.
+
+---
+
+### Security and Data Integrity
+
+**NFR-016** – The editor shall modify files only when explicitly requested by the user.
+
+**NFR-017** – The editor shall not intentionally alter document contents during file loading or saving except as required to preserve the edited text.
+
+**NFR-018** – The editor shall maintain the integrity of the in-memory document representation throughout editing operations.
+
+## 6. Constraints
+
+The following constraints define the technical and architectural limitations that govern the implementation of the terminal text editor.
+
+**CON-001** – The editor shall be implemented using the C99 programming language.
+
+**CON-002** – The editor shall target POSIX-compliant operating systems, with Linux serving as the primary development and reference platform.
+
+**CON-003** – The editor shall operate entirely within a text-based terminal and shall not require a graphical user interface.
+
+**CON-004** – The editor shall use ANSI escape sequences for terminal rendering and cursor control where supported by the terminal emulator.
+
+**CON-005** – The editor shall use the terminal's raw (non-canonical) input mode for interactive keyboard input.
+
+**CON-006** – The editor shall maintain a single editable document at any given time.
+
+**CON-007** – The implementation shall follow a modular architecture that separates input handling, command processing, document management, rendering, and file operations into distinct components.
+
+**CON-008** – The editor shall use a full-screen redraw rendering strategy for updating the display.
+
+**CON-009** – The implementation shall prioritize simplicity, readability, and educational value over advanced optimization techniques.
+
+**CON-010** – Features outside the defined project scope, including syntax highlighting, undo/redo, search and replace, plugin support, multiple documents, and collaborative editing, shall not be included in the baseline implementation.
+
+**CON-011** – The editor shall operate as a single-threaded application. All tasks, including reading keyboard input, updating the editor state, rendering the screen, and performing file operations, shall execute within a single event loop.
+
+## 7. Assumptions
+
+The following assumptions define the expected conditions under which the terminal text editor is designed to operate.
+
+**ASM-001** – The user has a basic understanding of terminal-based applications and keyboard-driven interaction.
+
+**ASM-002** – The editor is executed within a terminal emulator that supports ANSI escape sequences and raw terminal input.
+
+**ASM-003** – The operating system provides POSIX-compliant terminal and file system interfaces required by the editor.
+
+**ASM-004** – The user has the necessary permissions to read from and write to the files being edited.
+
+**ASM-005** – The editor operates on plain text files encoded in a supported character encoding.
+
+**ASM-006** – Sufficient system memory is available to load the entire document into memory during editing.
+
+**ASM-007** – Only one user interacts with the editor instance at any given time.
+
+**ASM-008** – The terminal window provides adequate dimensions to display the editor interface.
+
+**ASM-009** – The editor is terminated through its normal exit procedures so that terminal settings can be restored correctly.
+
+**ASM-010** – Future enhancements described in later volumes are not required for the baseline implementation defined by this specification.
+
+## 8. Use Cases
+
+The following use cases describe the primary interactions between the user and the terminal text editor. They represent the core functionality defined by this Software Requirements Specification.
+
+---
+
+### UC-001 – Create a New Document
+
+**Primary Actor:** User
+
+**Description:**
+The user starts the editor without specifying an existing file. The editor creates a new empty document that can be edited and saved.
+
+**Preconditions:**
+
+- The editor has been successfully launched.
+
+**Postconditions:**
+
+- A new empty document is available for editing.
+
+---
+
+### UC-002 – Open an Existing Document
+
+**Primary Actor:** User
+
+**Description:**
+The user opens an existing plain text file. The editor loads the file into the in-memory text buffer for editing.
+
+**Preconditions:**
+
+- The specified file exists and is readable.
+
+**Postconditions:**
+
+- The document contents are displayed and ready for editing.
+
+---
+
+### UC-003 – Edit Document Contents
+
+**Primary Actor:** User
+
+**Description:**
+The user inserts, deletes, or modifies text using the keyboard. The editor immediately updates the document stored in memory.
+
+**Preconditions:**
+
+- A document is open.
+
+**Postconditions:**
+
+- The document reflects the requested modifications.
+- The document is marked as modified.
+
+---
+
+### UC-004 – Navigate Within the Document
+
+**Primary Actor:** User
+
+**Description:**
+The user moves the cursor throughout the document using the keyboard. When necessary, the editor scrolls the viewport to keep the cursor visible.
+
+**Preconditions:**
+
+- A document is open.
+
+**Postconditions:**
+
+- The cursor is repositioned according to the user's input.
+
+---
+
+### UC-005 – Save the Current Document
+
+**Primary Actor:** User
+
+**Description:**
+The user saves the current document. The editor writes the contents of the in-memory text buffer to the associated file.
+
+**Preconditions:**
+
+- A document is open.
+
+**Postconditions:**
+
+- The file on disk reflects the current document contents.
+- The document is marked as unmodified.
+
+---
+
+### UC-006 – Display Editor Status
+
+**Primary Actor:** User
+
+**Description:**
+The editor continuously displays contextual information such as the current filename, cursor position, and document status while editing.
+
+**Preconditions:**
+
+- The editor is running.
+
+**Postconditions:**
+
+- The user receives up-to-date information about the current editing session.
+
+---
+
+### UC-007 – Exit the Editor
+
+**Primary Actor:** User
+
+**Description:**
+The user exits the editor using the designated keyboard shortcut. The editor terminates the editing session and restores the terminal to its original state.
+
+**Preconditions:**
+
+- The editor is running.
+
+**Postconditions:**
+
+- The editor terminates successfully.
+- The terminal settings are restored.
+
+## 9. Success Criteria
+
+The terminal text editor shall be considered to have successfully met the objectives of this Software Requirements Specification when all of the following criteria have been satisfied.
+
+**SC-001** – All functional requirements defined in this specification have been implemented and verified.
+
+**SC-002** – The editor operates correctly within a POSIX-compatible terminal environment using raw terminal input and ANSI escape sequences.
+
+**SC-003** – Users can create, open, edit, navigate, and save plain text documents using only the keyboard.
+
+**SC-004** – The editor correctly maintains the in-memory document state throughout an editing session.
+
+**SC-005** – The editor restores the terminal to its original operating state upon normal termination.
+
+**SC-006** – The implementation adheres to the architectural principles and constraints defined in this specification.
+
+**SC-007** – The source code is organized into modular components with clearly defined responsibilities and interfaces.
+
+**SC-008** – The editor provides a responsive and stable editing experience for typical plain text documents.
+
+**SC-009** – The implementation serves as a clear and maintainable reference for learning terminal programming, software architecture, and text editor design.
+
+**SC-010** – The completed implementation provides a solid foundation for the advanced features and enhancements introduced in later volumes of this book.

@@ -1,0 +1,181 @@
+---
+title: 7.3 Defining the Project Scope
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Every successful software project begins with a clear understanding of its boundaries.
+
+Once we know **what** the software should accomplish, we must decide **how much** of that functionality actually belongs in the project. This process is known as defining the **project scope**.
+
+Project scope describes exactly what is included in the software and, just as importantly, what is intentionally excluded.
+
+For our terminal text editor, defining the scope serves two important purposes.
+
+First, it keeps the project focused on its educational objectives. The goal of this book is not to compete with mature editors such as Vim, Emacs, or VS Code. Instead, it is to teach the principles behind terminal programming, software architecture, rendering, file systems, and text editing through the implementation of a practical application.
+
+Second, a well-defined scope prevents unnecessary complexity. Every additional feature introduces new requirements, new interactions, and new design decisions. By limiting the scope, we can concentrate on building a solid foundation before exploring more advanced capabilities.
+
+## Our Goal
+
+The software we will build throughout this book is a **single-document, terminal-based text editor** inspired by editors such as Nano.
+
+It is intentionally designed to be simple enough to understand from first principles while still demonstrating the architecture used by much larger applications.
+
+Our editor will focus on the core responsibilities of any text editor:
+
+- Opening existing text files
+- Creating new documents
+- Editing text
+- Navigating through a document
+- Saving changes back to disk
+- Displaying the document inside a terminal window
+
+Although these features appear modest, they require nearly every fundamental subsystem of a modern text editor, including keyboard input, cursor management, rendering, scrolling, document storage, and file management.
+
+## What Is Included
+
+The implementation developed throughout this book includes the following core capabilities.
+
+### File Management
+
+The editor shall:
+
+- Open an existing text file.
+- Create a new empty document.
+- Save the current document.
+- Load files from disk.
+- Report file-related errors.
+
+### Text Editing
+
+The editor shall support:
+
+- Character insertion
+- Character deletion
+- Line insertion
+- Line deletion
+- Basic text modification
+
+### Cursor Management
+
+The user shall be able to:
+
+- Move the cursor left, right, up, and down.
+- Navigate across line boundaries.
+- Move safely within the document.
+- Preserve the preferred horizontal position when moving vertically.
+
+### Rendering
+
+The editor shall:
+
+- Render the visible portion of the document within the terminal window.
+- Display a status bar containing document information.
+- Display a message bar — a single line at the bottom of the terminal — for informational and error messages.
+- Keep the cursor synchronized with the document.
+
+### Navigation
+
+The editor shall:
+
+- Scroll vertically when the cursor moves beyond the visible window.
+- Scroll horizontally when a line extends beyond the visible terminal width.
+- Update the viewport automatically to keep the cursor visible.
+
+### User Interaction
+
+The editor shall:
+
+- Interpret keyboard input and translate it into editor commands.
+- Recognize keyboard shortcuts for supported editor commands.
+- Allow the user to exit the application.
+
+### Document State
+
+The editor shall:
+
+- Track whether the document contains unsaved changes.
+- Display the current document name or an appropriate placeholder.
+- Display the current cursor position within the document.
+
+Collectively, these features define the **Minimum Viable Editor (MVE)** that we will implement. Every major architectural decision in later chapters will support one or more of these capabilities.
+
+## What Is Not Included
+
+Defining scope also means identifying features that are **deliberately excluded**.
+
+Readers may wonder why features commonly found in modern editors are missing. The answer is simple: every advanced feature depends on a solid foundation.
+
+The following capabilities are **outside the scope** of our implementation:
+
+- Syntax highlighting
+- Search and replace
+- Undo and redo
+- Multiple open documents
+- Mouse support
+- Plugin systems
+- Auto-completion
+- Soft word wrapping
+- Collaborative editing
+- Split windows
+- Code folding
+- Language Server Protocol (LSP) integration
+- Version control integration
+
+These topics are valuable and will be discussed in later volumes of this book, but they are intentionally excluded from the core implementation.
+
+## Why Excluding Features Is Important
+
+Many beginner projects fail because they continually grow in scope.
+
+A developer starts by building a simple editor.
+
+Then they decide to add syntax highlighting.
+
+While implementing syntax highlighting, they realize they need a parser.
+
+The parser suggests adding code folding.
+
+Code folding leads to language-aware indentation.
+
+Soon the project has expanded far beyond its original purpose.
+
+This gradual expansion is known as **feature creep**.
+
+Feature creep increases development time, complicates testing, and often results in software that is more difficult to understand than originally intended.
+
+Good software engineers do not merely decide **what** to build—they also decide **what not to build**.
+
+## Scope Is Not a Limitation
+
+It is important to understand that project scope is **not** a permanent limitation.
+
+Instead, it defines the goals for a particular version of the software.
+
+A well-designed architecture should make it possible to add new capabilities later without requiring major redesign.
+
+For example, our editor begins as a single-document application.
+
+Later volumes will explore how professional editors support:
+
+- Multiple documents
+- Syntax highlighting
+- Undo and redo
+- Advanced text buffer data structures
+- Plugin architectures
+- Language Server Protocol integration
+
+By postponing these features rather than ignoring them, we can study each one after mastering the fundamentals.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+One of the hallmarks of professional software engineering is disciplined scope management. Successful projects are rarely those that attempt to implement every possible feature. Instead, they deliver a well-defined set of capabilities reliably, then expand incrementally as new requirements emerge.
+
+</Aside>
+
+## Summary
+
+The project scope defines the boundaries of our editor. It specifies the essential features we will implement and clearly identifies the advanced capabilities that are intentionally postponed. Establishing these boundaries keeps the project focused, prevents feature creep, and provides a stable target for the architectural decisions that follow.
+
+With the scope established, we can now begin describing the software from the perspective of those who use it. In the next section, we will identify the project's **stakeholders and users**, and examine how their needs shape the requirements of the system.

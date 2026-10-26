@@ -1,0 +1,418 @@
+---
+title: 7.9 Use Cases
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+So far, we have defined the features our editor must provide, the quality attributes it should possess, the constraints under which it operates, and the assumptions it makes about its environment.
+
+The next step is to examine how these features work together from the user's perspective.
+
+One of the most common techniques used during software analysis is the **use case**.
+
+A use case describes a sequence of interactions between a user and a software system in order to accomplish a specific goal.
+
+Unlike individual requirements, which describe isolated pieces of functionality, use cases describe complete tasks.
+
+For example, instead of stating:
+
+> _The editor shall save a file._
+
+A use case describes the entire process:
+
+> _The user opens a document, edits its contents, saves the changes, and exits the editor._
+
+This provides a broader view of how the software is actually used.
+
+## What Is a Use Case?
+
+A **use case** represents a particular way in which a user interacts with the system to achieve an objective.
+
+Every use case consists of three basic elements:
+
+- **Actor** — who performs the action.
+- **Goal** — what the actor wants to accomplish.
+- **Interaction** — the sequence of steps required to achieve that goal.
+
+For our editor, the primary actor is almost always the **user**.
+
+The goals might include:
+
+- Creating a new document
+- Opening an existing file
+- Editing text
+- Navigating through a document
+- Saving changes
+- Viewing editor status
+- Exiting the application
+
+Each goal becomes a separate use case.
+
+## Why Use Cases Matter
+
+Requirements describe individual capabilities.
+
+Use cases demonstrate how those capabilities work together.
+
+Consider the following functional requirements:
+
+- Open a file.
+- Move the cursor.
+- Insert characters.
+- Save a file.
+
+Individually, each requirement describes one behavior.
+
+A use case connects them into a realistic workflow.
+
+```text
+Open File
+
+↓
+
+Move Cursor
+
+↓
+
+Insert Text
+
+↓
+
+Save File
+
+↓
+
+Exit
+```
+
+This makes it easier to understand how users interact with the software during normal operation.
+
+It also helps identify missing requirements.
+
+For example, if a user edits a document and immediately exits, what should happen?
+
+Should the editor:
+
+- quit immediately,
+- save automatically,
+- or warn about unsaved changes?
+
+Walking through a complete use case often reveals behaviors that might otherwise be overlooked.
+
+## Primary Use Cases
+
+Our terminal text editor supports several common user tasks.
+
+The most important use cases are described below.
+
+### UC-001 — Create a New Document
+
+**Actor**
+
+User
+
+**Goal**
+
+Create a new empty document for editing.
+
+**Typical Flow**
+
+```text
+Start Editor
+
+↓
+
+Empty Document Created
+
+↓
+
+Begin Editing
+```
+
+---
+
+### UC-002 — Open an Existing File
+
+**Actor**
+
+User
+
+**Goal**
+
+Load an existing text file into the editor.
+
+**Typical Flow**
+
+```text
+Start Editor
+
+↓
+
+Select File
+
+↓
+
+Load Document
+
+↓
+
+Display Contents
+```
+
+---
+
+### UC-003 — Edit a Document
+
+**Actor**
+
+User
+
+**Goal**
+
+Modify the contents of the current document.
+
+**Typical Flow**
+
+```text
+Move Cursor
+
+↓
+
+Insert/Delete Text
+
+↓
+
+Document Updated
+
+↓
+
+Continue Editing
+```
+
+---
+
+### UC-004 — Navigate Within the Document
+
+**Actor**
+
+User
+
+**Goal**
+
+Move the cursor through the document to review or reach a specific location.
+
+**Typical Flow**
+
+```text
+Press Arrow Keys
+
+↓
+
+Cursor Repositioned
+
+↓
+
+Scroll if Necessary
+
+↓
+
+Viewport Updated
+```
+
+This use case is separated from editing because navigation is a frequent, independent activity. Users often scroll through a document to read or review its contents without making any changes. Treating navigation as its own use case ensures that scrolling, viewport management, and cursor movement receive appropriate attention during design rather than being treated as an afterthought of the editing workflow.
+
+---
+
+### UC-005 — Save Changes
+
+**Actor**
+
+User
+
+**Goal**
+
+Write the current document to disk.
+
+**Typical Flow**
+
+```text
+Press Ctrl+S
+
+↓
+
+Write File
+
+↓
+
+Display Success Message
+
+↓
+
+Continue Editing
+```
+
+---
+
+### UC-006 — Display Editor Status
+
+**Actor**
+
+User
+
+**Goal**
+
+Know the current state of the editing session at all times.
+
+**Typical Flow**
+
+```text
+Editor Running
+
+↓
+
+Status Bar Updated
+
+↓
+
+User Views Information
+
+↓
+
+Continue Editing
+```
+
+This use case is less dramatic than editing or saving, but it is equally important. While the user edits, the editor continuously displays contextual information — the filename, cursor position, and whether the document has unsaved changes. This is not a single action but an ongoing responsibility. Including it as a use case explicitly acknowledges that status display is not an afterthought; it is a core part of the user experience that must be designed and maintained.
+
+---
+
+### UC-007 — Exit the Editor
+
+**Actor**
+
+User
+
+**Goal**
+
+Close the application safely.
+
+**Typical Flow**
+
+```text
+Press Ctrl+Q
+
+↓
+
+Unsaved Changes?
+
+├── No
+│      ↓
+│    Exit
+│
+└── Yes
+       ↓
+ Warning Displayed
+```
+
+This final use case demonstrates how several requirements may interact.
+
+The editor must determine whether the document has been modified before deciding whether it is safe to exit.
+
+## Use Cases and Requirements
+
+It is important to understand the relationship between use cases and functional requirements.
+
+```text
+Functional Requirements
+
+↓
+
+Individual Behaviors
+
+↓
+
+Combined Into
+
+↓
+
+Use Cases
+
+↓
+
+Complete User Workflows
+```
+
+One use case may depend on many functional requirements.
+
+For example, the **Edit Document** use case relies on requirements related to:
+
+- cursor movement,
+- text insertion,
+- deletion,
+- rendering,
+- scrolling,
+- status updates.
+
+Likewise, a single functional requirement may appear in several different use cases.
+
+For example, **cursor movement** is required while:
+
+- opening files,
+- editing text,
+- reviewing documents,
+- navigating large files.
+
+This many-to-many relationship is common in software engineering.
+
+## From Use Cases to Design
+
+Use cases also help guide architectural design.
+
+Consider the **Open File** use case.
+
+Even without implementation details, we can already identify several components that will participate:
+
+```text
+User
+
+↓
+
+Input Handler
+
+↓
+
+Command Engine
+
+↓
+
+File Manager
+
+↓
+
+Text Buffer
+
+↓
+
+Renderer
+
+↓
+
+Terminal
+```
+
+Notice that the use case describes **what happens**, not **how each component works internally**.
+
+The internal design of these components will be explored in the following chapters.
+
+For now, the use case simply demonstrates how different parts of the system cooperate to achieve a user's goal.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Professional software teams often write use cases before designing the architecture. Walking through realistic user workflows helps identify missing requirements, clarify responsibilities, and ensure that the final design supports the tasks users actually perform rather than isolated features.
+
+</Aside>
+
+## Summary
+
+Use cases describe complete interactions between users and the software. While functional requirements define individual capabilities, use cases combine those capabilities into realistic workflows that demonstrate how the system will be used in practice. They provide valuable insight into user behavior, reveal missing requirements, and help guide architectural design.
+
+With the major user workflows identified, the final step in our Software Requirements Specification is to define the **success criteria**—the measurable conditions that determine whether our editor has achieved its intended goals.

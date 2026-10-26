@@ -1,0 +1,226 @@
+---
+title: 7.7 Constraints
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Every software project operates within certain limitations.
+
+No matter how ambitious the design may be, developers must work within the boundaries imposed by technology, available resources, project goals, and engineering decisions. These limitations are known as **constraints**.
+
+Unlike requirements, which describe what the software should accomplish, constraints describe the conditions under which the software must be developed.
+
+Understanding these constraints is essential because they influence every architectural and implementation decision that follows.
+
+## What Are Constraints?
+
+A **constraint** is a rule or limitation that restricts the range of possible solutions.
+
+For example, suppose we decide that our editor must be written in **C99**.
+
+Immediately, many implementation choices become unavailable.
+
+We cannot use:
+
+- C++ classes
+- Rust ownership
+- Go goroutines
+- Java virtual machines
+
+The programming language itself becomes a design constraint.
+
+Similarly, if we decide that the editor must run inside a terminal, graphical user interface toolkits are no longer appropriate solutions.
+
+Constraints do not describe features.
+
+Instead, they define the environment in which those features must be implemented.
+
+## Why Constraints Matter
+
+At first glance, constraints may seem restrictive.
+
+In reality, they simplify the design process.
+
+Imagine being asked to build "the best text editor."
+
+Without any constraints, there are countless possibilities.
+
+Should it support:
+
+- Multiple windows?
+- Cloud synchronization?
+- AI-assisted editing?
+- Touchscreen input?
+- Voice commands?
+- Distributed collaboration?
+
+There is no obvious stopping point.
+
+Now imagine receiving the following additional instructions:
+
+- The editor shall be terminal-based.
+- The implementation language shall be C99.
+- The target platform shall be Linux.
+- The editor shall support a single document.
+
+Suddenly, the design space becomes much smaller and far easier to reason about.
+
+Good constraints reduce unnecessary complexity by eliminating solutions that fall outside the project's objectives.
+
+## Constraints for Our Editor
+
+Throughout this book, we intentionally adopt several engineering constraints.
+
+These constraints keep the project focused on its educational goals while providing a realistic environment for learning systems programming.
+
+```text
+Project Constraints
+
+├── C99
+├── POSIX APIs
+├── Linux
+├── Terminal Interface
+├── Single Thread
+└── Single Document
+```
+
+Each of these constraints influences the architecture in different ways.
+
+## Programming Language
+
+The implementation language for this project is:
+
+> **C (C99)**
+
+This decision is documented as **ADR-001**. C was chosen because it provides minimal abstraction while allowing direct interaction with operating system interfaces. Readers gain a deeper understanding of systems programming concepts without higher-level language features hiding the underlying mechanisms.
+
+Choosing C also affects the design of every module.
+
+For example:
+
+- Memory must be managed explicitly.
+- Data structures must be implemented manually.
+- Interfaces are defined using header files.
+- POSIX APIs can be accessed directly.
+
+These characteristics make C an excellent language for understanding how text editors work internally.
+
+## Operating System
+
+Our primary target platform is:
+
+> **Linux**
+
+Although many concepts apply equally well to other operating systems, this book focuses on Linux because it provides direct access to POSIX facilities such as:
+
+- `termios`
+- File descriptors
+- TTY and PTY devices
+- Standard file I/O
+
+Whenever platform-specific behavior arises, it will be clearly identified.
+
+Where practical, the implementation will remain portable to other POSIX-compliant systems such as macOS. This platform strategy is part of the project's overall standards.
+
+## Terminal-Based Interface
+
+Our editor is designed to run entirely inside a terminal.
+
+This means:
+
+- Input comes from the keyboard.
+- Output is rendered using text.
+- Screen updates are performed using ANSI escape sequences.
+- No graphical user interface toolkit is required.
+
+This constraint builds directly upon the concepts developed throughout Volume I, where we explored terminals, ANSI escape sequences, Raw Mode, and keyboard input. Those chapters provide the foundation upon which the rest of the editor is built.
+
+## Single-Threaded Execution
+
+Our editor operates as a **single-threaded application**.
+
+All major tasks—including:
+
+- reading keyboard input,
+- updating the editor state,
+- rendering the screen, and
+- performing file operations—
+
+are executed within a single event loop.
+
+This greatly simplifies synchronization because only one thread modifies the editor state at any given time.
+
+Although multi-threading can improve performance in some applications, it also introduces additional complexity such as race conditions, synchronization primitives, and concurrent state management.
+
+Since the goal of this project is to understand editor architecture rather than concurrent programming, a single-threaded design is the appropriate choice.
+
+## Single-Document Editor
+
+Our editor manages only one document at a time.
+
+This constraint simplifies many aspects of the design.
+
+For example:
+
+- There is only one active Text Buffer.
+- Only one cursor needs to be tracked.
+- The Renderer draws a single document.
+- File operations always apply to the current document.
+
+Supporting multiple documents would require additional concepts such as document management, tabs, window layouts, and active document switching.
+
+These features are valuable, but they are intentionally postponed until later volumes.
+
+## Simplicity Before Optimization
+
+Another important constraint is educational rather than technical.
+
+Whenever multiple implementation strategies are available, we generally choose the simplest design that clearly demonstrates the underlying concepts.
+
+For example:
+
+- We begin with a full-screen redraw strategy rather than incremental rendering.
+- We initially use a straightforward text representation before studying advanced data structures.
+- We emphasize readability and modularity over micro-optimizations.
+
+These choices are deliberate.
+
+The objective of this book is to build understanding first and optimize later.
+
+## Constraints Shape Architecture
+
+It is worth emphasizing that constraints do not merely restrict implementation—they actively shape the architecture.
+
+For example:
+
+```text
+Constraint
+
+↓
+
+Architectural Decisions
+
+↓
+
+Implementation
+```
+
+Choosing a terminal interface leads naturally to a Renderer based on ANSI escape sequences.
+
+Choosing Raw Mode requires an Input Parser capable of interpreting terminal byte streams.
+
+Choosing a single-document editor simplifies the Editor State by requiring only one Text Buffer.
+
+Every major architectural decision in the following chapters can be traced back to one or more of the constraints established here.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Experienced engineers rarely view constraints as obstacles. Instead, they treat them as design tools. Well-chosen constraints narrow the solution space, reduce unnecessary complexity, and encourage architectures that are focused, consistent, and easier to reason about.
+
+</Aside>
+
+## Summary
+
+Constraints define the boundaries within which our editor will be designed and implemented. By choosing C99, targeting Linux and POSIX APIs, limiting the editor to a terminal interface, using a single-threaded architecture, and supporting one document at a time, we establish a clear engineering framework for the rest of the project. These constraints simplify the design process while remaining fully aligned with the educational objectives of this book.
+
+With the project's constraints established, we can now identify the **assumptions** that the editor makes about its environment and its users, and examine how those assumptions influence the design of the system.

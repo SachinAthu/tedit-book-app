@@ -1,0 +1,213 @@
+---
+title: 7.8 Assumptions
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we established the **constraints** that define the boundaries of our project. Constraints describe limitations that we intentionally impose on the system.
+
+Assumptions are different.
+
+An **assumption** is something we believe to be true about the environment in which the software operates. Instead of restricting the design, assumptions allow us to simplify it by accepting certain conditions without repeatedly verifying them.
+
+Every software project makes assumptions. Some are stated explicitly, while others remain implicit. Documenting them helps ensure that everyone involved in the project understands the conditions under which the software is expected to function.
+
+## What Are Assumptions?
+
+An assumption is a condition that the software expects to be true.
+
+For example, our editor assumes that:
+
+- a keyboard is available,
+- the terminal supports ANSI escape sequences,
+- files can be read from and written to the file system, and
+- the operating system provides the POSIX APIs discussed throughout this book.
+
+If any of these assumptions are false, some parts of the editor may not work as intended.
+
+Unlike functional requirements, assumptions do not describe software behavior.
+
+Unlike constraints, assumptions are not design decisions.
+
+They are expectations about the environment in which the software runs.
+
+## Why Document Assumptions?
+
+Assumptions are easy to overlook because they often seem obvious.
+
+Consider a simple requirement:
+
+> The editor shall save the current document to a file.
+
+This requirement quietly depends on several assumptions.
+
+For example:
+
+- The destination file is writable.
+- The storage device is functioning correctly.
+- The operating system permits file access.
+- Sufficient disk space is available.
+
+If these assumptions are not satisfied, the requirement cannot be fulfilled.
+
+By documenting assumptions explicitly, we make the limits of the software clear and avoid unrealistic expectations.
+
+## Assumptions for Our Editor
+
+The following assumptions apply throughout this project.
+
+```text
+Project Assumptions
+
+├── ANSI-compatible terminal
+├── POSIX operating system
+├── UTF-8 text files
+├── Keyboard input available
+├── Read/write file permissions
+└── Reasonable terminal size
+```
+
+Each assumption simplifies some aspect of the implementation.
+
+## ANSI-Compatible Terminal
+
+Our editor assumes that it runs inside a terminal supporting ANSI escape sequences.
+
+This allows the renderer to:
+
+- move the cursor,
+- clear portions of the screen,
+- display the status bar,
+- hide and show the cursor,
+- and perform other terminal operations.
+
+These capabilities were introduced in Chapter 4 and form the basis of our rendering system. If a terminal does not support ANSI escape sequences, many visual features of the editor will not function correctly.
+
+## POSIX Environment
+
+The editor assumes the availability of a POSIX-compliant operating system.
+
+This assumption allows us to use APIs such as:
+
+- `termios`
+- `read()`
+- `write()`
+- `open()`
+- `close()`
+
+without providing alternative implementations for non-POSIX platforms.
+
+This assumption aligns with the project's Linux-first approach established earlier in the book.
+
+## UTF-8 Text Files
+
+Throughout this book, we assume that text files are encoded using **UTF-8**.
+
+This assumption simplifies document handling and is consistent with modern terminal environments.
+
+Although other encodings exist, supporting multiple character encodings would significantly increase the complexity of the editor and distract from the primary learning objectives.
+
+Later chapters will examine text encoding in greater detail.
+
+## Keyboard Input Is Available
+
+Because our editor is entirely keyboard-driven, we assume that keyboard input is continuously available.
+
+The application is not designed to operate using:
+
+- touch input,
+- voice commands,
+- game controllers,
+- or mouse interaction.
+
+All editing operations are performed through keyboard events received while the terminal is operating in Raw Mode.
+
+## File System Access
+
+The editor assumes that users have permission to access the files they intend to edit.
+
+For example, we assume that:
+
+- files can be opened,
+- files can be created when necessary,
+- modified files can be saved, and
+- the underlying storage device behaves normally.
+
+Of course, these assumptions may occasionally be violated in practice.
+
+Files may not exist.
+
+Permissions may be denied.
+
+Storage devices may fail.
+
+When this happens, the editor should report the error clearly rather than crashing or silently losing data.
+
+This illustrates an important distinction:
+
+An assumption describes the environment we expect.
+
+Good software still handles situations where those expectations are not met.
+
+## Reasonable Terminal Size
+
+Our editor also assumes that the terminal window is large enough to display its basic interface.
+
+For example, there should be sufficient space for:
+
+- the document area,
+- the status bar,
+- the message bar,
+- and the cursor.
+
+Very small terminal windows may prevent parts of the interface from being displayed correctly.
+
+Professional applications often include sophisticated resizing behavior, but for our educational editor, we assume a reasonably sized terminal while still responding gracefully when the window dimensions change.
+
+## Assumptions Are Not Guarantees
+
+It is important to understand that assumptions are **not guarantees**.
+
+The environment may occasionally violate them.
+
+For example:
+
+```text
+Assumption
+
+↓
+
+Terminal supports ANSI
+
+↓
+
+Reality
+
+↓
+
+Terminal does not support ANSI
+```
+
+When this happens, the software should fail gracefully whenever possible.
+
+This is why professional software includes error handling even for situations that are considered unlikely.
+
+Documenting assumptions simply makes it clear which operating conditions the software is designed to expect.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Professional software documentation distinguishes between **requirements**, **constraints**, and **assumptions** because they answer different questions.
+
+- **Requirements** describe what the software must do.
+- **Constraints** describe the boundaries within which it must be built.
+- **Assumptions** describe the conditions under which it is expected to operate.
+
+Keeping these concepts separate makes both the design and the documentation significantly easier to understand.
+
+</Aside>
+
+## Summary
+
+Assumptions describe the conditions that our editor expects to be true about its operating environment. They allow us to simplify the design by establishing a common foundation while acknowledging that real-world systems may occasionally violate those expectations. By documenting these assumptions explicitly, we make the scope and behavior of the software clearer for both developers and users.
+
+With the requirements, constraints, and assumptions now defined, we can examine how these elements work together from the user's perspective. In the next section, we will introduce **use cases**, which describe complete interactions between the user and the editor such as opening a file, editing text, and saving changes—rather than isolated pieces of functionality.

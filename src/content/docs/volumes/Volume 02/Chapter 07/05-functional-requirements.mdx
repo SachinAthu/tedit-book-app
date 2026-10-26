@@ -1,0 +1,133 @@
+---
+title: 7.5 Functional Requirements
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+So far, we have established why requirements are important, what an SRS is, who the stakeholders are, and the scope of our project. We are now ready to describe the capabilities that our editor must provide.
+
+These capabilities are known as **functional requirements**.
+
+A functional requirement defines a specific behavior or service that the software must perform. Every action a user performs—opening a file, moving the cursor, inserting text, or saving a document—is supported by one or more functional requirements.
+
+## Characteristics of Good Functional Requirements
+
+A good functional requirement should be:
+
+- **Clear** — easy to understand without ambiguity.
+- **Specific** — describes exactly one behavior.
+- **Testable** — it should be possible to verify whether the requirement has been satisfied.
+- **Implementation-independent** — it should avoid describing internal algorithms or data structures.
+
+For example, consider the following requirement:
+
+> **The editor shall allow the user to move the cursor using the arrow keys.**
+
+This is a good requirement because it describes an observable behavior. A tester can easily determine whether the requirement has been met.
+
+Now compare it with this statement:
+
+> **The editor shall store the cursor position using two integer variables.**
+
+Although technically true for one possible implementation, this is **not** a functional requirement. It describes an implementation decision rather than the behavior expected by the user.
+
+Throughout this chapter, we will focus on behaviors that users can observe.
+
+## Requirement Identifiers
+
+Professional Software Requirements Specifications typically assign every requirement a unique identifier.
+
+For example:
+
+```text
+FR-001
+FR-002
+FR-003
+...
+```
+
+These identifiers make it easier to:
+
+- discuss requirements during development,
+- reference requirements in design documents,
+- trace architectural decisions,
+- verify implementation during testing, and
+- manage changes as the project evolves.
+
+Large software projects may contain hundreds or even thousands of requirements. Without identifiers, referring to a specific requirement becomes difficult.
+
+Our project is much smaller, but using identifiers introduces an important professional practice that scales well to larger systems.
+
+## Organizing Functional Requirements
+
+Rather than listing every requirement in a single long sequence, it is useful to group related functionality together.
+
+Our editor naturally divides into several major areas:
+
+```text
+Functional Requirements
+
+├── File Management
+├── Text Editing
+├── Cursor Management
+├── Rendering
+├── Navigation
+├── User Interaction
+└── Document State
+```
+
+Each category represents one aspect of the editor's behavior.
+
+This organization also mirrors the architecture we will develop in the following chapters. As we move into system design, these functional areas will gradually become software modules with clearly defined responsibilities.
+
+## Writing Requirements Using "Shall"
+
+Requirements are commonly written using the word **shall**.
+
+For example:
+
+- The editor **shall** open an existing text file.
+- The editor **shall** save the current document.
+- The editor **shall** display the current cursor position.
+- The editor **shall** allow the user to insert printable characters.
+
+The word **shall** indicates that the behavior is mandatory.
+
+Other words carry different meanings:
+
+| Word       | Meaning                                        |
+| ---------- | ---------------------------------------------- |
+| **Shall**  | Mandatory requirement                          |
+| **Should** | Recommended but optional                       |
+| **May**    | Permitted but not required                     |
+| **Can**    | Indicates capability rather than a requirement |
+
+Using consistent terminology reduces ambiguity and makes requirements easier to interpret.
+
+## Functional Requirements for Our Editor
+
+The following sections define the functional requirements for our terminal text editor.
+
+For clarity, the requirements are grouped into seven categories:
+
+1. File Management
+2. Text Editing
+3. Cursor Management
+4. Rendering
+5. Navigation
+6. User Interaction
+7. Document State
+
+Each requirement describes a behavior that the completed editor must provide. Together, these requirements define the minimum functionality needed to achieve the project scope established earlier in this chapter.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Professional software engineers often use **requirements traceability**, where every architectural component, test case, and implementation feature can be traced back to one or more requirement identifiers. This practice ensures that every part of the system exists for a defined purpose and helps prevent unnecessary complexity.
+
+</Aside>
+
+## Summary
+
+Functional requirements describe **what** the software must do from the user's perspective. They focus on observable behavior, avoid implementation details, and provide a measurable definition of the editor's capabilities. By organizing these requirements into logical categories and assigning unique identifiers, we establish a solid foundation for the architectural design that follows.
+
+With the functional requirements defined, we can now turn to the qualities that determine how well the editor performs them. In the next section, we will define the **non-functional requirements**—attributes such as performance, reliability, and usability that distinguish a merely working editor from a good one.

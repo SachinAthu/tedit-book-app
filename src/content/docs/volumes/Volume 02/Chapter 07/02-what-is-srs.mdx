@@ -1,0 +1,153 @@
+---
+title: 7.2 What Is a Software Requirements Specification?
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we discussed why software projects benefit from planning before implementation. The next question naturally follows:
+
+> **What form should that plan take?**
+
+In professional software engineering, one of the first major documents created for a project is the **Software Requirements Specification**, commonly abbreviated as **SRS**.
+
+An SRS is a structured document that describes **what a software system must do** and the conditions under which it must operate. It acts as a blueprint for the entire project, providing a clear description of the system's expected behavior before any implementation begins.
+
+Unlike source code, an SRS is written primarily for people. It allows developers, designers, project managers, testers, and other stakeholders to develop a shared understanding of the project before technical decisions are made.
+
+## Describing _What_, Not _How_
+
+One of the most important principles of an SRS is that it focuses on **what** the software should accomplish rather than **how** it will accomplish it.
+
+Consider the following requirement:
+
+> The editor shall allow the user to move the cursor using the arrow keys.
+
+This statement defines an expected capability of the editor. It does not specify:
+
+- how keyboard input will be read,
+- how escape sequences will be parsed,
+- how the cursor position will be stored, or
+- how the screen will be updated.
+
+Those are implementation and architectural decisions that will be addressed in later chapters.
+
+This distinction can be summarized as follows:
+
+```text
+Requirements
+
+"What should the software do?"
+
+↓
+
+Architecture
+
+"How should the software be organized?"
+
+↓
+
+Implementation
+
+"How is each component built?"
+```
+
+Each stage answers a different question. Mixing them together often leads to confusion and unnecessary redesign.
+
+## An Example
+
+Suppose we want our editor to save a document.
+
+A requirement might simply state:
+
+```text
+The editor shall save the current document to a file when the user presses Ctrl+S.
+```
+
+Notice how much information is intentionally omitted.
+
+The requirement does **not** mention:
+
+- the POSIX file APIs,
+- buffering strategies,
+- temporary files,
+- atomic replacement,
+- error handling,
+- data structures.
+
+Those details belong to the software architecture and implementation.
+
+If we instead wrote:
+
+```text
+The editor shall use write() to save the file by iterating over a vector of strings.
+```
+
+we would no longer be writing a requirement—we would already be making implementation decisions.
+
+Keeping these concerns separate makes the project easier to understand, modify, and maintain.
+
+## Why This Separation Matters
+
+Separating requirements from implementation provides several important advantages.
+
+First, requirements remain stable even if the implementation changes. For example, we might initially store the document as a simple vector of strings because it is easy to understand. Later, we may decide to replace it with a Gap Buffer or Piece Table to improve editing performance. Although the internal design changes, the requirement remains exactly the same:
+
+> The editor shall allow users to edit text.
+
+Second, this separation encourages better design decisions. Instead of immediately committing to one solution, we can evaluate several alternatives before selecting the most appropriate architecture.
+
+Finally, it makes communication much clearer. Different members of a software team often focus on different aspects of a project. Requirements provide a common language that everyone can understand, regardless of whether they are implementing the renderer, designing the user interface, or writing test cases.
+
+## The Role of the SRS in This Book
+
+In large commercial projects, an SRS can easily span hundreds of pages and include detailed diagrams, interface specifications, legal constraints, security requirements, and traceability matrices.
+
+Our project does not require that level of formality.
+
+Instead, this chapter presents a lightweight SRS tailored to the educational goals of this book. It will define:
+
+- the scope of our editor,
+- the features it must provide,
+- the constraints under which it operates,
+- the assumptions we will make throughout the project, and
+- the criteria that determine when the editor is considered complete.
+
+These requirements will serve as the foundation for every architectural decision made in the following chapters.
+
+## From Requirements to Architecture
+
+Once the requirements are established, we can begin designing the system itself.
+
+The progression throughout Volume II will be:
+
+```text
+Requirements
+
+↓
+
+Architecture
+
+↓
+
+Modules
+
+↓
+
+Interactions
+
+↓
+
+Implementation (Volume X)
+```
+
+Every architectural decision we make should be traceable back to one or more requirements. If a component does not help satisfy a requirement, we should question whether it belongs in the system at all.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Professional software engineers rarely begin by asking, _"What code should I write first?"_ Instead, they ask, _"What problem must this software solve?"_ An SRS keeps the focus on solving the right problem before investing time in designing and implementing a solution.
+
+</Aside>
+
+## Summary
+
+A **Software Requirements Specification (SRS)** defines **what** a software system is expected to do without prescribing **how** it should be implemented. By separating requirements from architecture and implementation, we create a stable foundation for the rest of the project. In the following sections, we will begin writing the SRS for our own terminal text editor, starting by clearly defining the project's scope.

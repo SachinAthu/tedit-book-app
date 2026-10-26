@@ -1,0 +1,140 @@
+---
+title: 7.4 Stakeholders and Users
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Every software system is built to satisfy the needs of people.
+
+These people are known as **stakeholders**. A stakeholder is any individual or group that has an interest in the software's development, operation, or success. Some stakeholders interact with the software directly, while others are concerned with how it is designed, maintained, or supported.
+
+Understanding who the stakeholders are helps us write better requirements. Instead of describing software in abstract terms, we can describe it in terms of the problems it solves for the people who use it.
+
+Although our project is much smaller than a commercial application, the same principles still apply.
+
+## What Is a Stakeholder?
+
+A stakeholder is anyone who is affected by the software or has an interest in its success.
+
+In a large software project, stakeholders might include:
+
+- End users
+- Customers
+- Developers
+- Test engineers
+- Project managers
+- System administrators
+- Technical support teams
+- Business owners
+
+Each stakeholder views the software from a different perspective.
+
+For example, an end user may care about ease of use and reliability, while a developer is more concerned with maintainability and clean architecture. A tester focuses on correctness, whereas a project manager may prioritize deadlines and project scope.
+
+These different perspectives influence the requirements that appear in an SRS.
+
+## Stakeholders for Our Project
+
+Our editor is an educational project rather than a commercial product, so the number of stakeholders is much smaller. We discuss two main stakeholders here, but the final SRS will contain some additional stakeholders.
+
+### The User
+
+The most important stakeholder is the **user**.
+
+The user interacts with the editor to create and modify text documents. Their primary goals are simple:
+
+- Open a document.
+- Edit text efficiently.
+- Save their work.
+- Navigate through the document.
+- Exit the editor safely.
+
+Every functional requirement in this chapter ultimately exists to support one or more of these goals.
+
+### The Developer
+
+The second stakeholder is the **developer**—in this case, us.
+
+Although developers are not the primary users of the editor, they are responsible for designing, implementing, testing, and maintaining the software.
+
+As developers, we care about qualities such as:
+
+- Clear architecture
+- Modular design
+- Readable code
+- Maintainability
+- Reliability
+- Extensibility
+
+Many of the **non-functional requirements** introduced later in this chapter exist primarily to support these concerns.
+
+## Different Perspectives
+
+The same feature can appear very different depending on who is looking at it.
+
+Consider the **Save** command.
+
+From the user's perspective:
+
+> "I want my work to be saved when I press Ctrl+S."
+
+From the developer's perspective:
+
+> "The editor should write the document safely, report errors clearly, and avoid data corruption."
+
+Both statements describe the same feature, but each focuses on a different concern.
+
+The user's requirement describes **expected behavior**.
+
+The developer's requirement describes **implementation quality**.
+
+Recognizing these different viewpoints helps us create software that is both useful and maintainable.
+
+## Writing Requirements from the User's Perspective
+
+Functional requirements are generally written from the perspective of the user.
+
+For example:
+
+- The user shall be able to open an existing text file.
+- The user shall be able to insert characters at the current cursor position.
+- The user shall be able to save the current document.
+- The user shall be able to move the cursor using the arrow keys.
+
+Notice that these requirements describe **what the user can accomplish**, not the internal mechanisms that make those actions possible.
+
+This keeps the requirements independent of implementation details and allows the architecture to evolve without changing the project's objectives.
+
+## Balancing User Needs and Engineering Needs
+
+Good software engineering requires balancing the needs of both users and developers.
+
+Users expect software that is:
+
+- Easy to learn
+- Responsive
+- Reliable
+- Predictable
+
+Developers need software that is:
+
+- Well organized
+- Easy to maintain
+- Easy to extend
+- Straightforward to test
+
+These goals are not in conflict. In fact, a well-designed architecture often benefits both groups. A modular system is easier for developers to maintain, which in turn makes it easier to deliver a stable and reliable experience for users.
+
+Throughout this book, we will continually make design decisions that satisfy both perspectives. This aligns with the broader goal of understanding not only _how_ software is built, but _why_ professional engineers choose particular designs.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Many engineering problems arise because developers focus exclusively on the code while forgetting the people who will use or maintain it. Good requirements begin by identifying the stakeholders and understanding what each expects from the system.
+
+</Aside>
+
+## Summary
+
+Stakeholders are the people who have an interest in a software system. For our text editor, the two primary stakeholders are the **user**, who wants a reliable and intuitive editing experience, and the **developer**, who wants a maintainable and extensible codebase. Considering both perspectives helps us write requirements that describe not only the software's functionality but also the qualities that make it practical to build and use.
+
+With the stakeholders identified, we can now begin writing the first major part of our Software Requirements Specification: the **functional requirements**, which describe the capabilities our editor must provide. The complete SRS in [Appendix K](/appendices/software-requirements-specification/) also lists additional stakeholders — the maintainer, the reader, and future contributors — reflecting the broader audience of a formal specification document.
