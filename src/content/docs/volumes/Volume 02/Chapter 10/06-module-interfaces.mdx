@@ -1,0 +1,234 @@
+---
+title: 10.6 Module Interfaces
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we learned how header files define the public interface of a module. However, a module interface is more than just a collection of function declarations. It represents the **contract** between a module and the rest of the system.
+
+A well-designed interface clearly communicates what a module is capable of, while hiding the details of how those operations are performed. Other modules interact with the interface rather than with the implementation itself.
+
+This separation is one of the fundamental principles of modular software design.
+
+## What Is a Module Interface?
+
+A **module interface** is the set of publicly accessible functions, types, and constants that a module exposes to other modules.
+
+It defines:
+
+- What services the module provides.
+- What information callers must supply.
+- What results the caller can expect.
+
+It deliberately avoids exposing implementation details.
+
+For example, consider the Document module.
+
+Its interface might look like this:
+
+```text
+Document Module
+
++----------------------------+
+| document_insert_char()     |
+| document_delete_char()     |
+| document_split_line()      |
+| document_merge_lines()     |
++----------------------------+
+```
+
+These operations describe **what** the Document module can do.
+
+How the document stores text internally is not part of the interface.
+
+## Interfaces Hide Implementation
+
+Suppose we later decide to replace our document representation.
+
+Originally, the editor stores text as:
+
+```text
+Vector of Lines
+```
+
+Later, we might replace it with:
+
+```text
+Gap Buffer
+```
+
+or even:
+
+```text
+Piece Table
+```
+
+If every module accessed the internal data structure directly, changing the implementation would require modifications throughout the entire project.
+
+Instead, every module communicates through the Document interface.
+
+```text
+Command Engine
+        │
+        ▼
+Document Interface
+        │
+        ▼
+Document Implementation
+```
+
+As long as the public interface remains unchanged, the implementation can evolve without affecting the rest of the editor.
+
+This is one of the primary reasons interfaces exist.
+
+## Designing Small Interfaces
+
+A good interface exposes only the operations that other modules genuinely require.
+
+Consider the Renderer.
+
+From the perspective of the Command Engine, rendering is a single operation.
+
+```text
+Renderer
+
+renderer_draw()
+```
+
+Internally, however, rendering may involve several steps.
+
+```text
+renderer_draw()
+      │
+      ├── draw_rows()
+      ├── draw_status_bar()
+      ├── draw_message_bar()
+      └── draw_cursor()
+```
+
+The helper functions remain private because no other module needs to call them.
+
+This keeps the interface simple.
+
+A small interface is easier to:
+
+- Learn
+- Use
+- Test
+- Maintain
+- Extend
+
+Large interfaces often expose unnecessary details that increase coupling between modules.
+
+## Communication Through Interfaces
+
+Modules should communicate **only** through their public interfaces.
+
+Consider the interaction between the Command Engine and the Renderer.
+
+```text
+Command Engine
+        │
+        ▼
+renderer_draw()
+        │
+        ▼
+Renderer
+```
+
+The Command Engine does not need to know:
+
+- how the screen is cleared,
+- how ANSI escape sequences are generated,
+- how the status bar is drawn, or
+- how the cursor is positioned.
+
+Its only responsibility is to request that the Renderer produce a new frame.
+
+Likewise, the Renderer does not need to know why rendering was requested.
+
+Each module focuses exclusively on its own responsibility.
+
+## Interfaces Reduce Coupling
+
+Imagine that the Renderer directly accessed the internal variables of the Document module.
+
+```text
+Renderer
+      │
+      ▼
+Document Internals
+```
+
+Now the Renderer depends on the Document's internal representation.
+
+If the Document implementation changes, the Renderer may also need to change.
+
+Instead, the Renderer should interact only with the Document's public interface.
+
+```text
+Renderer
+      │
+      ▼
+Document Interface
+      │
+      ▼
+Document Implementation
+```
+
+This additional layer protects modules from implementation changes and significantly reduces coupling throughout the system.
+
+## Interfaces Reflect Responsibilities
+
+A module's interface should closely match its responsibility.
+
+For example:
+
+| Module       | Example Interface                    |
+| ------------ | ------------------------------------ |
+| Document     | Insert, delete, split, merge text    |
+| Cursor       | Move left, right, up, and down       |
+| Renderer     | Render the current editor state      |
+| File Manager | Load and save documents              |
+| Terminal     | Enable raw mode, query terminal size |
+| Input        | Read keyboard events                 |
+
+Notice that each interface exposes operations related to a single concern.
+
+If an interface begins to include unrelated operations, it often indicates that responsibilities have become mixed.
+
+For example, a Renderer interface should not include file loading functions, and the File Manager should not provide cursor movement functions.
+
+Maintaining this alignment between responsibilities and interfaces helps preserve the modular architecture established earlier in the book.
+
+## Designing Interfaces First
+
+Professional software development often begins by designing interfaces before writing implementations.
+
+This approach has several advantages.
+
+First, it encourages developers to think about **what** a module should accomplish rather than **how** it will accomplish it.
+
+Second, it allows different modules to be developed independently because the interface acts as an agreed-upon contract.
+
+Finally, a carefully designed interface often reveals architectural problems before implementation begins. If an interface feels overly complex or difficult to use, it may indicate that the module has been assigned too many responsibilities.
+
+Designing the interface first naturally leads to simpler, more cohesive modules.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A useful way to evaluate an interface is to ask a simple question:
+
+> **Can another developer use this module without reading its implementation?**
+
+If the answer is yes, the interface is likely doing its job. A well-designed interface should be largely self-explanatory. Function names, parameter lists, and documentation should provide enough information for other modules to use the component correctly, while the implementation remains hidden behind the interface.
+
+Professional software engineers often spend considerable time refining interfaces because they define how the rest of the system interacts with a module. An implementation can change many times during a project's lifetime, but a good public interface tends to remain stable.
+
+</Aside>
+
+## Summary
+
+A module interface is the contract between a module and the rest of the system. It defines the services a module provides while hiding the implementation behind those services. By communicating exclusively through small, well-designed interfaces, modules remain independent, loosely coupled, and easier to maintain. This separation allows implementations to evolve without affecting other parts of the editor, preserving the modular architecture established throughout the previous chapters.
+
+In the next section, we will examine how shared types and common utilities are organized to reduce duplication and eliminate unnecessary dependencies between feature modules.

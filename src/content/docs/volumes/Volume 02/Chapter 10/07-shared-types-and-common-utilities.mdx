@@ -1,0 +1,187 @@
+---
+title: 10.7 Shared Types and Common Utilities
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+As a project grows, certain definitions and utility functions naturally become useful in multiple modules. Basic data types, common macros, constants, and helper functions often need to be shared across the codebase.
+
+A common mistake in small projects is to duplicate these definitions wherever they are needed. While this may seem harmless initially, duplicated code quickly becomes a maintenance burden. A change made in one location must be repeated everywhere else, increasing the likelihood of inconsistencies and subtle bugs.
+
+To avoid this problem, our editor includes a dedicated **common** module that contains definitions shared by multiple components.
+
+```text
+editor/
+│
+├── common/
+│   └── common.h
+│
+├── document/
+├── renderer/
+├── input/
+├── terminal/
+└── ...
+```
+
+Rather than belonging to a specific subsystem, the `common` module provides foundational definitions that can be used throughout the project.
+
+## Why a Common Module?
+
+Imagine that both the Renderer and the Document module need to represent the dimensions of the terminal window.
+
+Without a shared definition, each module might declare its own structure.
+
+```text
+Renderer
+
+struct Size
+{
+    int rows;
+    int cols;
+}
+
+Document
+
+struct Size
+{
+    int rows;
+    int cols;
+}
+```
+
+Although these structures appear identical, they are separate definitions maintained independently. If one is later modified while the other is not, the project becomes inconsistent.
+
+Instead, both modules should use a single shared definition.
+
+```text
+common/
+    common.h
+        │
+        ▼
++----------------------+
+| struct Size          |
++----------------------+
+        ▲
+        │
+ ┌──────┴──────┐
+ │             │
+ ▼             ▼
+Renderer    Document
+```
+
+A single definition eliminates duplication and ensures that every module interprets the type in exactly the same way.
+
+## What Belongs in `common.h`?
+
+The purpose of `common.h` is to collect definitions that are genuinely shared across multiple modules.
+
+Typical contents include:
+
+- Common type definitions
+- Enumerations used throughout the editor
+- Project-wide constants
+- Small utility macros
+- Frequently used helper function declarations
+- Standard library includes used by many modules
+
+For example, an editor-wide enumeration representing operation results might be defined once in `common.h` rather than repeated in several modules.
+
+Likewise, constants such as default tab width or editor version information may be appropriate if they are referenced by multiple components.
+
+The key criterion is simple:
+
+> If several independent modules require the same definition, it belongs in the common module rather than being duplicated.
+
+## What Does _Not_ Belong in `common.h`?
+
+Because every module may include `common.h`, there is a temptation to place almost everything inside it. Doing so creates a different problem: the common module gradually becomes a dumping ground for unrelated code.
+
+The following items should **not** be placed in `common.h`:
+
+- Module-specific data structures
+- Editing algorithms
+- Rendering functions
+- File handling routines
+- Cursor movement logic
+- Large utility libraries unrelated to the editor's core infrastructure
+
+For example, functions that manipulate documents belong in the Document module, even if they appear useful elsewhere.
+
+```text
+Incorrect
+
+common.h
+    document_insert()
+    document_delete()
+    render_screen()
+    save_file()
+```
+
+These functions have clear owners and should remain within their respective modules.
+
+The common module should provide **shared foundations**, not shared behavior.
+
+## Minimizing Dependencies
+
+Another advantage of a dedicated common module is that it reduces unnecessary dependencies between feature modules.
+
+Suppose both the Renderer and the Cursor module require access to a `Position` structure.
+
+Without a common definition, one module may include the other's header.
+
+```text
+Renderer
+    │
+    ▼
+cursor.h
+```
+
+Now the Renderer depends on the Cursor module simply to obtain a type definition.
+
+Instead, the shared type can be moved into `common.h`.
+
+```text
+           common.h
+               ▲
+         ┌─────┴─────┐
+         │           │
+         ▼           ▼
+     Renderer     Cursor
+```
+
+Neither module depends on the other. They simply depend on the shared infrastructure.
+
+This seemingly small change significantly reduces coupling and keeps module relationships clean.
+
+## Designing Shared Utilities Carefully
+
+Not every utility function deserves a place in the common module.
+
+A useful guideline is to ask two questions:
+
+1. Is this functionality truly generic?
+2. Would it still make sense if every feature module except one were removed?
+
+If the answer to either question is "no," the function probably belongs within a specific module instead.
+
+Keeping the common module intentionally small encourages better modular design. It forces developers to think carefully about ownership rather than placing unrelated code into a convenient shared location.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Many mature software projects contain a module named `common`, `core`, `base`, or `shared`. These modules provide the minimal infrastructure needed by the rest of the application.
+
+However, experienced engineers are careful to prevent these modules from becoming excessively large. A bloated shared module eventually introduces the very coupling it was intended to eliminate because nearly every component begins to depend on it.
+
+For this reason, the common module should evolve slowly and deliberately. New definitions should be added only when they are genuinely shared by multiple independent modules and have no clear ownership elsewhere.
+
+A small, focused common module strengthens the architecture by reducing duplication while preserving the independence of feature modules.
+
+</Aside>
+
+## Summary
+
+The `common` module provides a central location for types, constants, and utilities that are shared across multiple components of the editor. By placing genuinely common definitions in a single header, we eliminate duplication, reduce unnecessary dependencies, and promote consistency throughout the codebase.
+
+At the same time, the common module must remain carefully scoped. It should contain only foundational infrastructure—not application-specific logic. Maintaining this discipline helps preserve the project's goals of low coupling, high cohesion, and clear module ownership.
+
+In the next section, we turn to the conventions that keep these modules consistent with one another. We will examine the naming rules for files, functions, types, and constants, which give the project a uniform and readable character.

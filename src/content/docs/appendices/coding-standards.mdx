@@ -1,0 +1,100 @@
+---
+title: Appendix M — Coding Standards
+description: The complete coding standards for the terminal text editor.
+sidebar:
+  label: M — Coding Standards
+  order: 13
+---
+
+## Naming
+
+### Directories & Files
+
+- `lowercase`
+- One module per directory.
+- Header and source share the same base name.
+
+Example:
+
+```text
+document/
+    document.h
+    document.c
+```
+
+### Functions
+
+- `snake_case`
+- Prefix with owning module.
+
+Examples:
+
+```text
+document_insert()
+cursor_move_left()
+renderer_draw()
+terminal_enable_raw_mode()
+```
+
+### Variables
+
+- `snake_case`
+- Use meaningful names.
+- Avoid abbreviations.
+
+Examples:
+
+```text
+cursor_row
+screen_columns
+current_file
+```
+
+### Types
+
+- `PascalCase`
+
+Examples:
+
+```text
+EditorState
+Document
+Cursor
+Viewport
+```
+
+### Constants & Enums
+
+- `UPPER_SNAKE_CASE`
+
+Examples:
+
+```text
+DEFAULT_TAB_WIDTH
+STATUS_BAR_HEIGHT
+
+KEY_CTRL_Q
+KEY_ARROW_UP
+```
+
+## Formatting
+
+- Four-space indentation.
+- Opening brace on a new line.
+- One statement per line.
+- Blank lines separate logical sections.
+- Keep line length reasonable.
+- Keep formatting consistent across the project.
+
+## Coding Guidelines
+
+- One responsibility per function.
+- Keep functions small and cohesive.
+- Use meaningful names.
+- Minimize global variables.
+- Prefer passing state explicitly.
+- Use `const` whenever data should not be modified.
+- Avoid magic numbers; use named constants.
+- Comments explain **why**, not **what**.
+- Public interfaces belong in header files.
+- Keep implementation details private to source files.

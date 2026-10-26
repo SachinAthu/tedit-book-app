@@ -1,0 +1,291 @@
+---
+title: 10.10 Coding Standards
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A project's architecture determines how the software is organized, while its coding standards determine how that architecture is expressed in source code. Even the best-designed system can become difficult to maintain if every developer follows different naming conventions, formatting styles, or programming practices.
+
+Coding standards establish a consistent way of writing code. They improve readability, reduce misunderstandings, and make the entire codebase feel as though it was written by a single developer.
+
+The Book Bible introduced the high-level coding principles for this project. In this section, we expand those principles into practical guidelines that will be followed throughout the implementation chapters.
+
+## Write in `snake_case`
+
+The C programming language has no official naming convention, but the C community has long favored `snake_case` for functions and variables.
+
+Throughout this project, function names, variable names, and file names use lowercase letters with words separated by underscores.
+
+```text
+document_insert()
+
+cursor_move_left()
+
+screen_rows
+
+current_file
+```
+
+This style offers several advantages:
+
+- Easy to read.
+- Widely used in C projects.
+- Consistent with POSIX library functions such as `open()`, `read()`, and `tcsetattr()`.
+
+Consistency is more important than personal preference. Once a convention is chosen, it should be applied uniformly across the entire project.
+
+## Use Meaningful Names
+
+Names should communicate intent rather than implementation details.
+
+Compare the following examples.
+
+```text
+Bad
+
+x
+
+tmp
+
+buf
+
+f()
+```
+
+These names reveal almost nothing about their purpose.
+
+Now consider:
+
+```text
+Good
+
+cursor_row
+
+visible_columns
+
+status_message
+
+document_insert()
+```
+
+A reader can immediately understand what each identifier represents.
+
+A useful guideline is this:
+
+> If another developer cannot understand the purpose of a variable or function from its name alone, the name should probably be improved.
+
+Descriptive names reduce the need for comments and make the code easier to understand months or even years later.
+
+## Give Each Function One Responsibility
+
+Every function should perform one well-defined task.
+
+For example, consider a function responsible for saving a document.
+
+A poor design might:
+
+- Validate the document.
+- Save the file.
+- Update the status bar.
+- Refresh the display.
+- Log debugging information.
+
+Such a function has several unrelated responsibilities.
+
+A better design separates these concerns.
+
+```text
+save_document()
+
+update_status_message()
+
+renderer_refresh()
+```
+
+Each function performs a single task and can be understood independently.
+
+This approach follows the **Single Responsibility Principle**, making functions easier to test, debug, and reuse.
+
+## Keep Functions Small
+
+Large functions often indicate that multiple responsibilities have been combined.
+
+Imagine opening a source file and finding a function that spans several hundred lines. Understanding its behavior requires reading a significant amount of code before its purpose becomes clear.
+
+Smaller functions are easier to:
+
+- Read.
+- Test.
+- Debug.
+- Reuse.
+- Modify safely.
+
+There is no universal rule for the ideal function length. Some functions naturally require more logic than others.
+
+Instead of counting lines, focus on cohesion.
+
+If a function can be divided into several smaller operations without making the code less clear, it usually should be.
+
+## Minimize Global Variables
+
+Global variables can be accessed from many parts of a program, making it difficult to determine who owns or modifies a particular piece of data.
+
+Consider the following situation.
+
+```text
+Global Variable
+       ▲
+       │
+ ┌─────┼─────┐
+ │     │     │
+ ▼     ▼     ▼
+Input Renderer File
+```
+
+Any module may change the variable, making unexpected interactions more likely.
+
+Our editor instead uses the **Editor State** as the single source of truth. Components operate on this shared state through well-defined interfaces rather than introducing unrelated global variables.
+
+Global variables should therefore be used only when they truly represent application-wide state that cannot reasonably belong to a specific module. Even then, they should be introduced with great care.
+
+By minimizing global state, we improve modularity, simplify testing, and reduce coupling between components.
+
+## Use Consistent Formatting
+
+Formatting has no effect on how a program executes, but it has a significant impact on readability.
+
+Consistent indentation, spacing, and brace placement allow developers to recognize the structure of the code quickly.
+
+For this project, we adopt the following concrete formatting rules:
+
+- Use **four-space indentation**.
+- Place the **opening brace on a new line**.
+- Write **one statement per line**.
+- Separate **logical sections with blank lines**.
+- Keep line length **reasonable**, wrapping long lines rather than writing very long single lines.
+
+For example, a small function written according to these rules looks like this:
+
+```text
+static void update_status_bar(EditorState *editor)
+{
+    if (editor->status_message[0] == '\0')
+    {
+        return;
+    }
+
+    render_status_message(editor);
+}
+```
+
+Note the four-space indentation, the opening brace on its own line, one statement per line, and the blank line separating the guard clause from the main body.
+
+When every file follows the same style, the reader can focus on the program's logic rather than adapting to different formatting preferences.
+
+In professional teams, formatting is often enforced automatically using formatting tools so that every contributor produces code with the same appearance.
+
+## Write Comments That Explain _Why_, Not _What_
+
+Comments should provide information that cannot be easily inferred from the code itself.
+
+For example:
+
+```text
+Poor Comment
+
+// Increment the cursor row
+cursor_row++;
+```
+
+The comment merely repeats what the code already says.
+
+A more valuable comment explains the reasoning behind the operation.
+
+```text
+Better Comment
+
+// Move the cursor to the next line after a successful line split.
+```
+
+This comment explains _why_ the operation occurs rather than simply describing the statement itself.
+
+Good comments often explain:
+
+- Design decisions.
+- Assumptions.
+- Non-obvious behavior.
+- Performance trade-offs.
+- Platform-specific considerations.
+
+If a comment simply translates code into English, it usually adds little value.
+
+## Avoid Magic Numbers
+
+A **magic number** is a literal value whose meaning is not immediately obvious.
+
+For example:
+
+```text
+if (key == 17)
+```
+
+Why 17?
+
+Without additional context, the value is meaningless.
+
+Instead, replace literal values with named constants.
+
+```text
+KEY_CTRL_Q
+```
+
+Similarly,
+
+```text
+status_bar_height = 1;
+```
+
+may be better expressed as
+
+```text
+STATUS_BAR_HEIGHT
+```
+
+Named constants make code easier to understand and simplify future modifications. If the value changes, only the constant needs to be updated rather than every occurrence throughout the project.
+
+## Use `const` Whenever Appropriate
+
+The `const` keyword communicates an important guarantee:
+
+> This value will not be modified.
+
+Whenever a function only needs to read data, its parameters should be declared as `const` where appropriate.
+
+Likewise, values that are intended to remain unchanged throughout their lifetime should be marked accordingly.
+
+Using `const` provides several benefits:
+
+- Prevents accidental modification.
+- Documents the intended use of data.
+- Enables additional compiler diagnostics.
+- Makes interfaces safer and easier to understand.
+
+Treating data as immutable whenever possible encourages clearer interfaces and reduces the likelihood of unintended side effects.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Coding standards are not intended to restrict creativity or enforce arbitrary rules. Their purpose is to reduce unnecessary variation so that developers can focus on solving problems rather than interpreting different coding styles.
+
+Many successful open-source projects—including the Linux kernel, Git, and SQLite—maintain detailed coding standards for exactly this reason. While the specific conventions differ, they all share the same objective: making the codebase consistent, readable, and maintainable over many years of development.
+
+As our editor evolves throughout this book, following these standards will help ensure that every new module integrates naturally with the existing codebase.
+
+</Aside>
+
+## Summary
+
+Coding standards complement the project's architecture by providing consistent guidelines for writing source code. By using `snake_case`, choosing meaningful names, giving each function a single responsibility, keeping functions focused, minimizing global variables, maintaining consistent formatting, writing comments that explain _why_, avoiding magic numbers, and using `const` appropriately, we produce code that is easier to read, maintain, and extend.
+
+These practices may appear simple, but together they establish the disciplined foundation required for building reliable software. In the implementation chapters that follow, every source file and function will adhere to these standards, ensuring that the editor remains both technically sound and approachable to future readers and contributors.
+
+The complete **Project Structure** and **Coding Standards** for our terminal text editor are provided in [Appendix L](/appendices/project-structure/) and [Appendix M](/appendices/coding-standards/). The chapter then concludes with a summary of what we have designed and a preview of the implementation work ahead.

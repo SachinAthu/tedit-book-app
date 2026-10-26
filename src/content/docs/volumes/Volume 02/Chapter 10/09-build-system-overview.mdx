@@ -1,0 +1,250 @@
+---
+title: 10.9 Build System Overview
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A software project consists of much more than its source code. Before an application can be executed, the source files must be translated into machine code, linked together with the required libraries, and packaged into an executable program.
+
+For very small programs containing only a single source file, this process is straightforward. A single compiler command is often sufficient.
+
+As our editor grows into a modular application with multiple directories and source files, manually compiling each file quickly becomes tedious and error-prone. A build system automates this process, ensuring that every component is compiled correctly and that changes are incorporated efficiently.
+
+In this section, we introduce the role of the build system and explain why it is an essential part of a professionally organized software project.
+
+## What Is a Build System?
+
+A build system is a collection of tools and configuration files that automate the process of transforming source code into an executable program.
+
+Instead of manually invoking the compiler for every source file, the developer describes the project once, and the build system performs the necessary compilation steps.
+
+Conceptually, the process looks like this:
+
+```text
+Source Files
+     │
+     ▼
+ Build System
+     │
+     ▼
+  Compiler
+     │
+     ▼
+ Object Files
+     │
+     ▼
+   Linker
+     │
+     ▼
+ Executable
+```
+
+The build system coordinates each stage, ensuring that every module is compiled and linked in the correct order.
+
+## Why Do We Need a Build System?
+
+Imagine that our editor consists of only two source files.
+
+```text
+main.c
+
+document.c
+```
+
+Compiling the project manually is still manageable.
+
+```text
+Compiler
+    │
+    ├── main.c
+    └── document.c
+```
+
+Now consider the project after several chapters.
+
+```text
+main.c
+
+command.c
+
+cursor.c
+
+document.c
+
+file.c
+
+input.c
+
+renderer.c
+
+state.c
+
+terminal.c
+
+viewport.c
+```
+
+Each source file may depend on several header files, and each modification requires recompilation of the affected components.
+
+Managing this process manually soon becomes impractical.
+
+A build system eliminates this burden by tracking the project's structure and automating the compilation process.
+
+## Responsibilities of the Build System
+
+Although different build systems provide different features, their core responsibilities are remarkably similar.
+
+The build system should:
+
+- Locate all source files.
+- Configure compiler options.
+- Manage header file dependencies.
+- Compile each source file into an object file.
+- Link object files into a single executable.
+- Rebuild only the components affected by recent changes.
+
+By automating these tasks, developers can focus on implementing functionality rather than managing compiler commands.
+
+## Supporting a Modular Architecture
+
+Our project is intentionally organized into independent modules.
+
+```text
+editor/
+│
+├── command/
+├── cursor/
+├── document/
+├── file/
+├── input/
+├── renderer/
+├── state/
+├── terminal/
+├── viewport/
+└── ...
+```
+
+Each module contains its own implementation and interface, but all modules must eventually become part of a single executable.
+
+The build system performs this integration.
+
+```text
+command.c
+       │
+cursor.c
+       │
+document.c
+       │
+renderer.c
+       │
+terminal.c
+       │
+       ▼
+  Build System
+       │
+       ▼
+ editor
+```
+
+This separation allows each module to be developed independently while still contributing to the complete application.
+
+## Incremental Builds
+
+One of the most valuable features of a modern build system is **incremental compilation**.
+
+Suppose only the Renderer module has been modified.
+
+Without dependency tracking, every source file would need to be recompiled.
+
+```text
+main.c        Recompile
+
+command.c     Recompile
+
+cursor.c      Recompile
+
+document.c    Recompile
+
+renderer.c    Recompile
+```
+
+Most of this work is unnecessary because only one module has changed.
+
+A build system recognizes this situation and recompiles only the affected files before relinking the executable.
+
+```text
+main.c        No change
+
+command.c     No change
+
+cursor.c      No change
+
+document.c    No change
+
+renderer.c    Recompile
+```
+
+For small educational projects, the time savings may seem modest. For large software systems containing thousands of source files, incremental builds can reduce compilation time from several minutes to only a few seconds.
+
+## Choosing CMake
+
+Many build systems are available for C projects, including traditional Makefiles, Meson, Ninja, Bazel, and others. Each has its own strengths and design philosophy.
+
+For this book, we adopt **CMake** as the project's build system.
+
+This choice is motivated by several factors:
+
+- It is widely used in professional C and C++ projects.
+- It supports Linux, macOS, Windows, and many embedded platforms.
+- It integrates well with modern IDEs and editors.
+- It scales effectively from small educational projects to large production systems.
+- It generates native build files for different platforms, allowing the same project description to be reused across operating systems.
+
+Although our implementation targets Linux, using CMake prepares the project for future portability without requiring major structural changes.
+
+The details of writing `CMakeLists.txt` files will be introduced later in the book. For now, it is sufficient to understand the role that CMake plays in organizing and building the project.
+
+## Build System vs. Compiler
+
+It is easy to confuse the build system with the compiler, but they serve different purposes.
+
+```text
+          Build System
+               │
+               ▼
+        Organizes Build
+               │
+      ┌────────┴────────┐
+      ▼                 ▼
+ Compiler           Linker
+      │                 │
+      └────────┬────────┘
+               ▼
+          Executable
+```
+
+The compiler translates individual source files into object files.
+
+The linker combines those object files into the final executable.
+
+The build system coordinates the entire process by deciding **what** needs to be compiled, **when** it should be compiled, and **how** the various tools should be invoked.
+
+This separation of responsibilities makes the build process flexible and maintainable.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Professional software projects often spend as much time improving their build systems as they do writing application code. A reliable build system supports automated testing, continuous integration, cross-platform compilation, packaging, and deployment.
+
+A poorly organized build process becomes increasingly difficult to maintain as a project grows. Developers may struggle with inconsistent compiler options, missing dependencies, or platform-specific build scripts.
+
+By introducing a structured build system early in the project's development, we establish a solid foundation that scales naturally with the editor's increasing complexity.
+
+</Aside>
+
+## Summary
+
+The build system is responsible for transforming a collection of independent source files into a single executable application. It automates compilation, manages dependencies, performs incremental builds, and coordinates the compiler and linker.
+
+For our editor, we use **CMake** because it provides a modern, portable, and scalable solution that complements the modular architecture established throughout this chapter.
+
+In the next section, we turn from building the project to writing its code. We will define the coding standards that govern how the editor's source code is written, ensuring that every module follows the same practical guidelines for style, structure, and clarity.

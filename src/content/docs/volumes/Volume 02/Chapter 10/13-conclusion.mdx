@@ -1,0 +1,31 @@
+---
+title: Conclusion
+---
+
+This chapter organized the architectural design from Chapter 8 into a concrete, navigable source tree. We began by mapping each architectural component to a dedicated module—`input/`, `renderer/`, `document/`, and so on—and designed the complete directory layout from top-level `editor/` down to individual source files.
+
+We then focused on the internal structure of each module: headers declare the public interface with include guards and function prototypes, while source files contain the implementation and private helpers, hidden with `static`. We reinforced that modules communicate only through their declared interfaces, using the Renderer's `renderer_draw()`, the Cursor's `cursor_move_left()` and `cursor_move_right()`, and the Document's `document_insert_char()` and `document_delete_char()` as practical examples. We introduced `common.h` for shared types and constants while cautioning against letting it become a dumping ground.
+
+We established naming conventions—`snake_case` for functions and variables, `PascalCase` for types, `UPPER_SNAKE_CASE` for constants—and introduced CMake as the build system that transforms source files through compilation and linking into an executable, with incremental builds that recompile only what changed. Finally, we codified coding standards around small functions, minimal globals, meaningful names, and comments that explain _why_.
+
+Every module, header, naming rule, and build step is now in place. The architecture has been translated into a source tree, and the source tree is ready for code.
+
+## Exercises
+
+### Review Questions
+
+1. What is the difference between software architecture and project structure? Why can't one substitute for the other?
+2. Explain why a module should consist of a header file that declares the public interface and a source file that contains the implementation. What problems arise when these responsibilities are mixed?
+3. What is the purpose of an include guard, and what can happen if one is omitted from a header file that is included by multiple source files?
+4. Why does the `common` module need careful scoping? Give an example of something that belongs in `common.h` and something that does not.
+5. Describe the naming conventions adopted for this project. Why do we use different letter cases for different language constructs (functions, types, constants)?
+
+### Thought Experiments
+
+1. Suppose a developer on the project begins placing Renderer-specific helper functions into `common.h` because "other modules might find them useful someday." How would you respond? What principles from this chapter would you invoke, and what long-term problems would you predict?
+
+## Preview of the Next Chapter
+
+The architecture is designed. The runtime model is understood. The project structure is laid out and every module has its place. Before we begin filling those modules with data structures and algorithms, we must address one more question: _why_ is the editor designed this particular way?
+
+In the next chapter, we will examine the major engineering decisions behind the project. Why C instead of a higher-level language? Why a full-screen redraw strategy instead of incremental rendering? Why separate input parsing from command execution, and why organize the code into layers and modules around a single source of truth? And why deliberately defer features such as multiple documents and multi-threading? Every design has trade-offs, and every trade-off has a reason. We will compare alternatives, evaluate their costs, and explain the rationale behind each choice. Those decisions will guide every implementation chapter that follows.

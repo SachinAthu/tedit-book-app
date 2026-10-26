@@ -1,0 +1,89 @@
+---
+title: Appendix L — Project Structure
+description: The complete project structure for the terminal text editor.
+sidebar:
+  label: L — Project Structure
+  order: 12
+---
+
+## Directory Layout
+
+The project follows a module-oriented directory structure.
+
+Each module owns its own directory containing both its public interface (`.h`) and implementation (`.c`).
+
+```text
+text-editor/
+├── docs/
+├── src/
+│   ├── command/
+│   ├── common/
+│   ├── cursor/
+│   ├── diagnostics/
+│   ├── document/
+│   ├── file/
+│   ├── input/
+│   ├── renderer/
+│   ├── state/
+│   ├── terminal/
+│   ├── text/
+│   ├── viewport/
+│   └── main.c
+├── tests/
+├── CMakeLists.txt
+├── LICENSE
+└── README.md
+```
+
+## Module Rules
+
+- One module per directory.
+- Each module owns its own `.h` and `.c` files.
+- Public interfaces belong in the module header.
+- Module internals remain private to the implementation file.
+- `main.c` coordinates the application but contains minimal logic.
+- The `input/` module houses all three input stages—Input Handler, Input Parser, and Input Engine—as separate functions within one module.
+
+## Dependencies
+
+Allowed dependency direction:
+
+```text
+Application
+    │
+    ▼
+Core
+    ▲
+    │
+Platform
+```
+
+Rules:
+
+- Dependencies must be one-way.
+- Circular dependencies are prohibited.
+- Modules depend only on the interfaces they require.
+- Renderer never modifies editor state.
+- Document never depends on Renderer.
+- Cursor and Renderer share display-width calculations through `text/text_layout`; Cursor never depends on Renderer.
+- File Manager never depends on Renderer.
+- Input never depends on File Manager.
+
+## Common Module
+
+`common/common.h` contains only project-wide shared definitions.
+
+Allowed contents:
+
+- Shared types
+- Shared enums
+- Shared constants
+- Utility declarations
+- Common includes
+
+It must not contain module-specific functionality.
+
+## Build System
+
+- Build system: **CMake**
+- Root build file: `CMakeLists.txt`

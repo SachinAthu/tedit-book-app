@@ -1,0 +1,250 @@
+---
+title: 10.3 Directory Layout
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Once we have identified the major modules of our editor, the next step is to organize them into a directory structure. The directory layout is the physical representation of our project's organization. It determines where source files, header files, documentation, tests, and build configuration are stored.
+
+A well-designed directory layout should be easy to understand without requiring extensive documentation. A developer opening the project for the first time should be able to recognize the major subsystems simply by looking at the project tree.
+
+Rather than separating all header files from all source files, we will organize our project around **modules**. Each module is placed in its own directory, containing both its public interface and its implementation. This organization reflects the architecture developed in previous chapters and keeps all related files together.
+
+Our goal is not to create the most elaborate project structure possible. Instead, we want a structure that is simple, logical, and capable of supporting the editor as it grows throughout this book.
+
+## The Complete Project Layout
+
+The following directory structure will be used throughout the implementation chapters.
+
+```text
+editor/
+│
+├── command/
+│   ├── command.h
+│   └── command.c
+│
+├── cursor/
+│   ├── cursor.h
+│   └── cursor.c
+│
+├── document/
+│   ├── document.h
+│   └── document.c
+│
+├── file/
+│   ├── file.h
+│   └── file.c
+│
+├── input/
+│   ├── input.h
+│   └── input.c
+│
+├── renderer/
+│   ├── renderer.h
+│   └── renderer.c
+│
+├── state/
+│   ├── state.h
+│   └── state.c
+│
+├── terminal/
+│   ├── terminal.h
+│   └── terminal.c
+│
+├── viewport/
+│   ├── viewport.h
+│   └── viewport.c
+│
+├── common/
+│   |── common.h
+│   └── common.c
+│
+├── tests/
+│
+├── docs/
+│
+├── main.c
+├── CMakeLists.txt
+└── README.md
+```
+
+Most directories represent a single architectural component of the editor. By grouping related files together, the project structure itself communicates the responsibilities of each module.
+
+Let us examine each part of the project individually.
+
+## Module Directories
+
+The heart of the project consists of the module directories.
+
+Each module contains everything required to implement a single responsibility.
+
+For example:
+
+```text
+renderer/
+├── renderer.h
+└── renderer.c
+```
+
+The header file defines the module's public interface, while the source file contains its implementation.
+
+Similarly,
+
+```text
+input/
+├── input.h
+└── input.c
+```
+
+implements the entire input pipeline. The Input Handler reads raw bytes, the Input Parser converts them into key events, and the Input Engine maps those events to commands. These three stages are kept as separate functions within the module, so the architectural boundaries from Chapter 8 are preserved even though they share a single directory.
+
+This organization offers several advantages:
+
+- Related files remain together.
+- Module boundaries are immediately visible.
+- Navigation becomes more intuitive.
+- Modules can grow without affecting the overall project structure.
+
+As the project evolves, a module may require additional source files. Because each module already has its own directory, expanding it becomes straightforward.
+
+For example, the Renderer module might eventually become:
+
+```text
+renderer/
+├── renderer.h
+├── renderer.c
+├── status_bar.c
+├── status_bar.h
+├── message_bar.c
+└── message_bar.h
+```
+
+The project structure remains organized because every rendering-related file stays within the Renderer module.
+
+## The `common/` Directory
+
+Some definitions are shared across multiple modules.
+
+Rather than placing these shared declarations inside an unrelated module, we provide a dedicated `common/` directory.
+
+Typical contents include:
+
+- Shared type definitions
+- Enumerations
+- Common constants
+- Utility macros (when necessary)
+
+The goal is to provide common infrastructure without creating unnecessary dependencies between modules.
+
+We will discuss the appropriate contents of `common.h` later in this chapter.
+
+## The `tests/` Directory
+
+As projects grow, testing becomes an essential part of software development.
+
+Although our editor is relatively small, it is good practice to keep test code separate from production code.
+
+The `tests/` directory provides a dedicated location for:
+
+- Unit tests
+- Integration tests
+- Experimental test programs
+
+Separating tests from the implementation keeps the production modules focused solely on the editor itself.
+
+Testing will be discussed in detail later in the book.
+
+## The `docs/` Directory
+
+Not every file in a software project is source code.
+
+Projects often include documentation describing the architecture, design decisions, requirements, and other supporting material.
+
+The `docs/` directory provides a central location for documents such as:
+
+- Software Requirements Specification (SRS)
+- Architecture documentation
+- Architecture Decision Records (ADRs)
+- Design notes
+- Developer guides
+
+Keeping documentation inside the project encourages it to evolve alongside the implementation.
+
+## `main.c`
+
+Every C program begins execution from a single entry point.
+
+For our editor, that entry point is:
+
+```text
+main.c
+```
+
+Unlike the other files, `main.c` does not belong to a specific module.
+
+Its primary responsibilities are to:
+
+- Initialize the editor
+- Start the event loop
+- Coordinate shutdown and cleanup
+
+The majority of the application's logic belongs in the individual modules rather than in `main.c`. As a result, `main.c` should remain relatively small and easy to understand.
+
+## Build Configuration
+
+Every software project requires instructions describing how the source code should be compiled.
+
+Rather than compiling each source file manually, modern projects typically use a build system.
+
+Our project stores its build configuration in:
+
+```text
+CMakeLists.txt
+```
+
+This file specifies:
+
+- Which source files belong to the project
+- Compiler options
+- Build targets
+- How the executable should be produced
+
+We will examine the build system in more detail later in this chapter.
+
+## The README File
+
+The `README.md` file is usually the first document a developer reads after opening a project.
+
+It provides a high-level overview of the project, including:
+
+- What the project is
+- How to build it
+- How to run it
+- Project goals
+- Important notes for contributors
+
+A well-written README allows new developers to begin working with the project quickly without first reading the source code.
+
+## Why This Layout?
+
+There are many valid ways to organize a C project. Some projects separate header files from source files, while others organize files by feature or library.
+
+For this book, we organize the project around **modules** because it most closely reflects the architecture developed in previous chapters.
+
+Each directory corresponds to a single architectural component, making the relationship between the design and the implementation immediately visible. Developers can locate functionality by thinking about responsibilities rather than individual file types.
+
+This approach also scales naturally. As modules grow, additional files can be added without reorganizing the rest of the project or cluttering a single source directory.
+
+Most importantly, the project structure reinforces the architectural principles introduced earlier: clear responsibilities, high cohesion, low coupling, and modular design.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A common instinct is to organize projects by file type—for example, placing every header file in one directory and every source file in another. While this is a perfectly valid approach and is common in many C libraries, it separates closely related files and makes navigation less intuitive.
+
+Organizing by **module** keeps each component's interface and implementation together. Since software is designed around modules rather than file extensions, this layout better reflects the architecture of the system and scales more naturally as individual modules evolve.
+
+</Aside>
+
+## Summary
+
+A well-designed directory layout provides the foundation for a maintainable software project. By organizing the project around architectural modules, we keep related files together, reinforce clear responsibilities, and create a codebase that is easy to navigate and extend. In the next section, we will examine how each module is organized internally and explore the relationship between header files and source files.

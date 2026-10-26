@@ -1,0 +1,747 @@
+---
+title: Chapter 11 — Design Decisions
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## Introduction
+
+Before designing the core components of our editor, it is important to understand why the system is designed the way it is. Every architectural choice represents a trade-off between simplicity, performance, maintainability, and future extensibility. The decisions presented in this chapter were made to support the educational goals of this project while providing a solid foundation for a functional terminal-based text editor.
+
+By understanding the reasoning behind these decisions, you will be better prepared to evaluate alternative designs and appreciate the trade-offs involved in software engineering.
+
+## Learning Objectives
+
+By the end of this chapter, you will be able to:
+
+- Explain why software design decisions involve trade-offs.
+- Understand the rationale behind the major architectural decisions in this project.
+- Compare the chosen designs with common alternatives.
+- Recognize how these decisions support simplicity, maintainability, and learning.
+- Appreciate how early design decisions influence the rest of a software project.
+
+## 11.1 How Engineers Make Design Decisions
+
+When developing software, there is rarely a single "correct" solution to a problem. Different designs can achieve the same goal, but each comes with its own advantages and disadvantages. As a result, software engineering is often about choosing the solution that best fits the project's requirements rather than searching for a perfect design.
+
+A good design decision begins with understanding the problem and the constraints. Factors such as simplicity, performance, maintainability, portability, and future extensibility all influence the final choice. Improving one characteristic often requires compromising another.
+
+For this project, our primary goal is educational value. The editor should be simple enough to understand from first principles while still demonstrating the architecture and techniques used in real-world software. This means we will often choose designs that favor clarity and maintainability over maximum performance or feature richness.
+
+Throughout this chapter, each design decision will follow the same process:
+
+1. Define the problem.
+2. Examine common alternatives.
+3. Explain the chosen solution.
+4. Discuss the trade-offs.
+5. Justify why the chosen design best fits this project.
+
+By understanding this decision-making process, you will learn not only how this editor is designed, but also how to evaluate architectural decisions in your own software projects.
+
+## 11.2 Decision 1 — Implement the Editor in C
+
+One of the first decisions in any software project is choosing the implementation language. Today, developers have many options, each with its own strengths and weaknesses. The language you choose influences how the software is structured, how it interacts with the operating system, and how much of the underlying system is visible to the programmer.
+
+For this project, we chose **C (C99)** as the implementation language. This decision was made because the primary goal of the book is to teach systems programming and terminal programming from first principles, not simply to build a working text editor.
+
+### Why C?
+
+C provides a minimal level of abstraction between the program and the operating system. Most POSIX APIs, including those used for terminal control and file operations, are designed with C in mind. As a result, readers can interact directly with the operating system without additional language features hiding the underlying mechanisms.
+
+Using C also encourages a deeper understanding of concepts such as memory management, pointers, data structures, and modular software design. These are fundamental skills that apply regardless of the programming language used later in a developer's career.
+
+### Alternatives
+
+Several modern languages could also be used to build a terminal text editor.
+
+- **C++** provides object-oriented and generic programming features that can simplify some aspects of implementation.
+- **Rust** offers strong memory safety guarantees and modern language features.
+- **Go** provides a simple syntax and excellent support for concurrent programming.
+- **Zig** offers low-level control while addressing some of C's shortcomings.
+
+Each of these languages is capable of producing an excellent text editor.
+
+### Trade-offs
+
+Choosing C also means accepting its limitations.
+
+- Memory must be managed manually.
+- The language provides fewer built-in abstractions than modern languages.
+- Some programming tasks require more code than in higher-level languages.
+
+However, these trade-offs support the educational objectives of this book. By working with a language that exposes the underlying system, readers gain a clearer understanding of how terminals, operating systems, and software architecture work together.
+
+<Aside type="note" title="Decision">
+  For this project, we will implement the editor using **C99**. It offers the
+  lowest practical level of abstraction while remaining portable, widely
+  supported, and well suited for learning systems programming. This decision
+  forms the foundation for every implementation chapter that follows.
+</Aside>
+
+## 11.3 Decision 2 — Use a Full-Screen Redraw Renderer
+
+One of the most important design decisions in a text editor is how the screen should be updated after the editor state changes. Whenever the user types a character, moves the cursor, or edits the document, the display must reflect those changes.
+
+There are two common approaches to screen rendering:
+
+- Update only the parts of the screen that changed.
+- Redraw the entire screen every time the editor state changes.
+
+For this project, we chose the **full-screen redraw** approach.
+
+### Why Full-Screen Redraw?
+
+With a full-screen redraw, the renderer does not need to track which parts of the display have changed. Instead, it simply generates a complete frame from the current Editor State and sends it to the terminal.
+
+The rendering process is straightforward:
+
+```text
+Editor State
+      │
+      ▼
+Generate Complete Frame
+      │
+      ▼
+Write Frame to Terminal
+```
+
+Each frame is treated as a fresh representation of the editor's current state.
+
+### Alternatives
+
+A more advanced approach is **incremental rendering**, where only the portions of the screen that have changed are updated.
+
+For example, if the user inserts a single character, the renderer attempts to update only the affected area instead of redrawing the entire screen.
+
+While this reduces the amount of terminal output, it introduces additional complexity. The renderer must determine what changed, calculate the affected regions, and ensure that partial updates do not leave the display in an inconsistent state.
+
+### Advantages
+
+The full-screen redraw strategy offers several advantages:
+
+- Simple to understand and implement.
+- Produces a consistent display every frame.
+- Easier to debug because each frame is generated from the complete Editor State.
+- Fits naturally into the event-driven architecture introduced in the previous chapter.
+
+The primary disadvantage is that more data is written to the terminal, even when only a small part of the screen changes.
+
+For a lightweight terminal editor, however, this overhead is negligible on modern systems. The benefits of a simpler and more maintainable design outweigh the small performance cost.
+
+<Aside type="note" title="Decision">
+
+For this project, the renderer will generate and display a complete frame after every event. This keeps the rendering pipeline predictable, maintains a clear separation between the Editor State and the Renderer, and provides a solid foundation before exploring more advanced rendering techniques in later chapters.
+
+</Aside>
+
+## 11.4 Decision 3 — Use Raw Terminal Mode
+
+A text editor must respond immediately to every key the user presses. Whether the user types a character, presses an arrow key, or uses a keyboard shortcut such as **Ctrl+S**, the editor must receive that input as soon as it occurs.
+
+By default, however, terminals operate in **canonical mode**. In this mode, the operating system collects an entire line of input and delivers it to the application only after the user presses **Enter**. Characters are also echoed automatically to the screen, and certain control keys are handled by the terminal instead of the application.
+
+For an interactive text editor, this behavior is unsuitable.
+
+### Why Raw Mode?
+
+In **raw mode**, the terminal delivers every key press directly to the application without waiting for the Enter key. Automatic echoing and line editing are disabled, allowing the editor to interpret every byte of input itself.
+
+This gives the editor complete control over keyboard interaction, making it possible to:
+
+- Respond immediately to individual key presses.
+- Handle arrow keys, function keys, and Escape sequences.
+- Implement keyboard shortcuts such as **Ctrl+S** and **Ctrl+Q**.
+- Decide how characters should be displayed instead of relying on the terminal.
+
+### Alternatives
+
+The alternative is to leave the terminal in its default canonical mode.
+
+While canonical mode is ideal for command-line programs that read complete lines of text, it prevents an editor from responding interactively. The application cannot receive arrow keys or shortcuts in the way an editor requires, and the terminal performs editing operations before the program ever sees the input.
+
+### Trade-offs
+
+Using raw mode provides complete control over user input, but it also transfers responsibility to the editor.
+
+The editor must:
+
+- Read and interpret every key press.
+- Handle special key sequences.
+- Draw characters to the screen.
+- Restore the terminal's original settings before exiting.
+
+If the program terminates without restoring the terminal state, the user's shell may remain in raw mode, causing characters to stop echoing and normal line editing to fail.
+
+<Aside type="note" title="Decision">
+
+For this project, the editor will enable **raw terminal mode** during initialization and restore the original terminal settings before exiting. This provides the level of control required for an interactive text editor while ensuring the terminal is returned to its normal operating state when the program finishes.
+
+</Aside>
+
+## 11.5 Decision 4 — Separate Input Parsing from Commands
+
+When a user presses a key, the terminal does not send high-level commands such as "move cursor up" or "save file." Instead, it sends a stream of raw bytes. Some keys produce a single byte, while others, such as the arrow keys, generate multi-byte escape sequences.
+
+If the editor attempted to process these raw bytes directly in its command logic, the code would quickly become difficult to understand and maintain.
+
+To avoid this, our editor separates **input parsing** from **command execution**.
+
+### Why Separate Input Parsing?
+
+The editor treats reading input and interpreting input as two distinct responsibilities.
+
+The processing pipeline looks like this:
+
+```text
+Keyboard
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command Engine
+```
+
+Each component has a specific role:
+
+- The **Input Handler** reads raw bytes from the terminal.
+- The **Input Parser** translates those bytes into abstract key events.
+- The **Input Engine** maps each key event to the appropriate editor command.
+- The **Command Engine** executes that command.
+
+For example, the arrow-up key might arrive as a sequence of bytes, but the Input Engine maps that event to a command such as `MOVE_CURSOR_UP`, and the Command Engine receives only that command. Neither component needs to know how the key was encoded by the terminal.
+
+### Alternatives
+
+An alternative is to combine input parsing and command execution into a single component.
+
+In this design, the Command Engine would read raw bytes directly from the terminal and interpret every escape sequence itself.
+
+While this may seem acceptable for a small program, it mixes terminal-specific details with editor logic. As support for additional keys and input sequences grows, the command code becomes increasingly complex and harder to maintain.
+
+### Advantages
+
+Separating input parsing from commands provides several advantages:
+
+- Clearly separates terminal protocols from editor behavior.
+- Simplifies the Command Engine.
+- Makes the parser easier to test independently.
+- Improves portability by isolating terminal-specific logic.
+- Makes support for additional keys easier to extend.
+
+The primary disadvantage is the introduction of an additional component in the architecture. However, this extra layer greatly improves clarity by giving each component a single, well-defined responsibility.
+
+<Aside type="note" title="Decision">
+
+For this project, raw terminal input is first translated into abstract key events by a dedicated **Input Parser**. The **Input Engine** then maps those events to editor commands, and the **Command Engine** executes those commands, remaining completely independent of the terminal's byte-level input format. This separation keeps the architecture cleaner, more maintainable, and easier to extend.
+
+</Aside>
+
+## 11.6 Decision 5 — Use a Layered Architecture
+
+As software grows, its components become increasingly dependent on one another. Without a clear structure, responsibilities begin to overlap, modules become tightly coupled, and even small changes can affect many parts of the system.
+
+To avoid these problems, our editor is organized using a **layered architecture**.
+
+### Why a Layered Architecture?
+
+A layered architecture groups components according to their responsibilities and defines how they are allowed to interact.
+
+Our editor consists of three logical layers:
+
+```text
+Application Layer
+(Input Engine,
+ Command Engine)
+        │
+        ▼
+Core Layer
+(Editor State)
+        ▲
+        │
+Platform Layer
+(Input Handler, Input Parser,
+Renderer, File Manager,
+Terminal Interface)
+```
+
+Each layer has a distinct purpose:
+
+- **Application Layer** decides what the editor should do.
+- **Core Layer** stores the editor's data.
+- **Platform Layer** interacts with the operating system and terminal.
+
+By separating these responsibilities, each layer can focus on a single aspect of the application.
+
+### Alternatives
+
+A common alternative is to allow every component to communicate directly with every other component.
+
+For example, the Renderer might modify the document, the File Manager might move the cursor, or the Input Handler might perform editing operations directly.
+
+While this may seem simpler for small programs, it quickly leads to tightly coupled code that is difficult to understand, test, and maintain.
+
+### Advantages
+
+Using a layered architecture provides several benefits:
+
+- Clearly defined responsibilities.
+- Reduced coupling between components.
+- Easier maintenance and debugging.
+- Better scalability as new features are added.
+- Improved readability by making the system structure explicit.
+
+The primary disadvantage is that some operations pass through multiple layers before reaching their destination. This introduces a small amount of additional code and indirection.
+
+For a project of this size, however, the organizational benefits far outweigh the minimal overhead.
+
+<Aside type="note" title="Decision">
+
+For this project, we organize the editor into **Application**, **Core**, and **Platform** layers. Each layer has a well-defined responsibility, and dependencies flow toward the Core Layer. This structure keeps the architecture modular, maintainable, and consistent as the editor grows.
+
+</Aside>
+
+## 11.7 Decision 6 — Centralize the Editor State
+
+A text editor consists of many components that need access to the same information. The Renderer needs the document and cursor position, the Command Engine modifies the document, the File Manager needs the current filename, and the Viewport determines which part of the document is visible.
+
+Without a central place to store this information, each component would be forced to maintain its own copy of the data. This quickly leads to inconsistencies and makes the application difficult to maintain.
+
+To avoid these problems, our editor uses a **centralized Editor State**.
+
+### Why Centralize the Editor State?
+
+The **Editor State** acts as the single source of truth for the entire application. It contains all of the information needed to represent the current editing session.
+
+A simplified view looks like this:
+
+```text
+Editor State
+├── Document
+├── Cursor
+├── Viewport
+├── Current File
+├── Dirty Flag
+├── Screen Size
+└── Status Message
+```
+
+Instead of storing this information independently, every component works with the same Editor State.
+
+This ensures that all components always operate on a consistent view of the application.
+
+### Alternatives
+
+An alternative is to let each component maintain its own state.
+
+For example, the Renderer could store its own cursor position, the File Manager could track the current filename separately, and the Command Engine could maintain its own copy of the document.
+
+Although this may appear simpler initially, duplicated state easily becomes inconsistent. If one component updates its copy while another does not, the application can behave unpredictably and bugs become difficult to diagnose.
+
+### Advantages
+
+Using a centralized Editor State provides several advantages:
+
+- One source of truth for application data.
+- Eliminates duplicated state.
+- Keeps components synchronized.
+- Simplifies debugging because the entire editor can be inspected in one place.
+- Makes the flow of data through the application easier to understand.
+
+The primary disadvantage is that many components depend on the Editor State. As it grows, careful organization is required to prevent it from becoming an oversized structure containing unrelated data.
+
+<Aside type="note" title="Decision">
+
+For this project, all runtime information is stored in a single **Editor State** structure. Components communicate by reading from or updating this shared state rather than maintaining their own copies. This design keeps the application consistent, simplifies maintenance, and provides a solid foundation for the core engine introduced in the next chapter.
+
+</Aside>
+
+## 11.8 Decision 7 — Give Every Component One Responsibility
+
+As a software project grows, it is tempting to let a component perform multiple related tasks. While this may seem convenient at first, it often leads to code that is difficult to understand, modify, and test.
+
+To keep the architecture simple and maintainable, each component in our editor has **one primary responsibility**.
+
+### Why One Responsibility?
+
+Each component is designed to solve a specific problem.
+
+For example:
+
+- The **Input Handler** reads raw keyboard input.
+- The **Input Parser** converts raw bytes into key events.
+- The **Input Engine** maps key events to editor commands.
+- The **Command Engine** executes editor commands.
+- The **Renderer** draws the current Editor State.
+- The **File Manager** handles file input and output.
+
+By limiting each component to a single responsibility, its purpose remains clear and well defined.
+
+### Alternatives
+
+An alternative is to combine multiple responsibilities into a single component.
+
+For example, a Renderer could also update the document, or a File Manager could process keyboard input. While this may reduce the number of modules, it creates components that are larger, more complex, and tightly coupled.
+
+As more features are added, these multi-purpose components become increasingly difficult to maintain because changes in one area can unintentionally affect another.
+
+### Advantages
+
+Assigning one responsibility to each component offers several advantages:
+
+- Components are easier to understand.
+- Code is easier to maintain and extend.
+- Bugs are easier to isolate and fix.
+- Components can evolve independently as the project grows.
+
+The main disadvantage is that the project contains more modules and interfaces than a tightly integrated design. However, these additional boundaries improve organization and make the architecture easier to navigate.
+
+<Aside type="note" title="Decision">
+
+For this project, every architectural component has **one clearly defined responsibility**. Components cooperate by performing their individual roles rather than taking on multiple unrelated tasks. This keeps the system modular, predictable, and easier to maintain as new features are introduced.
+
+</Aside>
+
+## 11.9 Decision 8 — Enforce One-Way Dependencies
+
+As the number of modules in a software project increases, the relationships between them become just as important as the modules themselves. If every component can depend on every other component, the architecture quickly becomes difficult to understand and maintain.
+
+To prevent this, our editor enforces **one-way dependencies**.
+
+### Why One-Way Dependencies?
+
+Each module is allowed to depend only on the modules it genuinely requires. Dependencies always flow in a single direction, preventing components from becoming tightly coupled.
+
+Our architecture follows this dependency direction:
+
+```text
+Application Layer
+        │
+        ▼
+Core Layer
+        ▲
+        │
+Platform Layer
+```
+
+The Core Layer sits at the center of the architecture. Both the Application and Platform layers interact with it, but the Core itself remains independent of the other layers.
+
+This keeps the architecture predictable and easy to reason about.
+
+### Alternatives
+
+An alternative is to allow unrestricted dependencies between modules.
+
+For example, the Renderer might call functions in the File Manager, the Document module might depend on the Renderer, or the Input Handler might directly manipulate rendering.
+
+While this can make individual features easier to implement initially, it creates **circular dependencies**, where two or more modules rely on each other.
+
+Circular dependencies make the system harder to understand, harder to test, and increasingly difficult to modify without unintended side effects.
+
+### Advantages
+
+Enforcing one-way dependencies provides several advantages:
+
+- Reduces coupling between modules.
+- Prevents circular dependencies.
+- Makes the architecture easier to understand.
+- Allows components to evolve independently.
+- Simplifies testing and maintenance.
+
+The primary disadvantage is that some interactions require passing data through intermediate components instead of communicating directly. Although this introduces a small amount of additional structure, it results in a much cleaner and more maintainable design.
+
+<Aside type="note" title="Decision">
+
+For this project, dependencies always flow in one direction according to the defined architecture. Each module depends only on the interfaces it requires, and circular dependencies are prohibited. This keeps the editor modular, predictable, and easier to extend as new features are added.
+
+</Aside>
+
+## 11.10 Decision 9 — Organize the Project by Modules
+
+As a software project grows, its directory structure becomes increasingly important. A well-organized project makes it easier to locate code, understand component responsibilities, and maintain the system over time.
+
+For this project, we organize the source code into **modules**, with each module owning its own directory.
+
+### Why Organize by Modules?
+
+Each module represents a single architectural component and contains both its public interface and its implementation.
+
+For example:
+
+```text
+document/
+├── document.h
+└── document.c
+
+renderer/
+├── renderer.h
+└── renderer.c
+
+input/
+├── input.h
+└── input.c
+```
+
+Keeping related files together makes the structure of the project reflect the structure of the architecture. When a developer needs to understand or modify a component, all of its files can be found in one place.
+
+### Alternatives
+
+One common alternative is to group files by type.
+
+```text
+include/
+├── document.h
+├── renderer.h
+├── input.h
+
+src/
+├── document.c
+├── renderer.c
+├── input.c
+```
+
+While this organization works for many projects, it separates a module's public interface from its implementation. Understanding a single component requires navigating between multiple directories.
+
+Another alternative is a flat project structure.
+
+```text
+document.c
+document.h
+renderer.c
+renderer.h
+input.c
+input.h
+```
+
+This approach may be acceptable for very small programs, but as more modules are added, the project becomes increasingly difficult to navigate.
+
+### Advantages
+
+A module-based directory structure provides several advantages:
+
+- Reflects the software architecture.
+- Keeps related files together.
+- Makes components easier to locate and understand.
+- Improves scalability as the project grows.
+- Encourages clear module boundaries.
+
+The primary disadvantage is that the project contains more directories than a flat layout. However, this additional organization quickly becomes valuable as the number of modules increases.
+
+<Aside type="note" title="Decision">
+
+For this project, each architectural component owns its own directory containing both its header and source files. This module-oriented organization keeps the physical structure of the project aligned with its logical architecture, making the codebase easier to understand, navigate, and maintain.
+
+</Aside>
+
+## 11.11 Decision 10 — Create a Dedicated Common Module
+
+As the editor grows, some definitions will be needed by multiple modules. Examples include shared data types, constants, enumerations, and utility declarations. Without a common location for these shared definitions, code duplication and unnecessary dependencies quickly become problems.
+
+To address this, our project includes a dedicated **Common** module.
+
+### Why a Common Module?
+
+The Common module provides a single place for definitions that are genuinely shared across the project.
+
+Typical contents include:
+
+- Shared type definitions
+- Shared enumerations
+- Shared constants
+- Common utility declarations
+- Project-wide include files
+
+This prevents the same definitions from being duplicated across multiple modules and ensures there is only one authoritative version.
+
+### Alternatives
+
+One alternative is to duplicate shared definitions wherever they are needed.
+
+While this may seem convenient at first, duplicated code is difficult to maintain. If a shared definition changes, every copy must also be updated, increasing the risk of inconsistencies.
+
+Another alternative is to place shared definitions inside an existing module, such as the Document or Renderer module.
+
+This avoids duplication but introduces unnecessary dependencies. Modules that need only a shared type or constant become dependent on functionality that is unrelated to their purpose.
+
+### Advantages
+
+A dedicated Common module provides several advantages:
+
+- Eliminates duplicated definitions.
+- Reduces unnecessary dependencies between modules.
+- Provides a single source of truth for shared infrastructure.
+- Makes common project-wide definitions easier to locate.
+
+The primary disadvantage is that the Common module can gradually become a "dumping ground" for unrelated code if it is not carefully managed.
+
+To prevent this, the Common module must contain **only** definitions that are genuinely shared across multiple independent modules. Module-specific logic should always remain within its owning module.
+
+<Aside type="note" title="Decision">
+
+For this project, we create a dedicated **Common** module to hold shared definitions used throughout the editor. It serves as a central location for common infrastructure while deliberately excluding module-specific functionality. This keeps dependencies clean, avoids duplication, and preserves the modular architecture of the project.
+
+</Aside>
+
+## 11.12 Decision 11 — Use CMake
+
+As a project grows beyond a few source files, building the application manually becomes increasingly difficult. Every time a new module is added, the compilation command must be updated, dependencies must be tracked, and platform-specific compiler options must be managed.
+
+To simplify this process, our project uses **CMake** as its build system.
+
+### Why CMake?
+
+CMake allows the entire build process to be described in a single set of configuration files. Instead of writing long compiler commands, developers define the project's structure once, and CMake generates the appropriate build files for the target platform.
+
+For our editor, CMake provides several important benefits:
+
+- Automatically manages multiple source files.
+- Tracks dependencies between modules.
+- Supports incremental builds.
+- Works across multiple operating systems.
+- Integrates with modern IDEs and development tools.
+
+As the project grows, the build configuration scales with it without requiring increasingly complex compiler commands.
+
+### Alternatives
+
+The simplest alternative is to invoke the compiler directly.
+
+For example:
+
+```bash
+gcc main.c renderer.c document.c input.c -o editor
+```
+
+This approach is acceptable for very small programs but becomes difficult to maintain as the number of source files increases.
+
+Another common alternative is **Make**, which gives developers fine-grained control over the build process. While Make is widely used, it requires manually maintaining build rules and is less portable across different platforms.
+
+Other build systems, such as Meson or Bazel, are also capable choices, but introducing them would add unnecessary complexity for the educational goals of this project.
+
+### Advantages
+
+Using CMake provides several advantages:
+
+- Scales well as the project grows.
+- Simplifies dependency management.
+- Improves portability.
+- Reduces manual build maintenance.
+- Uses a single project description across supported platforms.
+
+The primary disadvantage is that CMake introduces its own configuration language, which readers must learn in addition to C. For very small programs, this can feel like unnecessary overhead.
+
+However, our editor is designed to grow into a multi-module application. Introducing CMake early allows the build system to evolve naturally alongside the project instead of being added later as a major refactoring.
+
+<Aside type="note" title="Decision">
+
+For this project, we use **CMake** as the build system. It provides a scalable, portable, and maintainable way to build the editor while keeping the compilation process consistent throughout the remainder of the book.
+
+</Aside>
+
+## 11.13 Decisions We Intentionally Deferred
+
+Not every useful feature belongs in the first version of a text editor. Although modern editors provide hundreds of capabilities, implementing them all from the beginning would add significant complexity and distract from the primary goal of understanding the core architecture.
+
+For this project, several features are intentionally **deferred**. This does not mean they are unimportant or poorly designed—it simply means they are outside the scope of the baseline implementation.
+
+### Deferred Features
+
+The following features are not included in the initial version of the editor:
+
+- Multiple document support
+- Multi-threading
+- Plugin architecture
+- Syntax highlighting
+- Undo and redo
+- Search and replace
+- Multiple cursors
+- Soft word wrapping
+- Auto-completion
+- Language Server Protocol (LSP) integration
+
+These features are common in professional editors, but each introduces additional data structures, algorithms, and architectural considerations beyond the scope of this project.
+
+### Why Defer These Features?
+
+The primary objective of this book is to build a solid understanding of how a terminal text editor works from first principles.
+
+By focusing on the essential functionality first, readers can understand the core architecture without being distracted by advanced features that rely on the same foundation.
+
+Once the baseline editor is complete, many of these capabilities can be added as independent enhancements without fundamentally changing the architecture.
+
+### Advantages
+
+Deferring advanced features provides several benefits:
+
+- Keeps the implementation focused and manageable.
+- Reduces architectural complexity.
+- Allows core concepts to be learned thoroughly before introducing optimizations and extensions.
+- Produces a stable foundation for future enhancements.
+
+The obvious disadvantage is that the completed editor will not initially provide all of the features expected from modern text editors. However, this limitation is intentional and aligns with the educational goals of the project.
+
+<Aside type="note" title="Decision">
+
+For this project, we deliberately limit the baseline editor to its core responsibilities: editing a single plain-text document within a terminal environment. Advanced features are postponed until the underlying architecture has been fully understood and implemented. This incremental approach keeps the project approachable while providing a strong foundation for future chapters and later volumes of the book.
+
+</Aside>
+
+## 11.14 Design Principles to Remember
+
+Throughout this chapter, we examined the major design decisions that shape our editor. Although each decision addresses a different problem, they are guided by a common set of engineering principles.
+
+These principles will continue to influence every implementation decision in the chapters that follow.
+
+- **Prefer simplicity over unnecessary complexity.** A simple design is easier to understand, implement, and maintain.
+
+- **Separate responsibilities.** Each component should have one clearly defined purpose and interact with other components through well-defined interfaces.
+
+- **Keep components loosely coupled.** Modules should depend only on the components they genuinely require, reducing the impact of future changes.
+
+- **Maintain a single source of truth.** Shared application data belongs in the Editor State rather than being duplicated across components.
+
+- **Build incrementally.** Establish a solid foundation before introducing advanced features and optimizations.
+
+- **Accept trade-offs.** Every design decision improves some aspects of the system while compromising others. The goal is to choose the solution that best satisfies the project's requirements.
+
+By following these principles, we create an editor that is not only functional but also well-structured, maintainable, and easy to extend. More importantly, these are the same principles used when designing software systems of any size, making them valuable far beyond the scope of this project.
+
+## Chapter Summary
+
+Every software project begins with decisions. The language, the architecture, the build system, and the project structure all shape what the software becomes — often more than the code itself. In this chapter, we examined eleven decisions that define our editor's foundation and deliberately deferred several others to keep the project focused on its educational goals.
+
+We chose **C** as the implementation language because it provides the lowest practical abstraction and direct access to POSIX APIs, making the underlying system visible rather than hidden. For rendering, we selected a **full-screen redraw** strategy that treats every frame as a fresh representation of the Editor State — simpler to implement, easier to debug, and naturally aligned with the event-driven architecture from Chapter 9. We enabled **raw terminal mode** to receive every key press immediately, giving the editor complete control over user interaction at the cost of responsibility for restoring the terminal before exit.
+
+At the architectural level, we adopted a **three-layer design** — Application, Core, and Platform — that separates decision-making from data storage from system interaction. We centralized all runtime information into a single **Editor State** so every component operates on the same source of truth. We assigned each component **one responsibility** — the Input Handler reads bytes, the Input Parser produces events, the Input Engine maps events to commands, the Command Engine executes those commands, the Renderer draws frames, the File Manager handles I/O — and we enforced **one-way dependencies** flowing toward the Core Layer to prevent circular coupling. We organized the physical project into **module-based directories** that mirror the logical architecture, created a dedicated **Common module** for shared infrastructure while guarding against scope creep, and adopted **CMake** to scale the build system alongside the project.
+
+We also identified features that are intentionally deferred — multiple documents, syntax highlighting, undo, plugins, and others — not because they are unimportant, but because the first priority is understanding the core architecture before extending it.
+
+The principles behind every decision are the same: prefer simplicity, separate responsibilities, keep components loosely coupled, maintain a single source of truth, build incrementally, and accept that every design involves trade-offs. These principles are not specific to text editors. They apply to any software system, which is why understanding them at this stage matters more than memorizing any single decision.
+
+### Exercises
+
+#### Review Questions
+
+1. Why is canonical mode unsuitable for an interactive text editor, and what responsibilities does raw mode transfer to the application?
+
+2. What are the three layers in our editor's architecture, and what is the purpose of each?
+
+3. How does centralizing the Editor State prevent the problems that arise from duplicated state across components?
+
+4. Why does a flat project structure become difficult to maintain as the number of modules increases? How does module-based organization address this?
+
+5. What is the difference between a decision that is _rejected_ and a decision that is _deferred_? Give an example of each from this chapter.
+
+#### Thought Experiments
+
+**Imagine removing the Input Parser.** Suppose the Command Engine received raw byte sequences from the terminal instead of structured key events. What would the Command Engine need to know that it currently does not? What would happen if the terminal protocol for arrow keys changed? How would this affect the ability to test the Command Engine independently of the terminal? Write a short paragraph describing the consequences and explain why the Input Parser is a necessary architectural boundary.
+
+### Preview of the Next Chapter
+
+Now that we've established the major architectural decisions behind our editor, we're ready to design the most important data structure in the application: the **Editor State**. In Chapter 12, we'll define the central object that represents the entire editor at runtime — including the document, cursor, viewport, screen dimensions, status information, and configuration — and examine how every subsystem reads from and writes to this shared state.

@@ -1,0 +1,133 @@
+---
+title: 10.1 Why Project Structure Matters
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+When people first begin writing software, they often focus almost entirely on making the program work. As long as the code compiles and produces the expected output, its organization may seem unimportant. This approach may be acceptable for small programs consisting of a few hundred lines of code, but it quickly becomes a problem as projects grow in size and complexity.
+
+A text editor is composed of many independent responsibilities. It must read keyboard input, manage documents, track the cursor, render the screen, perform file operations, and maintain the overall application state. Placing all of this functionality into a single source file or scattering it across unrelated files makes the code increasingly difficult to understand and maintain.
+
+Project structure provides a way to organize source code so that it reflects the architecture of the system. Instead of viewing the project as a collection of files, we organize it as a collection of modules, where each module has a clearly defined purpose and responsibility. A well-structured project allows developers to locate code quickly, understand how different parts of the system interact, and modify one component without unintentionally affecting others.
+
+The organization of a project is therefore not simply a matter of aesthetics—it is an important engineering decision that directly affects the quality and maintainability of the software.
+
+## Maintainability
+
+Software is rarely written once and never changed again. Bugs are discovered, features are added, and requirements evolve over time. Most of a software project's lifetime is spent maintaining existing code rather than writing new code.
+
+A well-organized project makes maintenance significantly easier because related functionality is grouped together. When a developer needs to modify the renderer, they know exactly where to look. Likewise, changes to file handling or keyboard input are confined to their respective modules.
+
+By contrast, poorly organized code forces developers to search through unrelated files to locate the logic they need, increasing both development time and the likelihood of introducing errors.
+
+## Readability
+
+Code is read far more often than it is written. Future readers—including your future self—should be able to understand the structure of the project without reading every line of code.
+
+A logical directory structure serves as a map of the application. Even before opening a source file, a developer can infer the responsibilities of each module simply by examining the project layout.
+
+For example, seeing directories such as:
+
+```text
+renderer/
+document/
+input/
+terminal/
+```
+
+immediately communicates the major subsystems of the editor.
+
+Good organization reduces the mental effort required to navigate the codebase, allowing developers to focus on understanding the implementation rather than searching for it.
+
+## Separation of Concerns
+
+One of the most important principles in software engineering is **separation of concerns**. Each module should focus on solving a single problem and avoid taking responsibility for unrelated tasks.
+
+For example:
+
+- The Input Handler should read keyboard input.
+- The Renderer should draw the screen.
+- The File Manager should perform file operations.
+- The Document module should manage editable text.
+
+When each module has a single, well-defined responsibility, the system becomes easier to understand, test, and modify.
+
+This principle also reduces coupling between modules. Since each component performs a specific role, changes to one part of the system are less likely to affect others.
+
+## Scalability
+
+Although our editor is intentionally small, we should design it using practices that scale to larger projects.
+
+Consider the following project structure:
+
+```text
+project/
+│
+├── main.c
+├── editor.c
+├── helper.c
+├── misc.c
+├── util.c
+└── more.c
+```
+
+At first glance, it is difficult to determine where specific functionality belongs. Names such as `helper.c` and `misc.c` provide little information about their purpose, and over time they often become collections of unrelated functions.
+
+Now compare it with a structure organized around responsibilities:
+
+```text
+project/
+│
+├── document/
+├── cursor/
+├── viewport/
+├── renderer/
+├── input/
+├── terminal/
+├── file/
+├── command/
+└── state/
+```
+
+Here, each directory represents a distinct subsystem of the editor. As new functionality is added, it naturally fits into the appropriate module rather than being placed wherever there happens to be space.
+
+This organization allows the project to grow without becoming increasingly difficult to navigate.
+
+## Easier Navigation
+
+One of the greatest benefits of a good project structure is that it reduces the time spent searching for code.
+
+Suppose you discover that saving a file is not working correctly. In a well-organized project, you immediately know where to begin your investigation:
+
+```text
+file/
+```
+
+Similarly:
+
+- Rendering issues belong in `renderer/`.
+- Cursor movement belongs in `cursor/`.
+- Keyboard processing belongs in `input/`.
+- Document editing belongs in `document/`.
+
+The directory structure itself acts as documentation, guiding developers toward the correct location for each responsibility.
+
+## Reduced Coupling
+
+A well-designed project structure also reinforces the architectural dependency rules established in the previous chapter.
+
+When modules are clearly separated, they communicate through well-defined public interfaces instead of accessing each other's internal implementation. This reduces coupling and prevents unrelated components from becoming tightly intertwined.
+
+For example, the Renderer should not need to understand how keyboard input is read, and the Input Handler should not know how the screen is drawn. Each module focuses only on its own responsibility while interacting with other modules through clearly defined interfaces.
+
+This separation makes the system more robust because changes inside one module rarely require changes elsewhere.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A well-organized project structure does not make software faster, nor does it add new features. Instead, it makes the software easier to understand, maintain, and extend. As projects grow, good organization becomes just as important as correct algorithms and efficient code. Professional software development places significant emphasis on project structure because maintainability is a long-term investment that benefits every future change to the codebase.
+
+</Aside>
+
+## Summary
+
+Project structure is the physical representation of software architecture. A carefully organized project improves maintainability, readability, scalability, navigation, and modularity while reinforcing the architectural principles established in earlier chapters. In the next section, we will see how the architectural components introduced in Chapter 8 are translated into concrete source code modules within our editor project.

@@ -1,0 +1,282 @@
+---
+title: 10.8 Naming Conventions
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A well-structured project is easier to navigate when its naming is consistent. Even if the architecture is carefully designed, inconsistent names can make the source code difficult to understand. Developers spend far more time reading code than writing it, so clear and predictable naming is an important part of maintainability.
+
+Naming conventions provide a common language for the project. They allow developers to recognize the purpose of a file, function, variable, or type without needing to inspect its implementation.
+
+Throughout this book, we follow a simple and consistent naming scheme that emphasizes readability over brevity.
+
+## Why Naming Conventions Matter
+
+Consider the following function names.
+
+```text
+insert()
+
+doc_insert()
+
+document_insert()
+```
+
+All three names may perform the same operation, but they communicate different levels of information.
+
+The first name is ambiguous. Without additional context, it is impossible to know what is being inserted or where.
+
+The second is better, but the abbreviation `doc` requires readers to understand the project's shorthand.
+
+The third name is immediately clear.
+
+```text
+document_insert()
+```
+
+Even when encountered for the first time, its purpose is obvious.
+
+Descriptive names reduce the cognitive effort required to understand unfamiliar code.
+
+## File Naming
+
+Each module uses the same base name for its source and header files.
+
+```text
+document/
+    document.h
+    document.c
+
+renderer/
+    renderer.h
+    renderer.c
+
+input/
+    input.h
+    input.c
+```
+
+This convention makes locating implementations straightforward. When a developer sees `document.h`, they immediately know that its implementation resides in `document.c`.
+
+Using matching names also simplifies navigation in editors and build systems.
+
+## Function Naming
+
+Functions are prefixed with the name of the module that owns them.
+
+```text
+document_insert()
+
+document_delete()
+
+renderer_draw()
+
+cursor_move_left()
+
+terminal_enable_raw_mode()
+```
+
+This convention provides several advantages.
+
+First, ownership is immediately obvious.
+
+Second, function names remain unique across the project.
+
+For example, several modules may naturally require an `initialize()` function.
+
+Without prefixes:
+
+```text
+initialize()
+
+initialize()
+
+initialize()
+```
+
+There is no indication of which module each function belongs to.
+
+With module prefixes:
+
+```text
+renderer_initialize()
+
+terminal_initialize()
+
+document_initialize()
+```
+
+Each function is self-describing while avoiding naming collisions.
+
+## Structure and Type Names
+
+Structures represent important concepts within the editor and therefore use descriptive names.
+
+For example:
+
+```text
+EditorState
+
+Document
+
+Cursor
+
+Viewport
+
+TerminalSize
+```
+
+These names correspond directly to the architectural components introduced in earlier chapters, making the relationship between the design and the implementation easy to recognize.
+
+When a structure has an associated typedef, the chosen name should remain consistent throughout the project rather than introducing multiple aliases for the same concept.
+
+## Variables
+
+Variable names should describe their purpose rather than their type.
+
+Compare the following examples.
+
+```text
+int x;
+
+int a;
+
+int value;
+```
+
+These names reveal very little.
+
+Now consider:
+
+```text
+cursor_row
+
+cursor_column
+
+screen_rows
+
+screen_columns
+
+document_count
+```
+
+These variables communicate their meaning immediately.
+
+Similarly, pointers should not be distinguished solely by a prefix such as `p` or `ptr`.
+
+Instead of:
+
+```text
+doc_ptr
+```
+
+prefer:
+
+```text
+document
+```
+
+or
+
+```text
+current_document
+```
+
+The purpose of the object is more important than the fact that it happens to be accessed through a pointer.
+
+## Constants and Enumerations
+
+Project-wide constants should follow a consistent style that distinguishes them from variables.
+
+For example:
+
+```text
+DEFAULT_TAB_WIDTH
+
+STATUS_BAR_HEIGHT
+
+EDITOR_VERSION
+```
+
+Similarly, enumeration values should clearly indicate the category to which they belong.
+
+```text
+KEY_ARROW_UP
+
+KEY_ARROW_DOWN
+
+KEY_CTRL_S
+
+KEY_ESCAPE
+```
+
+Using meaningful prefixes prevents conflicts while making the origin of each constant immediately recognizable.
+
+## Avoiding Abbreviations
+
+Abbreviations may save a few keystrokes, but they often reduce readability.
+
+Compare these names.
+
+```text
+doc_ins()
+
+rend_upd()
+
+cur_mv()
+```
+
+Although short, they require readers to mentally decode each abbreviation.
+
+In contrast:
+
+```text
+document_insert()
+
+renderer_update()
+
+cursor_move()
+```
+
+These names are slightly longer but considerably easier to understand.
+
+Modern development tools provide automatic code completion, making the cost of typing longer names almost negligible. The resulting improvement in readability is well worth the additional characters.
+
+## Consistency Is More Important Than Preference
+
+Many naming styles are perfectly valid. Some projects use `camelCase`, while others prefer `PascalCase` or `snake_case`. Likewise, different teams have different conventions for prefixes, suffixes, and abbreviations.
+
+The most important principle is not choosing the "best" convention, but applying one convention consistently throughout the entire project.
+
+In our editor, we adopt the following conventions:
+
+| Element               | Convention                       | Example                   |
+| --------------------- | -------------------------------- | ------------------------- |
+| Directories           | `lowercase`                      | `renderer`, `document`    |
+| Source files          | `lowercase`                      | `renderer.c`              |
+| Header files          | `lowercase`                      | `renderer.h`              |
+| Functions             | `module_action()` (`snake_case`) | `document_insert()`       |
+| Variables             | `snake_case`                     | `cursor_row`              |
+| Constants             | `UPPER_SNAKE_CASE`               | `DEFAULT_TAB_WIDTH`       |
+| Enumeration values    | Prefixed `UPPER_SNAKE_CASE`      | `KEY_CTRL_Q`              |
+| Structures / typedefs | `PascalCase`                     | `EditorState`, `Document` |
+
+This combination provides clear visual distinctions between different language constructs while remaining idiomatic in C.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Professional software projects often enforce naming conventions through coding standards and automated tools such as formatters, linters, and code reviews. These practices are not intended to restrict individual programming style, but to make the codebase feel as though it was written by a single developer.
+
+Consistency reduces unnecessary distractions. When every file, function, and variable follows the same naming rules, developers can focus on understanding the program's behavior rather than interpreting different naming styles.
+
+For long-lived projects, consistent naming is one of the simplest and most effective ways to improve readability and maintainability.
+
+</Aside>
+
+## Summary
+
+Naming conventions provide a consistent vocabulary for the entire project. By using descriptive names, prefixing functions with their owning module, avoiding unnecessary abbreviations, and applying a uniform naming style throughout the codebase, we make the editor easier to navigate, understand, and maintain.
+
+Combined with the modular project structure presented earlier in this chapter, these conventions create a codebase whose organization is reflected not only in its directory layout but also in the names that appear throughout the source code.
+
+In the next section, we examine the build system, which turns this organized collection of source files into a working executable. We will see how individual modules are compiled and linked together to produce the final editor program.

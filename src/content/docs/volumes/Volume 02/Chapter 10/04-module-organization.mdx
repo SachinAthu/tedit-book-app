@@ -1,0 +1,240 @@
+---
+title: 10.4 Module Organization
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we organized our project into modules such as `renderer`, `document`, `input`, and `terminal`. Each module corresponds to a major architectural component and occupies its own directory.
+
+However, simply placing files into separate directories is not enough. We must also decide **how each module is organized internally** and **how other modules are allowed to interact with it**.
+
+A well-designed module should have a clear public interface, hide its implementation details, and expose only the functionality that other parts of the system actually need.
+
+## Anatomy of a Module
+
+Throughout this book, every module will follow the same basic structure.
+
+```text
+renderer/
+├── renderer.h
+└── renderer.c
+```
+
+The two files serve different purposes.
+
+- `renderer.h` defines the module's public interface.
+- `renderer.c` contains the implementation of that interface.
+
+This separation allows other modules to use the Renderer without knowing how it works internally.
+
+The same pattern applies to every module in the editor.
+
+```text
+document/
+├── document.h
+└── document.c
+
+cursor/
+├── cursor.h
+└── cursor.c
+
+input/
+├── input.h
+└── input.c
+```
+
+Once you understand one module, you can easily navigate the rest of the project because they all follow the same organization.
+
+## The Header File
+
+A header file describes **what a module provides**.
+
+It contains the declarations that other modules need in order to use the module correctly.
+
+Typical contents include:
+
+- Function declarations
+- Public type definitions
+- Public enumerations
+- Public constants
+
+For example:
+
+```c
+/* renderer.h */
+
+#ifndef RENDERER_H
+#define RENDERER_H
+
+void renderer_draw(void);
+
+#endif
+```
+
+Notice that the header tells us **what function exists**, but it does not explain **how the screen is drawn**.
+
+That information belongs in the source file.
+
+A useful way to think about a header file is as a **contract**.
+
+It tells other modules:
+
+> "These are the services I provide."
+
+It does **not** expose the implementation behind those services.
+
+## The Source File
+
+The source file contains **how the module performs its work**.
+
+Using the previous example:
+
+```c
+/* renderer.c */
+
+#include "renderer.h"
+
+void renderer_draw(void)
+{
+    /* Rendering implementation */
+}
+```
+
+The implementation may contain dozens of helper functions, internal algorithms, and implementation details.
+
+None of these are visible outside the module unless they are explicitly declared in the header file.
+
+This allows the implementation to evolve without affecting the rest of the project.
+
+## Public and Private Functions
+
+Not every function should be accessible from outside the module.
+
+Suppose the Renderer contains several helper functions used only while constructing a frame.
+
+```text
+Renderer
+
+render_frame()
+
+draw_status_bar()
+
+draw_message_bar()
+
+draw_cursor()
+
+draw_rows()
+```
+
+Other modules do not need to call these helper functions directly.
+
+Instead, they only need a single public function:
+
+```text
+renderer_draw()
+```
+
+Internally, the Renderer performs the remaining work itself.
+
+```text
+renderer_draw()
+      │
+      ├── draw_rows()
+      ├── draw_status_bar()
+      ├── draw_message_bar()
+      └── draw_cursor()
+```
+
+This hides unnecessary details from the rest of the system and keeps the module's interface small and easy to understand.
+
+## Information Hiding
+
+One of the fundamental principles of modular software design is **information hiding**.
+
+A module should reveal **what other modules need to know** while concealing **how it accomplishes its task**.
+
+For example, the Command Engine needs to render the screen.
+
+It does **not** need to know:
+
+- how ANSI escape sequences are generated,
+- how the status bar is drawn,
+- how cursor positioning works, or
+- how the screen is refreshed.
+
+Its only concern is calling:
+
+```c
+renderer_draw();
+```
+
+Everything else remains inside the Renderer module.
+
+This separation reduces coupling because changes to the Renderer rarely require changes elsewhere in the project.
+
+## Internal Helper Functions
+
+Many functions exist only to simplify the implementation of a module.
+
+For example:
+
+```c
+draw_status_bar();
+
+draw_message_bar();
+
+draw_cursor();
+```
+
+These functions are implementation details.
+
+Since no other module needs them, they should remain private to the source file.
+
+In C, this is accomplished using the `static` keyword.
+
+```c
+static void draw_status_bar(void)
+{
+    /* ... */
+}
+```
+
+Declaring a function as `static` limits its visibility to the current source file, preventing accidental use by other modules.
+
+As a result, the module exposes only its intended public interface.
+
+## Keeping Modules Focused
+
+Each module should have a single, clearly defined responsibility.
+
+For example:
+
+| Module     | Responsibility                                       |
+| ---------- | ---------------------------------------------------- |
+| `input`    | Turn raw terminal input into editor commands.        |
+| `command`  | Execute editor commands.                             |
+| `state`    | Hold the editor's data (the single source of truth). |
+| `document` | Store and modify editable text.                      |
+| `cursor`   | Track and update cursor position.                    |
+| `viewport` | Track which part of the document is visible.         |
+| `renderer` | Generate the visual output.                          |
+| `terminal` | Interact with the terminal environment.              |
+| `file`     | Load and save documents.                             |
+
+The `input` module groups three closely related stages: the Input Handler reads raw bytes, the Input Parser converts them into key events, and the Input Engine maps those events to commands. Because these three responsibilities cooperate to perform one task—turning raw input into commands—they are implemented together for now, with each stage kept as a separate function so the module can be split later if needed.
+
+If a module begins taking on unrelated responsibilities, it often indicates that it should be divided into smaller modules.
+
+Maintaining clear responsibilities keeps the architecture consistent with the design established in earlier chapters.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A common mistake among beginners is exposing every function in a header file "just in case" another module might need it. Over time, this creates large public interfaces that are difficult to understand and nearly impossible to change without affecting the rest of the system.
+
+A better approach is to expose only the smallest interface necessary. Every function that can remain private should remain private. A small public interface reduces coupling, simplifies maintenance, and gives the module greater freedom to evolve internally.
+
+</Aside>
+
+## Summary
+
+Every module in our editor follows the same internal organization: a header file defines the module's public interface, while a source file implements that interface. By exposing only the operations that other modules require and hiding implementation details behind a small, well-defined API, we create modules that are easier to understand, maintain, and extend. In the next section, we will examine header files in greater detail and discuss include guards, forward declarations, and the role they play in organizing a C project.
