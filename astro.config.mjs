@@ -7,10 +7,12 @@ import starlightPageActions from "starlight-page-actions";
 
 // https://astro.build/config
 export default defineConfig({
+  site: "https://tedit-book.vercel.app",
   integrations: [
     starlight({
       title: "Tedit",
       customCss: ["./src/styles/custom.css"],
+      favicon: "/favicon.ico",
       plugins: [
         starlightThemeRapide(),
         starlightScrollToTop({
