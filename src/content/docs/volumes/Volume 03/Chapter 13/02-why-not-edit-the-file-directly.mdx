@@ -1,0 +1,146 @@
+---
+title: 13.2 Why Not Edit the File Directly?
+description: Explains why editors keep text in memory instead of writing the file on every keystroke, covering speed, insertion cost, safety, and recovery.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Now that we understand the difference between a **file** and a **document**, an obvious question arises:
+
+> If the goal is to modify the file, why not edit the file directly?
+
+At first glance, editing the file itself seems like the simplest approach. After all, the file already contains the text we want to change. Why create a separate copy in memory?
+
+The answer lies in how storage devices work and what users expect from an interactive text editor.
+
+## Files Are Designed for Storage, Not Editing
+
+A file stored on disk is intended to provide **permanent storage**. Whether the storage device is a traditional hard disk drive (HDD) or a modern solid-state drive (SSD), accessing data is significantly slower than accessing data already loaded into memory.
+
+Imagine that every key press immediately modified the file on disk.
+
+If the user typed the word:
+
+```text
+Hello
+```
+
+the editor would have to perform five separate write operations:
+
+```text
+Press 'H' → Write to disk
+Press 'e' → Write to disk
+Press 'l' → Write to disk
+Press 'l' → Write to disk
+Press 'o' → Write to disk
+```
+
+Each write operation requires communication with the operating system and the storage device. Even though modern storage is fast, it is still far slower than modifying data already stored in RAM.
+
+For a responsive editor, performing disk I/O after every keystroke would be an unnecessary performance bottleneck.
+
+## Inserting Text Is More Complicated Than It Appears
+
+Editing a file is not simply a matter of replacing existing characters.
+
+Suppose a file contains:
+
+```text
+Hello World
+```
+
+Now imagine placing the cursor after **Hello** and inserting the word **Beautiful**.
+
+The desired result is:
+
+```text
+Hello Beautiful World
+```
+
+Notice that none of the existing characters can simply be overwritten. Instead, the remaining text must move to create space for the newly inserted characters.
+
+Conceptually, the operation looks like this:
+
+```text
+Before
+
+Hello| World
+
+Insert "Beautiful "
+
+↓
+
+After
+
+Hello Beautiful| World
+```
+
+Inside the file, this means all bytes after the insertion point must be shifted forward before the new text can be written.
+
+For large files, moving potentially thousands—or even millions—of bytes for every insertion would make editing extremely inefficient.
+
+Working with an in-memory document avoids repeatedly performing these expensive file operations.
+
+## Users Expect to Experiment
+
+Another important reason is the editing workflow itself.
+
+When writing a document, people constantly change their minds.
+
+They may:
+
+- Type a paragraph.
+- Delete several sentences.
+- Rewrite a section.
+- Undo their changes mentally by retyping the original text.
+- Close the editor without saving.
+
+If every modification immediately altered the file on disk, the original contents would be lost as soon as the first key was pressed.
+
+Instead, modern editors allow users to experiment freely by keeping all modifications in memory until they explicitly choose to save.
+
+The workflow becomes:
+
+```text
+Open File
+     │
+     ▼
+Load into Document
+     │
+     ▼
+Edit Freely
+     │
+     ▼
+Save (Optional)
+     │
+     ▼
+Update File
+```
+
+If the user exits without saving, the document in memory is simply discarded, and the file remains unchanged.
+
+## Better Error Recovery
+
+Separating the document from the file also improves reliability.
+
+Consider what could happen if a power failure or system crash occurred while the editor was writing every keystroke directly to the file.
+
+The file might be left only partially updated, resulting in corrupted or incomplete data.
+
+By keeping changes in memory and writing them only during a save operation, the editor greatly reduces the number of times the file is modified. This makes it easier to detect and report file I/O errors and preserves the original file until the user intentionally replaces it. More advanced techniques for protecting files during saving, such as temporary files and atomic replacement, will be discussed later in the book.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Separating the editable document from the file follows a common principle in software engineering:
+
+> **Perform frequent operations in memory and infrequent operations on persistent storage.**
+
+Memory is optimized for rapid modification, while storage is optimized for durability. By giving each one the responsibility it is best suited for, the editor remains both responsive and reliable.
+
+This design also aligns with one of the functional requirements established in the Software Requirements Specification: the editor maintains all document modifications in memory until the user explicitly saves them.
+
+</Aside>
+
+## Summary
+
+Although it may seem simpler to edit a file directly, doing so would result in slow performance, inefficient insertion and deletion operations, loss of unsaved work, and a greater risk of data corruption. Instead, the editor loads the file into an in-memory document, performs all editing operations there, and writes the updated contents back to disk only when the user requests a save. This separation provides the responsiveness, flexibility, and reliability expected from a modern text editor. In the next section, we'll examine exactly what the document component is responsible for.

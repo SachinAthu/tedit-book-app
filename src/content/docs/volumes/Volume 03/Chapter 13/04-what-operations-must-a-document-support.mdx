@@ -1,0 +1,329 @@
+---
+title: 13.4 What Operations Must a Document Support?
+description: Identifies the operations a document must support, including reading text, inserting and deleting characters, splitting and merging lines, and position access.
+---
+
+Now that we have established the responsibility of the Document, we can ask a more practical question:
+
+> **What must a Document actually be able to do?**
+
+Before choosing a data structure, we should first define the operations the data structure must support.
+
+This is an important design principle. We should not begin by choosing a data structure simply because it is familiar or commonly used. Instead, we first identify the operations required by the application and then evaluate which representation supports those operations effectively.
+
+For our editor, the Document must support the fundamental operations required to create and modify text.
+
+## Reading Text
+
+The first responsibility is being able to read the text stored in the Document.
+
+For example, the Renderer needs to obtain the contents of the visible lines so that it can display them.
+
+Conceptually:
+
+```text
+Document
+    │
+    ├── Line 0 → "Hello"
+    ├── Line 1 → "World"
+    └── Line 2 → "Editor"
+```
+
+The Document should therefore provide a way to retrieve:
+
+- The number of lines.
+- A particular line.
+- The contents of a line.
+- Characters within a line when necessary.
+
+The Document does not decide **how** those characters are displayed. It simply provides access to the text it owns.
+
+## Inserting Characters
+
+The most common editing operation is inserting a character.
+
+Suppose the Document contains:
+
+```text
+Hello World
+```
+
+and the cursor is positioned between `Hello` and `World`:
+
+```text
+Hello| World
+```
+
+If the user types `X`, the Document must become:
+
+```text
+HelloX| World
+```
+
+The important point is that the insertion occurs **inside existing text**.
+
+The Document therefore needs an operation capable of adding data at an arbitrary position.
+
+Conceptually:
+
+```text
+Before:
+
+Hello| World
+
+        │
+        │ insert 'X'
+        ▼
+
+After:
+
+HelloX| World
+```
+
+## Deleting Characters
+
+The opposite operation is deleting text.
+
+For example:
+
+```text
+HelloX| World
+```
+
+If the user presses Backspace, the `X` should be removed:
+
+```text
+Hello| World
+```
+
+The Document therefore needs to support removing characters from existing text.
+
+Depending on the command being executed, deletion may occur either before or at the current cursor position.
+
+Our requirements explicitly include both Backspace and Delete operations.
+
+## Inserting Lines
+
+Text editors do not operate only on individual characters. They must also be able to create new lines.
+
+Suppose the Document contains:
+
+```text
+Hello World
+```
+
+and the cursor is positioned between the two words:
+
+```text
+Hello| World
+```
+
+Pressing Enter should split the line:
+
+```text
+Hello
+World
+```
+
+Conceptually:
+
+```text
+Before:
+
+Line 0 → "Hello World"
+
+              │
+              │ split
+              ▼
+
+After:
+
+Line 0 → "Hello"
+Line 1 → "World"
+```
+
+This operation is more significant than inserting a character because it changes the structure of the Document itself.
+
+The number of lines increases from one to two.
+
+## Deleting Lines and Merging Lines
+
+The opposite operation must also be supported.
+
+Suppose the Document contains:
+
+```text
+Hello
+World
+```
+
+and the cursor is positioned at the beginning of the second line.
+
+Deleting the line boundary should merge the two lines:
+
+```text
+HelloWorld
+```
+
+Conceptually:
+
+```text
+Before:
+
+Line 0 → "Hello"
+Line 1 → "World"
+
+              │
+              │ merge
+              ▼
+
+After:
+
+Line 0 → "HelloWorld"
+```
+
+This is important because a line break is itself part of the document's structure.
+
+Our requirements therefore specify that the editor must be able to merge adjacent lines when deleting a line boundary.
+
+## Supporting the Cursor's Position
+
+The Document also needs to work with positions inside the text.
+
+A position can be described using a row and column:
+
+```text
+row    = 2
+column = 5
+```
+
+For example:
+
+```text
+Line 0 → "First"
+Line 1 → "Second"
+Line 2 → "Hello World"
+                  ^
+                  column 5
+```
+
+The Document must therefore allow other components to perform operations at specific positions.
+
+However, there is an important architectural distinction:
+
+> **The Document stores the text. The Cursor determines where an operation occurs.**
+
+The Document should not become responsible for cursor movement. Instead, the Command Engine and Cursor component determine the appropriate position and request the corresponding document operation.
+
+This keeps the responsibility boundary established in the previous section.
+
+## A Small Set of Fundamental Operations
+
+At this point, we can summarize the basic operations our Document needs:
+
+```text
+Document
+   │
+   ├── Read text
+   ├── Insert character
+   ├── Delete character
+   ├── Insert line
+   ├── Delete line
+   ├── Split line
+   └── Merge lines
+```
+
+These operations are enough to express the fundamental editing behavior required by our initial editor.
+
+Notice that we have deliberately described the **operations**, not their implementation.
+
+We have not yet decided whether the Document will use:
+
+```text
+A single string
+```
+
+or:
+
+```text
+An array/vector of lines
+```
+
+or:
+
+```text
+A gap buffer
+```
+
+or:
+
+```text
+A piece table
+```
+
+or:
+
+```text
+A rope
+```
+
+That decision comes later.
+
+This distinction is important because **the interface and the implementation are different concerns**.
+
+The editor knows that it needs to insert a character. It should not need to know whether that character is stored inside a contiguous array, a gap buffer, a piece table, or a tree.
+
+## Why Define Operations Before the Data Structure?
+
+Suppose we started by saying:
+
+> "We should use a gap buffer because text editors use gap buffers."
+
+We would be choosing a solution before understanding the problem.
+
+Instead, our reasoning should proceed in this order:
+
+```text
+What must the editor do?
+          │
+          ▼
+What operations must the Document support?
+          │
+          ▼
+What performance characteristics do those
+operations require?
+          │
+          ▼
+Which data structure satisfies those requirements?
+```
+
+This approach allows us to compare different representations objectively.
+
+For example, if frequent insertion near the cursor is our most important operation, one representation may be particularly attractive. If simplicity and easy line-based rendering are more important, another representation may be a better choice.
+
+The data structure should therefore follow the requirements—not the other way around.
+
+## The Operations Define the Document's Interface
+
+Eventually, these conceptual operations will become functions in our C implementation.
+
+For example, the Document might eventually expose operations conceptually similar to:
+
+```text
+document_insert(...)
+document_delete(...)
+document_split_line(...)
+document_merge_lines(...)
+```
+
+The exact interface will be designed when we move from architecture into implementation.
+
+For now, the important idea is that these operations define **what the Document can do**, while the internal data structure determines **how it does it**.
+
+This separation will become particularly important when we compare different document models in the next sections.
+
+## Summary
+
+Before selecting a data structure, we first identify the operations our Document must support. The fundamental operations are reading text, inserting and deleting characters, splitting and merging lines, and accessing text at specific positions. These operations form the conceptual interface of the Document.
+
+The next step is to examine different ways of representing that text in memory and determine how well each representation supports the operations our editor requires.

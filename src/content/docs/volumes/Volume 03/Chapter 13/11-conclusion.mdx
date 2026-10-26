@@ -1,0 +1,32 @@
+---
+title: 13.11 Conclusion
+description: Recaps the document model and representation choice, then provides review questions, thought experiments, common mistakes, and a preview.
+---
+
+A **document** is the editable, in-memory model of a file; it exists only while the editor runs, and every editing operation modifies the document rather than the disk. The **Document** component owns the text and nothing else—cursor, rendering, and input belong to other components. Because editing text is expensive, the choice of representation is an architectural decision. We surveyed five approaches—a single string, a vector of lines, a gap buffer, a piece table, and a rope—each with different trade-offs between simplicity, performance, and memory. Our editor deliberately begins with a **vector of lines**: it is simple to visualize and debug, matches both the cursor's row/column model and the renderer's line-by-line output, and can be replaced later without changing the higher-level architecture. This choice is recorded as **ADR-013: Document Representation**.
+
+## Exercises
+
+### Review Questions
+
+1. Explain why editing a file directly on disk is impractical.
+2. List five operations the Document component must support.
+3. Compare a single string and a vector of lines for implementing line splitting.
+4. Why is a vector of lines a better educational choice than a piece table?
+5. Which representation would you choose for editing multi-gigabyte log files, and why?
+
+### Thought Experiments
+
+1. Suppose a user reports that typing feels sluggish in a file containing one very long line (millions of characters on a single line). Explain why the vector-of-lines representation struggles in this scenario, and which alternative representation you would propose. How would you verify your hypothesis before rewriting the Document module?
+
+## Common Mistakes
+
+- Confusing the document with the file.
+- Assuming text editors modify the file directly.
+- Mixing cursor state into the Document.
+- Choosing the most advanced data structure before understanding simpler ones.
+- Optimizing before defining the required operations.
+
+## Preview of the Next Chapter
+
+In the next chapter, **Chapter 14 — Cursor Engine**, we will design the component responsible for navigating through the Document. We will examine how the cursor moves horizontally and vertically, how it behaves at line boundaries, and how the editor preserves a preferred horizontal position when moving between lines of different lengths. We will also explore how cursor movement interacts with the Viewport and scrolling, establishing the rules that keep the cursor within valid document and screen boundaries. By the end of the chapter, we will have a clear model for cursor behavior before implementing the Cursor Engine in the later implementation volume.

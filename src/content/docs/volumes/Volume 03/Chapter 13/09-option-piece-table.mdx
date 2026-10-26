@@ -1,0 +1,855 @@
+---
+title: 13.9 Option 4 — Piece Table
+description: Describes the piece table's immutable original and add buffers, piece references, and the indirection and memory costs it introduces.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The next document representation is the **piece table**.
+
+A piece table takes a very different approach from the representations we have considered so far.
+
+A vector of lines stores the current text directly:
+
+```text
+[
+    "Hello",
+    "World"
+]
+```
+
+A gap buffer stores the text in a contiguous buffer with a movable gap.
+
+A piece table, however, does not repeatedly modify the original text. Instead, it keeps the original text intact and records edits as references to pieces of text stored in one or more buffers.
+
+This idea is especially useful because editing a document does not necessarily require moving or rewriting large amounts of existing text.
+
+The important question is:
+
+> What if we could leave existing text where it is and simply describe how the current document is assembled?
+
+That is the basic idea behind a piece table.
+
+## The Basic Idea
+
+Suppose we begin with this document:
+
+```text
+Hello World
+```
+
+When the file is opened, the original contents are stored in an **original buffer**:
+
+```text
+Original Buffer
+
++-----------------------+
+| Hello World           |
++-----------------------+
+```
+
+Instead of modifying this buffer when the user types something, the editor stores newly inserted text in a separate **add buffer**.
+
+For example, suppose the user changes the document to:
+
+```text
+Hello Beautiful World
+```
+
+The new word:
+
+```text
+Beautiful
+```
+
+is placed in the add buffer:
+
+```text
+Original Buffer
+
++-----------------------+
+| Hello World           |
++-----------------------+
+
+Add Buffer
+
++-----------------------+
+| Beautiful             |
++-----------------------+
+```
+
+The original buffer has not been changed.
+
+So how does the editor know that the document should now contain:
+
+```text
+Hello Beautiful World
+```
+
+It keeps a sequence of **pieces** describing which portions of which buffers should appear in the document.
+
+Conceptually:
+
+```text
+Piece 1
+    ↓
+Original Buffer: "Hello "
+
+Piece 2
+    ↓
+Add Buffer:      "Beautiful "
+
+Piece 3
+    ↓
+Original Buffer: "World"
+```
+
+The logical document becomes:
+
+```text
+Hello  +  Beautiful  +  World
+```
+
+The piece table therefore separates:
+
+- where text is physically stored
+- how that text is logically arranged in the document
+
+This is the central idea behind the structure.
+
+## Original Buffer and Add Buffer
+
+A traditional piece table uses two primary buffers.
+
+The first is the **original buffer**.
+
+It contains the document exactly as it was when it was opened.
+
+```text
+Original Buffer
+
+Hello World
+```
+
+The second is the **add buffer**.
+
+It contains text inserted by the user during the editing session.
+
+```text
+Add Buffer
+
+Beautiful
+```
+
+The important property is that the original buffer is treated as immutable.
+
+If the user performs more insertions, they are appended to the add buffer rather than inserted into the original buffer.
+
+For example:
+
+```text
+Original Buffer
+
+Hello World
+```
+
+Then the user inserts:
+
+```text
+Beautiful
+```
+
+and later:
+
+```text
+!
+```
+
+The add buffer could become:
+
+```text
+Add Buffer
+
+Beautiful!
+```
+
+The buffers now look like:
+
+```text
+Original
++----------------+
+| Hello World    |
++----------------+
+
+Add
++----------------+
+| Beautiful!     |
++----------------+
+```
+
+Neither buffer necessarily represents the document by itself.
+
+Instead, a separate structure describes which portions should be visible and in what order.
+
+## The Piece Table
+
+The structure containing those descriptions is commonly called the **piece table**.
+
+Each entry describes a piece of text.
+
+Conceptually, a piece might contain:
+
+```text
+Source
+Start
+Length
+```
+
+For example:
+
+```text
+Piece
++----------------+
+| Source: Original
+| Start:  0
+| Length: 6
++----------------+
+```
+
+This could refer to:
+
+```text
+Original Buffer
+
+Hello World
+^^^^^^
+```
+
+Another piece could refer to the add buffer:
+
+```text
+Piece
++----------------+
+| Source: Add
+| Start: 0
+| Length: 10
++----------------+
+```
+
+Together:
+
+```text
+Piece Table
+
++-----------------------------+
+| Original, 0, 6              |
+| Add,      0, 10             |
+| Original, 6, 5              |
++-----------------------------+
+```
+
+The logical document becomes:
+
+```text
+Hello Beautiful World
+```
+
+The table does not contain the characters themselves.
+
+It contains **references to characters**.
+
+This distinction is fundamental.
+
+## Why This Is Interesting
+
+At first, the piece table may seem more complicated than a vector of lines.
+
+That is a fair observation.
+
+For a small editor, we could simply modify:
+
+```text
+vector of lines
+```
+
+directly.
+
+Why introduce buffers, pieces, offsets, and lengths?
+
+The answer is that the piece table solves a different class of problems.
+
+Consider a large document:
+
+```text
+A very large amount of text...
+```
+
+Suppose the user inserts a few characters near the beginning.
+
+With a simple contiguous representation, inserting those characters may require moving a large amount of existing text.
+
+A piece table can instead leave the existing text untouched.
+
+The new text is placed in the add buffer:
+
+```text
+Original Buffer
++--------------------------------------+
+| A very large amount of text...       |
++--------------------------------------+
+
+Add Buffer
++-------+
+| XYZ   |
++-------+
+```
+
+The piece table is then changed to describe the new arrangement.
+
+The data itself does not need to be moved.
+
+This gives the piece table an important characteristic:
+
+> Editing can often be performed by changing references rather than moving existing text.
+
+## Inserting Text
+
+Consider this document:
+
+```text
+Hello World
+```
+
+Initially, the piece table might contain:
+
+```text
+Original(0, 11)
+```
+
+which means:
+
+```text
+Original buffer
+0           10
+↓            ↓
+Hello World
+```
+
+Now suppose the user inserts:
+
+```text
+Beautiful
+```
+
+between `Hello` and `World`.
+
+The new text is appended to the add buffer:
+
+```text
+Add Buffer
+
+Beautiful
+```
+
+The original piece can then be divided into two pieces:
+
+```text
+Original(0, 6)
+Add(0, 10)
+Original(6, 5)
+```
+
+Conceptually:
+
+```text
+Original Buffer
+
+Hello World
+^^^^^^
+      ^^^^^
+      World
+
+
+Add Buffer
+
+Beautiful
+^^^^^^^^^
+
+
+Piece Table
+
+Original(0, 6)
+Add(0, 10)
+Original(6, 5)
+```
+
+Reading the pieces in order produces:
+
+```text
+Hello Beautiful World
+```
+
+Notice what did **not** happen.
+
+The editor did not move `"World"` inside the original buffer.
+
+It simply created a new logical arrangement.
+
+## Deleting Text
+
+Deletion is also interesting.
+
+Suppose the document is:
+
+```text
+Hello Beautiful World
+```
+
+and the user deletes:
+
+```text
+Beautiful
+```
+
+A piece table does not necessarily erase those characters from either buffer.
+
+Instead, it changes the piece sequence so that the relevant piece is no longer part of the logical document.
+
+Before deletion:
+
+```text
+Original(0, 6)
+Add(0, 10)
+Original(6, 5)
+```
+
+After deletion:
+
+```text
+Original(0, 6)
+Original(6, 5)
+```
+
+The add buffer still contains the text:
+
+```text
+Beautiful
+```
+
+but the current document no longer references it.
+
+This gives the piece table another important property:
+
+> Deleting text can be represented by removing or shortening references rather than immediately destroying the underlying characters.
+
+This idea becomes particularly interesting when we later discuss undo and redo.
+
+## Deleted Text Does Not Necessarily Disappear
+
+A consequence of this design is that the buffers can contain text that is no longer visible in the current document.
+
+For example:
+
+```text
+Original Buffer
+
+Hello World
+```
+
+and:
+
+```text
+Add Buffer
+
+Beautiful
+```
+
+The current piece table might reference only:
+
+```text
+Original(0, 6)
+Original(6, 5)
+```
+
+The add buffer still contains:
+
+```text
+Beautiful
+```
+
+even though the current document does not.
+
+This may initially seem wasteful.
+
+However, it can be useful.
+
+The underlying buffers provide a history of text that has been introduced during the editing session, while the piece table describes the current logical document.
+
+This separation is one reason piece tables can work well with more advanced editing features.
+
+It also introduces additional concerns such as memory management and fragmentation, which we will consider later.
+
+## A Piece Table Is Not the Document Text
+
+This distinction is worth emphasizing.
+
+With a vector of lines, the document representation looks like the document:
+
+```text
+Document
+
+[
+    "Hello",
+    "World"
+]
+```
+
+With a piece table, the document is reconstructed by following references.
+
+For example:
+
+```text
+                 Piece Table
+                      │
+          ┌───────────┼───────────┐
+          ▼           ▼           ▼
+      Original       Add       Original
+      (0, 6)         (0, 10)   (6, 5)
+          │           │           │
+          ▼           ▼           ▼
+       "Hello "   "Beautiful "  "World"
+          │           │           │
+          └───────────┼───────────┘
+                      ▼
+             Logical Document
+
+          "Hello Beautiful World"
+```
+
+The document therefore exists at two levels:
+
+1. **Physical storage** — the original and add buffers.
+2. **Logical structure** — the sequence of pieces that defines the current document.
+
+This is more sophisticated than the vector-of-lines model.
+
+## Advantages of a Piece Table
+
+A piece table has several important advantages.
+
+### Existing Text Does Not Need to Be Rewritten
+
+The original buffer remains unchanged.
+
+Large sections of the document can therefore remain where they are while the piece table changes around them.
+
+### Insertions Can Be Efficient
+
+New text is appended to the add buffer, while the logical structure is updated to reference it.
+
+This avoids repeatedly inserting characters into a large contiguous buffer.
+
+### Deletions Can Be Lightweight
+
+Deleting text can often be represented by removing a reference from the piece sequence rather than physically erasing characters.
+
+### Naturally Preserves Original Text
+
+Because the original buffer is immutable, the editor always has access to the original file contents during the editing session.
+
+This can be useful for advanced features such as undo, change tracking, and recovery strategies.
+
+### Well Suited to Large Documents
+
+A piece table can avoid repeatedly moving large amounts of text when edits are made throughout a large document.
+
+However, this does not mean every operation is automatically fast. The structure used to store and locate pieces also matters.
+
+## Limitations of a Piece Table
+
+The advantages come with additional complexity.
+
+### More Indirection
+
+With a vector of lines, accessing a line is conceptually simple:
+
+```text
+lines[row]
+```
+
+With a piece table, the editor may need to locate the appropriate piece and then calculate an offset within the referenced buffer.
+
+There is an additional level of indirection.
+
+### More Complex Editing Logic
+
+An insertion may require:
+
+```text
+Find piece
+        ↓
+Split piece
+        ↓
+Append text to add buffer
+        ↓
+Create new piece
+        ↓
+Update piece sequence
+```
+
+This is considerably more involved than inserting a character into a line.
+
+### Memory Can Accumulate
+
+Text placed in the add buffer generally remains there even after it is no longer visible in the current document.
+
+A long editing session can therefore accumulate unused text.
+
+Managing this efficiently can become a separate concern.
+
+### Random Access Requires Care
+
+The piece table describes the document indirectly.
+
+Finding the text corresponding to a particular document position may require navigating the piece structure.
+
+A simple sequence of pieces can therefore become inefficient as the number of pieces grows.
+
+More sophisticated implementations use additional data structures to make locating positions efficient.
+
+## Complexity Depends on the Piece Structure
+
+It is tempting to say:
+
+> A piece table makes editing fast.
+
+That statement is incomplete.
+
+The performance of a piece table depends not only on the buffers but also on how the pieces themselves are stored and searched.
+
+Imagine a document represented by:
+
+```text
+Piece 1
+Piece 2
+Piece 3
+...
+Piece 100000
+```
+
+If finding a position requires scanning every piece from the beginning, random access can become expensive.
+
+Therefore, a practical piece-table implementation may use additional indexing structures.
+
+This illustrates an important engineering principle:
+
+> A data structure is rarely just one isolated idea. Its practical performance depends on how its internal components are organized.
+
+For the purposes of this chapter, we are interested primarily in the conceptual model. The implementation details and more advanced performance techniques belong to the later algorithms and data-structure chapters.
+
+## Piece Table and Line-Oriented Editing
+
+There is another important consideration for our editor.
+
+Our editor is designed around operations such as:
+
+```text
+Insert character
+Delete character
+Split line
+Merge lines
+Access line
+Render visible lines
+```
+
+A piece table is fundamentally organized around **pieces of text**, not lines.
+
+For example, a piece might contain:
+
+```text
+"Hello\nWorld\nProgramming"
+```
+
+The editor still needs to determine where the line boundaries occur.
+
+This does not make a piece table unsuitable for text editing. Professional editors can build additional indexing structures around their underlying text representation.
+
+But it does mean that the straightforward mapping between:
+
+```text
+cursor_row
+cursor_column
+```
+
+and:
+
+```text
+document[row][column]
+```
+
+is less direct.
+
+Compare this with our vector-of-lines representation:
+
+```text
+lines[row][column]
+```
+
+The difference is significant for a small educational editor.
+
+## Piece Table Versus Vector of Lines
+
+At this point we can compare the two approaches at a high level.
+
+```text
+Vector of Lines
+
+Document
+    │
+    ├── Line 0 → "Hello"
+    ├── Line 1 → "World"
+    └── Line 2 → "Editor"
+```
+
+versus:
+
+```text
+Piece Table
+
+Document
+    │
+    ▼
+Piece Sequence
+    │
+    ├── Original piece
+    ├── Add piece
+    └── Original piece
+          │
+          ▼
+      Buffers
+```
+
+The vector of lines is direct.
+
+The piece table is indirect.
+
+The vector of lines is easier to understand.
+
+The piece table can provide better behavior for certain editing workloads and large documents.
+
+Neither is universally better.
+
+The appropriate choice depends on the requirements.
+
+## Why Not Use a Piece Table Immediately?
+
+A piece table is a serious and useful document representation.
+
+So why not use one in our editor from the beginning?
+
+Because our goal is not to select the most sophisticated data structure available.
+
+Our requirements favor:
+
+- simplicity
+- understandable code
+- straightforward cursor operations
+- line-oriented editing
+- predictable rendering
+- easy debugging
+- educational clarity
+
+The project also explicitly prioritizes simplicity and readability over advanced optimization techniques.
+
+The runtime architecture reinforces this approach. The Document is responsible for editable text, while the Renderer reads the Editor State and produces a frame without modifying it.
+
+For the initial editor, the additional complexity of a piece table is therefore not justified by our current workload.
+
+That does not make the piece table a bad design.
+
+It simply makes it a poor fit **for this particular stage of the project**.
+
+## Where Piece Tables Become More Interesting
+
+Piece tables become much more interesting when an editor needs to support:
+
+- very large documents
+- efficient editing across large amounts of text
+- sophisticated undo and redo
+- change tracking
+- persistent editing histories
+- efficient manipulation without repeatedly moving large text buffers
+
+These are precisely the kinds of problems we will encounter when the book moves into more advanced data structures.
+
+The project roadmap deliberately places the detailed **Piece Table** discussion in Volume VI, Chapter 27, after the reader has studied arrays, strings, complexity, and the gap buffer.
+
+That separation is intentional.
+
+Chapter 13 asks:
+
+> What kinds of document representations exist, and which one fits our initial requirements?
+
+Later chapters ask:
+
+> How can we implement and optimize these representations?
+
+Keeping those questions separate prevents implementation details from obscuring the architectural decision.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A more sophisticated data structure is not automatically a better engineering choice.
+
+A piece table can solve problems that a vector of lines handles poorly. But if those problems are outside the requirements of the current system, introducing the piece table may simply increase complexity without providing meaningful benefits.
+
+Good architecture is not about maximizing sophistication.
+
+It is about matching the design to the problem.
+
+</Aside>
+
+## Summary
+
+A **piece table** represents a document using references to pieces of text stored in separate buffers.
+
+The basic model consists of:
+
+```text
+Original Buffer
+       +
+   Add Buffer
+       +
+  Piece Table
+       ↓
+Logical Document
+```
+
+The original text remains unchanged, while newly inserted text is stored separately. The piece table determines which portions of those buffers make up the current document.
+
+This approach provides several advantages:
+
+- Existing text does not need to be repeatedly rewritten.
+- Insertions can be represented efficiently.
+- Deletions can remove references rather than immediately destroying text.
+- The original document contents remain available.
+- It can scale well to editing workloads involving large amounts of text.
+
+However, it also introduces:
+
+- additional indirection
+- more complicated editing operations
+- more complicated position lookup
+- additional memory-management concerns
+- a less direct relationship between document positions and lines
+
+For a professional or large-scale editor, these trade-offs can be worthwhile.
+
+For our initial editor, they are unnecessary.
+
+We are deliberately choosing a simpler representation that maps naturally to the operations our editor needs to perform. The piece table remains an important design to understand because it demonstrates that there are fundamentally different ways to represent editable text.
+
+The next candidate takes yet another approach.
+
+Instead of representing text as a sequence of lines or as pieces of buffers, a **rope** organizes text as a tree.
+
+That gives us another important alternative to examine before we make our final decision.

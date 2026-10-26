@@ -1,0 +1,351 @@
+---
+title: 13.5 Possible Ways to Represent Text
+description: Surveys five ways to represent editable text, a single string, vector of lines, gap buffer, piece table, and rope, and their trade-offs.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+We now know what our Document must be able to do. The next question is:
+
+> **How should the text actually be stored in memory?**
+
+There is no single data structure that is ideal for every text editor. Different representations make different operations efficient, consume different amounts of memory, and introduce different levels of implementation complexity.
+
+This is why choosing a Document model is an architectural decision rather than simply a coding detail.
+
+For our editor, we will consider five broad approaches:
+
+1. A single string
+2. A Vector of Lines
+3. A gap buffer
+4. A piece table
+5. A rope
+
+We will first understand each approach at a high level. The following sections will then examine their strengths and weaknesses in more detail.
+
+## A Single String
+
+The simplest possible representation is to store the entire document as one continuous string.
+
+For example:
+
+```text
+Hello
+World
+Editor
+```
+
+could be represented in memory as:
+
+```text
+"Hello\nWorld\nEditor"
+```
+
+The newline character separates one line from the next.
+
+Conceptually:
+
+```text
++----------------------------------+
+| H e l l o \n W o r l d \n ...  |
++----------------------------------+
+```
+
+This approach is extremely easy to understand.
+
+The entire document is simply one sequence of characters, and newline characters indicate where lines end.
+
+It also makes loading and saving conceptually straightforward because the in-memory representation closely resembles the file's byte sequence.
+
+However, editing introduces difficulties.
+
+If we insert characters near the beginning of a large string, the characters after the insertion point may need to be moved to make room:
+
+```text
+Before:
+
+HelloWorld
+     ^
+     |
+  Insert
+
+After:
+
+Hello Beautiful World
+```
+
+As the document grows, these operations can become increasingly expensive.
+
+## A Vector of Lines
+
+Instead of storing the entire document as one string, we can represent it as a collection of individual lines.
+
+For example:
+
+```text
+[
+    "Hello",
+    "World",
+    "Editor"
+]
+```
+
+Conceptually:
+
+```text
+Document
+   │
+   ├── Line 0 → "Hello"
+   ├── Line 1 → "World"
+   └── Line 2 → "Editor"
+```
+
+This representation corresponds naturally to how users think about text.
+
+A document contains lines, and each line contains characters.
+
+Operations such as splitting and merging lines become easier to reason about.
+
+For example, pressing Enter can transform:
+
+```text
+"Hello World"
+```
+
+into:
+
+```text
+"Hello"
+"World"
+```
+
+by replacing one line with two lines.
+
+This model is also convenient for our renderer because the renderer ultimately needs to display the document one line at a time.
+
+However, it still has limitations. Inserting a character into the middle of a long line may require characters within that line to move. In addition, inserting or deleting lines may require the surrounding collection to be modified.
+
+Nevertheless, the representation remains relatively simple.
+
+## A Gap Buffer
+
+A **gap buffer** takes a different approach.
+
+Instead of continuously moving characters whenever an insertion occurs, it maintains an empty region—a **gap**—at the current editing position.
+
+For example:
+
+```text
+Hello World
+```
+
+might internally look conceptually like:
+
+```text
+Hello     World
+     ^^^^^
+      Gap
+```
+
+The empty space provides room for new characters.
+
+If the user types:
+
+```text
+Beautiful
+```
+
+the editor can place the characters directly into the gap:
+
+```text
+Hello Beautiful World
+```
+
+without immediately moving all of the text after the cursor.
+
+The gap can therefore make repeated edits near the same position very efficient.
+
+The trade-off is additional complexity. The gap must be moved when the cursor moves far away, and the buffer may need to be resized when the available gap becomes too small.
+
+We will study gap buffers in much greater detail in **Chapter 26**.
+
+## A Piece Table
+
+A **piece table** uses a fundamentally different strategy.
+
+Instead of repeatedly modifying the original text, the editor keeps text in one or more underlying buffers and represents the current document as a sequence of pieces referring to portions of those buffers.
+
+Conceptually:
+
+```text
+Original Buffer
++-----------------------+
+| Hello World           |
++-----------------------+
+
+Add Buffer
++-----------------------+
+| Beautiful             |
++-----------------------+
+
+Document
++---------+-----------+---------+
+| Original|    Add    |Original |
++---------+-----------+---------+
+```
+
+The document becomes a collection of references describing which portions of the underlying buffers should be displayed and in what order.
+
+This can make insertion and deletion operations efficient while preserving the original document data.
+
+However, a piece table is considerably more complicated than a simple vector of lines.
+
+It is therefore not a data structure we want to introduce merely because it is powerful. We first need to understand the requirements and trade-offs that justify its complexity.
+
+We will examine piece tables in detail in **Chapter 27**.
+
+## Rope
+
+A **rope** represents text as a tree rather than as one large contiguous sequence.
+
+Conceptually:
+
+```text
+             Document
+             /      \
+          Part A    Part B
+          /   \     /   \
+        Text  Text Text  Text
+```
+
+Each leaf contains a portion of the document, while the tree structure allows the editor to locate and modify different regions without moving the entire document.
+
+This approach can be particularly useful for very large documents where repeatedly modifying one large contiguous string would be expensive.
+
+However, the benefits come with additional complexity.
+
+The editor must maintain the tree structure, and operations such as insertion, deletion, balancing, and position lookup become more sophisticated.
+
+Ropes will be discussed in greater depth in **Chapter 28**.
+
+## Comparing the Five Approaches
+
+At a high level, the five representations look like this:
+
+```text
+Single String
+     │
+     ▼
+One continuous sequence of characters
+
+
+Vector of Lines
+     │
+     ▼
+Lines → Strings → Characters
+
+
+Gap Buffer
+     │
+     ▼
+Characters + movable editing gap
+
+
+Piece Table
+     │
+     ▼
+Buffers + sequence of pieces
+
+
+Rope
+     │
+     ▼
+Tree → Text fragments
+```
+
+Each representation solves the same fundamental problem:
+
+> **How can we store and modify a document efficiently?**
+
+But they make different trade-offs.
+
+| Representation  | Basic Idea                | Main Strength                | Main Cost                       |
+| --------------- | ------------------------- | ---------------------------- | ------------------------------- |
+| Single String   | One continuous string     | Simplicity                   | Expensive edits                 |
+| Vector of Lines | Separate string per line  | Simple line-based editing    | Character movement within lines |
+| Gap Buffer      | Empty space near cursor   | Efficient local editing      | Gap management                  |
+| Piece Table     | References to text pieces | Efficient structural editing | More complex representation     |
+| Rope            | Tree of text fragments    | Scales to large text         | Complex implementation          |
+
+The important observation is that **more sophisticated does not automatically mean better**.
+
+A rope is more complicated than a vector of lines. That does not make it the correct choice for every editor.
+
+Likewise, a simple string may be completely adequate for a small text-processing program even though it would be a poor choice for a large interactive editor.
+
+The correct representation depends on the requirements of the application.
+
+## Representation Is an Engineering Trade-off
+
+We can think about the decision as a balance:
+
+```text
+                 Simplicity
+                     ▲
+                     │
+             Single String
+                     │
+             Vector of Lines
+                     │
+                Gap Buffer
+                     │
+               Piece Table
+                     │
+                  Rope
+                     │
+                     ▼
+              Implementation
+                Complexity
+```
+
+This is not a ranking of the data structures. It simply illustrates that increasingly sophisticated representations generally require us to reason about more internal machinery.
+
+Our editor has deliberately been designed as a small educational terminal editor. The requirements emphasize clarity, maintainability, and educational value rather than advanced optimization.
+
+Therefore, we should not choose a representation simply because it is used by a large or professional editor.
+
+Instead, we should ask:
+
+- What operations does our editor perform most often?
+- How large are the documents we expect to support?
+- How much complexity can the implementation reasonably introduce?
+- How easy will the representation be to understand and debug?
+- Can the representation be replaced later if the requirements change?
+
+These questions will guide the decision in the sections that follow.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A data structure is not inherently "good" or "bad."
+
+It is appropriate or inappropriate **for a particular workload and set of requirements**.
+
+This is one of the most important lessons of this chapter. A professional engineer does not begin with:
+
+> "Which is the fastest data structure?"
+
+Instead, the better question is:
+
+> **"Which data structure provides the right trade-off for this system?"**
+
+For our editor, that means we must compare these representations against the operations we defined in Section 13.4 before making our final choice.
+
+</Aside>
+
+## Summary
+
+There are several ways to represent editable text in memory. A single string provides maximum simplicity, a vector of lines provides a natural line-oriented model, a gap buffer optimizes local editing, a piece table represents text as references to underlying buffers, and a rope organizes text fragments into a tree.
+
+Each approach involves different trade-offs between simplicity, performance, memory usage, and implementation complexity.
+
+The next sections examine these representations individually, beginning with the simplest approach: **a single string**.

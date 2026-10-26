@@ -1,0 +1,149 @@
+---
+title: 13.3 Responsibilities of the Document
+description: Defines the Document's single responsibility of owning editable text and separates it from cursor, viewport, rendering, input, and file I/O.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we established that the **Document** is the editable, in-memory representation of a file. However, simply knowing what the Document is does not tell us what it is responsible for.
+
+This distinction is important because one of the hallmarks of good software architecture is that every component has a **clearly defined responsibility**. A component should have one primary purpose and should avoid taking on unrelated tasks. This idea aligns with the architectural principle introduced earlier that each component in our editor has a single, well-defined responsibility.
+
+The Document is no exception.
+
+## The Document Owns the Text
+
+The primary responsibility of the Document is straightforward:
+
+> **The Document owns and manages the editable text.**
+
+Whenever the user types a character, deletes text, presses Enter, or removes a line break, the Document is the component that stores the resulting changes.
+
+Conceptually, the Document is responsible for answering questions such as:
+
+- What text does the document contain?
+- How many lines are there?
+- What characters appear on a particular line?
+- How should the text change after an editing operation?
+
+Everything related to the document's textual content belongs here.
+
+## What the Document Does Not Own
+
+Just as important as defining what the Document **does** is defining what it **does not** do.
+
+A common mistake when designing software is allowing one component to accumulate too many responsibilities. This often leads to tightly coupled systems that are difficult to understand, test, and maintain.
+
+Our Document should **not** be responsible for:
+
+- Tracking the cursor position
+- Determining which part of the document is visible
+- Drawing text on the terminal
+- Reading keyboard input
+- Saving files to disk
+- Displaying status messages
+
+Each of these responsibilities belongs to another component within the editor architecture.
+
+The separation can be visualized as follows:
+
+```text
+                 Editor State
++--------------------------------------+
+|                                      |
+|  +-----------+   +---------------+   |
+|  | Document  |   |    Cursor     |   |
+|  +-----------+   +---------------+   |
+|                                      |
+|  +-----------+   +---------------+   |
+|  | Viewport  |   | Status Message|   |
+|  +-----------+   +---------------+   |
+|                                      |
++--------------------------------------+
+```
+
+The Document is only one part of the overall **Editor State**. While the Editor State represents the complete state of the application, each individual component is responsible for managing only its own data.
+
+## Separation of Responsibilities
+
+Consider a simple editing operation.
+
+Suppose the user presses the **Backspace** key.
+
+Several things happen inside the editor:
+
+```text
+User Presses Backspace
+            │
+            ▼
+      Input Handler
+            │
+            ▼
+     Command Engine
+            │
+            ▼
+ Delete Character from Document
+            │
+            ▼
+ Update Cursor Position
+            │
+            ▼
+      Render Screen
+```
+
+Notice that deleting the character is only one part of the operation.
+
+The Document removes the character.
+
+The Cursor component updates its position.
+
+The Renderer redraws the screen.
+
+Each component performs only its own task.
+
+If the Document also tried to move the cursor or redraw the screen, it would become tightly coupled to other parts of the editor. A simple text storage component would suddenly need to understand rendering and user interaction, making the architecture much more difficult to maintain.
+
+## Thinking Like a Librarian
+
+A useful analogy is to think of the Document as a librarian responsible for managing a collection of books.
+
+The librarian knows:
+
+- Which books exist.
+- Where each book is stored.
+- When a book is added or removed.
+
+The librarian does **not** decide:
+
+- Which visitor is currently reading a book.
+- Which shelf is visible through the library window.
+- How the library building is painted.
+- When the lights are turned on.
+
+Those responsibilities belong to other people.
+
+Similarly, the Document manages the text, while other components manage cursor movement, rendering, input, and file operations.
+
+## Why This Matters
+
+Keeping the Document focused on a single responsibility provides several important advantages.
+
+First, the Document becomes easier to understand because every function relates to managing text.
+
+Second, the Document can evolve independently. Later in this book, we will explore more advanced document representations such as gap buffers, piece tables, and ropes. Because the Document's responsibility is well defined, we can replace its internal implementation without affecting unrelated components like the Renderer or Input Handler.
+
+Finally, clear responsibility boundaries reduce coupling between modules. Each component communicates through the Editor State rather than directly manipulating one another's internal data, resulting in a cleaner and more maintainable architecture.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Professional software systems rarely become difficult because individual components are complex. They become difficult because component responsibilities become blurred.
+
+When one component stores data, draws the screen, processes input, and performs file I/O, every future change becomes risky because unrelated concerns are intertwined.
+
+By giving the Document exactly one responsibility—**managing the editable text**—we create a component that is easier to reason about, easier to test, and easier to replace as the editor grows.
+
+</Aside>
+
+## Summary
+
+The Document is responsible only for storing and managing the editable text in memory. It owns the document's contents but does not manage the cursor, rendering, input, viewport, or file operations. By limiting the Document to a single responsibility, the editor remains modular, maintainable, and flexible enough to accommodate more sophisticated document implementations in later chapters. In the next section, we'll examine the operations a document must support.

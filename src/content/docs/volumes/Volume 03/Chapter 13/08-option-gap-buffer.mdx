@@ -1,0 +1,549 @@
+---
+title: 13.8 Option 3 — Gap Buffer
+description: Explains the gap buffer's movable empty region, why local insertions and deletions are cheap, and what gap movement and resizing cost.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The vector-of-lines representation gives us a simple and natural model for our editor, but it still has an important limitation.
+
+Each line is stored as a contiguous sequence of characters.
+
+Consider:
+
+```text
+Hello World
+```
+
+If the cursor is positioned near the beginning:
+
+```text
+He|llo World
+```
+
+and the user repeatedly inserts characters, the characters after the cursor may need to move each time.
+
+For example:
+
+```text
+He|llo World
+```
+
+After inserting `A`:
+
+```text
+HeA|llo World
+```
+
+After inserting `B`:
+
+```text
+HeAB|llo World
+```
+
+The characters following the cursor continually have to make room for the newly inserted characters.
+
+A **gap buffer** addresses this problem by deliberately keeping an empty region near the cursor.
+
+Instead of immediately moving characters whenever something is inserted, the editor maintains a **gap** where new characters can be placed.
+
+## The Basic Idea
+
+Consider the text:
+
+```text
+Hello World
+```
+
+A gap buffer might internally represent it as:
+
+```text
+Hello     World
+     ^^^^^
+      Gap
+```
+
+The empty space between `Hello` and `World` is the gap.
+
+The logical document is still:
+
+```text
+Hello World
+```
+
+The spaces representing the gap are not part of the document.
+
+They are unused capacity reserved for future insertions.
+
+Conceptually:
+
+```text
+Logical Document
+
+Hello World
+```
+
+is stored as:
+
+```text
+Physical Storage
+
++-------+-----------+-------+
+| Hello |    Gap    | World |
++-------+-----------+-------+
+```
+
+This distinction between the **logical document** and its **physical representation** is fundamental to understanding a gap buffer.
+
+## Inserting Into the Gap
+
+Now suppose the user types `X`.
+
+Because the cursor is positioned at the gap, the editor does not need to move `"World"`.
+
+It simply places `X` inside the gap:
+
+```text
+Before:
+
+Hello     World
+     ^^^^^
+      Gap
+
+
+After:
+
+HelloX    World
+      ^^^^
+       Gap
+```
+
+The logical document is now:
+
+```text
+HelloX World
+```
+
+The important part is that the characters after the cursor did not need to move.
+
+The editor consumed one position from the gap.
+
+If the user continues typing:
+
+```text
+A
+B
+C
+```
+
+the gap continues to shrink:
+
+```text
+HelloXABC World
+```
+
+Conceptually:
+
+```text
+HelloXABC  World
+          ^^
+          Gap
+```
+
+Repeated insertions near the same location can therefore be very efficient.
+
+## Why the Gap Helps
+
+Compare this with a normal contiguous string.
+
+With a contiguous string:
+
+```text
+Hello| World
+```
+
+inserting a character may require:
+
+```text
+Move existing characters
+        ↓
+Make space
+        ↓
+Insert character
+```
+
+With a gap buffer:
+
+```text
+Hello|    World
+     ^^^^
+      Gap
+```
+
+the space has already been reserved.
+
+The insertion becomes:
+
+```text
+Place character into gap
+        ↓
+Shrink gap
+```
+
+This is the main advantage of the data structure.
+
+The gap effectively moves the cost of creating space away from every individual insertion and toward less frequent gap-management operations.
+
+## Moving the Cursor
+
+The gap works particularly well when the user performs several edits near the same location.
+
+But what happens when the cursor moves?
+
+Suppose the buffer is:
+
+```text
+HelloABC    World
+```
+
+with the gap after `ABC`:
+
+```text
+HelloABC    World
+        ^^^^
+         Gap
+```
+
+Now the user moves the cursor to the beginning of `World`:
+
+```text
+HelloABC    |World
+```
+
+The gap needs to move to the new cursor position.
+
+Conceptually:
+
+```text
+Before:
+
+HelloABC    World
+        ^^^^
+         Gap
+
+
+Move gap →
+
+HelloABCWorld
+             ^
+```
+
+More precisely, the characters between the old gap and the new cursor position are moved across the gap.
+
+The result might look like:
+
+```text
+HelloABCWorld
+        ^^^^
+         Gap
+```
+
+The exact physical arrangement is an implementation detail. The important point is that **moving the cursor can require moving characters**.
+
+This creates the fundamental trade-off of a gap buffer:
+
+> Insertions near the gap are cheap, but moving the gap can be expensive.
+
+## Locality of Editing
+
+This makes the gap buffer particularly well suited to an important characteristic of text editing:
+
+**users tend to make multiple edits near the current cursor position.**
+
+Consider writing a sentence:
+
+```text
+The quick brown fox
+```
+
+The user types characters sequentially:
+
+```text
+T
+Th
+The
+The
+The q
+The qu
+The qui
+...
+```
+
+The cursor continuously advances through nearby positions.
+
+A gap buffer can keep the gap near the cursor, allowing these insertions to occur without repeatedly shifting the remainder of the text.
+
+This is an example of **locality**.
+
+The data structure is designed around the assumption that recent editing operations are often concentrated around the current editing position.
+
+## The Gap Has a Finite Size
+
+The gap cannot grow forever.
+
+Suppose the buffer begins with:
+
+```text
+Hello     World
+     ^^^^^
+```
+
+and the user inserts enough characters to consume the entire gap:
+
+```text
+HelloXYZ World
+```
+
+Eventually:
+
+```text
+HelloXYZWorld
+```
+
+There is no free space left.
+
+The editor must then create a larger gap.
+
+A common conceptual process is:
+
+```text
+Current buffer
+       │
+       ▼
+Allocate larger storage
+       │
+       ▼
+Copy existing contents
+       │
+       ▼
+Create larger gap
+       │
+       ▼
+Continue editing
+```
+
+This operation is more expensive than inserting a character into an existing gap.
+
+However, it does not necessarily happen after every insertion.
+
+The implementation can allocate a reasonably sized gap so that many future insertions can occur before another resize is required.
+
+## A Simplified Internal Model
+
+A gap buffer can be described using four important regions or positions:
+
+```text
++----------------+---------+----------------+
+| Text Before    |   Gap   | Text After     |
++----------------+---------+----------------+
+                 ^
+                 |
+               Cursor
+```
+
+Conceptually, the data structure needs to know:
+
+- Where the gap begins.
+- Where the gap ends.
+- How much storage exists.
+- Where the logical cursor is located.
+
+For example:
+
+```text
+buffer:
+
++--------------------------------------+
+| Hello |       | World                |
++--------------------------------------+
+        ^       ^
+        |       |
+    gap_start gap_end
+```
+
+The gap occupies the range between `gap_start` and `gap_end`.
+
+Characters before the gap belong to the document before the cursor.
+
+Characters after the gap belong to the document after the cursor.
+
+The gap itself contains unused storage.
+
+## Deletion
+
+A gap buffer can also make deletion efficient near the cursor.
+
+Suppose:
+
+```text
+HelloABC    World
+        ^^^^
+         Gap
+```
+
+and the user presses Backspace.
+
+The character before the cursor can be removed by expanding the gap backward:
+
+```text
+HelloAB     World
+       ^^^^^
+        Gap
+```
+
+Conceptually:
+
+```text
+Before:
+
+HelloABC    World
+       ^
+       Cursor
+
+
+After Backspace:
+
+HelloAB     World
+      ^
+      Cursor
+```
+
+No characters after the cursor need to move.
+
+The deleted character is effectively absorbed into the gap.
+
+Similarly, deleting characters after the cursor can expand the gap in the other direction.
+
+## Complexity
+
+The primary advantage of a gap buffer is that insertion and deletion **near the existing gap** can be very efficient.
+
+A simplified view is:
+
+| Operation                 | Typical Cost |
+| ------------------------- | -----------: |
+| Insert near gap           |         O(1) |
+| Delete near gap           |         O(1) |
+| Move gap a short distance |  O(distance) |
+| Move gap a long distance  |  O(distance) |
+| Resize buffer             |         O(n) |
+
+The exact behavior depends on the implementation and allocation strategy.
+
+The key idea is that the cost is shifted from individual local edits toward **moving the gap** and **resizing the buffer**.
+
+This is a different trade-off from the vector-of-lines representation.
+
+## Gap Buffer vs. Vector of Lines
+
+We can now compare the two representations.
+
+### Vector of Lines
+
+```text
+Document
+   │
+   ├── Line 0
+   ├── Line 1
+   └── Line 2
+```
+
+Its major strength is simplicity.
+
+Line operations are natural, and the representation closely matches the way our editor thinks about text.
+
+### Gap Buffer
+
+```text
+Text Before | Gap | Text After
+```
+
+Its major strength is efficient local editing.
+
+Repeated insertions and deletions around the cursor can avoid repeatedly shifting the surrounding text.
+
+The trade-off is greater implementation complexity.
+
+| Property              | Vector of Lines | Gap Buffer         |
+| --------------------- | --------------- | ------------------ |
+| Conceptual simplicity | High            | Moderate           |
+| Character insertion   | Good            | Very good near gap |
+| Character deletion    | Good            | Very good near gap |
+| Line operations       | Natural         | More involved      |
+| Cursor movement       | Simple          | May move gap       |
+| Memory management     | Simpler         | More complex       |
+| Implementation        | Easier          | Harder             |
+
+Neither representation is universally better.
+
+They optimize for different things.
+
+## Why Not Use a Gap Buffer Yet?
+
+At this point, the gap buffer may appear to be a better choice.
+
+After all, our editor performs many character insertions and deletions.
+
+However, there is another architectural consideration: **complexity**.
+
+Our current goal is not to build the fastest possible text editor. The project is intentionally designed as a small educational editor whose architecture should remain easy to understand and implement. The requirements explicitly prioritize simplicity and educational value over advanced optimization.
+
+A gap buffer introduces concepts that our current implementation does not need:
+
+- Gap management
+- Gap movement
+- Buffer resizing
+- Additional position bookkeeping
+- More complicated insertion and deletion logic
+
+The vector-of-lines model gives us a much simpler starting point.
+
+That does not make the gap buffer unimportant.
+
+Quite the opposite.
+
+Understanding the gap buffer helps us see **why more sophisticated text editors need specialized data structures**.
+
+We will return to gap buffers in much greater depth in **Chapter 26**, where we will study their implementation, performance characteristics, and trade-offs in detail.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The gap buffer demonstrates an important principle in data-structure design:
+
+> **Performance often comes from changing where the work happens, not from eliminating the work entirely.**
+
+A contiguous string repeatedly moves characters during insertion.
+
+A gap buffer reserves space so that local insertions are cheap.
+
+But when the cursor moves, the gap itself must be moved.
+
+The work has not disappeared. It has been reorganized around the expected editing pattern.
+
+This is a recurring theme throughout computer science: a data structure becomes useful when it optimizes the operations that matter most for its workload.
+
+</Aside>
+
+## Summary
+
+A gap buffer represents text as two regions of characters separated by an unused region called the **gap**.
+
+```text
+Text Before | Gap | Text After
+```
+
+The gap is kept near the cursor so that repeated insertions and deletions can occur without immediately moving large amounts of text.
+
+This provides excellent performance for local editing, but introduces additional complexity for moving the gap and resizing the underlying storage.
+
+For our editor, the gap buffer is an important alternative to understand, but we will not use it as our initial Document representation. Its detailed implementation will be explored later in Volume VI, after the core editor has been built and the reader has a stronger understanding of the problem.

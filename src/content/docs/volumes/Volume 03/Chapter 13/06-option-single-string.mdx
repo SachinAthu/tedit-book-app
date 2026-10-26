@@ -1,0 +1,422 @@
+---
+title: 13.6 Option 1 — A Single String
+description: Examines the single-string document model, its simple loading and saving, and the shifting cost that makes middle edits expensive.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The simplest possible way to represent a document is to store the entire document as one continuous string.
+
+For a document such as:
+
+```text
+Hello
+World
+This is an editor
+```
+
+we could store the contents in memory as:
+
+```text
+"Hello\nWorld\nThis is an editor"
+```
+
+The newline character, `\n`, separates one line from the next.
+
+Conceptually, the Document becomes:
+
+```text
++------------------------------------------------+
+| H e l l o \n W o r l d \n T h i s ...        |
++------------------------------------------------+
+```
+
+There is no separate structure for lines. There is simply one sequence of characters.
+
+This approach is attractive because it is extremely easy to understand.
+
+## Why a Single String Is Attractive
+
+A single string has a very small conceptual model.
+
+The Document contains:
+
+```text
+Characters
+    ↓
+"Hello\nWorld\nEditor"
+```
+
+There is no need to maintain a separate vector of lines or a more complicated tree structure.
+
+This gives us several advantages.
+
+### Simple Representation
+
+The entire document is represented by one contiguous sequence of characters.
+
+```text
+Document
+   │
+   ▼
+"Hello\nWorld\nEditor"
+```
+
+There is very little bookkeeping involved.
+
+### Simple File Loading
+
+Loading a file into the Document maps naturally to this representation.
+
+The file already contains a sequence of bytes. We can read those bytes into memory and use them as the document's contents.
+
+```text
+File
+ │
+ │ read
+ ▼
+String
+```
+
+### Simple File Saving
+
+Saving follows the same model in reverse:
+
+```text
+String
+ │
+ │ write
+ ▼
+File
+```
+
+There is little transformation required between the in-memory representation and the file representation.
+
+### Low Conceptual Complexity
+
+For a small text-processing program, this representation may be entirely reasonable.
+
+If the program only needs to:
+
+- read a file,
+- inspect its contents,
+- perform a few modifications,
+- and write it back,
+
+a single string can be an effective solution.
+
+The problem appears when we begin performing frequent interactive edits.
+
+## The Cost of Insertion
+
+Consider the following document:
+
+```text
+Hello World
+```
+
+Internally, we can think of it as:
+
+```text
+H e l l o   W o r l d
+```
+
+Suppose the cursor is positioned after `Hello`:
+
+```text
+Hello| World
+```
+
+Now the user types:
+
+```text
+Beautiful
+```
+
+The desired result is:
+
+```text
+HelloBeautiful World
+```
+
+To create space for the new characters, the existing characters after the cursor must move.
+
+Conceptually:
+
+```text
+Before:
+
+Hello| World
+      └─────┘
+       existing
+       characters
+
+
+After making room:
+
+Hello________ World
+     └──────┘
+       space
+
+
+After insertion:
+
+HelloBeautiful World
+```
+
+With a contiguous string, the characters following the insertion point generally need to be shifted to make room.
+
+If the insertion occurs near the beginning of a large document, a large portion of the document may need to move.
+
+For a document containing millions of characters, this can become expensive.
+
+## The Cost of Deletion
+
+Deletion has the opposite problem.
+
+Suppose the document contains:
+
+```text
+Hello Beautiful World
+```
+
+and we remove `Beautiful `:
+
+```text
+Hello|Beautiful World
+```
+
+The remaining characters need to close the gap:
+
+```text
+Before:
+
+Hello Beautiful World
+     └───────────────┘
+
+
+After:
+
+Hello World
+```
+
+Conceptually:
+
+```text
+H e l l o _ _ _ _ _ _ W o r l d
+              │
+              │ remove
+              ▼
+H e l l o   W o r l d
+```
+
+Again, characters may need to be moved within the contiguous storage.
+
+The more text that follows the deletion point, the more data may need to be shifted.
+
+## Line Operations Become Less Natural
+
+A text editor does not only insert and delete individual characters.
+
+It also works with lines.
+
+For example, pressing Enter should transform:
+
+```text
+Hello World
+```
+
+into:
+
+```text
+Hello
+World
+```
+
+With a single string, this means inserting a newline character:
+
+```text
+"Hello World"
+```
+
+becomes:
+
+```text
+"Hello\nWorld"
+```
+
+This is possible, but the concept of a "line" is not explicitly represented by the data structure.
+
+The editor must repeatedly interpret newline characters to determine where lines begin and end.
+
+For example:
+
+```text
+"Hello\nWorld\nEditor"
+       ^      ^
+       │      │
+     line    line
+     break   break
+```
+
+The data structure only knows about characters.
+
+The concept of a line exists at a higher level.
+
+That is not necessarily wrong, but it makes line-oriented operations less convenient than a representation that explicitly stores lines.
+
+## Cursor Positioning
+
+A cursor in our editor is represented conceptually by a row and column:
+
+```text
+row    = 2
+column = 5
+```
+
+For a line-based representation, finding the corresponding position is relatively direct.
+
+With a single string, however, the editor must translate:
+
+```text
+row = 2
+column = 5
+```
+
+into a character offset within the complete string.
+
+For example:
+
+```text
+Hello\n
+World\n
+Editor
+```
+
+The cursor at:
+
+```text
+row = 2
+column = 5
+```
+
+corresponds to an offset somewhere inside the continuous character sequence.
+
+This translation is manageable, but it introduces additional work whenever the editor needs to move between line/column coordinates and string offsets.
+
+## Memory Considerations
+
+A single string has an important memory advantage: the text can be stored in one contiguous allocation.
+
+Conceptually:
+
+```text
++--------------------------------------+
+| H | e | l | l | o | \n | W | o | ... |
++--------------------------------------+
+```
+
+This can provide good cache locality because nearby characters are stored next to one another in memory.
+
+However, growing the string can require additional memory allocation.
+
+If the current storage is full and we need to insert more characters, the implementation may need to allocate a larger region and copy the existing contents into it.
+
+A common strategy is to allocate additional capacity ahead of time, but this introduces a trade-off between unused memory and the frequency of reallocations.
+
+These details become increasingly important as the document grows.
+
+## Complexity of Editing
+
+The important issue is not that a single string cannot perform editing operations.
+
+It can.
+
+The issue is **how much data must potentially move for each operation**.
+
+For a contiguous string, insertion or deletion near the beginning of the document may require shifting a large number of characters.
+
+A simplified view is:
+
+| Operation                |             Typical Cost |
+| ------------------------ | -----------------------: |
+| Read character by offset |                     O(1) |
+| Append at end            |           O(1) amortized |
+| Insert near beginning    |                     O(n) |
+| Delete near beginning    |                     O(n) |
+| Find a line              | O(n) in the general case |
+| Split a line             |                     O(n) |
+
+Here, `n` represents the amount of text affected by the operation.
+
+The exact complexity depends on the implementation details, allocation strategy, and where the operation occurs. The important point is that **editing in the middle of a contiguous sequence can require moving many characters**.
+
+For a small document, this may be completely acceptable.
+
+For a heavily edited large document, it can become a significant performance limitation.
+
+## When Would a Single String Be Appropriate?
+
+A single string is not a bad data structure.
+
+It is simply optimized for a different set of requirements.
+
+It can be a good choice when:
+
+- Documents are small.
+- Editing operations are infrequent.
+- Simplicity is more important than editing performance.
+- The program primarily reads and processes text.
+- Line-based operations are not central to the application.
+
+For example, a small configuration editor or text-processing utility might work perfectly well with a single string.
+
+The problem is that our editor is an **interactive text editor**.
+
+The user may perform hundreds or thousands of insertions and deletions during a single editing session. The cursor can move throughout the document, and operations such as splitting and merging lines are fundamental to the user experience.
+
+That makes the trade-off less attractive.
+
+## Why We Will Not Use It
+
+The single-string representation gives us an excellent starting point because it demonstrates an important lesson:
+
+> **The simplest representation is not always the best representation for the workload.**
+
+It is easy to implement, easy to load, and easy to save. But frequent insertions and deletions can require significant portions of the string to move.
+
+Our editor also operates naturally in terms of lines. A representation that explicitly models lines can make many of the editor's operations easier to understand and implement.
+
+For these reasons, we will not use a single string as the primary Document representation.
+
+This does **not** mean that contiguous character storage is inherently inefficient. In fact, the individual lines in our eventual representation will themselves use contiguous character storage. The important difference is that instead of treating the entire document as one enormous sequence, we divide it into manageable line-level sequences.
+
+That leads us to the next option: **a vector of lines**.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A useful design principle emerges from this comparison:
+
+> **Choose a data structure based on the operations the application performs most frequently.**
+
+A single string optimizes for simplicity and contiguous storage. Our editor, however, needs efficient and understandable support for character editing and line-based operations.
+
+The correct question is therefore not:
+
+> "Is a single string fast?"
+
+but:
+
+> "Is a single string the right representation for our editor's workload?"
+
+For our current requirements, the answer is no.
+
+</Aside>
+
+## Summary
+
+A single string provides the simplest possible Document representation. It offers straightforward loading, saving, memory access, and a very small conceptual model. However, insertions and deletions can require large portions of the string to be moved, and line-oriented operations require the editor to interpret newline characters within the continuous sequence.
+
+For a small text-processing program, these limitations may not matter. For our interactive editor, they make the representation less suitable.
+
+The next option is a **vector of lines**, which gives the Document a structure that more closely matches the way a text editor works.

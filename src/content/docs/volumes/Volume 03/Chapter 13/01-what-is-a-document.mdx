@@ -1,0 +1,92 @@
+---
+title: 13.1 What Is a Document?
+description: Distinguishes a file stored on disk from the editable in-memory document and explains how a save writes the document back.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+When people first think about a text editor, they often imagine that it edits a file directly. If you open a file, type a few characters, and save it, it is easy to assume that every keystroke immediately changes the file stored on disk.
+
+In reality, that is not how text editors work.
+
+Before we can understand how a text editor edits text, we must distinguish between two related but fundamentally different concepts: **a file** and **a document**. Although these terms are sometimes used interchangeably in everyday conversation, they represent different things inside an editor.
+
+A **file** is a sequence of bytes stored permanently on a storage device such as a hard drive or SSD. It exists independently of the editor and remains unchanged until the editor explicitly writes new data back to it.
+
+A **document**, on the other hand, is the editor's in-memory representation of that file. It exists only while the editor is running and is designed to be modified efficiently as the user edits the text.
+
+Consider the following text file:
+
+```text
+Hello
+World
+```
+
+When the editor opens this file, it first reads its contents from disk.
+
+```text
+           File on Disk
++--------------------------+
+| Hello                    |
+| World                    |
++--------------------------+
+            │
+            │ Read
+            ▼
+```
+
+The editor then constructs a document in memory that contains the editable representation of the file.
+
+```text
+           File on Disk
++--------------------------+
+| Hello                    |
+| World                    |
++--------------------------+
+            │
+            │ Read
+            ▼
+      Document in Memory
++--------------------------+
+| Hello                    |
+| World                    |
++--------------------------+
+```
+
+From this point onward, every editing operation—typing characters, deleting text, inserting new lines, or moving text—modifies the **document**, not the file.
+
+Only when the user chooses **Save** does the editor write the current state of the document back to the file.
+
+```text
+           File on Disk
++--------------------------+
+| Hello                    |
+| World                    |
++--------------------------+
+            ▲
+            │ Write (Save)
+            │
+      Document in Memory
++--------------------------+
+| Hello!                   |
+| Wonderful World          |
++--------------------------+
+```
+
+Notice that after editing, the document contains different text from the original file. Until the save operation occurs, the file on disk still contains its original contents.
+
+This separation between the file and the document is one of the most important ideas in text editor design. It allows the user to experiment freely, make multiple changes, and even abandon them entirely without affecting the original file. It also makes editing much more responsive because modifications occur in memory rather than requiring frequent disk operations.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Think of the file as a **persistent snapshot** of your work and the document as the **working copy** that you actively modify.
+
+A useful analogy is writing a report. Instead of making permanent changes to the only printed copy every time you revise a sentence, you work on a draft. Once you are satisfied with the draft, you produce a new final copy. Similarly, a text editor treats the document as the editable draft and the file as the stored version.
+
+As introduced in the previous chapter, the **Document** is one of the major components contained within the **Editor State**. The Editor State represents the complete runtime state of the application, while the Document is responsible only for storing the editable text. Other information, such as the cursor position, viewport, status messages, and configuration settings, belongs to different parts of the Editor State and should not be stored in the Document itself. This clear separation of responsibilities keeps the architecture modular and easier to understand as the editor grows.
+
+</Aside>
+
+## Summary
+
+A file and a document serve different purposes. A file is the permanent representation of text stored on disk, while a document is the editable, in-memory representation used by the text editor. Throughout the remainder of this book, we will focus primarily on the document, since it is the structure that every editing operation manipulates. In the next section, we'll see why editors modify the document in memory rather than editing the file on disk directly.

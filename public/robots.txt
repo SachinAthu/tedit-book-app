@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://https://tedit-book.vercel.app/sitemap.xml
+Sitemap: https://https://tedit-book.vercel.app/sitemap-index.xml

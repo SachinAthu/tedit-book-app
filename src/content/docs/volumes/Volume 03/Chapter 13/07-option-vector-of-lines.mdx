@@ -1,0 +1,481 @@
+---
+title: 13.7 Option 2 — A Vector of Lines
+description: Describes a vector-of-lines document, showing why line splits, merges, cursor mapping, and rendering fit an editor despite long-line and vector costs.
+---
+
+The second approach is to represent the Document as a **vector of lines**, where each line stores its own sequence of characters.
+
+Instead of treating the entire document as one continuous string:
+
+```text
+"Hello\nWorld\nEditor"
+```
+
+we represent it as separate lines:
+
+```text
+[
+    "Hello",
+    "World",
+    "Editor"
+]
+```
+
+Conceptually:
+
+```text
+Document
+   │
+   ├── Line 0 → "Hello"
+   ├── Line 1 → "World"
+   └── Line 2 → "Editor"
+```
+
+This representation is particularly attractive for our editor because the user's mental model of a text document is already line-oriented.
+
+## Why Use Lines?
+
+A text editor constantly works with lines.
+
+The cursor has a row and column:
+
+```text
+row    = 1
+column = 3
+```
+
+The renderer draws one line at a time.
+
+Pressing Enter splits a line.
+
+Backspace at the beginning of a line can merge it with the previous line.
+
+Scrolling moves through lines.
+
+With a vector of lines, these concepts are represented directly in the Document.
+
+Instead of asking:
+
+> "Where are the newline characters in this large string?"
+
+we can ask:
+
+> "What is line 1?"
+
+That is a significant simplification.
+
+## The Basic Representation
+
+Suppose the document contains:
+
+```text
+Hello
+World
+This is an editor
+```
+
+Our conceptual representation becomes:
+
+```text
+Document
+    │
+    ▼
++-----------------------------+
+| Line 0 → "Hello"            |
+| Line 1 → "World"            |
+| Line 2 → "This is an editor"|
++-----------------------------+
+```
+
+Each line is an independent sequence of characters.
+
+The complete document is therefore a collection of these sequences.
+
+In C, the eventual implementation will use a dynamically sized collection of lines, where each line is stored as a sequence of Unicode code points rather than as encoded bytes. The exact implementation details will be introduced when we begin implementing the Document module.
+
+For now, the important idea is the structure:
+
+```text
+Document
+    ↓
+Vector of Lines
+    ↓
+Characters
+```
+
+## Line Operations Become Natural
+
+One of the biggest advantages of this representation is that line-based operations map directly onto the data structure.
+
+Consider pressing Enter in:
+
+```text
+Hello World
+```
+
+with the cursor between the two words:
+
+```text
+Hello| World
+```
+
+The Document can conceptually transform one line:
+
+```text
+Line 0 → "Hello World"
+```
+
+into two lines:
+
+```text
+Line 0 → "Hello"
+Line 1 → "World"
+```
+
+The operation is easy to visualize:
+
+```text
+Before:
+
++----------------+
+| "Hello World"  |
++----------------+
+
+        │
+        │ split
+        ▼
+
+After:
+
++----------------+
+| "Hello"        |
++----------------+
+| "World"        |
++----------------+
+```
+
+This corresponds directly to the `split line` operation we identified earlier.
+
+## Merging Lines
+
+The reverse operation is equally natural.
+
+Suppose the Document contains:
+
+```text
+Line 0 → "Hello"
+Line 1 → "World"
+```
+
+and the user deletes the boundary between the lines.
+
+The two lines can be combined:
+
+```text
+Line 0 → "HelloWorld"
+```
+
+Conceptually:
+
+```text
+Before:
+
++----------+
+| "Hello"  |
++----------+
+| "World"  |
++----------+
+
+      │
+      │ merge
+      ▼
+
++----------------+
+| "HelloWorld"   |
++----------------+
+```
+
+The operation modifies the vector of lines rather than searching for newline characters inside a large string.
+
+This is one of the reasons a line-based representation fits our editor particularly well.
+
+## Character Editing Still Works
+
+Using lines does not mean we lose the ability to edit individual characters.
+
+Suppose:
+
+```text
+Line 0 → "Hello World"
+```
+
+and the cursor is here:
+
+```text
+Hello| World
+```
+
+Inserting `X` modifies only that line:
+
+```text
+Line 0 → "HelloX World"
+```
+
+Similarly, deleting a character modifies the affected line.
+
+```text
+Before:
+
+Line 0 → "HelloX World"
+
+After deletion:
+
+Line 0 → "Hello World"
+```
+
+This gives us a useful hierarchy:
+
+```text
+Document
+    │
+    ├── Line 0
+    │      └── Characters
+    │
+    ├── Line 1
+    │      └── Characters
+    │
+    └── Line 2
+           └── Characters
+```
+
+The Document manages the vector of lines, while each line manages its characters.
+
+## A Natural Match for the Cursor
+
+Our Cursor is represented using a row and column.
+
+For example:
+
+```text
+row    = 2
+column = 5
+```
+
+With a vector of lines, this maps naturally to:
+
+```text
+Document
+    │
+    ├── Line 0
+    ├── Line 1
+    └── Line 2
+            │
+            └── Character 5
+```
+
+The row identifies the line.
+
+The column identifies the position within that line.
+
+This makes cursor-related operations easier to reason about than with a single continuous string.
+
+The Cursor still remains a separate component. The Document simply provides the text at the requested position.
+
+## Rendering Becomes Straightforward
+
+The vector-of-lines representation also matches the way our Renderer works.
+
+The Renderer needs to produce a frame containing the visible lines of the Document.
+
+For example:
+
+```text
+Document:
+
+Line 0 → "Hello"
+Line 1 → "World"
+Line 2 → "This is an editor"
+Line 3 → "Another line"
+```
+
+The Renderer can conceptually process them one at a time:
+
+```text
+Line 0 → draw "Hello"
+Line 1 → draw "World"
+Line 2 → draw "This is an editor"
+Line 3 → draw "Another line"
+```
+
+This is consistent with the architecture established earlier: the Renderer reads the Document from Editor State and generates the visual frame without modifying the Document.
+
+The representation therefore aligns naturally with both the **editing model** and the **rendering model**.
+
+## Memory Layout
+
+There is an important difference between a single string and a vector of lines.
+
+With a single string:
+
+```text
++-----------------------------------+
+| H e l l o \n W o r l d \n ...    |
++-----------------------------------+
+```
+
+the entire document is one contiguous character sequence.
+
+With a vector of lines:
+
+```text
++----------------+
+| Line pointers  |
++----------------+
+       │
+       ├──────────► "Hello"
+       │
+       ├──────────► "World"
+       │
+       └──────────► "Editor"
+```
+
+The collection stores references to individual line strings, while each line has its own character storage.
+
+This introduces some additional memory overhead because we now maintain both the collection and the individual strings.
+
+However, it also means that modifying one line does not require moving all of the characters in the entire document.
+
+If we insert a character into `"World"`, we primarily modify the storage belonging to that line.
+
+That is a useful improvement over treating the entire document as one enormous string.
+
+## Complexity of Common Operations
+
+The exact complexity depends on the underlying collection and string implementation, but the general behavior is easier to understand.
+
+| Operation                        |                General Cost |
+| -------------------------------- | --------------------------: |
+| Access a line by index           |                        O(1) |
+| Access a character within a line |                        O(1) |
+| Insert character within a line   |              O(line length) |
+| Delete character within a line   |              O(line length) |
+| Split a line                     |              O(line length) |
+| Merge two lines                  |              O(line length) |
+| Insert a line                    | O(number of affected lines) |
+| Delete a line                    | O(number of affected lines) |
+
+The important observation is that character movement is generally limited to the affected line rather than the entire document.
+
+For example, inserting a character into a 50-character line does not require moving characters from every other line in a 100,000-line document.
+
+That is a meaningful advantage for an interactive editor.
+
+## The Cost of the Vector
+
+The vector-of-lines representation is not perfect.
+
+Suppose the document contains:
+
+```text
+Line 0
+Line 1
+Line 2
+Line 3
+Line 4
+```
+
+and we insert a new line between Line 1 and Line 2.
+
+The collection itself must make room for the new element:
+
+```text
+Before:
+
+Line 0
+Line 1
+Line 2
+Line 3
+Line 4
+
+After:
+
+Line 0
+Line 1
+New Line
+Line 2
+Line 3
+Line 4
+```
+
+Depending on the underlying implementation, elements after the insertion point may need to be shifted.
+
+Therefore, the vector solves one class of problems while leaving another.
+
+This is an important engineering trade-off.
+
+We are no longer moving the entire document's characters for every character insertion, but modifying the vector of lines can still require work.
+
+## What About Very Long Lines?
+
+There is another limitation.
+
+Consider a single line containing several million characters:
+
+```text
+Line 0 → "AAAAAAAAAAAAAAAAAAAA....."
+```
+
+Even though the document contains only one line, inserting a character near its beginning may require many characters within that line to move.
+
+So the vector-of-lines representation does not eliminate the fundamental cost of editing contiguous character sequences.
+
+It simply limits that cost to the affected line.
+
+This distinction becomes important later when we study structures such as the **gap buffer**, **piece table**, and **rope**.
+
+## Why It Fits Our Editor
+
+The vector-of-lines model provides a useful balance between simplicity and capability.
+
+It gives us:
+
+- A simple mental model.
+- Natural line-based operations.
+- Easy cursor positioning.
+- Straightforward rendering.
+- Relatively simple implementation.
+- Reasonable performance for the documents our editor is designed to handle.
+
+Most importantly, it allows us to understand the editor without introducing sophisticated data structures too early.
+
+This is consistent with the project's requirements, which explicitly prioritize simplicity, readability, and educational value over advanced optimization.
+
+This decision is documented as **ADR-013: Document Representation**, which records the choice of a vector of lines, the alternatives considered, and the trade-offs accepted.
+
+A good data structure often reflects the way its application thinks about data.
+
+Our editor thinks in terms of:
+
+```text
+Document
+    ↓
+Lines
+    ↓
+Characters
+```
+
+The vector-of-lines representation follows exactly that model.
+
+This makes the structure easy to explain, debug, and reason about. More advanced representations may eventually provide better performance, but they also hide the text behind additional layers of machinery.
+
+For the first implementation of our editor, understanding the data is more important than maximizing performance.
+
+## Summary
+
+A vector of lines represents a Document as a collection of independently stored text lines. This makes line-oriented operations such as splitting, merging, rendering, and cursor positioning natural and easy to understand.
+
+Character editing is still performed within individual lines, so very long lines can still require character movement. Likewise, inserting or deleting lines can require changes to the underlying collection.
+
+Despite these limitations, the representation provides an excellent balance between simplicity, performance, and educational value for our editor.
+
+The next options—**gap buffers, piece tables, and ropes**—will address some of these performance limitations, but they will also introduce additional complexity.
