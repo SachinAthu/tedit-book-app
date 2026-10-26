@@ -13,7 +13,8 @@
     "@astrojs/starlight": "^0.42.3",
     "astro": "^7.2.10",
     "sharp": "^0.35.3",
-    "starlight-theme-flexoki": "^0.3.0",
+    "starlight-page-actions": "^0.7.1",
+    "starlight-scroll-to-top": "^2.0.0",
     "starlight-theme-rapide": "^0.6.0"
   },
   "devDependencies": {
