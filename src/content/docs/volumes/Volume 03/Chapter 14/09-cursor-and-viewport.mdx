@@ -1,0 +1,473 @@
+---
+title: 14.9 Cursor and the Viewport
+description: Explains document versus screen coordinates, viewport offsets, coordinate transformations, and why scrolling does not move the logical cursor.
+---
+
+The Cursor represents a position within the Document, but the terminal can display only a limited portion of that Document at any given time.
+
+This creates an important relationship between the **Cursor** and the **Viewport**.
+
+The Document may contain hundreds or thousands of lines, while the terminal might have space for only a few dozen. The Cursor can therefore refer to a valid position in the Document that is currently outside the visible portion of the screen.
+
+The Viewport determines which part of the Document is currently visible.
+
+Conceptually:
+
+```text
+Document
+│
+│  line 0
+│  line 1
+│  line 2
+│  ...
+│
+│  line 100
+│  line 101
+│  line 102
+│  ...
+│
+└──────────────────────
+          │
+          ▼
+       Viewport
+          │
+          ▼
+       Terminal
+```
+
+The Cursor belongs to the Document's coordinate system. The terminal cursor belongs to the screen's coordinate system.
+
+The Viewport provides the connection between them.
+
+## Document Coordinates and Screen Coordinates
+
+The Cursor's position is expressed using document coordinates:
+
+```text
+cursor_row
+cursor_column
+```
+
+These coordinates describe a position within the Document regardless of whether that position is currently visible.
+
+The Viewport also has a position within the Document. For vertical scrolling, we can represent this with:
+
+```text
+viewport_row
+```
+
+which identifies the first document row currently visible on the screen.
+
+For example:
+
+```text
+Document
+
+line 40
+line 41
+line 42
+line 43
+line 44
+line 45
+line 46
+line 47
+...
+```
+
+Suppose:
+
+```text
+viewport_row = 42
+```
+
+Then the visible area begins at document line 42:
+
+```text
+Terminal
+
+screen row 0  → document line 42
+screen row 1  → document line 43
+screen row 2  → document line 44
+screen row 3  → document line 45
+...
+```
+
+If the Cursor is at:
+
+```text
+cursor_row = 45
+```
+
+then its screen row is:
+
+```text
+screen_row = cursor_row - viewport_row
+```
+
+which gives:
+
+```text
+screen_row = 45 - 42
+            = 3
+```
+
+The Cursor is therefore displayed on screen row 3.
+
+This is a coordinate transformation: the logical document position is converted into a position relative to the currently visible region.
+
+## Vertical Coordinate Transformation
+
+The relationship can be visualized as:
+
+```text
+Document Coordinates
+
+cursor_row = 45
+     │
+     │ subtract
+     ▼
+viewport_row = 42
+     │
+     ▼
+screen_row = 3
+```
+
+More generally:
+
+```text
+screen_row = cursor_row - viewport_row
+```
+
+This formula is simple, but it establishes an important architectural boundary.
+
+The Cursor does not need to know where the terminal is displaying it. It only needs to maintain its logical position in the Document.
+
+The Viewport provides the offset required to translate that logical position into a visible position.
+
+## Horizontal Coordinate Transformation
+
+The same principle applies horizontally when the editor supports horizontal scrolling.
+
+The Viewport can maintain a horizontal offset:
+
+```text
+viewport_column
+```
+
+This identifies the first document column currently visible on the screen. For now this model assumes every logical character occupies exactly one terminal cell; Chapter 20 defines `viewport_column` in the Renderer's visual space, where TAB expansion applies.
+
+The Cursor's horizontal screen position is then conceptually:
+
+```text
+screen_column = cursor_column - viewport_column
+```
+
+For example, suppose:
+
+```text
+cursor_column   = 80
+viewport_column = 60
+```
+
+Then:
+
+```text
+screen_column = 80 - 60
+              = 20
+```
+
+The logical Cursor is at column 80 of the document line, but it appears at screen column 20 because the first 60 columns are outside the visible area.
+
+The complete transformation is therefore:
+
+```text
+Document Position
+      │
+      │ subtract viewport offset
+      ▼
+Screen Position
+
+screen_row =
+    cursor_row - viewport_row
+
+screen_column =
+    cursor_column - viewport_column
+```
+
+The formulas are intentionally independent of the terminal itself. The Renderer can use these screen coordinates when constructing the frame, while the Cursor continues to operate entirely in Document coordinates.
+
+These formulas also assume that every logical character occupies exactly one terminal cell. That assumption holds for most characters but not for TAB, which the terminal may display across several cells. Chapter 20 therefore redefines `viewport_column` itself in that display space, so the subtraction here holds only when no variable-width character precedes the viewport. The real translation therefore runs:
+
+```text
+logical column
+      │
+      ▼
+visual/display column
+      │
+      ▼
+screen column
+```
+
+with the logical-to-display step performed by the Renderer, not by the Cursor Engine. Tab-stop widths, tab expansion, and any other character-width questions are rendering concerns that belong to the Renderer; the Cursor Engine never needs to know them.
+
+## The Cursor Does Not Move Because the Viewport Moves
+
+Scrolling can make the Cursor appear to move on the screen even though its logical position has not changed.
+
+Consider a Cursor at document row 20:
+
+```text
+cursor_row = 20
+```
+
+If the viewport begins at row 15:
+
+```text
+viewport_row = 15
+```
+
+then:
+
+```text
+screen_row = 20 - 15
+           = 5
+```
+
+Now suppose the viewport scrolls downward by three lines:
+
+```text
+viewport_row = 18
+```
+
+The Cursor is still at document row 20:
+
+```text
+cursor_row = 20
+```
+
+but its screen position is now:
+
+```text
+screen_row = 20 - 18
+           = 2
+```
+
+The Cursor appears higher on the terminal even though the logical Cursor has not moved.
+
+This distinction is fundamental:
+
+> **Cursor movement changes the logical position. Viewport movement changes which part of the Document is mapped onto the screen.**
+
+The two operations may happen together during navigation, but they represent different state changes.
+
+## Keeping the Transformation Valid
+
+The coordinate transformation only makes sense when the Cursor is inside the visible region.
+
+For vertical movement, the visible document rows can be thought of as:
+
+```text
+viewport_row
+    ...
+viewport_row + visible_rows - 1
+```
+
+If:
+
+```text
+cursor_row < viewport_row
+```
+
+the Cursor is above the visible region.
+
+If:
+
+```text
+cursor_row >= viewport_row + visible_rows
+```
+
+the Cursor is below the visible region.
+
+In either case, the Viewport must be adjusted before the Renderer produces the frame.
+
+This leads to an important separation of responsibilities:
+
+```text
+Cursor
+  │
+  │ logical position
+  ▼
+Viewport
+  │
+  │ visible region
+  ▼
+Renderer
+  │
+  │ screen position
+  ▼
+Terminal
+```
+
+The Cursor does not decide how the terminal should scroll. The Viewport determines which portion of the Document should be visible, and the Renderer converts that state into terminal output.
+
+## Why Keep the Coordinate Systems Separate?
+
+It might seem simpler to store the Cursor's screen position directly.
+
+That would create a problem.
+
+Suppose the user scrolls the document without changing the logical editing position. A screen-based Cursor would have to be rewritten whenever the Viewport changed.
+
+A document-based Cursor does not have this problem.
+
+Its position remains stable:
+
+```text
+cursor_row    = 120
+cursor_column = 15
+```
+
+The Viewport can change independently:
+
+```text
+viewport_row = 110
+```
+
+and the Renderer derives:
+
+```text
+screen_row = 120 - 110
+           = 10
+```
+
+This makes the state easier to reason about because each value describes one thing:
+
+- **Cursor** → logical editing position
+- **Viewport** → visible portion of the Document
+- **Screen position** → derived display coordinate
+
+The screen position does not need to become another independent source of truth.
+
+## A Complete Example
+
+Suppose the Document contains 100 lines and the terminal provides room for 10 text rows.
+
+The state might be:
+
+```text
+Document
+    line_count = 100
+
+Cursor
+    cursor_row    = 56
+    cursor_column = 12
+
+Viewport
+    viewport_row    = 52
+    viewport_column = 5
+```
+
+The Renderer can derive the Cursor's screen position:
+
+```text
+screen_row =
+    56 - 52
+    = 4
+
+screen_column =
+    12 - 5
+    = 7
+```
+
+Therefore the logical position:
+
+```text
+(row 56, column 12)
+```
+
+appears on the terminal at:
+
+```text
+(row 4, column 7)
+```
+
+Nothing about the Cursor itself has changed. The screen position is simply the result of applying the current Viewport offset.
+
+This gives the editor a clean transformation:
+
+```text
+             Document
+                │
+                │ logical coordinates
+                ▼
+             Cursor
+                │
+                │ + Viewport offset
+                ▼
+          Screen coordinates
+                │
+                ▼
+             Renderer
+                │
+                ▼
+             Terminal
+```
+
+The important point is that the terminal is the final coordinate system, not the Cursor's coordinate system.
+
+## Relationship Between Cursor, Viewport, and Renderer
+
+The three components therefore have distinct responsibilities.
+
+The **Cursor** answers:
+
+> Where is the user editing?
+
+The **Viewport** answers:
+
+> Which part of the Document should be visible?
+
+The **Renderer** answers:
+
+> How should that visible state be represented on the terminal?
+
+Their relationship can be summarized as:
+
+```text
+Document
+   │
+   ├──────────────► Cursor
+   │                 │
+   │                 │ logical position
+   │                 ▼
+   └──────────────► Viewport
+                     │
+                     │ coordinate transformation
+                     ▼
+                  Renderer
+                     │
+                     ▼
+                  Terminal
+```
+
+This separation also follows the broader architecture established for the editor: the Editor State remains the single source of truth, while the Renderer reads that state to produce a frame without modifying it.
+
+The Cursor therefore remains a logical concept even when the document is scrolled. The Viewport determines how that logical position becomes visible, and the Renderer turns the resulting screen coordinates into terminal output.
+
+With this relationship established, the next question is how the editor should react when the Cursor moves outside the currently visible region. That is the responsibility of keeping the Cursor visible.
+
+## Summary
+
+The Cursor lives in the Document's coordinate space, while the terminal can display only a small portion of the Document at a time.
+
+To summarize what we covered:
+
+- The **Cursor** answers *where is the user editing?* using logical Document coordinates.
+- The **Viewport** answers *which part of the Document should be visible?*
+- The **Renderer** answers *how should that visible state be represented on the terminal?*
+- The Cursor can be a valid Document position that is currently **outside the visible region**.
+- The Viewport provides the coordinate transformation from the Cursor's logical position to **screen coordinates**; the terminal is the final coordinate system, not the Cursor's.
+
+The Cursor therefore remains a logical concept even when the document is scrolled.
+
+Continue to **Section 14.10, Keeping the Cursor Visible**, which examines how the editor should react when the Cursor moves outside the currently visible region.

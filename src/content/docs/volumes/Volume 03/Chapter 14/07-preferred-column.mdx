@@ -1,0 +1,464 @@
+---
+title: 14.7 Preferred Column
+description: Introduces the preferred column as remembered horizontal intent, distinguishing it from the current column and explaining clamping and restoration.
+---
+
+Vertical movement introduces a problem that horizontal movement does not: **adjacent lines may have different lengths**.
+
+Consider this document:
+
+```text
+This is a long line
+Hi
+Another long line
+```
+
+Suppose the Cursor is positioned near column 15 on the first line:
+
+```text
+This is a long line
+               ^
+Hi
+Another long line
+```
+
+The Cursor might have:
+
+```text
+cursor_row    = 0
+cursor_column = 15
+```
+
+Now press Down.
+
+The destination line is:
+
+```text
+Hi
+```
+
+It contains only two characters, so column 15 is not a valid position. The Cursor must therefore move to the end of the shorter line:
+
+```text
+This is a long line
+Hi|
+Another long line
+```
+
+The actual Cursor column is now:
+
+```text
+cursor_column = 2
+```
+
+This is necessary to preserve the Cursor invariant:
+
+```text
+0 <= cursor_column <= current_line_length
+```
+
+But something important has been lost.
+
+The user was originally navigating around column 15. The Cursor moved to column 2 only because the destination line was too short.
+
+If the user now presses Down again, the next line is long enough to accommodate column 15:
+
+```text
+This is a long line
+Hi
+Another long line
+```
+
+A natural result is:
+
+```text
+This is a long line
+Hi
+Another long line
+               ^
+```
+
+The Cursor has returned to approximately the horizontal position the user originally intended.
+
+To achieve this behavior, the editor needs to remember the user's desired horizontal position separately from the Cursor's current column.
+
+That value is the **preferred column**.
+
+## Current Column vs Preferred Column
+
+We therefore need to distinguish between two related values:
+
+```text
+current_column
+preferred_column
+```
+
+The **current column** describes where the Cursor is actually positioned on the current line.
+
+The **preferred column** describes the horizontal position that vertical movement attempts to preserve.
+
+For example, before moving down:
+
+```text
+This is a long line
+               ^
+Hi
+Another long line
+```
+
+we might have:
+
+```text
+current_column  = 15
+preferred_column = 15
+```
+
+After moving onto the shorter line:
+
+```text
+This is a long line
+Hi|
+Another long line
+```
+
+the values become conceptually:
+
+```text
+current_column  = 2
+preferred_column = 15
+```
+
+The Cursor is physically at column 2 because that is the furthest valid position on the short line.
+
+But the editor remembers that vertical movement is still trying to maintain column 15.
+
+## Preferred Column Is an Intent
+
+The preferred column is therefore not another physical location in the Document.
+
+There is no requirement that:
+
+```text
+preferred_column <= current_line_length
+```
+
+For example:
+
+```text
+current_column  = 2
+preferred_column = 15
+```
+
+is perfectly valid when the current line contains only two characters.
+
+The important distinction is:
+
+```text
+Current Column
+      │
+      └── Where the Cursor is now
+
+
+Preferred Column
+      │
+      └── Where vertical movement wants it to be
+```
+
+This allows the Cursor to temporarily occupy a position different from the user's preferred horizontal position without losing that position.
+
+## Preferred Column Is a Logical Column
+
+The preferred column lives in the same coordinate space as the cursor column: it is measured in **logical characters**, not in terminal cells.
+
+A line containing TAB characters will be displayed wider than its logical length, but that visual width plays no role here. The preferred column records how many logical characters from the beginning of the line the user intends to maintain, and vertical movement preserves that count even when a TAB appears along the way. The Cursor Engine never needs to know how many cells the TAB will occupy.
+
+The relationship between a logical column and the number of terminal cells it occupies is resolved later, when the Renderer converts Document coordinates into screen coordinates.
+
+## Moving Through Lines of Different Lengths
+
+Consider the following sequence:
+
+```text
+Line 0: This is a long line
+Line 1: Hi
+Line 2: Another long line
+```
+
+Start at column 15:
+
+```text
+This is a long line
+               ^
+Hi
+Another long line
+```
+
+The initial state is:
+
+```text
+current_column   = 15
+preferred_column = 15
+```
+
+Press Down.
+
+The destination line is too short:
+
+```text
+This is a long line
+Hi|
+Another long line
+```
+
+Now:
+
+```text
+current_column   = 2
+preferred_column = 15
+```
+
+Press Down again.
+
+The destination line is long enough:
+
+```text
+This is a long line
+Hi
+Another long line
+               ^
+```
+
+Now:
+
+```text
+current_column   = 15
+preferred_column = 15
+```
+
+The preferred column allows vertical navigation to behave consistently even when the lines between the starting and destination positions have different lengths.
+
+## The Preferred Column and Vertical Movement
+
+The rule can now be stated clearly:
+
+> **Up and Down attempt to place the Cursor at the preferred column on the destination line. If that line is shorter, the actual Cursor column is clamped to the end of the line.**
+
+Conceptually:
+
+```text
+             Preferred Column
+                    │
+                    ▼
+          Destination line
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+       Long enough          Too short
+          │                   │
+          ▼                   ▼
+   current_column =     current_column =
+   preferred_column     line_length
+```
+
+The preferred column is therefore what allows vertical movement to preserve horizontal intent.
+
+## Why Not Just Use the Current Column?
+
+Without a separate preferred column, the editor would lose the original horizontal position whenever it encountered a short line.
+
+Consider:
+
+```text
+This is a long line
+               ^
+Hi
+Another long line
+```
+
+After one Down:
+
+```text
+This is a long line
+Hi|
+Another long line
+```
+
+If the editor only stored:
+
+```text
+current_column = 2
+```
+
+then another Down would naturally produce:
+
+```text
+This is a long line
+Hi
+Another long line
+  ^
+```
+
+The editor would have no way to know that the user originally wanted column 15.
+
+The preferred column preserves that information.
+
+```text
+current_column
+      │
+      │ constrained by
+      ▼
+current line length
+
+
+preferred_column
+      │
+      │ preserved during
+      ▼
+vertical movement
+```
+
+This is a small addition to the Cursor state, but it produces a significant improvement in navigation behavior.
+
+## Preferred Column and the Document Model
+
+The preferred column does not change the Document itself.
+
+The Document continues to contain exactly the same lines:
+
+```text
+Document
+├── "This is a long line"
+├── "Hi"
+└── "Another long line"
+```
+
+Only the Cursor state changes:
+
+```text
+Cursor
+├── row
+├── current column
+└── preferred column
+```
+
+This is consistent with the architecture established earlier: the Document owns the editable text, while the Cursor represents the logical editing position. The Editor State remains the single source of truth for the overall application state.
+
+## Preferred Column Is Mainly a Vertical Navigation Concept
+
+The preferred column exists primarily to support **vertical movement**.
+
+When moving Up or Down, the editor tries to preserve it.
+
+For example:
+
+```text
+Up
+ │
+ ▼
+previous line
+ │
+ ▼
+try preferred column
+```
+
+and:
+
+```text
+Down
+ │
+ ▼
+next line
+ │
+ ▼
+try preferred column
+```
+
+If the destination line is shorter, the actual Cursor position is constrained by that line.
+
+This gives us two distinct concepts:
+
+```text
+Horizontal movement
+    │
+    └── changes the desired horizontal position
+
+
+Vertical movement
+    │
+    └── tries to preserve the desired horizontal position
+```
+
+The exact rules for when horizontal and editing operations change the preferred column will be defined in the next section.
+
+## A Useful Mental Model
+
+A useful way to think about the preferred column is as an **anchor** for vertical navigation.
+
+```text
+Preferred column
+        │
+        ▼
+        15
+        │
+        │
+        ▼
+┌───────────────────────┐
+│ This is a long line   │ ← column 15 available
+├───────────────────────┤
+│ Hi                    │ ← column 15 unavailable
+├───────────────────────┤
+│ Another long line     │ ← column 15 available
+└───────────────────────┘
+```
+
+The Cursor follows this preferred horizontal position as it moves vertically, but each individual line determines how far the Cursor can actually move.
+
+This gives us a clean separation between **intent** and **constraint**:
+
+- The preferred column represents the intended horizontal position.
+- The current line determines the maximum valid position.
+- The current column is the result of applying that constraint.
+
+## Summary
+
+The preferred column solves a specific problem in vertical navigation.
+
+Without it, moving through a short line can permanently change the horizontal position used by subsequent vertical movements.
+
+With it:
+
+```text
+Preferred Column
+       │
+       ▼
+Preserve horizontal intent
+       │
+       ▼
+Clamp to destination line
+       │
+       ▼
+Restore preferred position
+when a longer line is reached
+```
+
+The resulting model is:
+
+```text
+Long line
+     │
+     │ preferred = 15
+     ▼
+Short line
+     │
+     │ current = 2
+     │ preferred = 15
+     ▼
+Long line
+     │
+     │ current = 15
+     │ preferred = 15
+     ▼
+Continue vertically
+```
+
+Continue to **Section 14.8, When Preferred Column Changes**, which examines when the preferred column should change. If every movement modified it, vertical navigation would lose the very behavior it was introduced to provide.

@@ -1,0 +1,532 @@
+---
+title: 14.5 Crossing Line Boundaries
+description: Compares stopping at line edges with crossing into adjacent lines, and justifies keeping horizontal and vertical movement separate.
+---
+
+Horizontal movement is straightforward while the Cursor remains within a single line. The situation becomes more interesting when the Cursor reaches the beginning or end of that line.
+
+Consider:
+
+```text
+Hello
+World
+```
+
+with the Cursor at the end of the first line:
+
+```text
+Hello|
+World
+```
+
+The Cursor is at:
+
+```text
+cursor_row    = 0
+cursor_column = 5
+```
+
+If the user presses Right, the Cursor has reached the horizontal boundary of the current line.
+
+What should happen?
+
+There are two reasonable interpretations.
+
+## Option 1 — Stop at the Line Boundary
+
+The simplest behavior is to leave the Cursor where it is:
+
+```text
+Hello|
+World
+```
+
+Pressing Right again has no effect.
+
+Under this model, horizontal movement is strictly local to the current line:
+
+```text
+Left / Right
+     │
+     ▼
+Current line
+     │
+     ▼
+Beginning or end
+     │
+     ▼
+Stop
+```
+
+This has a significant advantage: each movement command has a single, predictable responsibility.
+
+- Left changes the column.
+- Right changes the column.
+- Neither operation changes the row.
+
+Moving to another line is handled separately.
+
+This is the model we will use for our editor.
+
+## Option 2 — Move to the Next Line
+
+Another possible design is to treat the end of one line as connected to the beginning of the next.
+
+For example:
+
+```text
+Hello|
+World
+```
+
+pressing Right could produce:
+
+```text
+Hello
+|World
+```
+
+Similarly:
+
+```text
+|World
+```
+
+pressing Left could produce:
+
+```text
+Hello|
+World
+```
+
+This can feel natural because the text document can be thought of as one continuous sequence of characters separated by line boundaries.
+
+However, it also means that the meaning of Left and Right becomes more complicated.
+
+A horizontal movement could now change:
+
+```text
+cursor_column
+```
+
+or:
+
+```text
+cursor_row
+```
+
+depending on where the Cursor currently is.
+
+That makes the operation less local and introduces additional questions about vertical positioning.
+
+## Why We Keep the Behaviors Separate
+
+For the architecture of our editor, it is useful to keep Cursor movement operations simple and explicit.
+
+We therefore define:
+
+> **Horizontal movement operates within the current line and stops at its boundaries.**
+
+So:
+
+```text
+Right at end of line
+        │
+        ▼
+Remain at end of line
+```
+
+and:
+
+```text
+Left at beginning of line
+        │
+        ▼
+Remain at beginning of line
+```
+
+Moving between lines is a separate operation.
+
+This does not mean the editor cannot provide convenient navigation across lines. It simply means that such behavior should be explicitly defined as part of another movement rule rather than being hidden inside the basic Left and Right operations.
+
+## Beginning of a Line
+
+The same issue occurs in the opposite direction.
+
+Consider:
+
+```text
+Hello
+|World
+```
+
+The Cursor is at:
+
+```text
+cursor_row    = 1
+cursor_column = 0
+```
+
+Pressing Left could either:
+
+1. remain at the beginning of `World`, or
+2. move to the end of `Hello`.
+
+Under our chosen model, it remains where it is:
+
+```text
+Hello
+|World
+```
+
+The Cursor does not cross the line boundary simply because the user pressed Left.
+
+This gives us a symmetric rule:
+
+```text
+Beginning of line
+       │
+       │ Left
+       ▼
+     Stop
+
+
+End of line
+       │
+       │ Right
+       ▼
+     Stop
+```
+
+## Why Explicit Boundaries Matter
+
+This decision may appear minor, but boundary behavior becomes important as more editor features are introduced.
+
+Consider the following operations:
+
+- Backspace
+- Delete
+- Enter
+- Up
+- Down
+- Word movement
+- Search
+- Selection
+
+Some of these operations legitimately cross line boundaries.
+
+For example, Backspace at the beginning of a line may eventually merge that line with the previous line.
+
+```text
+Hello
+|World
+```
+
+After Backspace:
+
+```text
+HelloWorld|
+```
+
+But that behavior belongs to **editing**, not ordinary horizontal movement.
+
+Likewise, pressing Enter intentionally creates a line boundary:
+
+```text
+Hello|
+```
+
+becomes:
+
+```text
+Hello
+|
+```
+
+The important architectural principle is:
+
+> **A line boundary should be crossed only by an operation whose semantics explicitly require crossing it.**
+
+This prevents different components from developing conflicting interpretations of the same boundary.
+
+## Horizontal Movement vs Editing
+
+This distinction gives us a useful comparison.
+
+Horizontal movement:
+
+```text
+Right
+
+Hello|
+World
+```
+
+produces:
+
+```text
+Hello|
+World
+```
+
+because the Cursor is already at the line boundary.
+
+An editing operation such as Backspace, however, may intentionally cross that boundary:
+
+```text
+Hello
+|World
+```
+
+becomes:
+
+```text
+HelloWorld|
+```
+
+The two operations interact with the same boundary but have different responsibilities.
+
+```text
+                 Line Boundary
+                       │
+             ┌─────────┴─────────┐
+             │                   │
+       Cursor Movement        Editing
+             │                   │
+             ▼                   ▼
+          Respect             May cross
+          boundary            boundary
+```
+
+This separation keeps the Cursor Engine focused on **position management**, while editing semantics remain the responsibility of the command and document operations.
+
+## What About Vertical Movement?
+
+If Left and Right do not cross line boundaries, we still need a way to move from one line to another.
+
+That is the responsibility of vertical movement.
+
+For example:
+
+```text
+Hello|
+World
+```
+
+pressing Down can move the Cursor to the second line:
+
+```text
+Hello
+World|
+```
+
+The row changes, and the new column is determined according to the vertical movement rules.
+
+This creates a clean distinction:
+
+```text
+Horizontal movement
+    │
+    └── changes column within current line
+
+
+Vertical movement
+    │
+    └── changes row and determines a column
+```
+
+The distinction becomes particularly important when adjacent lines have different lengths.
+
+Consider:
+
+```text
+This is a long line
+Hi
+Another long line
+```
+
+If the Cursor is near the end of the first line:
+
+```text
+This is a long line
+                  ^
+Hi
+Another long line
+```
+
+moving Down cannot simply preserve the exact column because the second line is much shorter.
+
+This is the **short-line problem**, and it leads directly to one of the most important concepts in Cursor design: the preferred column.
+
+## Line Boundaries Are Document Boundaries
+
+A line boundary is not a terminal boundary.
+
+The terminal displays lines on the screen, but the Cursor operates on the logical Document.
+
+For example:
+
+```text
+Document:
+
+Line 0 → "Hello"
+Line 1 → "World"
+```
+
+The newline separating these lines is part of the document's structure.
+
+The Cursor therefore needs to understand that:
+
+```text
+Hello|
+World
+```
+
+and:
+
+```text
+Hello
+|World
+```
+
+are two different logical positions.
+
+They are not simply adjacent screen coordinates.
+
+This distinction will become increasingly important when we later introduce scrolling and rendering.
+
+## Empty Lines and Boundaries
+
+Empty lines make the boundary rules even clearer.
+
+Consider:
+
+```text
+Hello
+
+World
+```
+
+The middle line contains no characters.
+
+Its only valid Cursor position is:
+
+```text
+Hello
+|
+World
+```
+
+If the Cursor is there:
+
+```text
+cursor_row    = 1
+cursor_column = 0
+```
+
+pressing Left cannot move it anywhere within the line.
+
+Pressing Right cannot move it anywhere either.
+
+But pressing Up or Down can move it to another line.
+
+This demonstrates that **row movement and column movement are independent concepts**.
+
+## The Chosen Rule
+
+For the baseline editor, we therefore establish the following rule:
+
+> **Left and Right move only within the current line. They stop at the beginning and end of that line rather than crossing into adjacent lines.**
+
+The resulting behavior is:
+
+```text
+                Horizontal Movement
+
+              Current Line
+                   │
+        ┌──────────┴──────────┐
+        ▼                     ▼
+      Left                   Right
+        │                     │
+        ▼                     ▼
+ column > 0              column < length
+        │                     │
+        ▼                     ▼
+ column -= 1             column += 1
+        │                     │
+        └──────────┬──────────┘
+                   ▼
+             Valid Position
+```
+
+At either boundary:
+
+```text
+|Hello
+```
+
+or:
+
+```text
+Hello|
+```
+
+further horizontal movement has no effect.
+
+## Why This Decision Is Useful
+
+This decision gives us several useful properties.
+
+**First, horizontal movement remains simple.**
+
+It changes only the column.
+
+**Second, the Cursor remains easy to reason about.**
+
+The row does not unexpectedly change during a Left or Right operation.
+
+**Third, responsibilities remain separated.**
+
+The Cursor Engine handles position movement, while editing commands decide when line boundaries should be modified.
+
+**Fourth, vertical movement gets a clear responsibility.**
+
+Changing the row is explicitly associated with Up and Down operations.
+
+This follows the broader architectural principle that each component and operation should have a clearly defined responsibility. The system architecture specifically separates Cursor behavior from input interpretation, command processing, rendering, and file management.
+
+## A Note on Real Editors
+
+Different text editors may choose different navigation behaviors, and advanced editors may provide commands that deliberately cross line boundaries.
+
+The purpose of our design is not to claim that one behavior is universally correct.
+
+Instead, we are choosing a behavior that is:
+
+- simple,
+- predictable,
+- easy to implement,
+- consistent with our architecture,
+- and appropriate for the educational scope of this editor.
+
+This is an important engineering lesson:
+
+> **A design does not need to support every possible behavior. It needs to define its behavior clearly and consistently.**
+
+## Summary
+
+We can now state our line-boundary rules clearly:
+
+| Situation              | Result                        |
+| ---------------------- | ----------------------------- |
+| Left inside a line     | Move one position left        |
+| Left at line beginning | Stop                          |
+| Right inside a line    | Move one position right       |
+| Right at line end      | Stop                          |
+| Move between lines     | Handled by vertical movement  |
+| Modify line boundary   | Handled by editing operations |
+
+The Cursor Engine therefore treats each line as a distinct horizontal space.
+
+Continue to **Section 14.6, Vertical Movement**, which examines the other major direction of movement, where differing line lengths introduce a much more interesting problem.

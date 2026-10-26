@@ -1,0 +1,526 @@
+---
+title: 14.3 Cursor Position vs Character Position
+description: Explains why a cursor marks an editing boundary between characters rather than a character index, affecting insertion, deletion, and line ends.
+---
+
+One of the most important details in cursor design is understanding that a **cursor position is not necessarily the position of a character**.
+
+This distinction may seem small, but it affects almost every editing operation we will implement later.
+
+Consider the following line:
+
+```text
+Hello
+```
+
+It contains five characters:
+
+```text
+H   e   l   l   o
+```
+
+The character indexes are:
+
+```text
+0   1   2   3   4
+```
+
+However, the Cursor can occupy **six editing positions**:
+
+```text
+| H | e | l | l | o |
+0   1   2   3   4   5
+```
+
+The important observation is that the final position, `5`, does not correspond to a character.
+
+It represents the position immediately after the final character.
+
+## Character Index vs Cursor Position
+
+A character index identifies an existing character:
+
+```text
+Hello
+ ^
+```
+
+For example:
+
+```text
+character index = 1
+```
+
+refers to:
+
+```text
+e
+```
+
+A cursor position identifies a location where an editing operation can occur:
+
+```text
+Hello
+  ^
+```
+
+The cursor may be positioned between `e` and the first `l`.
+
+Conceptually:
+
+```text
+H   e   l   l   o
+|   |   |   |   |   |
+0   1   2   3   4   5
+```
+
+The numbers now represent **boundaries between characters**, rather than character indexes.
+
+This distinction gives us two different ways of thinking about the same line:
+
+```text
+Character indexes:
+
+H   e   l   l   o
+0   1   2   3   4
+
+
+Cursor positions:
+
+| H | e | l | l | o |
+0   1   2   3   4   5
+```
+
+Both models are useful, but they answer different questions.
+
+> **A character index identifies a character. A cursor position identifies where an editing operation occurs.**
+
+## Why Does the Extra Position Matter?
+
+The extra position at the end of the line is essential.
+
+Suppose the document contains:
+
+```text
+Hello
+```
+
+and the Cursor is at the end:
+
+```text
+Hello|
+```
+
+The Cursor must be able to represent this state.
+
+If valid cursor columns were limited to:
+
+```text
+0 <= cursor_column < line_length
+```
+
+then the position after `o` would be impossible to represent.
+
+Instead, our model allows:
+
+```text
+0 <= cursor_column <= line_length
+```
+
+For a five-character line:
+
+```text
+0 <= cursor_column <= 5
+```
+
+Therefore, `5` is a valid Cursor position even though there is no character at index `5`.
+
+This is why the previous section defined the column boundary using `<=` rather than `<`.
+
+## Inserting at a Cursor Position
+
+This distinction becomes clearer when we consider insertion.
+
+Suppose we have:
+
+```text
+Hello
+```
+
+and the Cursor is positioned between `e` and the first `l`:
+
+```text
+He|llo
+```
+
+The cursor position is:
+
+```text
+cursor_column = 2
+```
+
+If the user inserts the character `X`, the result should be:
+
+```text
+HeXllo
+```
+
+The inserted character appears **at the Cursor position**.
+
+Conceptually:
+
+```text
+Before:
+
+H e | l l o
+    ^
+    cursor position
+
+
+Insert X:
+
+
+H e X | l l o
+      ^
+      cursor moves forward
+```
+
+The Cursor therefore represents the boundary at which the new character is inserted.
+
+## Insertion at the End of a Line
+
+Now consider:
+
+```text
+Hello|
+```
+
+The Cursor is at:
+
+```text
+cursor_column = 5
+```
+
+If the user inserts `!`, the result is:
+
+```text
+Hello!|
+```
+
+The Cursor position was valid even though there was no character at column `5`.
+
+This is an important property of the model:
+
+> **The Cursor may occupy the position immediately after the final character of a line.**
+
+Without this position, inserting text at the end of a line would require special handling outside the normal cursor model.
+
+## Backspace and the Character Before the Cursor
+
+The distinction also makes Backspace easier to understand.
+
+Suppose the document contains:
+
+```text
+Hello
+```
+
+and the Cursor is here:
+
+```text
+Hel|lo
+```
+
+The Cursor position is:
+
+```text
+cursor_column = 3
+```
+
+The character immediately before the Cursor is:
+
+```text
+l
+```
+
+Backspace removes that character:
+
+```text
+He|lo
+```
+
+The Cursor moves from column `3` to column `2`.
+
+Conceptually:
+
+```text
+Before:
+
+H e l | l o
+      ^
+      column 3
+
+
+Backspace:
+
+H e | l o
+    ^
+    column 2
+```
+
+The Cursor does not point to the character being deleted.
+
+Instead, Backspace operates on the character **immediately before the Cursor**.
+
+This distinction will become important when we design deletion commands in Chapter 16.
+
+## Delete and the Character at the Cursor
+
+Delete behaves differently.
+
+Suppose:
+
+```text
+Hel|lo
+```
+
+The Cursor is at column `3`.
+
+The character at the Cursor position is:
+
+```text
+l
+```
+
+Delete removes that character:
+
+```text
+Hel|o
+```
+
+So the two operations can be described relative to the Cursor:
+
+```text
+Backspace
+    │
+    ▼
+Character before Cursor
+
+
+Delete
+    │
+    ▼
+Character at Cursor
+```
+
+This is another reason the Cursor should be understood as a **position between characters**, rather than simply an index identifying one character.
+
+## The End-of-Line Boundary
+
+The final cursor position is particularly important:
+
+```text
+Hello|
+```
+
+At this position:
+
+```text
+cursor_column = line_length
+```
+
+There is no character at the Cursor.
+
+Therefore:
+
+```text
+Backspace
+```
+
+can still operate on the final `o`, but:
+
+```text
+Delete
+```
+
+has no character on the current line to remove.
+
+This does not necessarily mean that Delete does nothing. Later, we will define how deletion interacts with line boundaries and how adjacent lines can be merged. For now, the important point is that the Cursor position itself remains valid.
+
+## Empty Lines
+
+The same model works naturally for an empty line.
+
+An empty line contains zero characters:
+
+```text
+""
+```
+
+But it still has one valid Cursor position:
+
+```text
+|
+```
+
+or:
+
+```text
+cursor_column = 0
+```
+
+This gives us a consistent rule:
+
+```text
+Line length       Valid cursor positions
+-----------       ----------------------
+0                 0
+1                 0, 1
+2                 0, 1, 2
+5                 0, 1, 2, 3, 4, 5
+```
+
+In general:
+
+```text
+number of cursor positions = line_length + 1
+```
+
+This is a useful mental model for understanding text editing.
+
+## Cursor Movement
+
+The distinction also affects how we think about horizontal movement.
+
+Suppose:
+
+```text
+Hello|
+```
+
+The Cursor is already at the maximum valid column:
+
+```text
+cursor_column = 5
+```
+
+Pressing Right cannot move it to column `6`, because the line has no such editing position.
+
+Therefore:
+
+```text
+0 <= cursor_column <= line_length
+```
+
+must remain true after every movement.
+
+Similarly, pressing Left at:
+
+```text
+|Hello
+```
+
+cannot move the Cursor to column `-1`.
+
+The valid horizontal range is always bounded by the current line.
+
+## Why This Model Is Useful
+
+Representing the Cursor as an editing position rather than a character index gives us a consistent model for several operations:
+
+```text
+                    Cursor Position
+                          │
+          ┌───────────────┼───────────────┐
+          ▼               ▼               ▼
+       Insert          Backspace        Delete
+          │               │               │
+          ▼               ▼               ▼
+      At cursor       Before cursor    At cursor
+```
+
+It also gives us a natural representation for the end of a line and for empty lines.
+
+Most importantly, it allows us to reason about editing operations without mixing up two different concepts:
+
+- **where the Cursor is**
+- **which character an operation affects**
+
+Keeping these concepts separate will make the later Command Engine much easier to design.
+
+## A Useful Mental Model
+
+A helpful way to visualize a line is not as a sequence of characters, but as characters separated by cursor positions:
+
+```text
+| H | e | l | l | o |
+0   1   2   3   4   5
+```
+
+The characters occupy the spaces between positions.
+
+The Cursor occupies one of the boundaries.
+
+This gives us a simple interpretation:
+
+```text
+Cursor position N
+        │
+        ├── character N is after the cursor
+        │
+        └── character N - 1 is before the cursor
+```
+
+Therefore, when:
+
+```text
+cursor_column = 0
+```
+
+there is no character before the Cursor.
+
+And when:
+
+```text
+cursor_column = line_length
+```
+
+there is no character after the Cursor.
+
+These two boundary conditions will appear repeatedly throughout the editor.
+
+## Summary
+
+For a line containing `N` characters:
+
+```text
+Character indexes:
+
+0 ... N - 1
+
+
+Cursor positions:
+
+0 ... N
+```
+
+Therefore:
+
+```text
+0 <= cursor_column <= N
+```
+
+The Cursor position is an editing boundary, not simply a character index.
+
+This distinction gives us a clean foundation for:
+
+- insertion
+- Backspace
+- Delete
+- line splitting
+- line merging
+- horizontal movement
+
+We will use this model throughout the rest of the book.
+
+Continue to **Section 14.4, Horizontal Movement**, which examines the first actual movement operation: moving the Cursor left and right within a line.

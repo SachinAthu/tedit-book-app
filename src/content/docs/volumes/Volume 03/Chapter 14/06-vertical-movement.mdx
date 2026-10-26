@@ -1,0 +1,590 @@
+---
+title: 14.6 Vertical Movement
+description: Explains how Up and Down change rows while handling clamping, the short-line problem, document boundaries, and empty lines.
+---
+
+Horizontal movement changes the Cursor's column while keeping it on the same line. Vertical movement is different because it changes the Cursor's **row** and therefore moves it between different lines of the Document.
+
+At first, vertical movement appears just as simple as horizontal movement.
+
+If the Cursor is here:
+
+```text
+Hello, world
+      ^
+This is an editor
+Another line
+```
+
+pressing Down should move it to the corresponding position on the next line:
+
+```text
+Hello, world
+
+This is an editor
+      ^
+
+Another line
+```
+
+Conceptually:
+
+```text
+Up   → cursor_row - 1
+Down → cursor_row + 1
+```
+
+But unlike horizontal movement, vertical movement immediately encounters a problem:
+
+> **Different lines can have different lengths.**
+
+That single fact makes vertical cursor movement considerably more interesting.
+
+## Moving Up
+
+Suppose the Document contains:
+
+```text
+First line
+Second line
+Third line
+```
+
+and the Cursor is positioned on the second line:
+
+```text
+First line
+Second line
+      ^
+Third line
+```
+
+The Cursor might have:
+
+```text
+cursor_row    = 1
+cursor_column = 6
+```
+
+Pressing Up should change the row:
+
+```text
+cursor_row = 0
+```
+
+The Cursor then attempts to occupy approximately the same horizontal position on the first line:
+
+```text
+First line
+      ^
+Second line
+Third line
+```
+
+The important operation here is that the **row changes**, while the editor attempts to preserve the horizontal position.
+
+Conceptually:
+
+```text
+Up
+ │
+ ▼
+Move to previous line
+ │
+ ▼
+Choose appropriate column
+```
+
+## Moving Down
+
+Down follows the same principle.
+
+Starting with:
+
+```text
+First line
+Second line
+      ^
+Third line
+```
+
+pressing Down changes:
+
+```text
+cursor_row = 2
+```
+
+and the Cursor attempts to remain at the same horizontal position:
+
+```text
+First line
+Second line
+
+Third line
+      ^
+```
+
+Thus, the basic vertical movement rule is:
+
+> **Up and Down change the Cursor's row while attempting to preserve its horizontal position.**
+
+This is different from Left and Right, which operate entirely within the current line.
+
+## Vertical Movement Is Not Simply Row Arithmetic
+
+Although the row change itself is simple:
+
+```text
+Up:
+cursor_row -= 1
+
+Down:
+cursor_row += 1
+```
+
+the complete operation cannot stop there.
+
+The new row may contain a line that is shorter than the current column.
+
+Consider:
+
+```text
+This is a long line
+Hi
+Another long line
+```
+
+Suppose the Cursor is here:
+
+```text
+This is a long line
+               ^
+Hi
+Another long line
+```
+
+The Cursor is at a relatively large column on the first line.
+
+Now press Down.
+
+The next line contains only two characters:
+
+```text
+Hi
+```
+
+There is no position on that line corresponding to the original horizontal position.
+
+The Cursor therefore cannot simply retain the same column value.
+
+It must be adjusted to a valid position on the new line.
+
+## Clamping to the New Line
+
+A straightforward solution is to **clamp** the Cursor's column to the length of the destination line.
+
+Suppose:
+
+```text
+current column = 15
+```
+
+but the destination line has length:
+
+```text
+destination length = 2
+```
+
+The Cursor cannot remain at column `15`.
+
+Instead:
+
+```text
+new column = 2
+```
+
+The result becomes:
+
+```text
+This is a long line
+Hi|
+Another long line
+```
+
+The Cursor remains at the end of the short line.
+
+This preserves the Cursor invariant:
+
+```text
+0 <= cursor_column <= current_line_length
+```
+
+The general rule is:
+
+```text
+new_column = min(current_column, destination_line_length)
+```
+
+This is a useful first solution because it guarantees that the Cursor never becomes invalid.
+
+However, it introduces another problem.
+
+## The Short-Line Problem
+
+Consider:
+
+```text
+This is a very long line
+Hi
+Another very long line
+```
+
+Suppose the Cursor starts at column `18`:
+
+```text
+This is a very long line
+                  ^
+Hi
+Another very long line
+```
+
+After pressing Down, clamping places it at the end of `Hi`:
+
+```text
+This is a very long line
+Hi|
+Another very long line
+```
+
+The Cursor's actual column is now:
+
+```text
+cursor_column = 2
+```
+
+Now press Down again.
+
+If the editor simply uses the current column, it will attempt to move to column `2` on the third line:
+
+```text
+This is a very long line
+Hi
+Another very long line
+  ^
+```
+
+But this is probably not what the user intended.
+
+The user was originally navigating vertically around column `18`.
+
+The short line forced the Cursor temporarily to column `2`, but the user's desired horizontal position did not necessarily change.
+
+This is the central problem that leads to the concept of the **preferred column**.
+
+## Why Users Expect a Different Behavior
+
+Imagine navigating through source code:
+
+```text
+function process_document()
+{
+    return document;
+}
+```
+
+Suppose the Cursor is near a particular indentation level and the user presses Down repeatedly.
+
+If one intermediate line is shorter, users generally expect the Cursor to return to the original horizontal position when a later line is long enough.
+
+For example:
+
+```text
+Long line with many characters
+                  ^
+Hi
+Long line with many characters
+```
+
+After Down:
+
+```text
+Long line with many characters
+Hi|
+Long line with many characters
+```
+
+After another Down, a well-behaved editor should be able to return to the original horizontal position:
+
+```text
+Long line with many characters
+Hi
+Long line with many characters
+                  ^
+```
+
+Simply storing the current column is not enough to achieve this.
+
+The editor needs to remember something else.
+
+That value is the **preferred column**.
+
+## Vertical Movement and Cursor State
+
+We can therefore distinguish between two concepts:
+
+```text
+Current Column
+      │
+      └── Where the Cursor is right now
+
+
+Preferred Column
+      │
+      └── Where vertical movement is trying to keep it
+```
+
+On a normal line:
+
+```text
+current_column = preferred_column
+```
+
+On a short line:
+
+```text
+current_column < preferred_column
+```
+
+The Cursor is temporarily constrained by the shorter line.
+
+This gives us a more accurate model of vertical movement:
+
+```text
+              Preferred Column
+                     │
+                     ▼
+             Attempt target
+                     │
+                     ▼
+             Destination line
+                     │
+             ┌───────┴───────┐
+             │               │
+       Long enough       Too short
+             │               │
+             ▼               ▼
+       Use preferred     Clamp to end
+         column          of line
+```
+
+We will examine this mechanism in detail in the next section.
+
+## Vertical Boundaries
+
+Vertical movement also has document boundaries.
+
+If the Cursor is already on the first line:
+
+```text
+|First line
+Second line
+Third line
+```
+
+pressing Up cannot move it to a nonexistent row:
+
+```text
+cursor_row = -1
+```
+
+It remains on the first line.
+
+Likewise, if the Cursor is on the final line:
+
+```text
+First line
+Second line
+Third line|
+```
+
+pressing Down cannot move it beyond the Document:
+
+```text
+cursor_row = document_line_count
+```
+
+Instead, it remains on the final line.
+
+The vertical boundary rules are therefore:
+
+```text
+First line
+    │
+    │ Up
+    ▼
+   Stop
+
+
+Last line
+    │
+    │ Down
+    ▼
+   Stop
+```
+
+This is the vertical equivalent of the horizontal boundary rules established earlier.
+
+## Empty Lines
+
+Empty lines also need to be handled naturally.
+
+Consider:
+
+```text
+First line
+
+Third line
+```
+
+The second line has no characters.
+
+Its only valid Cursor position is:
+
+```text
+First line
+|
+Third line
+```
+
+If the Cursor moves Down onto this line, its column may need to be temporarily reduced to zero:
+
+```text
+cursor_column = 0
+```
+
+Moving Down again can then attempt to restore the preferred horizontal position on the third line.
+
+This is another situation where the difference between **current column** and **preferred column** becomes important.
+
+## Vertical Movement Does Not Modify the Document
+
+It is also important to remember what vertical movement does **not** do.
+
+Moving the Cursor does not:
+
+- insert characters,
+- delete characters,
+- split lines,
+- merge lines,
+- modify the file,
+- or change the Document contents.
+
+It only changes the Cursor's position within the existing Document.
+
+Conceptually:
+
+```text
+Before movement
+
+Document ──────────────┐
+                       │
+Cursor ────────────────┤
+                       │
+                       ▼
+                 Update position
+                       │
+                       ▼
+Document ──────────────┐
+                       │
+Cursor ────────────────┤
+                       │
+                       ▼
+                 Renderer later
+```
+
+This preserves the separation of responsibilities established by the architecture. The Document owns the text, the Cursor manages the logical editing position, and the Renderer reads the resulting state to display it.
+
+## Complexity
+
+Vertical movement remains a constant-time operation with our vector-of-lines representation.
+
+The editor needs direct access to:
+
+1. the previous or next line,
+2. its length,
+3. the preferred column.
+
+It does not need to scan the entire Document.
+
+Therefore:
+
+```text
+Time complexity:  O(1)
+Space complexity: O(1)
+```
+
+This is another benefit of representing the Document as independently accessible lines. The Cursor can move directly from one line to the next without searching through the document.
+
+## The Vertical Movement Contract
+
+We can now establish the basic contract for Up and Down.
+
+**Up:**
+
+- Move to the previous line.
+- Do not move above the first line.
+- Attempt to preserve the preferred column.
+- Clamp the actual column if the destination line is shorter.
+
+**Down:**
+
+- Move to the next line.
+- Do not move below the last line.
+- Attempt to preserve the preferred column.
+- Clamp the actual column if the destination line is shorter.
+
+In simplified form:
+
+```text
+Up / Down
+    │
+    ▼
+Change row
+    │
+    ▼
+Find destination line
+    │
+    ▼
+Attempt preferred column
+    │
+    ▼
+Destination too short?
+   /        \
+ Yes         No
+  │           │
+  ▼           ▼
+Clamp       Use preferred
+  │           │
+  └─────┬─────┘
+        ▼
+  Valid Cursor State
+```
+
+This gives us a robust starting point, but the preferred-column mechanism deserves closer examination. Without it, vertical navigation through lines of different lengths would feel inconsistent.
+
+## Summary
+
+Vertical movement changes the Cursor's **row** and therefore moves it between lines.
+
+To summarize what we covered:
+
+- **Up** moves to the previous line and **Down** moves to the next line.
+- Unlike horizontal movement, vertical movement cannot simply preserve the column, because **different lines can have different lengths**.
+- A naive solution is to **clamp** the column to the destination line's length, but that causes the **short-line problem**: the Cursor drifts left and never returns to the user's intended column.
+- The fix is the **preferred column**: the position vertical movement is trying to keep, separate from the Cursor's current column.
+- Vertical movement stops at the **first and last lines** of the Document, handles **empty lines** naturally, and **does not modify the Document**.
+- With the vector-of-lines representation, vertical movement remains **O(1)** in time and space.
+
+The row change is simple; the difficulty lies entirely in what column the Cursor should occupy on the destination line.
+
+Continue to **Section 14.7, Preferred Column**, which examines the short-line problem and how the preferred column preserves the user's intended horizontal position during vertical movement.

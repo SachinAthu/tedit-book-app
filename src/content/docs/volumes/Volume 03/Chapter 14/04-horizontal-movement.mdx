@@ -1,0 +1,608 @@
+---
+title: 14.4 Horizontal Movement
+description: Defines Left and Right cursor movement within the current line, including boundary stopping, logical character steps, and preferred-column updates.
+---
+
+The simplest Cursor operations are horizontal movements.
+
+When the user presses the Left or Right Arrow key, the Cursor should move within the current line without changing its row.
+
+For example:
+
+```text
+Hello, world
+     ^
+```
+
+If the Cursor is at column `5`:
+
+```text
+cursor_row    = 0
+cursor_column = 5
+```
+
+pressing Right should produce:
+
+```text
+Hello, world
+      ^
+```
+
+The row remains unchanged:
+
+```text
+cursor_row    = 0
+cursor_column = 6
+```
+
+Likewise, pressing Left moves the Cursor back toward the beginning of the line.
+
+```text
+Hello, world
+      ^
+```
+
+becomes:
+
+```text
+Hello, world
+     ^
+```
+
+The basic rule is therefore straightforward:
+
+```text
+Left  → cursor_column - 1
+Right → cursor_column + 1
+```
+
+However, these operations cannot simply increment or decrement the column indefinitely. The Cursor must always remain within the valid boundaries established in the previous section.
+
+## Moving Left
+
+The leftmost valid Cursor position is column `0`.
+
+Consider:
+
+```text
+|Hello, world
+```
+
+The Cursor is already at:
+
+```text
+cursor_column = 0
+```
+
+If the user presses Left again, there is nowhere else to move within the current line.
+
+The Cursor must remain at column `0`.
+
+```text
+|Hello, world
+```
+
+It must never become:
+
+```text
+cursor_column = -1
+```
+
+Therefore, the rule for Left movement is conceptually:
+
+```text
+if cursor_column > 0
+    move left
+otherwise
+    remain at the current position
+```
+
+This is an example of a **boundary condition**. Cursor movement is not simply arithmetic; every operation must preserve the Cursor invariants.
+
+```text
+0 <= cursor_column <= line_length
+```
+
+## Moving Right
+
+The Right Arrow follows the same principle in the opposite direction.
+
+Consider:
+
+```text
+Hello|
+```
+
+If the line contains five characters:
+
+```text
+line_length = 5
+```
+
+then:
+
+```text
+cursor_column = 5
+```
+
+is already the maximum valid position.
+
+Pressing Right again must not produce:
+
+```text
+cursor_column = 6
+```
+
+Instead, the Cursor remains at the end of the line:
+
+```text
+Hello|
+```
+
+Conceptually:
+
+```text
+if cursor_column < line_length
+    move right
+otherwise
+    remain at the current position
+```
+
+The important point is that the maximum Cursor position is determined by the **length of the current line**.
+
+## Movement Counts Logical Characters
+
+Left and Right move the Cursor by one **logical character**, not by one terminal cell.
+
+Consider:
+
+```text
+A<TAB>B
+```
+
+with cursor positions:
+
+```text
+   A   TAB   B
+|   |     |   |
+0   1     2   3
+```
+
+Starting at the beginning:
+
+```text
+|A<TAB>B
+```
+
+pressing Right moves past `A`:
+
+```text
+A|<TAB>B
+```
+
+Pressing Right again moves past the entire TAB:
+
+```text
+A<TAB>|B
+```
+
+The Cursor jumps across the whole TAB in one step. It does not step through every visual terminal cell that the TAB will occupy on screen.
+
+The line length used by the boundary checks is likewise the number of logical characters in the line. For `A<TAB>B` that length is three, so the valid columns are `0` through `3` — regardless of whether the TAB is later displayed across 2, 4, 7, or 8 cells.
+
+The Cursor Engine therefore does not need the configured tab width. How many cells a TAB occupies is a rendering question, answered later when the logical position is converted into a screen position.
+
+## Horizontal Movement Is Relative to the Current Line
+
+The Cursor's row does not change during ordinary horizontal movement.
+
+Suppose the Document contains:
+
+```text
+First line
+Second line
+Third line
+```
+
+and the Cursor is here:
+
+```text
+Second line
+      ^
+```
+
+Pressing Left or Right changes:
+
+```text
+cursor_column
+```
+
+but not:
+
+```text
+cursor_row
+```
+
+Conceptually:
+
+```text
+Left / Right
+     │
+     ▼
+Change column
+     │
+     └── Row remains unchanged
+```
+
+This makes horizontal movement local to the current line.
+
+Moving between lines is a separate concern that we will address when we examine line boundaries and vertical movement.
+
+## Horizontal Movement and Line Length
+
+Because every line can have a different length, the valid horizontal range changes whenever the Cursor moves to another line.
+
+Consider:
+
+```text
+Short
+A much longer line
+Hi
+```
+
+The valid positions are different for each line:
+
+```text
+Short
+0 1 2 3 4 5
+
+A much longer line
+0 1 2 3 4 ... 17
+
+Hi
+0 1 2
+```
+
+Therefore, the Cursor Engine cannot use a single global maximum column.
+
+It must always consider:
+
+```text
+current_line_length
+```
+
+The rule is:
+
+```text
+0 <= cursor_column <= current_line_length
+```
+
+This is another reason the Cursor needs access to the current Document position and why the Document and Cursor responsibilities must remain distinct. The Document owns the text and therefore determines line length; the Cursor owns the current position within that text.
+
+## The End of the Line Is a Valid Position
+
+The end of a line deserves special attention.
+
+Consider:
+
+```text
+Hello
+```
+
+The Cursor can occupy:
+
+```text
+|Hello
+```
+
+or:
+
+```text
+H|ello
+```
+
+or:
+
+```text
+He|llo
+```
+
+and so on until:
+
+```text
+Hello|
+```
+
+The final position is valid even though there is no character after the Cursor.
+
+This follows directly from the editing-position model established earlier:
+
+```text
+| H | e | l | l | o |
+0   1   2   3   4   5
+```
+
+The Cursor can occupy position `5`.
+
+Therefore, pressing Right moves the Cursor through a sequence of valid positions:
+
+```text
+|Hello
+H|ello
+He|llo
+Hel|lo
+Hell|o
+Hello|
+```
+
+Once it reaches the final position, additional Right presses have no effect.
+
+## The Beginning of the Line Is Also a Valid Position
+
+The same principle applies to the beginning.
+
+The Cursor can occupy:
+
+```text
+|Hello
+```
+
+This is the first valid position in the line.
+
+Pressing Left cannot move it beyond that point.
+
+The complete horizontal range is therefore:
+
+```text
+Beginning                       End
+    │                            │
+    ▼                            ▼
+
+    | H | e | l | l | o |
+    0   1   2   3   4   5
+```
+
+The Cursor moves between these boundaries but never beyond them.
+
+## Horizontal Movement and the Preferred Column
+
+Horizontal movement also has an important relationship with the **preferred column**, which we will examine in detail later.
+
+When the user explicitly moves Left or Right, they are deliberately changing their horizontal position.
+
+For example:
+
+```text
+Hello, world
+     ^
+```
+
+Moving Right changes the desired horizontal position:
+
+```text
+Hello, world
+      ^
+```
+
+Therefore, horizontal movement should update the preferred horizontal position to match the new column.
+
+This is different from vertical movement.
+
+When the user moves Up or Down, the editor may temporarily place the Cursor on a shorter line while preserving the horizontal position the user was trying to maintain.
+
+That distinction will become important when we encounter lines of different lengths.
+
+## What Happens at a Line Boundary?
+
+Consider:
+
+```text
+Hello
+World
+```
+
+with the Cursor at the end of the first line:
+
+```text
+Hello|
+World
+```
+
+What should happen when the user presses Right?
+
+There are two common possibilities.
+
+The first is to keep the Cursor at the end of the current line:
+
+```text
+Hello|
+World
+```
+
+The second is to move it to the beginning of the next line:
+
+```text
+Hello
+|World
+```
+
+Both behaviors are possible in text editors.
+
+This is an important design decision because it affects how users navigate through the document and how the Command Engine interprets horizontal movement.
+
+For our basic editor, we should keep the movement rules explicit rather than allowing one operation to unexpectedly perform two different kinds of movement.
+
+The Cursor Engine should therefore treat the end of the current line as a horizontal boundary. Crossing into another line is a separate movement decision and should be defined explicitly rather than being an accidental consequence of incrementing the column.
+
+This keeps horizontal movement conceptually simple:
+
+```text
+Left / Right
+     │
+     ▼
+Move within current line
+     │
+     ▼
+Stop at line boundary
+```
+
+Vertical movement can then be responsible for changing the row.
+
+## Empty Lines
+
+Horizontal movement must also work correctly on empty lines.
+
+Consider:
+
+```text
+Hello
+
+World
+```
+
+The middle line has length zero.
+
+Its only valid Cursor position is:
+
+```text
+|
+```
+
+or:
+
+```text
+cursor_column = 0
+```
+
+Pressing Left has no effect.
+
+Pressing Right also has no effect.
+
+There is simply no horizontal space to move through.
+
+This may seem trivial, but empty lines are an important boundary case because they demonstrate that the Cursor's valid range is always determined by the current line.
+
+## Horizontal Movement as an Invariant-Preserving Operation
+
+We can now describe horizontal movement more precisely.
+
+For Left:
+
+```text
+cursor_column > 0
+        │
+        ▼
+cursor_column = cursor_column - 1
+```
+
+For Right:
+
+```text
+cursor_column < line_length
+        │
+        ▼
+cursor_column = cursor_column + 1
+```
+
+In both cases:
+
+```text
+0 <= cursor_column <= line_length
+```
+
+must remain true.
+
+This gives us an important engineering principle:
+
+> **A cursor movement operation should never produce an invalid Cursor state.**
+
+The movement operation itself is responsible for respecting the boundaries rather than relying on another component to repair an invalid position afterward.
+
+## Complexity
+
+Horizontal movement is a constant-time operation.
+
+The Cursor only needs to:
+
+1. Read the current column.
+2. Check the appropriate boundary.
+3. Increment or decrement the column when movement is valid.
+4. Update the preferred column.
+
+Therefore:
+
+```text
+Time complexity:  O(1)
+Space complexity: O(1)
+```
+
+The operation does not need to inspect the entire Document.
+
+The only document-related information it needs is the length of the current line when moving Right.
+
+## The Horizontal Movement Contract
+
+We can now establish a simple behavioral contract for horizontal movement.
+
+**Left:**
+
+- Move one position toward the beginning of the current line.
+- Never move below column `0`.
+- Do not change the current row.
+- Update the preferred column.
+
+**Right:**
+
+- Move one position toward the end of the current line.
+- Never move beyond the line length.
+- Do not change the current row.
+- Update the preferred column.
+
+In simplified form:
+
+```text
+              Horizontal Movement
+
+       ┌───────────────┐
+       │ Current Line  │
+       └───────┬───────┘
+               │
+        ┌──────┴──────┐
+        ▼             ▼
+      Left           Right
+        │             │
+        ▼             ▼
+ column > 0      column < length
+        │             │
+        ▼             ▼
+ column -= 1     column += 1
+        │             │
+        └──────┬──────┘
+               ▼
+        Update Cursor
+               │
+               ▼
+       Valid Cursor State
+```
+
+These rules are deliberately small. Good cursor design does not require complicated movement logic for the simplest operations. Complexity appears when we move between lines, particularly when lines have different lengths.
+
+## Summary
+
+Horizontal movement is the simplest Cursor operation: Left and Right shift the column within the current line while the row stays fixed.
+
+To summarize what we covered:
+
+- **Left** moves one position toward the beginning of the line, never below column `0`.
+- **Right** moves one position toward the end of the line, never beyond the current line length.
+- Both move by **one logical character** — a TAB counts as a single character, no matter how many terminal cells it will occupy.
+- The valid range is always `0 <= cursor_column <= current_line_length`, so the maximum depends on the line the Cursor is currently on.
+- Both the beginning and the end of a line are valid positions, including on empty lines.
+- Horizontal movement is **local to the current line**; it stops at line boundaries rather than silently crossing into another line.
+- Horizontal movement updates the **preferred column**, unlike vertical movement.
+- Every movement must be **invariant-preserving**: an operation never produces an invalid Cursor state.
+- The operation is **O(1)** in both time and space.
+
+These rules are deliberately small, and horizontal movement stays simple precisely because it never changes the row.
+
+Continue to **Section 14.5, Crossing Line Boundaries**, which examines what happens when the Cursor reaches the beginning or end of a line and must decide how to move between lines.

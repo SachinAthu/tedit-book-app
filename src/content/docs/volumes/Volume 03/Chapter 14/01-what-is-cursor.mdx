@@ -1,0 +1,336 @@
+---
+title: 14.1 What Is the Cursor?
+description: Defines the cursor as a logical document position, distinguishes it from the terminal cursor, and explains its validity and role in the editor state.
+---
+
+The Document Model answers the question:
+
+> **What text does the editor contain?**
+
+The Cursor answers a different question:
+
+> **Where in that text is the user currently positioned?**
+
+Consider a document containing three lines:
+
+```text
+Hello, world
+This is an editor
+Cursor position
+```
+
+The Document tells us that these three lines exist. The Cursor tells us where the next editing operation will take place.
+
+For example:
+
+```text
+Hello, world
+This is an editor
+       ^
+Cursor position
+```
+
+The cursor is currently positioned somewhere within the second line.
+
+At the conceptual level, we can represent this position using two coordinates:
+
+```text
+cursor_row
+cursor_column
+```
+
+For example:
+
+```text
+cursor_row    = 1
+cursor_column = 7
+```
+
+The row identifies the line within the Document, while the column identifies the horizontal position within that line.
+
+```text
+Document
+│
+├── Line 0: "Hello, world"
+├── Line 1: "This is an editor"
+│                 ^
+│                 └── column 7
+│
+└── Line 2: "Cursor position"
+```
+
+This fits naturally with the document representation selected in Chapter 13. Because the Document is organized as a collection of lines, the cursor can identify a line directly using its row and then identify a position within that line using its column. The vector-of-lines representation was deliberately chosen in part because it maps naturally to this row-and-column model.
+
+## The Cursor Is a Logical Position
+
+It is tempting to think of the cursor as the blinking character that we see on the terminal. That is not quite correct.
+
+The Cursor in our architecture represents a **logical position in the Document**.
+
+The terminal cursor is only the visual representation of that position.
+
+Consider:
+
+```text
+Logical Cursor
+      │
+      │
+      ▼
++-----------------------+
+| Document              |
+|                       |
+| Hello                 |
+| This is an editor     |
+|       ^               |
+| Another line          |
++-----------------------+
+```
+
+The Renderer eventually converts this logical position into a terminal coordinate.
+
+This distinction is important because the Document can be much larger than the visible terminal area.
+
+Suppose the cursor is logically positioned at:
+
+```text
+row    = 500
+column = 20
+```
+
+but the terminal currently displays only lines 480 through 510.
+
+The logical position is still:
+
+```text
+(500, 20)
+```
+
+The terminal position is something else entirely. It depends on the current Viewport.
+
+```text
+Document coordinate
+        │
+        ▼
+   Cursor position
+        │
+        │ Viewport offset
+        ▼
+   Screen coordinate
+        │
+        ▼
+   Terminal cursor
+```
+
+The Renderer is responsible for turning the current Editor State into the visible frame, while the Cursor represents the editing position that exists independently of that rendering process. The runtime model explicitly requires the Renderer to read state rather than modify it.
+
+## Logical Columns Are Not Screen Columns
+
+The logical position also differs from the visual position **horizontally**.
+
+The Document stores Unicode code points. A logical line such as:
+
+```text
+A<TAB>B
+```
+
+contains three logical characters:
+
+```text
+A
+U+0009
+B
+```
+
+The Cursor occupies positions between those logical characters:
+
+```text
+        0   1   2   3
+        A  TAB  B
+         ^   ^   ^
+```
+
+For ordinary characters, a logical column and its visual column often appear to correspond. For TAB they do not. U+0009 is a single logical character, but the terminal may display it across two, four, seven, or eight cells depending on the configured tab width (`tab_width`, Chapter 12).
+
+The Cursor Engine therefore never needs to know that width. It treats the TAB as one logical character — one position to pass over during movement — and leaves the visual question to the Renderer:
+
+```text
+Document column
+      │
+      ▼
+logical character position
+      │
+      ▼
+Renderer
+      │
+      ▼
+screen column
+```
+
+This establishes one of the chapter's central invariants:
+
+> **The Cursor Engine operates in Document coordinates. Visual tab expansion belongs to the Renderer.**
+
+For the same reason, a cursor column is not a UTF-8 byte offset. The Cursor sees logical code-point positions, not the raw bytes that represent them.
+
+## The Cursor Is Not a Selection
+
+Another important distinction is that our basic Cursor does not represent a selected range of text.
+
+Consider:
+
+```text
+Hello, world
+      ^
+```
+
+The cursor identifies a single editing position.
+
+It does not mean:
+
+```text
+Hello, [world]
+```
+
+and it does not represent a range such as:
+
+```text
+start = (0, 6)
+end   = (0, 11)
+```
+
+Selection is a separate concept that a more advanced editor could introduce later.
+
+For the baseline editor, we only need to know where editing occurs.
+
+## The Cursor and Editing Operations
+
+The cursor determines where commands apply.
+
+For example, if the user inserts a character:
+
+```text
+Hello
+   ^
+```
+
+the new character is inserted at the cursor position.
+
+Similarly, Backspace operates relative to the cursor, and Enter splits the current line at the cursor position.
+
+This gives us an important relationship:
+
+```text
+             Cursor
+                │
+                ▼
+          Editing Position
+                │
+        ┌───────┼────────┐
+        ▼       ▼        ▼
+     Insert   Delete    Split
+```
+
+The Cursor itself does not need to know what an insertion or deletion means. Those operations belong to the editing and command logic. The Cursor's responsibility is to maintain a valid position within the Document.
+
+This separation follows the project's architectural principle that each component should have one primary responsibility.
+
+## A Cursor Must Always Be Valid
+
+A cursor cannot be allowed to point to an arbitrary coordinate.
+
+For example, if the Document contains only three lines:
+
+```text
+0: Hello
+1: World
+2: Editor
+```
+
+then this is not a valid row:
+
+```text
+cursor_row = 10
+```
+
+Likewise, if the current line is:
+
+```text
+Hello
+```
+
+the cursor cannot have an arbitrary column such as:
+
+```text
+cursor_column = 100
+```
+
+The Cursor Engine therefore has an important invariant:
+
+> **The Cursor must always represent a valid position within the current Document.**
+
+This invariant will guide every movement operation we design throughout this chapter.
+
+## Cursor State and Editor State
+
+The Cursor does not exist independently of the editor.
+
+It is part of the larger `EditorState`:
+
+```text
+EditorState
+│
+├── Document
+├── Cursor
+├── Viewport
+├── Current File
+├── Dirty Flag
+├── Screen Size
+└── ...
+```
+
+`EditorState` remains the application's single source of truth. The Cursor is the component responsible for the meaning and behavior of cursor-related state. This distinction allows the rest of the system to interact with the cursor without taking ownership of its rules.
+
+For example:
+
+```text
+Input
+  │
+  ▼
+Input Engine
+  │
+  ▼
+Command Engine
+  │
+  ▼
+Cursor movement
+  │
+  ▼
+Editor State
+  │
+  ▼
+Renderer
+```
+
+The Input Handler will eventually tell the system that the user pressed an arrow key. The Input Engine will map that event to a cursor-movement command, and the Command Engine will execute it. The Cursor will then apply the movement rules. Finally, the Renderer will display the resulting position.
+
+This separation gives us a clean architecture:
+
+> **Input identifies what the user did. Commands decide what operation should occur. The Cursor maintains the rules for where the user is positioned. The Renderer displays the result.**
+
+## Summary
+
+The Cursor answers a simple but central question: **where in the Document is the user positioned?**
+
+To summarize what we covered:
+
+- The Cursor is a **logical position** in the Document, not the blinking character on the terminal.
+- It identifies a position with a `cursor_row` and a `cursor_column`.
+- Its column is a **logical character position** within the line, not a terminal screen column or a UTF-8 byte offset.
+- It is **not a selection** — it points to a single editing position.
+- It determines where editing operations such as **Insert**, **Delete**, and **Split** apply.
+- It must **always be valid** within the current Document.
+- It lives inside the larger **Editor State**, alongside the Document, Viewport, and other components.
+
+Now that we know what the Cursor represents, the next section examines how its position is precisely described.
+
+Continue to **Section 14.2, Cursor Coordinates**.

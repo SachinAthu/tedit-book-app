@@ -1,0 +1,160 @@
+---
+title: Chapter 14 — Cursor Engine
+description: Explains how the editor represents and moves the cursor, covering coordinates, preferred columns, line boundaries, and viewport visibility.
+---
+
+## Introduction
+
+A text editor must answer a fundamental question at all times:
+
+> **Where is the user currently editing?**
+
+The Document Model introduced in Chapter 13 answers a different question: **what text exists?** Our document is represented as a collection of lines, giving us a clear structure for accessing and modifying the text. But knowing the contents of the document is not enough. The editor must also know the position at which the next editing operation will occur.
+
+That position is represented by the **Cursor**.
+
+At first, cursor management appears simple. A cursor seems to be nothing more than a row and a column:
+
+```text
+cursor_row    = 3
+cursor_column = 7
+```
+
+If the user presses the Left Arrow key, decrease the column. If the user presses the Right Arrow key, increase it. If the user presses Up or Down, change the row.
+
+However, a real text editor quickly exposes problems that are not obvious from this simple model.
+
+What happens when the cursor reaches the beginning of a line? What happens when it reaches the end? What if the next line is shorter than the current line? What should happen when the user moves vertically through several lines of different lengths? What happens when the cursor moves beyond the portion of the document currently visible on the terminal?
+
+These questions reveal that the Cursor is not merely a pair of integers. It is part of the editor's core behavior.
+
+Consider this document:
+
+```text
+The quick brown fox
+Hi
+The editor is being built
+```
+
+Suppose the cursor is near the end of the first line:
+
+```text
+The quick brown fox
+                  ^
+Hi
+The editor is being built
+```
+
+When the user presses Down, the second line does not contain enough characters to preserve the same horizontal position. The editor therefore needs rules for determining the new position.
+
+A well-designed Cursor Engine must handle these situations consistently while keeping the cursor within the valid boundaries of the Document.
+
+There is another distinction that is especially important for a terminal editor: the **logical cursor** and the **terminal cursor** are not necessarily the same thing.
+
+The logical cursor represents a position in the Document:
+
+```text
+Document position
+
+row    = 10
+column = 25
+```
+
+The terminal cursor represents a position on the visible screen. If the document has been scrolled, the same logical position may appear at a completely different screen coordinate.
+
+```text
+Document
+    │
+    │ logical position
+    ▼
+Cursor
+    │
+    │ affected by Viewport
+    ▼
+Screen position
+    │
+    ▼
+Terminal Cursor
+```
+
+This separation follows the architecture established earlier in the book. `Editor State` is the application's single source of truth, while the Cursor is responsible for representing the logical editing position. The Renderer reads that state and ultimately translates it into something visible on the terminal.
+
+The same rule applies horizontally. The cursor's column counts **logical characters** in the Document line, and characters such as TAB are expanded into terminal cells only later, by the Renderer.
+
+The Cursor Engine therefore sits at an important boundary between the Document, the Viewport, and the eventual rendering system.
+
+This chapter will develop the rules behind that system before we implement them. We will examine horizontal and vertical movement, cursor boundaries, the preferred column, and the relationship between the logical cursor and the Viewport.
+
+The goal is not simply to make the arrow keys work. The goal is to establish a **predictable and well-defined cursor model** that the Input Engine and Command Engine can use later.
+
+That distinction is important because the runtime architecture separates input, commands, state updates, and rendering:
+
+```text
+Keyboard
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Editor State
+    │
+    ▼
+Renderer
+    │
+    ▼
+Terminal
+```
+
+A cursor movement begins as user input, becomes an abstract command, changes the Editor State, and is then reflected visually by the Renderer. The Cursor Engine should therefore not read terminal input or draw anything itself. Its responsibility is to define and manage cursor state and movement.
+
+By the end of this chapter, the reader should understand not only how a cursor moves, but **why cursor movement requires explicit rules and how those rules fit into the architecture of the editor**.
+
+## Learning Objectives
+
+By the end of this chapter, you should be able to:
+
+- Explain what the Cursor represents within a text editor.
+- Distinguish between a logical Document position and a terminal screen position.
+- Represent a cursor using row and column coordinates.
+- Explain the difference between a character position and an insertion position.
+- Explain why every logical character, including TAB, occupies exactly one column of the Cursor's logical position.
+- Define the rules for horizontal cursor movement.
+- Define the rules for vertical cursor movement.
+- Explain why different line lengths make vertical movement more complicated.
+- Understand the purpose of a **preferred column**.
+- Define the boundaries that a valid Cursor position must satisfy.
+- Explain how the Cursor interacts with the Viewport.
+- Understand why keeping the Cursor visible is a responsibility shared by cursor movement and viewport management.
+- Distinguish Cursor behavior from the responsibilities of the Command Engine and Renderer.
+- Identify common cursor-related edge cases such as empty lines, short lines, document boundaries, and long lines.
+- Reason about the time complexity of basic cursor movement operations.
+- Establish a clear behavioral contract that can later be implemented by the `cursor` module.
+
+The central idea of this chapter is simple:
+
+> **The Cursor tells the editor where the next editing operation applies; it does not tell the terminal where to draw.**
+
+Keeping that distinction clear will make the later chapters on Input, Commands, Rendering, and Scrolling considerably easier to understand.
+
+## Sections
+
+- [14.1 What Is the Cursor?](/volumes/volume-03/chapter-14/01-what-is-cursor/)
+- [14.2 Cursor Coordinates](/volumes/volume-03/chapter-14/02-cursor-coordinates/)
+- [14.3 Cursor Position vs Character Position](/volumes/volume-03/chapter-14/03-cursor-vs-character-position/)
+- [14.4 Horizontal Movement](/volumes/volume-03/chapter-14/04-horizontal-movement/)
+- [14.5 Crossing Line Boundaries](/volumes/volume-03/chapter-14/05-crossing-line-boundaries/)
+- [14.6 Vertical Movement](/volumes/volume-03/chapter-14/06-vertical-movement/)
+- [14.7 Preferred Column](/volumes/volume-03/chapter-14/07-preferred-column/)
+- [14.8 When Preferred Column Changes](/volumes/volume-03/chapter-14/08-when-preferred-column-changes/)
+- [14.9 Cursor and the Viewport](/volumes/volume-03/chapter-14/09-cursor-and-viewport/)
+- [14.10 Keeping the Cursor Visible](/volumes/volume-03/chapter-14/10-keeping-cursor-visible/)
+- [14.11 Conclusion](/volumes/volume-03/chapter-14/11-conclusion/)

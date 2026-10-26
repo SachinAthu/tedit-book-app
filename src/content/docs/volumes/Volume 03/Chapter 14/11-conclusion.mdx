@@ -1,0 +1,78 @@
+---
+title: 14.11 Conclusion
+description: Recaps the cursor model and movement contract, then provides review questions, thought experiments, common mistakes, and a preview of the next chapter.
+---
+
+The **Cursor** answers a single question: _where in the Document is the user currently positioned?_ It represents a **logical position** in the Document, not the blinking character on the terminal — the terminal cursor is only a visual representation produced by the Renderer much later.
+
+That logical position is described by two coordinates, `cursor_row` and `cursor_column`. The row identifies a line in the Document, and the column identifies a position within that line. Because the column points _between_ characters, a line of five characters has six valid positions, and the end of a line is just as valid as its beginning. The column counts **logical characters**: a TAB (U+0009) is one logical character and therefore one position of the cursor column, no matter how many terminal cells the Renderer later gives it.
+
+The Cursor must always be valid: `0 <= cursor_row < line_count` and `0 <= cursor_column <= current_line_length`. Every movement operation preserves these invariants rather than leaving another component to repair an invalid position afterward.
+
+Horizontal movement is local to the current line: Left and Right change the column, stop at the line boundaries, and update the preferred column, because the user is deliberately establishing a new horizontal intention. Vertical movement is more subtle because lines have different lengths: Up and Down change the row while attempting to preserve the preferred column, clamping the actual column to the destination line when it is shorter. The preferred column is navigation state — it records the horizontal position the user intends to maintain while moving vertically.
+
+Finally, the Cursor lives in Document coordinates, while the terminal can display only a portion of the Document at a time. The Viewport determines which part is visible and keeps the cursor on screen, and the Renderer translates logical coordinates into screen coordinates. The Cursor remains a logical concept throughout: its behavior belongs entirely to the Cursor module, while the Command Engine decides when cursor operations occur.
+
+The two central design choices — confining horizontal movement to the current line and preserving horizontal intent through a preferred column — are recorded as **ADR-014: Cursor Movement Model**.
+
+## Cursor Movement Rules
+
+The Cursor's movement behavior can now be expressed as a compact contract.
+
+| Operation |         Row |     Current Column | Preferred Column |
+| --------- | ----------: | -----------------: | ---------------- |
+| Left      |   unchanged |        −1, bounded | update           |
+| Right     |   unchanged |        +1, bounded | update           |
+| Up        | −1, bounded | preferred, clamped | preserve         |
+| Down      | +1, bounded | preferred, clamped | preserve         |
+
+These rules form the behavioral contract that the Cursor implementation will later follow.
+
+## Exercises
+
+### Review Questions
+
+1. What is the difference between a logical cursor and a terminal cursor?
+2. Why are there potentially six cursor positions in a five-character line?
+3. Why does a line containing `A<TAB>B` have four cursor positions even though the TAB may occupy several terminal cells?
+4. Why is a preferred column necessary for vertical movement?
+5. Why shouldn't the Renderer own cursor movement?
+6. Why must cursor coordinates be validated?
+7. Why does horizontal movement update the preferred column while vertical movement preserves it?
+
+### Thought Experiments
+
+1. Given the document:
+
+```text
+Hello
+Hi
+Hello World
+```
+
+starting with the cursor at the beginning of the first line (`row = 0`, `column = 0`) and a preferred column of `0`, determine the cursor's `row` and `column` after each step of the sequence `Down`, `Down`, `Right`, `Right`, `Up`, `Down`, `Down`. For each step, state the resulting `current_column` and `preferred_column`.
+
+2. Suppose the user holds the Down key to scroll through a document in which every second line is short. Explain why clamping alone — without a preferred column — causes the cursor to drift left and "stick" to the ends of the short lines. Then describe what a well-behaved editor should do instead.
+
+3. A line of five characters offers six valid cursor positions. Where does the sixth position come from, and why does the editor need it even though there is no character there?
+
+### Design Exercise
+
+1. Write down the invariants that must always be true for a valid `Cursor`. For each invariant, identify one user action that could violate it if the Cursor Engine did not enforce the rule, and explain how the movement logic preserves it.
+
+## Common Mistakes
+
+- Treating the terminal cursor as the editor cursor.
+- Assuming the cursor column is a terminal screen column — the column counts logical characters, and a TAB occupies one logical position regardless of its visual width.
+- Allowing the cursor to move outside the document.
+- Losing the preferred column during vertical movement.
+- Assuming every line has the same length.
+- Mixing document coordinates with screen coordinates.
+- Putting cursor movement logic directly into the Renderer.
+- Making the Command Engine responsible for low-level cursor calculations.
+- Forgetting empty lines and empty documents.
+- Implementing scrolling as part of terminal cursor movement.
+
+## Preview of the Next Chapter
+
+The next chapter moves from **where the user is positioned** to **how the editor understands what the user wants to do**. Chapter 15 introduces the **Input Engine**, which sits between parsed key events and editor commands: it determines which command each input represents and dispatches that command for execution. We will examine input events, key mapping, keyboard shortcuts, and the boundary between low-level terminal input and higher-level editor commands. By the end of the chapter, the input path will be clearly separated from the Cursor and Command Engine, completing another important boundary in the editor's architecture.

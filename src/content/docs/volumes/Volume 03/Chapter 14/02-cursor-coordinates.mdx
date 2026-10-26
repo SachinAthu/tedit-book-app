@@ -1,0 +1,412 @@
+---
+title: 14.2 Cursor Coordinates
+description: Describes cursor positions as zero-based row and column coordinates, including logical character columns, empty lines, and validity invariants.
+---
+
+Now that we understand what the Cursor represents, we need a precise way to describe its position.
+
+For our editor, the simplest representation is a pair of coordinates:
+
+```text
+cursor_row
+cursor_column
+```
+
+Together, these values identify the Cursor's logical position within the Document.
+
+Consider the following document:
+
+```text
+Hello, world
+This is an editor
+Third line
+```
+
+We can identify each line using its row:
+
+```text
+0 → Hello, world
+1 → This is an editor
+2 → Third line
+```
+
+If the Cursor is positioned somewhere on the second line, its row is:
+
+```text
+cursor_row = 1
+```
+
+The column then identifies the horizontal position within that line.
+
+```text
+This is an editor
+       ^
+       column 7
+```
+
+So the complete Cursor position can be represented as:
+
+```text
+cursor_row    = 1
+cursor_column = 7
+```
+
+This row-and-column model fits naturally with our Document representation. Because the Document stores text as a collection of lines, the row identifies which line we need to access, while the column identifies the position within that line. This is one of the reasons the vector-of-lines representation works particularly well for a simple editor.
+
+## Rows
+
+The row identifies a line within the Document.
+
+For example:
+
+```text
+0: First line
+1: Second line
+2: Third line
+3: Fourth line
+```
+
+The Cursor:
+
+```text
+cursor_row = 2
+```
+
+refers to:
+
+```text
+Third line
+```
+
+Rows are zero-based because the underlying data structure is naturally indexed from zero.
+
+This means that if the Document contains `N` lines, the valid row range is:
+
+```text
+0 <= cursor_row < N
+```
+
+For example, a document containing five lines has valid rows:
+
+```text
+0
+1
+2
+3
+4
+```
+
+There is no valid row `5`.
+
+This simple rule becomes important when implementing Up and Down movement later.
+
+## Columns
+
+The column identifies the horizontal position within the current line.
+
+Consider:
+
+```text
+Hello
+```
+
+We can visualize the character positions as:
+
+```text
+H   e   l   l   o
+0   1   2   3   4
+```
+
+At first glance, this might suggest that the cursor can only occupy one of these five positions.
+
+However, an editor cursor represents an **editing position**, not simply the index of a character.
+
+There is therefore an additional position at the end of the line:
+
+```text
+H   e   l   l   o
+0   1   2   3   4   5
+```
+
+The position `5` represents the point immediately after the final character.
+
+This distinction will become especially important when we discuss insertion and deletion.
+
+For now, we can think of the column as representing the position at which the next editing operation applies.
+
+More precisely, the column is a **logical character position**: one column per Unicode code point stored in the line. Every character counts exactly once, including TAB (U+0009).
+
+Consider:
+
+```text
+A<TAB>B
+```
+
+The line contains three code points — `A`, TAB, and `B` — and therefore four cursor positions:
+
+```text
+   A   TAB   B
+|   |     |   |
+0   1     2   3
+```
+
+The TAB counts as one logical character even though the terminal will later display it across several cells. Its visual width is a rendering concern; for the Cursor, U+0009 is a character exactly like `A` or `B`.
+
+The column is also not a byte offset. In a line such as:
+
+```text
+A<TAB>é
+```
+
+the Cursor sees logical code-point positions to step through — `A`, TAB, `é` — regardless of how many UTF-8 bytes each occupies in the file. Bytes belong at the file boundary; the Cursor works in logical character positions.
+
+## Cursor Position as a Pair
+
+The complete logical position is therefore:
+
+```text
+(row, column)
+```
+
+For example:
+
+```text
+(0, 0)
+```
+
+means the beginning of the first line.
+
+```text
+(1, 4)
+```
+
+means a position within the second line.
+
+```text
+(2, 10)
+```
+
+means a position within the third line, provided that the third line is long enough.
+
+We can visualize the coordinates as:
+
+```text
+          columns
+       0 1 2 3 4 5 6
+       ↓ ↓ ↓ ↓ ↓ ↓ ↓
+
+row 0  H e l l o |
+row 1  W o r l d |
+row 2  E d i t o r |
+       ↑
+       row
+```
+
+The Cursor identifies one of these positions.
+
+## Accessing the Current Line
+
+Because the Document is represented as a collection of lines, the current line can conceptually be obtained using the cursor's row:
+
+```text
+document.lines[cursor_row]
+```
+
+The Cursor does not own this text.
+
+It only tells the editor which line is currently active.
+
+For example:
+
+```text
+Document
+│
+├── lines[0] = "Hello"
+├── lines[1] = "World"
+└── lines[2] = "Editor"
+         ▲
+         │
+   cursor_row = 2
+```
+
+The current line is therefore:
+
+```text
+"Editor"
+```
+
+and `cursor_column` tells us where within that line the Cursor is positioned.
+
+This separation is important. The **Document owns the text**, while the **Cursor identifies a position within that text**. The architecture deliberately keeps these responsibilities separate.
+
+## The Cursor Cannot Ignore Line Length
+
+The valid range of `cursor_column` depends on the current line.
+
+Suppose the current line is:
+
+```text
+Hello
+```
+
+Its length is five characters.
+
+The cursor can therefore occupy positions from:
+
+```text
+0
+```
+
+through:
+
+```text
+5
+```
+
+So:
+
+```text
+0 <= cursor_column <= line_length
+```
+
+A value such as:
+
+```text
+cursor_column = 10
+```
+
+would not represent a valid position in this line.
+
+This means cursor validity depends on **both coordinates**:
+
+```text
+cursor_row
+     │
+     ▼
+selects current line
+     │
+     ▼
+line length
+     │
+     ▼
+determines valid cursor_column
+```
+
+The row determines the line, and the selected line determines how far the column may extend.
+
+## Empty Lines
+
+Empty lines demonstrate why the distinction between character positions and editing positions matters.
+
+Consider:
+
+```text
+Hello
+
+World
+```
+
+The second line contains zero characters.
+
+Its length is:
+
+```text
+0
+```
+
+Yet the Cursor still needs a valid position on that line.
+
+That position is:
+
+```text
+cursor_column = 0
+```
+
+Conceptually:
+
+```text
+Hello
+|
+World
+```
+
+There is no character on the empty line, but there is still an editing position where text can be inserted.
+
+Therefore, an empty line does not mean that the Cursor has nowhere to go. It means that its only valid column is zero.
+
+## Cursor Invariants
+
+From these rules, we can establish the basic invariants for the Cursor.
+
+For the row:
+
+```text
+0 <= cursor_row < document_line_count
+```
+
+For the column:
+
+```text
+0 <= cursor_column <= current_line_length
+```
+
+Together:
+
+```text
++----------------------------------+
+|          Valid Cursor            |
+|                                  |
+|  0 <= row < line_count           |
+|                                  |
+|  0 <= column <= current length   |
++----------------------------------+
+```
+
+These invariants are more important than any particular implementation.
+
+Every cursor movement operation must preserve them.
+
+If the user presses Left, Right, Up, or Down, the resulting Cursor must still represent a valid position in the Document.
+
+## Why Explicit Coordinates Matter
+
+Using explicit row and column coordinates gives the rest of the editor a simple interface.
+
+The Command Engine can ask the Cursor to move.
+
+The editing logic can use the Cursor position to determine where an operation applies.
+
+The Renderer can read the Cursor position and translate it into screen coordinates.
+
+The Viewport can determine whether that position is currently visible.
+
+Conceptually:
+
+```text
+                 Cursor
+              /    |    \
+             /     |     \
+            ▼      ▼      ▼
+        Editing  Viewport  Renderer
+        position visibility display
+```
+
+This is another example of the architectural principle established throughout the project: components should have clear responsibilities and communicate through the centralized Editor State rather than creating hidden dependencies between themselves.
+
+The two coordinates may look simple, but they provide the foundation for everything that follows. Once we have a precise definition of a Cursor position, we can begin defining how that position changes when the user moves horizontally or vertically.
+
+## Summary
+
+The Cursor position is described by a pair of coordinates: `cursor_row` and `cursor_column`.
+
+To summarize what we covered:
+
+- The row identifies a line in the Document; the column identifies a position within that line.
+- The column is a **logical character position** — one per code point, including TAB — never a terminal cell count or a UTF-8 byte offset.
+- Explicit coordinates give the **Command Engine**, **editing logic**, **Renderer**, and **Viewport** a simple, shared interface.
+- The Cursor must always satisfy its **validity invariants**: `0 <= row < line_count` and `0 <= column <= current length`.
+- Every movement operation must preserve those invariants.
+
+The two coordinates may look simple, but they provide the foundation for everything that follows. Once we have a precise definition of a Cursor position, we can begin defining how that position changes when the user moves horizontally or vertically.
+
+Continue to **Section 14.3, Cursor Position vs Character Position**, which examines an important detail that is easy to overlook: **a cursor position is not the same thing as a character position**. Understanding that distinction will make insertion, deletion, and line-boundary behavior much easier to reason about later.

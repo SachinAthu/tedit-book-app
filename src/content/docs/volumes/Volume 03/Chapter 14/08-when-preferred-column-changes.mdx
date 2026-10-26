@@ -1,0 +1,217 @@
+---
+title: 14.8 When Preferred Column Changes
+description: Specifies that vertical movement preserves the preferred column while horizontal movement updates it, with a summary table of cursor operations.
+---
+
+The preferred column exists to preserve horizontal intent during vertical movement. For that to work, it cannot change every time the cursor's actual column changes.
+
+This gives the Cursor two related but distinct values:
+
+- **Current column** — the cursor's actual position on the current line.
+- **Preferred column** — the horizontal position that vertical movement attempts to preserve.
+
+The distinction becomes important when the cursor moves through lines of different lengths.
+
+Consider:
+
+```text
+This is a reasonably long line
+Hi
+Another reasonably long line
+```
+
+Suppose the cursor begins at column 20:
+
+```text
+This is a reasonably long line
+                    ^
+```
+
+The state is:
+
+```text
+current_column    = 20
+preferred_column  = 20
+```
+
+Moving down to `Hi` cannot place the cursor at column 20 because that line is only two characters long. The actual cursor therefore moves to column 2:
+
+```text
+Hi
+  ^
+```
+
+But the preferred column remains 20:
+
+```text
+current_column    = 2
+preferred_column  = 20
+```
+
+If the cursor moves down again, the longer line allows column 20 to be restored.
+
+```text
+Another reasonably long line
+                    ^
+```
+
+The important question is therefore: **which operations represent a new horizontal intention?**
+
+## Vertical Movement Preserves the Preferred Column
+
+Up and Down movement should preserve the preferred column.
+
+When moving vertically, the cursor changes rows, but the user's horizontal intent has not changed.
+
+The movement can be described conceptually as:
+
+```text
+preferred_column
+       │
+       ▼
+destination line
+       │
+       ▼
+clamp to line length
+       │
+       ▼
+current_column
+```
+
+For example:
+
+```text
+Line 1: 012345678901234567890
+                            ^
+Line 2: 012
+          ^
+Line 3: 012345678901234567890
+                            ^
+```
+
+The cursor's actual column changes while passing through the short line, but the preferred column remains constant.
+
+Therefore:
+
+- **Up** preserves `preferred_column`.
+- **Down** preserves `preferred_column`.
+
+This is the central rule that gives vertical navigation predictable behavior.
+
+## Horizontal Movement Updates the Preferred Column
+
+Left and Right movement are different.
+
+When the user explicitly moves horizontally, they are expressing a new horizontal intention. The preferred column should therefore be updated to match the cursor's new actual column.
+
+Suppose the cursor is here:
+
+```text
+This is a long line
+                    ^
+```
+
+with:
+
+```text
+current_column    = 20
+preferred_column  = 20
+```
+
+If the user presses Left three times, the cursor moves to column 17:
+
+```text
+This is a long line
+                 ^
+```
+
+The new state becomes:
+
+```text
+current_column    = 17
+preferred_column  = 17
+```
+
+The preferred column has changed because the user deliberately changed the horizontal position.
+
+The same applies to Right movement:
+
+```text
+current_column    = current_column + 1
+preferred_column  = current_column
+```
+
+Thus:
+
+- **Left** updates `preferred_column`.
+- **Right** updates `preferred_column`.
+
+This creates a clear distinction between **vertical movement preserving intent** and **horizontal movement establishing intent**.
+
+## Editing Operations Require a Separate Decision
+
+Editing operations such as insertion, deletion, line splitting, and line merging can also change the cursor's position.
+
+For example, pressing Enter may split a line and place the cursor on a newly created line. Backspace at the beginning of a line may merge two lines and move the cursor to a different position.
+
+These operations clearly affect `current_column`, but their effect on `preferred_column` should be defined as part of the editing semantics rather than assumed from cursor movement alone.
+
+This distinction is useful because the Cursor Engine is responsible for cursor movement, while the Command Engine will later coordinate editing commands and state changes. The project's architecture deliberately separates command execution from the lower-level responsibilities of the Cursor.
+
+For now, the important rule is that **explicit horizontal cursor movement establishes a new preferred column, while vertical movement preserves the existing one**.
+
+The detailed interaction between editing commands and cursor state will be addressed when the Command Engine and editing operations are introduced.
+
+## The Rules at a Glance
+
+The Cursor's preferred-column behavior can therefore be summarized as follows:
+
+| Operation | Current Column            | Preferred Column |
+| --------- | ------------------------- | ---------------- |
+| Up        | Changes, possibly clamped | Preserved        |
+| Down      | Changes, possibly clamped | Preserved        |
+| Left      | Decreases                 | Updated          |
+| Right     | Increases                 | Updated          |
+
+This gives the Cursor a simple and predictable model:
+
+```text
+             Horizontal movement
+                    │
+                    ▼
+           Establish new intent
+                    │
+                    ▼
+             preferred_column
+                    │
+             ┌──────┴──────┐
+             ▼             ▼
+            Up            Down
+             │             │
+             └──────┬──────┘
+                    ▼
+          Preserve horizontal intent
+                    │
+                    ▼
+        Clamp to destination line
+                    │
+                    ▼
+             current_column
+```
+
+The preferred column is therefore not a second cursor position. It is a piece of navigation state that records the horizontal position the user intends to maintain while moving vertically.
+
+## Summary
+
+The preferred column must not change every time the cursor's actual column changes. Otherwise it could not preserve horizontal intent during vertical movement.
+
+To summarize what we covered:
+
+- **Vertical movement** (Up, Down) **preserves** the preferred column; the actual column may be clamped on short lines.
+- **Horizontal movement** (Left, Right) **updates** the preferred column, because the user is deliberately establishing a new horizontal position.
+- **Editing operations** affect the actual column, but their effect on the preferred column is defined as part of editing semantics, not cursor movement.
+- The preferred column is not a second cursor position — it is navigation state recording the horizontal position the user intends to maintain while moving vertically.
+
+The rule in one sentence: **explicit horizontal movement establishes a new preferred column, while vertical movement preserves the existing one.**
+
+Continue to **Section 14.9, Cursor and the Viewport**, which examines where the Cursor is allowed to exist relative to the portion of the Document that the terminal can actually display.
