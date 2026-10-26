@@ -1,0 +1,614 @@
+---
+title: Appendix G — Architecture Decision Records (ADRs)
+sidebar:
+  label: G — Architecture Decision Records
+  order: 7
+---
+
+## ADR-001
+
+Programming Language
+
+Decision:
+
+C
+
+Reason:
+
+Lowest abstraction.
+
+---
+
+## ADR-002
+
+Rendering Strategy
+
+Decision:
+
+Full redraw
+
+Reason:
+
+Simpler implementation. Redrawing the entire screen on every frame avoids the complexity of tracking incremental changes and keeps the renderer a pure function of editor state.
+
+First referenced: Chapter 4, Section 4.5 (Clearing the Screen)
+
+---
+
+## ADR-003
+
+Terminal Input Mode
+
+Decision:
+
+Raw mode (non-canonical)
+
+Reason:
+
+A text editor must respond to individual key presses — including arrow keys, Backspace, Delete, Tab, Escape, and keyboard shortcuts — without waiting for the Enter key. Canonical mode's line buffering, echo, and signal generation prevent this. Raw mode disables these behaviors and delivers every byte directly to the application, making it the only viable input mode for an interactive text editor.
+
+Decision:
+
+Save and restore original terminal settings
+
+Reason:
+
+Raw mode is a temporary operating state, not a permanent configuration change. The editor must save the original `termios` settings before enabling raw mode and restore them before exiting — whether the exit is normal or due to an error. Failing to restore the settings leaves the user's terminal in an unusable state (no echo, no line editing, broken shell). This save-modify-restore pattern applies broadly: any software that temporarily modifies shared system resources should leave them exactly as it found them.
+
+First referenced: Chapter 5
+
+---
+
+## ADR-004
+
+Input Parsing Architecture
+
+Decision:
+
+Separate raw byte parsing from editor logic by introducing a dedicated Input Parser component.
+
+Reason:
+
+Terminal input arrives as an unstructured byte stream containing printable characters, control characters, multi-byte UTF-8 sequences, and variable-length escape sequences — all sharing common prefixes (e.g., ESC). Mixing byte-level parsing directly into editor commands couples the editor to terminal protocol details, making the code harder to maintain, test, and port. A dedicated Input Parser sits between the raw byte stream and the Input Engine, translating terminal-specific byte sequences into abstract key events (`KEY_ARROW_UP`, `KEY_CTRL_S`). This provides a clean boundary: the parser handles terminal protocols; everything above it operates on structured events. The design follows the broader principle of separating low-level implementation details from high-level application behavior. (The Input Engine that consumes these key events is a distinct component between the Input Parser and the Command Engine, introduced later by ADR-015.)
+
+First referenced: Chapter 8
+
+## ADR-005
+
+Layered Architecture
+
+Decision:
+
+Organize the editor into three logical layers:
+
+- Application
+- Core
+- Platform
+
+Reason:
+
+Separates responsibilities and reduces coupling.
+
+First referenced: Chapter 8
+
+## ADR-006
+
+Centralized Editor State
+
+Decision:
+
+Maintain a single EditorState structure that acts as the application's single source of truth.
+
+Reason:
+
+Avoid duplicated state and inconsistent updates.
+
+First referenced: Chapter 8
+
+## ADR-007
+
+State Ownership
+
+Decision:
+
+Each piece of state has exactly one owning component.
+
+Reason:
+
+Improves consistency and simplifies debugging.
+
+First referenced: Chapter 8
+
+## ADR-008
+
+Dependency Direction
+
+Decision:
+
+Dependencies flow toward the Core Layer. Circular dependencies are prohibited.
+
+Reason:
+
+Produces a modular architecture with low coupling.
+
+First referenced: Chapter 8
+
+## ADR-009
+
+Component Responsibilities
+
+Decision:
+
+Each architectural component has one primary responsibility.
+
+Reason:
+
+Follows the Single Responsibility Principle and improves maintainability.
+
+First referenced: Chapter 8
+
+## ADR-010
+
+Module-Based Directory Layout
+
+Decision:
+
+Organize the project into module directories — one per architectural component — with each module's header and source files co-located. Reject the alternative of grouping files by type (all headers in one directory, all sources in another), and reject a flat layout (all `.c` and `.h` files in a single directory).
+
+Reason:
+
+A module-based layout makes the architecture visible in the directory tree. Every architectural component from Chapter 8 becomes a physical directory whose name communicates its responsibility: `input/`, `renderer/`, `document/`, and so on. Co-locating each module's header and source file keeps its public interface and implementation together, making it easier to find, understand, and modify. A flat layout scales poorly as modules are added, and a file-type layout separates a module's interface from its implementation, requiring the developer to navigate two unrelated trees to understand one component.
+
+First referenced: Chapter 10
+
+## ADR-011
+
+Dedicated Common Module
+
+Decision:
+
+Create a `common/` directory with a `common.h` header for shared type definitions, constants, enumerations, and utility macros that are needed by multiple independent feature modules. Explicitly prohibit placing module-specific logic (document operations, rendering functions, cursor movement, file handling) into this module.
+
+Reason:
+
+Without a central shared module, definitions needed by multiple components would either be duplicated — leading to inconsistencies when one copy changes — or placed in an arbitrary module's header, creating an unnecessary dependency. The common module eliminates both problems by providing a single source of truth for genuinely shared infrastructure. The prohibition against module-specific logic prevents the common module from becoming a dumping ground that introduces the very coupling it is intended to eliminate.
+
+First referenced: Chapter 10
+
+## ADR-012
+
+CMake as Build System
+
+Decision:
+
+Use CMake as the project's build system rather than traditional Make, Meson, Ninja, Bazel, or hand-written build scripts.
+
+Reason:
+
+CMake provides cross-platform support (Linux, macOS, Windows, embedded platforms), scales from small educational projects to large production systems, integrates with modern IDEs, and generates native build files from a single project description. This allows the same `CMakeLists.txt` to describe the project regardless of the target platform, avoiding platform-specific build scripts. While CMake introduces its own configuration language, the investment in learning it is offset by eliminating the need to manually track dependencies, compiler flags, and incremental rebuilds as the project grows.
+
+Trade-off: CMake adds an external dependency and a configuration language to learn. For a single-file program, a compiler command would suffice. However, the editor will grow to multiple modules, each with their own source and header files, making manual compilation impractical. CMake is introduced early so that the build system scales with the project rather than being retrofitted later.
+
+First referenced: Chapter 10
+
+---
+
+## ADR-013
+
+Document Representation
+
+Decision:
+
+Represent the document in memory as a **vector of lines** — a collection of independently stored text lines, each holding its own sequence of characters — rather than a single string, a gap buffer, a piece table, or a rope.
+
+Reason:
+
+A text editor constantly works with lines: the cursor has a row and column, the renderer draws one line at a time, pressing Enter splits a line, and Backspace at the start of a line merges it with the previous one. A vector of lines maps these concepts directly onto the data structure, making line operations natural and easy to reason about. It is simple to visualize and debug, matches the cursor's row/column model and the renderer's line-by-line output, and is consistent with the project's requirements, which prioritize simplicity, readability, and educational value over advanced optimization. More sophisticated representations such as gap buffers, piece tables, and ropes offer better performance for certain workloads but hide the text behind additional layers of machinery that are unnecessary for this editor's scope.
+
+Trade-off: The vector of lines does not eliminate the fundamental cost of editing contiguous character sequences. Character insertions and deletions still shift memory within the affected line, so very long lines can be costly to edit, and inserting or deleting lines can require changes to the underlying collection. These limitations are acceptable for the documents our editor is designed to handle. Because the Document's responsibility is well defined (owning the text and nothing else), the representation can be replaced later without changing the higher-level architecture.
+
+First referenced: Chapter 13
+
+Note: The gap buffer alternative is studied in detail in Chapter 26, which examines its layout, invariants, operations, growth, and trade-offs. Chapter 26 Section 9 confirms that adopting a gap buffer would not require redesigning the Document abstraction — the representation is an implementation detail behind the Document's interface. The piece table alternative is studied in detail in Chapter 27, which builds the structure from its two immutable buffers and piece descriptors and examines insertion, deletion, invariants, position lookup, and trade-offs. Chapter 27 Section 13 confirms the same conclusion for a piece table: because the Document abstraction separates higher-level editor behavior from the concrete representation, the representation can be replaced without forcing the Command Engine, Cursor, or Renderer to understand its internals. The project deliberately does not adopt either alternative; the baseline Document remains a vector of lines.
+
+---
+
+## ADR-014
+
+Cursor Movement Model
+
+Decision:
+
+Model the cursor as a logical position — a row and a column — managed by a dedicated Cursor component whose movement is explicit and local. Horizontal movement (Left/Right) is confined to the current line and stops at its boundaries rather than automatically crossing into adjacent lines; vertical movement (Up/Down) changes the row while attempting to preserve a separate preferred column, clamping the actual column to the destination line's length when that line is too short. The column is a logical character position in Document coordinates — one per Unicode code point, including TAB — never a terminal screen column or a UTF-8 byte offset; visual expansion of characters such as TAB is a Renderer concern.
+
+Reason:
+
+Text documents have lines of different lengths, so the cursor cannot naively preserve a single column across vertical movement. Storing only the current column is insufficient: after passing through a short line, the cursor would permanently drift toward the beginning of the line and never return to the user's intended horizontal position. A preferred column records the user's horizontal intent, while the actual column reflects the constraint imposed by the current line. Likewise, confining horizontal movement to a single line keeps the operation's meaning simple — crossing into another line is a separate movement decision, made explicitly rather than as an accidental side effect of incrementing a column.
+
+Trade-off: The preferred column is additional navigation state that must be kept consistent — horizontal movement establishes it, vertical movement preserves it, and editing operations define their own effect on it. This is more complex than tracking a single column, but it is what makes vertical navigation through lines of different lengths behave predictably.
+
+First referenced: Chapter 14
+
+---
+
+## ADR-015
+
+Input Engine
+
+Decision:
+
+Introduce a dedicated Input Engine component between the Input Parser and the Command Engine. The Input Engine maps abstract key events to editor commands and dispatches those commands for execution, without reading raw terminal bytes, parsing escape sequences, or modifying the Document.
+
+Reason:
+
+The Input Parser understands terminal input, and the Command Engine understands how to execute editor operations. Deciding which command a key event represents is a third, distinct responsibility. Folding it into the Input Parser would couple terminal-specific parsing to editor-specific commands; folding it into the Command Engine would couple command execution to the keyboard layout. A dedicated Input Engine completes the input pipeline as three clean stages — read bytes (Input Handler), parse into events (Input Parser), map to commands (Input Engine) — giving each stage one responsibility. It also keeps commands independent of the keys that trigger them: a shortcut is a binding between an input event and a command, so bindings can change (including future configurable shortcuts) without changing the commands themselves.
+
+Trade-off: The Input Engine adds one component and one boundary to the architecture for a mapping that a small editor could perform with a simple `switch` statement. That structural cost is accepted because the boundary — separating input from behavior — is what keeps input handling from accumulating document, cursor, and file responsibilities as the editor grows.
+
+First referenced: Chapter 15
+
+---
+
+## ADR-016
+
+Command Engine
+
+Decision:
+
+Introduce a dedicated Command Engine component that receives commands from the Input Engine, executes them, and coordinates the resulting state changes. Represent each command as a simple value — a command type (an enumeration) plus optional command data — and dispatch commands using a straightforward `switch` statement over the command type, rather than a function-pointer table or a command-object framework.
+
+Reason:
+
+The Input Engine answers "which command does this input represent?", while the Command Engine answers "what should happen when this command executes?". These are distinct responsibilities. Folding command execution into the Input Engine would couple input interpretation to editor behavior, causing the input layer to accumulate knowledge of the Document, Cursor, and File Manager. Distributing command handling across the core components would leave no single place to coordinate the multi-component state transitions that commands such as `INSERT_CHARACTER` require. Representing a command as a value — a type plus optional data — keeps it independent of the input that triggered it, so a shortcut or a future menu system can reach the same command without changing its implementation, while the Document and Cursor retain ownership of their own rules.
+
+Trade-off: The Command Engine adds one component and one boundary for work that a small editor could perform with a `switch` statement in the input path. The simple value representation and switch dispatch are sufficient for the editor's small, fixed command vocabulary, but they do not provide undo/redo, command history, or dynamic registration — capabilities that would require the full Command Pattern, which is deliberately deferred to Chapter 31.
+
+First referenced: Chapter 16
+
+---
+
+## ADR-017
+
+Rendering Model and Frame Representation
+
+Decision:
+
+Use immediate-mode rendering combined with an application-side frame representation. The renderer derives a complete visual frame from the current Editor State on each frame, renders once per event-loop iteration (event-driven rather than a continuous game loop), and represents the completed frame in an in-memory Editor Screen Buffer before converting it into terminal output.
+
+Reason:
+
+Immediate-mode rendering keeps the renderer a read-only consumer of the Editor State: given the same relevant state, the renderer produces the same visual result, with no second persistent visual model to keep synchronized. Rendering once per event reflects the editor's event-driven architecture and avoids the wasted work of a continuously running game loop. Representing the frame in an Editor Screen Buffer separates frame construction from terminal output, so the terminal never observes a partially constructed frame, without turning the rendering system into a full retained-mode framework.
+
+Trade-off: A retained-mode system could avoid reconstructing unchanged regions of the display, but for a small terminal editor the additional state and synchronization complexity is not justified. The Editor Screen Buffer adds a modest, bounded amount of memory proportional to the visible terminal area, accepted in exchange for a simpler, more predictable rendering pipeline.
+
+First referenced: Chapter 17
+
+---
+
+## ADR-018
+
+Screen Buffer Representation
+
+Decision:
+
+Represent the Screen Buffer as a reusable in-memory grid of **screen cells** — one cell per visible terminal position — stored as a contiguous one-dimensional allocation addressed with `index = row × columns + column`. Reject direct terminal output, a string-based frame buffer, separate character and attribute buffers, and a dirty-region buffer as the baseline representation.
+
+Reason:
+
+A terminal screen is a grid of positions, so a cell per position maps directly onto that structure and matches the renderer's row/column access. Each cell can hold the character plus optional visual attributes (foreground, background, attributes) for one position, which a string-based buffer cannot express cleanly. A contiguous one-dimensional allocation preserves the two-dimensional logical model while keeping storage simple and predictable, with memory bounded by terminal dimensions (`O(rows × columns)`) rather than document size. Because the editor uses full redraw, the buffer only needs to represent the current frame, so the same allocation can be reused across rendering cycles — keeping allocation out of the normal rendering path.
+
+Trade-off: The cell buffer stores a cell for every visible position even when much of the screen is empty or unchanged, and full redraw regenerates the entire frame rather than updating only changed regions. These costs are accepted because terminal screens are small and the project prioritizes a simple, predictable rendering pipeline over incremental-rendering optimizations; dirty-region tracking remains a deferred optimization if profiling later justifies it.
+
+First referenced: Chapter 18
+
+---
+
+## ADR-019
+
+Viewport and Scrolling Model
+
+Decision:
+
+Represent the visible region of the document with a Viewport that stores only two integer offsets — `viewport_row`, the first visible document row, and `viewport_column`, the first visible **visual/display column** of the rendered viewport — rather than a copy of the document. Scrolling keeps the Cursor visible by adjusting these offsets, and the editor uses horizontal scrolling (moving `viewport_column` to expose different visual columns of a single long line) instead of soft wrapping. The decision distinguishes the two coordinate spaces explicitly: vertical scrolling is based on logical document rows; horizontal scrolling is based on visual/display columns; `viewport_column` represents the first visible visual column; cursor visibility is determined using the cursor's rendered visual position, not its logical column; the Cursor's logical column remains a Document coordinate; and the Renderer bridges logical positions and visual positions. `viewport_column` is not a UTF-8 byte offset, not a logical Document character index, and not `Cursor.column` — the values coincide only when the rendered line contains no variable-width characters.
+
+Reason:
+
+The terminal can display only a portion of the document, so the editor must record which portion is visible. Storing just two offsets keeps the Viewport's state constant (`O(1)` space), avoids duplicating the document, and makes keeping the cursor visible a matter of a few coordinate comparisons (`O(1)` time). The scrolling system operates on the rendered coordinate space because its purpose is to determine which portion of the terminal screen is visible:
+
+```text
+Document / Cursor ── logical position ──► Renderer ── visual position ──► Viewport / scrolling
+```
+
+Rows and columns therefore follow different coordinate spaces. Document rows map one-to-one to screen rows, so `viewport_row` can count logical rows directly. Horizontal positions do not: a logical column counts Unicode code points, while the terminal displays cells, and characters such as TAB occupy several cells (Chapters 14 and 19). The Renderer owns that logical-to-visual mapping — including the configured tab width — and `viewport_column` is expressed in the visual columns it produces. Scrolling never performs UTF-8 decoding, never computes tab widths, and never modifies the Document; it only consumes the rendered coordinates. On lines without variable-width characters, logical and visual columns coincide, which is why the simpler single-space model appears to work until TABs are introduced. Horizontal scrolling preserves the simple row/column coordinate model established by the Cursor and the Renderer, maintaining a one-to-one mapping between document rows and screen rows. Soft wrapping would break that mapping by spreading a single document row across multiple screen rows, requiring the editor to calculate wrapped screen lines, determine the cursor's visual row, and map screen positions back to document positions. The project requirements also explicitly exclude soft wrapping.
+
+Trade-off: Horizontal scrolling means a very long line cannot be viewed in full at once — the user scrolls horizontally to see later portions of the line, whereas soft wrapping would show the entire line across multiple rows. The two-offset model likewise provides no smooth scrolling, scroll margins, split windows, or independently scrolling views; those features become justified only when the interface itself grows more complex. These costs are accepted for the baseline editor, which prioritizes simplicity, predictable behavior, and educational value over advanced interface behavior.
+
+First referenced: Chapter 20
+
+---
+
+## ADR-020
+
+File Persistence Model
+
+Decision:
+
+Introduce a dedicated File Manager as the single boundary between the editor and the file system, and adopt a full-document persistence model: loading reads the entire file, decodes its UTF-8 bytes into Unicode code points to build the in-memory Document, and saving encodes those code points back into UTF-8 and rewrites the complete document to disk. Reject incremental persistence, memory mapping, and lazy or partial loading as the baseline strategy.
+
+Reason:
+
+The File Manager gives file persistence a single, narrow responsibility (ADR-009), so POSIX file APIs remain localized to one component rather than spreading through the Command Engine, Document, and Renderer. Loading the whole document keeps the editor's core model simple: the Document in memory is the authoritative text being edited, and the file on disk is merely its persistent image. A full save is easy to understand and reason about — the file always receives the complete current state of the Document, avoiding the bookkeeping needed to track which regions changed. This matches the project's priority on simplicity and educational value.
+
+Trade-off: Full-document persistence ties memory usage to the number of code points and load/save time to the number of bytes (UTF-8 decoding on load, encoding on save), so very large files can be slow to load or save and expensive to hold in memory. Incremental persistence or memory mapping could reduce some of these costs but would introduce substantial additional complexity: tracking modified regions, maintaining consistency between memory and disk, and handling partial updates and interrupted writes. For a small, single-document educational editor those costs are not justified, and the model can be revisited if requirements change.
+
+First referenced: Chapter 21
+
+---
+
+## ADR-021
+
+Text Encoding Strategy
+
+Decision:
+
+Store the Document's text as decoded Unicode code points, one code point per element, arranged line by line. Use UTF-8 only at the file boundary: the File Manager decodes UTF-8 bytes into code points when loading and encodes code points back into UTF-8 bytes when saving. Store logical lines without line-ending bytes, recognizing both LF and CRLF on load and writing a single canonical line ending (LF) on save. Every logical line boundary — including the one after the final line — is serialized as LF, so a saved file always ends with a trailing newline. A Document with no lines has no line boundaries to serialize and therefore saves as a zero-byte file, which is consistent with this rule rather than an exception to it.
+
+Reason:
+
+Storing code points gives the Document a fixed-width element per character, so a cursor column, a line length, and a character position are all measured in code points rather than bytes. This removes the byte/character mismatch from inside the Document — cursor movement, insertion, deletion, and length computation all operate directly on characters. UTF-8 remains the encoding of the file on disk because it is compact, ASCII-compatible, and standard on Linux. Keeping the encoding at the boundary confines byte-level concerns to loading and saving, where the File Manager already owns the transfer.
+
+Trade-off: A code point requires up to four bytes of storage even for ASCII text, which stores as one byte in UTF-8, so the in-memory Document can be larger than the file it came from. The editor also gains a decode step on load and an encode step on save. In exchange, the core editing model becomes simpler and more predictable. Full grapheme-cluster handling (combining marks, emoji sequences) is deliberately out of scope: the editor treats one code point as one logical character.
+
+First referenced: Chapter 22
+
+---
+
+## ADR-022
+
+File Safety Strategy
+
+Decision:
+
+Adopt a safe-save strategy in which saving prepares the complete new version of the document in a Temporary File and then commits it by atomically replacing the destination file using a single atomic filesystem operation such as `rename()`. Create the Temporary File in the same directory as the destination so the replacement remains within one filesystem. Keep the Dirty Flag set until the final replacement succeeds, report failures through the Message Bar, and return control to the Event Loop after recoverable errors. A failed save must never make the editor believe the current Document has been successfully saved. Deliberately defer for the baseline editor: durability beyond atomic replacement (such as `fsync()` and directory synchronization), preservation of file metadata (permissions, ownership, timestamps), and automatic crash recovery from leftover Temporary Files.
+
+Reason:
+
+Directly truncating and rewriting the destination can destroy the last valid version if an error occurs before the new contents have been completely written. Preparing the new version separately in a Temporary File moves the risky construction work away from the user's existing file, and requesting an atomic replacement prevents the destination from ever exposing a deliberately partial or missing intermediate state. Keeping the Dirty Flag set until the final replacement succeeds ensures the editor never reports the document as saved when it is not, and continuing the Event Loop after recoverable errors keeps the editor usable. Deferring durability, metadata preservation, and automatic recovery keeps the baseline implementation simple and understandable, consistent with the project's priority on educational value.
+
+Trade-off: The strategy turns each save into a two-phase prepare-and-commit operation, requiring space for a Temporary File, an extra write, and a rename, and a save can now fail at additional steps. It still does not guarantee survival of a power loss, does not preserve the original file's metadata, and does not recover unsaved work after a crash. These costs are accepted in exchange for protecting the last known-good version of the file while a save is in progress.
+
+First referenced: Chapter 23
+
+---
+
+## ADR-023
+
+Search Strategy
+
+Decision:
+
+Adopt direct linear search over the Document as the baseline search strategy, implemented as an editor feature that works with the existing architecture rather than as a separate search system. Search locates a query within the Document and reports each match as a logical Document position paired with a length, leaving cursor movement, Viewport adjustment, and rendering to the components that already own them. The baseline supports literal search, next and previous match navigation, forward and backward direction, optional wrap-around, and incremental search that reuses the same linear search as the query changes; regular-expression matching is supported as an optional, more expressive strategy layered on top of literal search. Introduce a small, temporary Search State — the query, direction, current match, and whether a search is active — owned by the search feature and distinct from the Cursor. Deliberately defer: a search index, cached search results, fuzzy search, a full regex-engine implementation, unrestricted multi-line matching, replace, persistent match highlighting, search history, and multi-document search.
+
+Reason:
+
+Search in an editor is a system feature, not a string-matching function. The Document already owns the text, the Cursor owns the logical position, the Viewport owns the visible region, and the Renderer owns presentation; a search feature that duplicated any of those responsibilities would become a second editor. Linear search keeps the baseline simple: it requires no index, no preprocessing, no additional representation, and no synchronization with a copy of the Document, and it produces results the existing components can consume directly. Incremental search changes the interaction — re-searching as the query changes — but not the underlying algorithm. Regular expressions add expressiveness while still producing the same logical match, so their complexity can be contained inside the search subsystem. Deferring indexes, caching, replace, and other enhancements keeps the feature within the project's scope while leaving room to optimize later behind the same search interface.
+
+Trade-off: Linear search can rescan the same text during repeated searches, and incremental search may perform many searches as the query changes; regex adds pattern-interpretation cost. A search index or cached results could reduce repeated work, but only by introducing additional memory, update costs, and synchronization between two representations of the Document. Optimization is deferred until a measured workload justifies it.
+
+First referenced: Chapter 30
+
+---
+
+## ADR-024
+
+Undo / Redo History Model
+
+Decision:
+
+Adopt operation-based undo/redo history modeled as a two-stack state machine. Keep an **Undo Stack** of performed operations that can be reversed and a **Redo Stack** of undone operations that can be reapplied; each history entry is a self-contained undo record describing the document-changing operation plus the information required to reverse it. Reject snapshot-based history (preserving complete document states) as the baseline strategy. Define the three fundamental transitions explicitly: a new edit pushes onto the Undo Stack and clears the Redo Stack; Undo pops the most recent entry, applies its inverse, and moves the record to the Redo Stack; Redo pops from the Redo Stack, reapplies the original operation, and moves the record back to the Undo Stack. Only document-changing commands enter history; navigation, scrolling, searching, and similar view-level commands do not. Group and coalesce compatible operations so history reflects user-meaningful actions rather than every low-level mutation. Restore the cursor position associated with an edit on undo and redo. Never drive the Dirty Flag from history: the flag reflects whether the current Document matches the saved version, evaluated against the save point (or an equivalent reference state) rather than derived from the undo/redo stacks.
+
+Reason:
+
+Undo requires history, and operation-based records are change-sized rather than document-sized: a small edit to a large document retains only the changed data, whereas a snapshot would copy the entire state. Stacks are the natural representation because operations must be reversed in the opposite order from which they were executed, and the two-stack model provides both backward movement (undo) and forward movement (redo) within a single linear history. Clearing the Redo Stack on a new edit is what keeps history a single linear path rather than a set of disconnected branches, and the state-machine formulation makes that rule explicit and less error-prone. Recording only document-changing commands keeps history meaningful for the user, while grouping and coalescing bridge the gap between the Command Engine's low-level operations and the user's mental model of one action. Restoring cursor position makes undo feel like reversing the user's last edit, and keeping the Dirty Flag independent of history is required for correctness: undoing back to the saved contents should make the document clean even when history is non-empty, and undoing to a still-modified state should leave it dirty.
+
+Trade-off: Operation-based history demands that every record contain all information required to reverse the operation, which is more complex than the conceptually simple but memory-expensive snapshot approach; large insertions or deletions can still produce sizable records. A policy for limiting history (unlimited, maximum operation count, or memory budget) is required so that a long session cannot consume unbounded memory, and discarding the oldest entries permanently removes the ability to undo to those earlier states even though the current Document is unaffected. This replaces the Command Pattern deferral recorded in ADR-016: the editor now retains the information necessary to reverse commands that modify the Document.
+
+First referenced: Chapter 31
+
+---
+
+## ADR-025
+
+Syntax Highlighting Baseline
+
+Decision:
+
+Implement syntax highlighting as derived information built by an analysis pipeline layered on top of the Document, using a stateful Lexer plus lightweight contextual analysis as the baseline. The Lexer produces Tokens that reference document regions by logical position rather than copying text; syntax analysis refines those tokens into semantic Highlight Classes; a Theme maps those classes to Visual Styles; and the Renderer draws the result. The Document remains the single authoritative source of text, so highlighting never modifies the text, never stores colors or escape sequences in the buffer, and can always be discarded and regenerated. Deliberately defer: a full parser or syntax tree, a language server, a semantic type checker, and a generalized incremental parsing framework.
+
+Reason:
+
+Syntax highlighting is an information-processing problem, not a coloring problem. Treating it as derived state preserves the architecture established throughout the book: the Document owns text, the Renderer owns presentation, and highlighting sits between them as analysis. Keeping lexical analysis and rendering independent means language knowledge never leaks into presentation, and semantic Highlight Classes give a stable boundary that Themes can map without forcing analysis to change. A stateful Lexer with lightweight context is enough to demonstrate professional principles without prematurely introducing the complexity of advanced parsing.
+
+Trade-off: The pipeline adds a layer of derived state that must be invalidated and regenerated as the Document changes, and lexical analysis alone cannot resolve every highlighting decision, so some limited contextual rules are needed. More sophisticated approaches—full syntax trees or incremental parsing—would improve correctness and efficiency for large, frequently edited documents, but only at the cost of much greater complexity. The design therefore preserves the boundaries that allow a later upgrade to such approaches without redesigning the Document or Renderer.
+
+First referenced: Chapter 32
+
+---
+
+## ADR-026
+
+Configuration Model
+
+Decision:
+
+Treat configuration as validated policy data owned by Editor State, not behavior. Configuration separates **policy** — how the editor behaves — from **architecture** — how the editor is built. The baseline model uses a single user configuration file overlaid on a complete set of built-in defaults, with an optional command-line override layer applied after the user configuration. Every configurable option must have a valid, conservative default, so the editor never enters normal operation with a missing or invalid value, and a missing configuration file means "no persistent overrides," never "no configuration." Precedence is explicit and resolved before normal editing begins: defaults, then user configuration, then command-line overrides, with the most specific source winning. Configuration is loaded, parsed, and validated once during startup through a single configuration boundary; no module reads or parses the configuration file itself. The resulting `Configuration` is stored in `EditorState` and consumed by the Input Engine (key bindings), the Renderer (theme, display settings), and command-related code (editing settings). Invalid configuration (wrong types, out-of-range values, unknown settings, invalid or conflicting key bindings) produces clear diagnostics, and the baseline fails fast rather than quietly continuing with partial state. Configuration is established during startup and remains fixed for the session; live runtime reload is deliberately deferred. Key bindings map one input event to zero or one command; multiple inputs may map to the same command, but one input may not map to multiple commands. Configuration controls policy only and must never be allowed to redefine architectural boundaries, data structures, or correctness rules.
+
+Reason:
+
+The same architecture must support different preferences — tab width, theme, key bindings — without changing how the editor is built. Placing configuration in `EditorState` as validated data keeps behavior centralized while respecting the single-owner principle: the configuration layer owns parsing and validation, and consuming components own the behavior those policies control. Defaults make configuration optional and predictable, so a first-time user starts from a known baseline and components can assume a complete, valid configuration rather than handling missing values. An explicit precedence rule prevents the undefined behavior that results when different components each decide which source wins. Validating at one boundary, before the Event Loop begins, turns untrusted external input into trusted editor state so internal components operate under stronger assumptions. Fail-fast behavior with clear diagnostics makes configuration mistakes visible and actionable instead of silently producing surprising defaults. As the editor gains commands, binding input events to commands rather than implementations keeps the Input Engine stable regardless of how many shortcuts exist.
+
+Trade-off: A deliberately small configuration surface avoids configuration creep — every option carries the cost of a value, a default, validation, documentation, storage, and consuming code — so options are limited to genuine user-facing policies. Startup-only loading keeps the runtime model simple but defers the flexibility of live reconfiguration (themes applied mid-session, rebinding during input processing, rebuilding derived rendering state), which would add substantial complexity for little benefit in the baseline editor. A single user configuration file avoids the extra precedence and discovery rules of project-local, system-wide, or workspace-scoped configuration, which can be introduced later if requirements justify them.
+
+First referenced: Chapter 33
+
+---
+
+## ADR-027
+
+Multiple Buffer Architecture
+
+Decision:
+
+Adopt a multi-buffer, multi-window architecture in which the editor holds a collection of independently managed editing contexts rather than a single editable document, and define the five concepts the architecture uses consistently. A **Document** holds the logical text being edited. A **Buffer** is the in-memory editing context associated with a Document — distinct from the Text Buffer data structure that represents the Document — and owns buffer-specific state: the Document, its file association, its Dirty Flag, its undo history, and document-derived state such as search and syntax-analysis state. A **View** is the presentation binding between a Buffer and the way it is displayed: a Buffer reference together with view state (the Viewport and the Cursor). A **Window** is a rectangular region of the terminal that hosts a View and owns the View's state. A **Tab** organizes one or more Windows. Classify all editor state into three scopes: editor-wide (configuration, terminal dimensions, the buffer collection, the tab collection, and the window layout), buffer-specific (Document, file association, Dirty Flag, undo history, and document-derived state), and window-specific (geometry, Viewport, Cursor, and displayed Buffer). Introduce a dedicated **Buffer Manager** as the single component responsible for the buffer collection and its lifecycle — creation, lookup, removal, and co-ordinating protection of modified Buffers before destruction — and give it ownership of the collection only, never the internal editing state of each Buffer. Do not store a separate editor-level "active buffer" pointer: the active buffer is a derived value, resolved as the buffer referenced by the active Window in the active Tab. Keep the Cursor and Viewport in the Window rather than the Buffer so that several Windows can display the same Buffer with independent editing positions. Treat switching buffers as a selection operation that never creates, destroys, or copies Buffer state; a Buffer may remain alive while no Window displays it, and only an explicit close ends its lifecycle after unsaved changes are protected.
+
+Reason:
+
+A single-document editor cannot support realistic workflows: users consult one file while editing another, and they sometimes want to view two regions of the same file simultaneously. Merely adding more Documents does not solve the underlying problem, because each editing context carries its own cursor position, modified state, undo history, file association, and derived state, and those must remain associated with it while the user works elsewhere. Multiplicity exposes hidden assumptions in the single-document architecture — state that was global must now be assigned to the correct owner, or switching buffers and sharing documents across Windows produces subtle bugs: a global Dirty Flag cannot represent several documents, a shared Viewport cannot give two Windows different views, and a single "current document" cannot be the target of commands when several editing contexts exist. Classifying state into editor-wide, buffer-specific, and window-specific scopes extends the single-owner principle (ADR-007) to individual editing contexts and visual presentations; the lifetime test — whether state must survive switching buffers, or whether each Window needs its own value — makes the boundary operational rather than abstract. A dedicated Buffer Manager concentrates collection and lifecycle responsibilities behind one boundary (ADR-009), in the same way the Input Engine, Command Engine, and File Manager concentrate their domains, so modules do not each maintain their own view of which Buffers exist. Deriving the active buffer from the active Window avoids a second source of truth that could fall out of sync with what the user sees. Keeping the Cursor and Viewport in the Window is what makes multiple views of one Buffer possible without duplicating the document, and keeping the Buffer alive independently of display preserves the editing context across switching.
+
+Trade-off:
+
+The multi-buffer model introduces more objects and lifecycle management than a single-document design, and retaining many editing contexts costs memory: memory grows with the number and size of Buffers and with their undo histories and derived state, while rendering work depends on the visible Windows rather than the total number of Buffers. Switching is cheap because it changes which Buffer a Window references rather than copying documents, making resource retention a deliberate trade-off of usability for memory. Accepting these costs preserves the simple, predictable ownership boundaries that keep the editor understandable, consistent with the project's priority on educational value.
+
+First referenced: Chapter 34
+
+---
+
+## ADR-028
+
+Testing Strategy
+
+Decision:
+
+Establish a three-level automated testing strategy — unit, integration, and end-to-end — supplemented by manual testing where automation cannot represent the terminal experience. **Unit tests** verify a single component in isolation through its public interface, covering its contract, boundaries, failure behavior, and invariants while requiring as little of the rest of the editor as possible; the Document, Cursor, Viewport, and Input Parser are the primary unit-testing targets. **Integration tests** verify the contracts and state transitions between components — Input Parser to Input Engine, Command Engine to Editor State, File Manager to Document or Buffer, and Renderer to Editor Screen Buffer — testing one meaningful architectural boundary at a time. **End-to-end tests** verify complete user-visible workflows through the assembled editor (open, edit, save, exit; create and save; save failure; unsaved-exit protection; buffer switching), using a controlled pseudo-terminal environment where terminal behavior is part of the test and verifying observable results rather than internal implementation details. **Regression tests** preserve previously established behavior and corrected defects at the lowest level that reproduces each failure. **Failure-case tests** verify that invalid positions, file and save failures, malformed input, invalid configuration, and terminal failures preserve valid state, communicate the failure through the appropriate boundary, and recover where the architecture permits. Tests must be deterministic — given the same initial state and operation sequence, the same result every time — with no dependence on terminal size, timing, keyboard, filesystem, or random state. The suite is organized to mirror the architecture: unit, integration, and end-to-end tests are distinguishable, grouped by component responsibility and user workflow, named for the behavior they protect, isolated from one another and from the developer's environment, and kept close to the contracts they protect. Test doubles are used only to isolate meaningful external boundaries (for example, a controlled file-system boundary when testing save behavior) rather than to avoid testing real components. Invariant tests protect the rules the ownership model requires each component to maintain — Cursor validity, Viewport visibility, parser-state recovery, Dirty Flag preservation on failed saves, and buffer/window state ownership — giving the architecture a direct, verifiable form.
+
+Reason:
+
+Testing turns the editor's correctness from an argued assumption into verifiable evidence. Compilation and manual experimentation alone cannot establish behavioral correctness in a stateful, interactive system, where a defect in any component — input parsing, command execution, Document state, Cursor movement, Viewport scrolling, or rendering — can produce incorrect behavior even when the editor appears to work. The three-level strategy follows the architecture's deliberate separation of responsibilities: because each component owns a narrow contract, behavior can be isolated and tested at its own boundary, and higher-level tests then verify that those contracts integrate correctly. The motto "test behavior at the lowest level that can meaningfully verify it, and use higher-level tests for the interactions lower-level tests cannot cover" concentrates coverage where it is most reproducible and easiest to diagnose while reserving expensive end-to-end tests for complete workflows. Determinism makes failures reproducible, test organization makes the suite itself a form of architectural documentation, and invariant testing reflects the single-owner principle: because ownership defines responsibility, invariants define what that responsibility must preserve.
+
+Trade-off:
+
+A multi-level test suite costs more to write and maintain than manual experimentation alone, and the discipline of determinism, isolation, and named, organized tests demands ongoing care; however, the result is repeatable evidence that protects behavior as the editor grows. Full end-to-end reproduction of every behavior would be slow and hard to diagnose, so the strategy deliberately concentrates coverage at the lower levels while keeping end-to-end tests "few but significant." Determinism and control require fixtures and, where necessary, test doubles; excessive mocking is avoided because tests that verify only the doubles provide false confidence. Manual testing remains necessary for visual, interactive, and exploratory behavior — terminal appearance, cursor placement, resizing, and terminal restoration — that automated tests cannot faithfully represent, so it complements rather than replaces the automated suite.
+
+First referenced: Chapter 35
+
+---
+
+## ADR-029
+
+Debugging and Diagnostics Strategy
+
+Decision:
+
+Treat debugging as the disciplined process of locating the **first incorrect state** — the earliest point along the event-processing pipeline at which reality differs from expectation — and support that process with development-time observability: **assertions** that express editor invariants as executable checks, a **debug build** that keeps assertions active and provides debugging symbols, reduced optimization, diagnostic logging, and optional runtime instrumentation, **logging and tracing** that record events and state transitions while remaining pure observers, and **sanitizer-enabled builds** for memory diagnostics. Debugging must not change program behavior: diagnostics must remain observers, never become owners of Editor State, never create second sources of truth, and never modify state, consume input, alter command execution, or change rendering. A reproduced defect should be reduced to the smallest deterministic sequence and, where practical, preserved as a **regression test**.
+
+Reason:
+
+A terminal editor is stateful, event-driven, split across architectural boundaries, and coupled to a terminal it does not fully control, so a defect can be introduced several stages before its symptom appears. Making program behavior observable turns debugging from visual guesswork into state analysis: assertions expose violated invariants at the point they become false, a debug build preserves that information without changing program semantics, logging and tracing reconstruct what happened in long or intermittent sequences that cannot be paused, and sanitizers convert undefined memory behavior into diagnostics instead of late crashes. Requiring diagnostics to remain observers follows the single-owner principle established in ADR-007: if logs or instrumentation became owners of Editor State, they would introduce second sources of truth that could fall out of sync with what the user sees. Connecting reproduction to regression testing ties debugging directly to the testing strategy of ADR-028, so a corrected defect becomes permanent protection rather than a one-time fix.
+
+Trade-off:
+
+Development-time observability costs build and runtime overhead: assertions, diagnostics, and instrumentation add code and can slow the debug build, and maintaining debug and release configurations is ongoing work. Sanitizer-enabled builds are not production builds and can report errors that occur only under instrumentation. These costs are confined to development and accepted in exchange for finding defects faster and more reliably; the release build omits assertions and diagnostics while preserving all invariants the implementation must maintain even without the checks that detect their violation.
+
+First referenced: Chapter 36
+
+---
+
+## ADR-030
+
+Portability Strategy
+
+Decision:
+
+Treat Linux as the primary reference platform and POSIX-compatible systems as the target environment, with macOS, BSD, Windows, and WSL as portability targets. Contain platform-specific behavior at the platform boundary rather than letting it spread through the Core: the Core (Document, Cursor, Viewport, Editor State) stays platform-independent, while platform-facing components (Terminal Interface, File Manager, Input Handler) absorb the environmental mechanisms. Prefer the most portable interface that satisfies a requirement — the C standard library, then POSIX, then platform-specific APIs — and isolate platform-specific interfaces where they are unavoidable. Use conditional compilation only at the platform boundary to select among implementations, with platform macros (such as `PLATFORM_POSIX` and `PLATFORM_WINDOWS`) centralized at a small number of authoritative locations and compiler-provided macros (such as `_WIN32`) mapped to them there rather than scattered through the source tree. Classify WSL as an execution environment rather than a separate platform: platform selection follows the interfaces available to the running process, not the physical host. Adopt a phased implementation — Linux/POSIX first, then additional POSIX systems (macOS/BSD), then Windows — so portability shapes the architecture without requiring every platform to be implemented at once.
+
+Reason:
+
+A terminal editor depends directly on operating-system and terminal facilities — input, terminal modes, dimensions, file descriptors, filesystem operations — that differ across platforms. Without an explicit boundary, platform-specific code spreads through the editor and each additional platform forces changes in many unrelated modules (ADR-008, ADR-009). Linux as the reference platform provides a concrete environment to develop and validate against, while POSIX provides a common interface shared by Linux, macOS, and BSD; but POSIX compatibility does not guarantee identical behavior, so the boundary must still contain the remaining differences. Preferring the most portable interface that suffices confines platform-specific code to cases where no common interface exists, and localizing conditional compilation to the platform boundary keeps platform selection from becoming a global concern. Classifying WSL by its execution environment prevents the editor from confusing "running on a Windows host" with "using Windows APIs."
+
+Trade-off:
+
+Portability imposes real costs — additional implementations, build configurations, testing environments, and the discipline to avoid non-portable assumptions — and a single reference platform risks accidental Linux-specific assumptions leaking into the Core. The phased approach accepts that Windows support is deferred, and the containment rule (isolate platform differences, do not eliminate them) is what keeps those costs manageable: designing for portability and implementing every platform are treated as distinct tasks.
+
+First referenced: Chapter 37
+
+---
+
+## ADR-031
+
+Build Configuration Strategy
+
+Decision:
+
+Maintain two distinct build configurations of the same editor — a **development build** that maximizes observability and a **release build** that maximizes suitability for users — and express both through the CMake build system rather than reconstructing compiler commands manually. The development build enables debugging symbols, keeps assertions active, provides diagnostic logging and tracing, reduces optimization, and may enable sanitizers, under a strong compiler-warning policy. The release build enables optimization, reduces or separates debug information, typically disables assertions and development diagnostics while retaining the warning policy, and produces the executables used for release artifacts. The source code is identical across configurations; only the build configuration differs. Build configurations are declared and reproducible, generated files live in separate out-of-source build directories, and platform-specific build settings are centralized at the platform boundary in keeping with ADR-030. Sanitizer-enabled builds are a specialized development configuration, distinct from both the ordinary development configuration and the release configuration.
+
+Reason:
+
+Developers and end users need different properties from the same program — observability and diagnosability during development versus efficiency and stability in released software. A single configuration that always carries development instrumentation imposes unnecessary overhead on the released executable, while a configuration that always strips it deprives developers of the information needed to diagnose failures. Because the architecture already centralizes build decisions in CMake (ADR-012), expressing both purposes as declared configurations keeps the build process explicit, repeatable, and reproducible instead of relying on undocumented personal compiler commands. Configurations must not change what the editor is: they mirror the architecture, and the release build must preserve every invariant the implementation must maintain even when the checks that detect violations are absent.
+
+Trade-off:
+
+Maintaining two configurations is ongoing work, and development-time instrumentation adds build and runtime overhead — assertions, logging, and diagnostics enlarge the debug build and slow it — while sanitizer builds impose additional runtime cost and can report errors that occur only under instrumentation. These costs are confined to development and accepted in exchange for finding and correcting defects faster and more reliably; the release build omits instrumentation while remaining correct.
+
+First referenced: Chapter 38
+
+---
+
+## ADR-032
+
+Release and Versioning Strategy
+
+Decision:
+
+Adopt Semantic Versioning (`MAJOR.MINOR.PATCH`) as the release-versioning policy, treating the version as a stable, single source of release identity, and centralize that version so the executable, documentation, release notes, packaging metadata, and release artifacts all agree on one identity. Bind each release version to a specific source state so the release can be traced and rebuilt. Generate release artifacts — installation layout, user-facing documentation, license, and integrity checksums — from the release build through the build system rather than by manually copying files from a developer's machine. Aim for reproducible builds by controlling the source state, build configuration, toolchain, dependencies, and build environment, building from clean out-of-source directories, and recording the build metadata needed to rebuild and verify a release. Distribute through deliberate, platform-appropriate channels, distinguishing a supported platform from a supported distribution channel, and treat publication as a boundary: after publication, a release is an identified historical version, and defects are corrected in development and released as subsequent versions rather than silently patched in the published artifact.
+
+Reason:
+
+A release without an identity cannot be distinguished, maintained, or investigated: users, developers, documentation, bug reports, and distribution systems must be able to determine which version is in use and which source state produced it. Semantic Versioning communicates the significance of changes — incompatible versus backward-compatible — as a convention, while a single source of version across all artifacts prevents the failure where the executable, documentation, and metadata identify different releases. Artifacts generated from release builds through the build system remove the manual copying that introduces forgotten files, stale executables, and wrong versions; reproducible builds allow an independently produced release to be rebuilt and compared with the original; and treating published releases as historical versions preserves the meaning of version numbers when defects are found later. This extends the build strategy of ADR-031 and the portability strategy of ADR-030 into the release process.
+
+Trade-off:
+
+Versioning, release documentation, and reproducibility impose real costs: centralized version propagation, artifact generation, checksum publication, recorded build metadata, and the discipline to verify a release candidate before publication. Reproducibility requires controlling details of the toolchain and environment and may still not achieve byte-for-byte identity across toolchains, and each additional distribution channel adds maintenance work. These costs are accepted because they make the release process repeatable, verifiable, and auditable — the premise that the editor can be handed to users as reliable, packaged software.
+
+First referenced: Chapter 38
+
+---
+
+## ADR-033
+
+Plugin Architecture Strategy
+
+Decision:
+
+Keep plugins deferred from the baseline editor, consistent with the SRS, and when an extension system is eventually introduced, adopt the smallest architecture that adds a deliberate boundary without compromising the core: an in-process model based on dynamic loading, a small versioned plugin ABI, an explicit host-provided API that exposes capabilities rather than internal state, opaque handles for editor-owned resources, and compatibility validation before activation. Treat plugins as trusted code running in-process rather than as sandboxed or strongly isolated extensions, and place dynamic loading behind a platform-isolated loader so the Core reasons about "load, resolve, unload" rather than platform-specific `dlopen` details.
+
+Reason:
+
+A plugin is independently compiled code crossing a boundary into the running editor, so it introduces concerns ordinary internal modules do not have — interface, ABI compatibility, versioning, dynamic loading, lifecycle, failure, and security. Exposing capabilities through an explicit interface rather than the editor's internals keeps the compatibility surface small and lets the editor evolve internally without breaking plugins, consistent with the state-ownership rules of ADR-006 and ADR-007 and the platform-boundary discipline of ADR-030. In-process execution keeps communication a simple function call and matches the editor's priority on simplicity; a process-isolated or sandboxed design would add serialization, IPC, and lifecycle complexity the baseline does not justify.
+
+Trade-off:
+
+In-process plugins provide extension, not fault or security isolation: a faulty or malicious plugin can crash or compromise the editor. Accepting trusted in-process plugins is simpler and faster but shifts the burden of trust to the user, who must install only trusted extensions. A small ABI surface, explicit compatibility checks, and a controlled lifecycle contain the coupling cost, but extensibility still adds real maintenance overhead — which is why plugins remain deferred until independent extension is worth the cost.
+
+First referenced: Chapter 39
+
+---
+
+## ADR-034
+
+Visual-Column Preservation for Vertical Navigation
+
+Decision:
+
+Keep `Cursor.row` and `Cursor.column` as zero-based logical Document coordinates, where each stored Unicode code point—including TAB—occupies one logical column. During vertical movement, preserve a separate preferred visual display column. Map that visual target to the nearest valid logical code-point boundary on the destination line, accounting for configured tab stops and code-point display widths. If a line is shorter, clamp the actual cursor position while retaining the preferred visual column for subsequent vertical movement. Show both the one-based logical column and one-based visual display column in the Status Bar.
+
+Reason:
+
+A tab or wide Unicode code point can occupy multiple terminal columns while remaining one logical Document code point. Preserving only the logical column therefore causes vertical movement to drift visually, and showing only a logical column in the Status Bar hides the cause. A shared text-layout utility keeps Renderer and Cursor calculations consistent without making Cursor depend on Renderer or changing the stored text.
+
+Trade-off:
+
+The Cursor must maintain additional preferred-visual state and map visual targets back to valid logical boundaries. A target inside a tab expansion or wide character cannot be represented exactly; this implementation selects the nearest boundary and resolves ties toward the boundary before the character. This is accepted to preserve stable visual intent while retaining the existing Document model.
+
+Supersedes the preferred-logical-column aspect of ADR-014 for vertical navigation; the logical Document coordinate model remains unchanged.
+
+First referenced: Chapter 54 follow-up — Status Bar and Vertical Navigation Refinement

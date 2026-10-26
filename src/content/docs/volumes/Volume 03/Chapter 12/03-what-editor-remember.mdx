@@ -1,0 +1,210 @@
+---
+title: 12.3 What Information Must Our Editor Remember?
+description: Identifies the document, cursor, viewport, terminal size, file, dirty flag, messages, and configuration the editor tracks.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Now that we understand what application state is and why a text editor is a stateful program, we can answer a practical design question:
+
+> **Exactly what information must our editor remember while it is running?**
+
+Before writing a single line of code, we should identify the pieces of information that define the editor's current condition. Every feature we implement later—moving the cursor, inserting text, scrolling the screen, or saving a file—will depend on this information.
+
+A good way to discover the editor's state is to imagine an editing session and ask what the editor must know at each step.
+
+Suppose you open a file, move the cursor, type a few characters, scroll down several lines, and then save your changes. At every moment during this process, the editor needs to remember multiple pieces of information simultaneously.
+
+Some of these describe the document being edited, while others describe the editor itself.
+
+## The Document
+
+The most obvious piece of information is the document currently being edited.
+
+Without the document, there would be nothing to display or modify.
+
+The editor must know:
+
+- The text currently in memory
+- How the text is organized
+- Which lines exist
+- The contents of each line
+
+At this stage, we are only concerned with **what** must be stored—not **how** it will be represented. We will explore different document data structures in Chapter 13.
+
+## The Cursor
+
+The editor must always know where the next editing operation will occur.
+
+If the user types a character, presses Backspace, or hits Enter, the editor needs to know exactly where to apply that operation.
+
+The cursor therefore maintains the current editing position within the document.
+
+```text
+Hello, World!
+      ^
+      Cursor
+```
+
+Whenever the cursor moves, this information becomes part of the editor's state.
+
+## The Viewport
+
+Documents are often much larger than the terminal window.
+
+If a file contains thousands of lines, only a small portion can be displayed at one time.
+
+The editor therefore needs to remember **which part of the document is currently visible**.
+
+```text
+Entire Document
++----------------------+
+| Line 1               |
+| Line 2               |
+| Line 3               |
+| ...                  |
+| Line 500             |
+| ...                  |
+| Line 1000            |
++----------------------+
+
+        │
+        ▼
+
+Viewport
++----------------------+
+| Line 496             |
+| Line 497             |
+| Line 498             |
+| Line 499             |
+| Line 500             |
++----------------------+
+```
+
+Without this information, the renderer would not know which lines to draw.
+
+## The Terminal Size
+
+The renderer also needs to know the dimensions of the terminal window.
+
+For example:
+
+```text
+Rows    : 40
+Columns : 120
+```
+
+The available screen size determines:
+
+- How many document lines are visible
+- Where the status bar is drawn
+- How much horizontal space is available
+
+If the terminal window is resized, this part of the editor state must be updated accordingly.
+
+## The Current File
+
+The editor also remembers which file is currently associated with the document.
+
+This information is needed whenever the user saves the document.
+
+For example:
+
+```text
+Current File
+
+notes.txt
+```
+
+If the user starts the editor without opening an existing file, there may be no associated filename yet. In that case, the editor must remember that the document is currently unnamed.
+
+## The Modified State
+
+As soon as the user changes the document, the editor must remember that the in-memory document no longer matches the file stored on disk.
+
+This information is commonly represented by a **dirty flag**.
+
+```text
+Dirty Flag
+
+false  →  Document matches disk
+
+true   →  Unsaved changes exist
+```
+
+This allows the editor to:
+
+- Display that the document has been modified
+- Warn the user before exiting
+- Avoid unnecessary save operations
+
+## Status Messages
+
+Editors often provide temporary feedback to the user.
+
+For example:
+
+```text
+File saved successfully.
+
+Cannot open file.
+
+Search completed.
+```
+
+Although these messages are only displayed briefly, they are still part of the editor's runtime state because the renderer needs to know what message should currently appear on the screen.
+
+## Configuration
+
+Finally, the editor maintains various settings that influence its behavior.
+
+Examples include:
+
+- Tab width
+- Display preferences
+- Feature options
+
+Tab width controls how the Renderer expands TAB characters (Chapter 19); changing it never modifies the Document.
+
+Our initial implementation will keep configuration intentionally simple, but designing a place for it now makes future extensions much easier.
+
+## Bringing Everything Together
+
+If we combine all of these pieces, we arrive at a high-level view of the information our editor must maintain throughout an editing session.
+
+```text
+Editor State
+│
+├── Document
+├── Cursor
+├── Viewport
+├── Screen Size
+├── Current File
+├── Dirty Flag
+├── Status Message
+└── Configuration
+```
+
+Notice that every item in this list describes **the current condition of the editor**. None of these components performs work on its own. Instead, they simply represent information that other parts of the system read and update as the user interacts with the editor.
+
+These are not arbitrary choices. Together, they capture everything the editor needs to know to continue an editing session correctly from one event to the next.
+
+## Persistent and Transient State
+
+Not all state is created equal. Some pieces of information map to data that exists outside the editor, while others have meaning only during the editing session itself.
+
+**Persistent state** represents information that corresponds to data stored on disk. The **Document** is backed by a file, and the **Configuration** can be saved between sessions so that user preferences persist across launches. These components have a life beyond the current editor session — they describe information that may be written out and read back later.
+
+**Transient state** describes the editing session itself and has no meaning once the editor exits. The **Cursor** position, **Viewport**, **Dirty Flag**, **Status Message**, **Screen Size**, and **Current File** name all exist solely while the editor is running. They describe *where* the user is working, *what* is visible, *whether* changes are pending, and *how* the terminal is configured — information that is meaningful only within the context of an active editing session.
+
+Understanding this distinction clarifies why not all of the Editor State is saved when the user writes a file. Saving captures the document's contents, but the cursor position, viewport, and status message remain in memory — they are part of the editing experience, not the document itself.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+It is tempting to think of a text editor as "just a document with a cursor." In reality, the document is only one part of the application's state. Features such as scrolling, status messages, terminal resizing, and file management all require additional information that exists independently of the document itself. Recognizing these distinct responsibilities early leads to a cleaner and more maintainable architecture.
+
+</Aside>
+
+## Summary
+
+The Editor State consists of all the information the editor must remember while it is running. This includes the document, cursor position, viewport, terminal dimensions, current file, modified status, status messages, and configuration. Together, these pieces describe the complete runtime condition of the application. In the next section, we will see how these pieces are combined into a single, well-organized **EditorState structure** that serves as the foundation for the editor's design.

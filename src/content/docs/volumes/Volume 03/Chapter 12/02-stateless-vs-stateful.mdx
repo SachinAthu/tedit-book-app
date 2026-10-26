@@ -1,0 +1,192 @@
+---
+title: 12.2 Stateless vs Stateful Programs
+description: Contrasts one-shot stateless programs with long-running stateful programs, and explains why a text editor is stateful.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Now that we understand what **application state** is, we can divide programs into two broad categories:
+
+- **Stateless programs**
+- **Stateful programs**
+
+Understanding this distinction helps explain why a text editor requires a carefully designed runtime model while many simpler programs do not.
+
+## Stateless Programs
+
+A **stateless program** performs a task using the information it receives, produces a result, and then terminates without needing to remember anything afterward.
+
+Consider the following program:
+
+```c
+#include <stdio.h>
+
+int main(void)
+{
+    printf("Hello, World!\n");
+    return 0;
+}
+```
+
+When this program runs, the sequence of events is straightforward:
+
+```text
+Program Starts
+      │
+      ▼
+Print "Hello, World!"
+      │
+      ▼
+Program Exits
+```
+
+The program performs a single operation and then ends. Once it exits, all of its data disappears from memory. If you run it again, it starts from exactly the same initial state as before.
+
+Another example is a simple unit conversion program:
+
+```text
+Input: 100 centimeters
+
+↓
+
+Convert to meters
+
+↓
+
+Output: 1 meter
+
+↓
+
+Exit
+```
+
+The program does not need to remember previous conversions or maintain any ongoing information. Each execution is completely independent of the last.
+
+Many command-line utilities follow this model. They receive input, process it, produce output, and terminate.
+
+## Stateful Programs
+
+A **stateful program**, on the other hand, remains active and continuously responds to new events. To do this correctly, it must remember what has already happened.
+
+Consider a music player.
+
+While it is running, it needs to remember information such as:
+
+- Which song is currently playing
+- The current playback position
+- Whether playback is paused
+- The current volume level
+- The active playlist
+
+Every user action modifies part of this information.
+
+```text
+Play
+    │
+    ▼
+Current Song Updated
+
+Pause
+    │
+    ▼
+Playback State Updated
+
+Volume Up
+    │
+    ▼
+Volume Level Updated
+```
+
+If the application forgot this information after every button press, it would behave unpredictably. Pressing **Pause** would make no sense if the player had already forgotten which song was playing.
+
+Video games provide another familiar example.
+
+As the player explores the game world, the program continuously updates information such as:
+
+```text
+Game State
+│
+├── Player position
+├── Health
+├── Inventory
+├── Active quests
+└── Enemy locations
+```
+
+Every frame of the game depends on the state produced by the previous frame. The game world evolves continuously because the application remembers what has already happened.
+
+## Why a Text Editor Is Stateful
+
+A text editor behaves much more like a game or a music player than a simple command-line utility.
+
+Suppose you open a file containing:
+
+```text
+Hello
+World
+```
+
+You move the cursor to the end of the first line and type an exclamation mark.
+
+The editor must immediately remember that:
+
+- The document contents have changed.
+- The cursor has moved one position to the right.
+- The document now contains unsaved changes.
+- The screen may need to be redrawn.
+
+After a single key press, the editor's state becomes:
+
+```text
+Editor State
+│
+├── Document updated
+├── Cursor position updated
+├── Dirty flag set
+└── Display requires refresh
+```
+
+When you press the next key, the editor does not start over from the beginning. Instead, it continues from the state created by the previous operation.
+
+This continuous evolution of state is what makes interactive applications possible. Every user action builds upon the results of the previous one, allowing the editing session to progress naturally.
+
+## The Editor as a Long-Running Program
+
+Unlike a stateless utility that performs one task and exits, a text editor typically runs for minutes or even hours.
+
+During that time, it repeatedly performs the same cycle:
+
+```text
+Wait for Input
+      │
+      ▼
+Update Editor State
+      │
+      ▼
+Redraw the Screen
+      │
+      ▼
+Wait for the Next Input
+```
+
+Each iteration begins with the state produced by the previous iteration. The editor is therefore constantly evolving, with every key press modifying some part of its internal state.
+
+This long-running, event-driven behavior is one of the defining characteristics of interactive software and is the reason why designing a clear and well-organized **Editor State** is so important.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Being stateful does not simply mean "storing variables." It means that the program's future behavior depends on its current condition. Two users pressing the same key can produce completely different results because the editor's state is different.
+
+For example, pressing **Backspace**:
+
+- At the beginning of a line may merge two lines.
+- In the middle of a line deletes a character.
+- In an empty document may do nothing.
+
+The key press is identical in every case, but the outcome depends entirely on the current Editor State.
+
+</Aside>
+
+## Summary
+
+Stateless programs perform a task and terminate without remembering previous work. Stateful programs remain active and continuously update their internal state as they respond to events. A text editor is a stateful application because every editing operation depends on the current document, cursor position, viewport, and other runtime information. In the next section, we will identify exactly what information our editor must remember throughout an editing session.

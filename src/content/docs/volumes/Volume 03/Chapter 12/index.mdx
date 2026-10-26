@@ -1,0 +1,40 @@
+---
+title: Chapter 12 — Editor State
+description: How the editor's runtime state is defined, composed, owned, and updated during an editing session.
+---
+
+## Introduction
+
+Every interactive application carries with it an invisible burden. At any given moment, the program must remember enough about its current condition to continue operating correctly when the next event arrives. A calculator must recall the value being displayed. A music player must know which song is playing and whether it is paused. A video game must track player health, enemy positions, and the current level.
+
+This accumulated information is the application's _runtime state_. Although it exists only while the program is executing, it is just as important as the executable code itself. Without it, the program has no memory of what has already happened and no way to decide what should happen next.
+
+A text editor faces a particularly interesting version of this problem. Open a file, move the cursor, insert characters, scroll through the document, and then save your changes. At every step, the editor must simultaneously remember the document being edited, the current cursor position, the visible portion of the document, the dimensions of the terminal window, the name of the associated file, whether unsaved changes exist, and which status message should be displayed.
+
+All of this information must live somewhere.
+
+Scattering it across the application in disconnected variables leads to bugs, inconsistency, and code that is difficult to extend. Instead, our architecture brings it together into a single, well-organized structure: the **Editor State**. This chapter explores what the Editor State is, why it is essential, the information it must contain, and the design principles that keep it clean and maintainable as the editor grows.
+
+## Learning Objectives
+
+By the end of this chapter, readers should be able to:
+
+- Explain what application state is.
+- Distinguish persistent data from temporary state.
+- Identify the information the editor must maintain.
+- Understand why the Editor State is the application's single source of truth.
+- Design the top-level `EditorState` structure.
+- Understand ownership of state.
+- Prepare for implementation in later chapters.
+
+## Sections
+
+- [12.1 What Is Application State?](/volumes/volume-03/chapter-12/01-application-state/)
+- [12.2 Stateless vs Stateful Programs](/volumes/volume-03/chapter-12/02-stateless-vs-stateful/)
+- [12.3 What Information Must Our Editor Remember?](/volumes/volume-03/chapter-12/03-what-editor-remember/)
+- [12.4 Designing the EditorState Structure](/volumes/volume-03/chapter-12/04-designing-editor-state-structure/)
+- [12.5 Understanding Each Part](/volumes/volume-03/chapter-12/05-understanding-each-part/)
+- [12.6 State Ownership](/volumes/volume-03/chapter-12/06-state-ownership/)
+- [12.7 How State Changes During Editing](/volumes/volume-03/chapter-12/07-state-change-rendering/)
+- [12.8 Designing for Growth](/volumes/volume-03/chapter-12/08-designing-for-growth/)
+- [12.9 Conclusion](/volumes/volume-03/chapter-12/09-conclusion/)

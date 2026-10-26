@@ -1,0 +1,282 @@
+---
+title: 12.7 How State Changes During Editing
+description: Traces how a single input event updates several parts of the Editor State before the renderer draws a frame.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Up to this point, we have viewed the **Editor State** as a collection of information that describes the current condition of the editor. However, the Editor State is not static. It changes continuously as the user interacts with the application.
+
+Every key press, mouse movement (in future versions), terminal resize, or file operation causes some part of the Editor State to change.
+
+Understanding **how** these changes occur is just as important as understanding **what** information is stored.
+
+## Editing Is a Sequence of State Changes
+
+From the user's perspective, editing appears to be a simple activity.
+
+They press a key.
+
+A character appears on the screen.
+
+The cursor moves.
+
+The editor immediately feels responsive.
+
+Internally, however, much more is happening.
+
+A single key press triggers a chain of operations that update several parts of the Editor State before anything is drawn on the screen.
+
+For example, suppose the user types the character **A**.
+
+```text
+Keyboard
+
+↓
+
+"A"
+```
+
+Although only one key was pressed, multiple parts of the application participate in handling that event.
+
+## From Input to State
+
+The editor processes input through a well-defined sequence of steps.
+
+```text
+Keyboard
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Editor State
+```
+
+Each component has a specific responsibility.
+
+- The **Input Handler** reads raw bytes from the terminal.
+- The **Input Parser** converts those bytes into an abstract key event.
+- The **Input Engine** maps that event to an editor command.
+- The **Command Engine** executes that command.
+- The **Editor State** is updated accordingly.
+
+Notice that **none of these components draw the screen**.
+
+Their only responsibility is to determine what changed.
+
+This is the same event-processing pipeline introduced in Chapter 9 and formalized in the Runtime Model.
+
+## One Event, Multiple State Changes
+
+Typing a character rarely changes just one piece of state.
+
+Suppose the document initially contains:
+
+```text
+Hell|
+```
+
+(The vertical bar represents the cursor.)
+
+The user presses **o**.
+
+The document becomes:
+
+```text
+Hello|
+```
+
+Although the visible result appears simple, several pieces of state have changed.
+
+```text
+Editor State
+│
+├── Document       ✓ Updated
+├── Cursor         ✓ Moved
+├── Dirty Flag     ✓ Set
+├── Status Message Unchanged
+├── Viewport       Unchanged
+└── Screen Size    Unchanged
+```
+
+The document now contains an additional character.
+
+The cursor has advanced by one position.
+
+The Dirty Flag indicates that the document no longer matches the file on disk.
+
+Other parts of the Editor State remain unchanged because this particular operation does not affect them.
+
+This demonstrates an important idea:
+
+> **A single user action may update multiple parts of the Editor State.**
+
+## Rendering Happens Afterwards
+
+After all necessary state updates have completed, the renderer generates a new frame.
+
+```text
+Keyboard
+    │
+    ▼
+Update Editor State
+    │
+    ▼
+Render Frame
+    │
+    ▼
+Terminal
+```
+
+Notice the order carefully.
+
+The renderer **never** updates the Editor State.
+
+Instead, it simply reads the current state and produces a visual representation.
+
+This is one of the core architectural principles of our editor.
+
+The Runtime Model defines this execution order explicitly:
+
+```text
+Event
+    │
+    ▼
+Execute Command
+    │
+    ▼
+Update Editor State
+    │
+    ▼
+Render Frame
+```
+
+Rendering always occurs **after** state updates have completed.
+
+## Another Example: Moving the Cursor
+
+Not every event modifies the document.
+
+Suppose the user presses the **Left Arrow** key.
+
+Initially:
+
+```text
+Hello|
+```
+
+After the key press:
+
+```text
+Hell|o
+```
+
+This operation produces a different set of state changes.
+
+```text
+Editor State
+│
+├── Document       Unchanged
+├── Cursor         ✓ Updated
+├── Dirty Flag     Unchanged
+├── Viewport       Maybe Updated
+└── Screen Size    Unchanged
+```
+
+Only the cursor position changes.
+
+If the cursor moves outside the visible window, the viewport may also need to change so that the cursor remains visible.
+
+The document itself remains exactly the same.
+
+Different user actions therefore affect different parts of the Editor State.
+
+## Saving the Document
+
+Saving illustrates another kind of state transition.
+
+When the user presses **Ctrl+S**, the document itself does not change.
+
+Instead, the File Manager writes the existing document to disk.
+
+After a successful save:
+
+```text
+Editor State
+│
+├── Document       Unchanged
+├── Cursor         Unchanged
+├── Dirty Flag     ✓ Cleared
+├── Status Message ✓ Updated
+└── Current File   Unchanged
+```
+
+The document contents remain identical.
+
+Only the metadata surrounding the editing session changes.
+
+This demonstrates that not every operation modifies the document itself.
+
+Some operations modify only the editor's runtime state.
+
+## Every Event Follows the Same Pattern
+
+Although different events update different parts of the Editor State, they all follow the same overall sequence.
+
+```text
+Wait for Event
+      │
+      ▼
+Parse Input
+      │
+      ▼
+Execute Command
+      │
+      ▼
+Update Editor State
+      │
+      ▼
+Render Frame
+      │
+      ▼
+Wait for Next Event
+```
+
+This cycle repeats for every key press throughout the lifetime of the editor.
+
+The application spends almost all of its execution inside this loop, processing one event after another. This event-driven execution model is the foundation of the editor's runtime behavior.
+
+## Why This Matters
+
+Understanding this sequence helps explain many of the architectural decisions introduced in earlier chapters.
+
+For example:
+
+- The **Command Engine** performs editing operations.
+- The **Editor State** stores the results of those operations.
+- The **Renderer** visualizes the current state.
+- The **File Manager** persists the document when requested.
+
+Each component performs one well-defined task before passing control to the next.
+
+Because responsibilities are clearly separated, the flow of execution remains predictable and easy to understand.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A common mistake when designing interactive applications is to let components modify the screen directly while processing events. For example, a command might insert a character **and** immediately draw it on the terminal. At first this seems efficient, but it quickly leads to inconsistent rendering because different commands begin drawing different parts of the interface. By updating the Editor State first and rendering only after all changes are complete, every frame becomes a complete and consistent representation of the application's current state. This design naturally supports the full-screen redraw strategy adopted by our editor (ADR-002).
+
+</Aside>
+
+## Summary
+
+Editing is fundamentally a sequence of state transitions. Every user action is mapped to a command by the Input Engine, the Command Engine executes that command to update the appropriate parts of the Editor State, and only then does the Renderer generate a new frame. Different events modify different pieces of state, but every operation follows the same execution model: **process the event, update the state, and render the result**. This predictable workflow forms the foundation of the editor's runtime behavior. In the next section, we will see how designing the Editor State for growth keeps the architecture open to future features without requiring a fundamental redesign.

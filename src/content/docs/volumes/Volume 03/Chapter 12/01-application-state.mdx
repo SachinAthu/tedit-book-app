@@ -1,0 +1,76 @@
+---
+title: 12.1 What Is Application State?
+description: Defines application state as the runtime information a program must retain to keep operating correctly.
+---
+
+Before we can design the internal data structures of our editor, we need to answer a more fundamental question:
+
+> **What information must the editor remember while it is running?**
+
+The answer to this question is known as the application's **state**.
+
+Application state is the collection of information that describes the current condition of a program at any given moment. It represents everything the program needs to know in order to continue operating correctly.
+
+Every non-trivial program maintains some form of state. Even if it is not immediately visible, the program is constantly storing information about what has already happened and what should happen next.
+
+For example, consider a simple calculator application. At any given time, it needs to remember information such as:
+
+- The current value being displayed
+- The selected arithmetic operation
+- Any value stored in memory
+
+Without this information, the calculator would have no way to continue a calculation after each button press.
+
+Likewise, a video game maintains a much larger amount of state throughout its execution.
+
+```text
+Game State
+│
+├── Player position
+├── Player health
+├── Score
+├── Enemy locations
+├── Inventory
+└── Current level
+```
+
+Every action performed by the player changes part of this state. Moving the character updates the player's position, collecting an item updates the inventory, and defeating an enemy changes the score. The game continuously remembers these values so that the world remains consistent from one frame to the next.
+
+A text editor is no different. Although it appears much simpler than a game, it must also remember a significant amount of information while it is running.
+
+For example, the editor needs to know:
+
+- Which document is currently open
+- Where the cursor is located
+- Whether the document has been modified
+- Which portion of the document is visible on the screen
+- What status message should be displayed
+- The current size of the terminal window
+
+Together, these pieces of information describe the complete state of the editor at a particular instant.
+
+Unlike a file stored on disk, application state exists only while the program is executing. As the user interacts with the editor—typing characters, moving the cursor, scrolling through the document, or saving changes—the state is continuously updated to reflect the current editing session.
+
+A useful way to think about application state is to imagine that the program is paused at an arbitrary moment. To resume execution exactly where it left off, the program would need to know everything about its current condition.
+
+For a text editor, this includes information such as:
+
+```text
+Editor State
+│
+├── Document contents
+├── Cursor position
+├── Viewport position
+├── Current file
+├── Modified status
+├── Screen dimensions
+└── Status message
+```
+
+If all of this information were preserved, the editor could continue operating as though it had never been interrupted. If any part were missing—for example, the cursor position or the viewport—the editor would no longer know where the user was working, leading to inconsistent or incorrect behavior.
+
+Throughout the remainder of this volume, we will refer to this collection of runtime information as the **Editor State**. Rather than scattering related data throughout the application, our editor will maintain a single, well-defined structure that represents the complete state of the program. This design keeps the architecture organized, makes the flow of data easier to understand, and provides a solid foundation for every feature we implement in later chapters.
+
+## Summary
+
+Application state is the information a program maintains while it is running. It captures the program's current condition and enables it to respond correctly to future events. For our text editor, this state includes the document being edited, the cursor location, the visible portion of the document, and various other pieces of runtime information. In the next section, we'll see how this distinguishes stateful programs like a text editor from programs that perform a single task and immediately terminate.

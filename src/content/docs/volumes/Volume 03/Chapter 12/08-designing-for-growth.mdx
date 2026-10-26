@@ -1,0 +1,228 @@
+---
+title: 12.8 Designing for Growth
+description: Shows how the component-based Editor State absorbs future features such as search and undo without redesign.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Throughout this chapter, we have focused on the needs of a simple terminal text editor. At first glance, some parts of the Editor State may appear unnecessary or even excessive for such a small application.
+
+For example, why create separate structures for the Viewport and Configuration when the initial implementation supports only a single document and a handful of settings?
+
+The answer lies in an important principle of software architecture:
+
+> **Good architecture should support growth without requiring fundamental redesign.**
+
+This does **not** mean trying to predict every feature the editor might ever have. Instead, it means organizing today's design so that tomorrow's features can be added naturally.
+
+## Building a Foundation
+
+When constructing a building, engineers first design a strong foundation.
+
+The foundation is not built because every floor exists today.
+
+It is built because future expansion should not require rebuilding the entire structure.
+
+Software architecture follows the same idea.
+
+Rather than designing only for today's requirements, we create a structure that allows the application to evolve.
+
+Our current Editor State is intentionally organized into well-defined components.
+
+```text
+Editor State
+│
+├── Document
+├── Cursor
+├── Viewport
+├── Screen Size
+├── Current File
+├── Dirty Flag
+├── Status Message
+└── Configuration
+```
+
+Each component has a clear responsibility and a well-defined place within the architecture.
+
+As the editor grows, new capabilities can often be introduced by extending an existing component or adding a new one, rather than redesigning the entire system.
+
+## Adding New Features
+
+Suppose we decide to implement a search feature in a future volume.
+
+The editor suddenly needs to remember information such as:
+
+- The current search query
+- The active search result
+- Whether search is case-sensitive
+
+Rather than scattering these variables throughout the application, we can introduce a dedicated component.
+
+```text
+Editor State
+│
+├── Document
+├── Cursor
+├── Viewport
+├── Search
+├── Screen Size
+├── Current File
+├── Dirty Flag
+├── Status Message
+└── Configuration
+```
+
+Nothing else in the architecture needs to change.
+
+The existing components continue performing their original responsibilities.
+
+Only the Editor State grows to include a new area of responsibility.
+
+## Supporting Undo and Redo
+
+Consider another future enhancement.
+
+An editor that supports **Undo** and **Redo** must remember the history of editing operations.
+
+That information is also part of the application's runtime state.
+
+Instead of modifying unrelated components, we simply introduce another component.
+
+```text
+Editor State
+│
+├── Document
+├── Cursor
+├── Undo History
+├── Viewport
+├── Screen Size
+├── Current File
+├── Dirty Flag
+├── Status Message
+└── Configuration
+```
+
+Again, the overall organization remains unchanged.
+
+The architecture grows by **adding** responsibilities rather than **reorganizing** existing ones.
+
+## Multiple Documents
+
+Our editor intentionally supports only a single document.
+
+This decision was discussed in Chapter 11 as one of the deliberate design choices for the initial implementation.
+
+Suppose a future version supports multiple open documents.
+
+At a high level, the Editor State might evolve from:
+
+```text
+Editor State
+│
+└── Document
+```
+
+to something like:
+
+```text
+Editor State
+│
+├── Documents
+│
+├── Active Document
+│
+├── Cursor
+├── Viewport
+├── Screen Size
+└── ...
+```
+
+Notice what does **not** change.
+
+The overall idea of a centralized Editor State remains exactly the same.
+
+Only its contents evolve to support additional capabilities.
+
+This demonstrates one of the strengths of a modular design.
+
+## Extending Without Breaking
+
+A well-designed architecture allows new functionality to be added with minimal impact on existing code.
+
+Imagine adding a Clipboard feature.
+
+Ideally, the implementation should involve:
+
+1. Creating a Clipboard component.
+2. Adding it to the Editor State.
+3. Updating only the modules that use it.
+
+The renderer, file manager, and terminal interface should require little or no modification because their responsibilities have not changed.
+
+This illustrates an important engineering principle:
+
+> **Adding a feature should affect as few components as possible.**
+
+When new functionality forces changes throughout the entire codebase, it is often a sign that the architecture is too tightly coupled.
+
+## Avoiding Overengineering
+
+Designing for growth does **not** mean implementing features before they are needed.
+
+For example, we are **not** going to implement:
+
+- Search
+- Undo and Redo
+- Multiple documents
+- Syntax highlighting
+- Plugin systems
+
+These features remain intentionally outside the scope of the baseline editor defined by the Software Requirements Specification.
+
+Instead, we simply leave room for them.
+
+There is an important difference between:
+
+- **Preparing for future growth**, and
+- **Implementing speculative features.**
+
+The first improves maintainability.
+
+The second often introduces unnecessary complexity.
+
+Our goal is always to keep the implementation as simple as possible while ensuring that the architecture can evolve naturally.
+
+## A Stable Core
+
+One of the defining characteristics of good software architecture is stability.
+
+Individual components may grow.
+
+New modules may be introduced.
+
+Additional features may appear.
+
+Yet the fundamental organization of the system remains unchanged.
+
+```text
+            Editor State
+                  │
+      ┌───────────┼───────────┐
+      │           │           │
+ Existing     Existing     New
+Components   Components  Components
+```
+
+This stability is one of the reasons we invested time in designing the Editor State before writing any implementation code.
+
+A clear architectural foundation allows the application to evolve without repeatedly redesigning its core.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Experienced software engineers often describe good architecture as **open for extension, closed for modification**. This does not mean the code never changes. Rather, it means new capabilities are typically introduced by extending the existing design instead of rewriting it. By organizing the Editor State into well-defined, independent components, we make it possible to add new runtime information without disturbing the responsibilities of the components that already exist.
+
+</Aside>
+
+## Summary
+
+The Editor State was designed not only for today's editor but also for tomorrow's enhancements. As new features are introduced, additional components can be incorporated into the Editor State without fundamentally changing the application's architecture. This modular organization supports growth while preserving the simplicity, clarity, and maintainability of the existing design. By investing in a strong architectural foundation now, we make future extensions significantly easier to implement while keeping the core editor stable and easy to understand.

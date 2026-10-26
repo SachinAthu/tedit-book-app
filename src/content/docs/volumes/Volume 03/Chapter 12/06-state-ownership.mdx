@@ -1,0 +1,234 @@
+---
+title: 12.6 State Ownership
+description: Explains single-owner state ownership, where one component writes each piece of state while many may read it.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous sections, we established two important ideas:
+
+- The editor maintains a single **Editor State** that serves as the application's single source of truth.
+- The Editor State is composed of several smaller components, each responsible for a different aspect of the editor.
+
+This naturally leads to another architectural question:
+
+> **If all state is stored in one place, who is allowed to modify it?**
+
+Simply placing all runtime information inside the Editor State does not automatically prevent bugs. If every component can freely modify any part of the state, the application quickly becomes difficult to understand and maintain.
+
+To avoid this problem, our editor follows another important architectural principle:
+
+> **Every piece of state has exactly one owner.**
+
+This is the design decision documented in **ADR-007: State Ownership**.
+
+## What Is State Ownership?
+
+Owning a piece of state means being responsible for maintaining and modifying it.
+
+The owner is the only component that is allowed to change that particular piece of information.
+
+Other components may read the state whenever they need it, but they must not modify it directly.
+
+Think of ownership as assigning responsibility.
+
+For example, in a company:
+
+```text
+Company
+│
+├── Finance Department
+├── Human Resources
+├── Marketing
+└── Engineering
+```
+
+Every department has its own responsibilities.
+
+If the marketing department could freely modify payroll records, or the finance department could hire employees without involving human resources, the organization would quickly become chaotic.
+
+Instead, each department owns a well-defined area of responsibility.
+
+Software architecture follows the same principle.
+
+Each component owns the state that falls within its area of expertise.
+
+## Why Ownership Matters
+
+Consider what would happen if both the Command Engine and the Renderer could modify the cursor position.
+
+Suppose the user presses the **Right Arrow** key.
+
+The Command Engine updates the cursor:
+
+```text
+Cursor
+
+Column = 16
+```
+
+Later, while drawing the screen, the Renderer decides to "correct" the cursor position because it believes the cursor should remain visible.
+
+Now two independent components are changing the same information.
+
+```text
+Command Engine
+        │
+        ▼
+Cursor Position
+        ▲
+        │
+Renderer
+```
+
+At this point, answering the question
+
+> "Who moved the cursor?"
+
+becomes surprisingly difficult.
+
+When multiple components modify the same state, unexpected interactions begin to appear.
+
+A bug introduced in one module may appear as a problem in another, making the system much harder to debug.
+
+## A Single Owner
+
+Instead, our architecture assigns one owner to each major piece of state.
+
+For example:
+
+```text
+Editor State
+│
+├── Document
+│      ▲
+│      │
+│   Command Engine
+│
+├── Cursor
+│      ▲
+│      │
+│   Cursor Module
+│
+├── Current File
+│      ▲
+│      │
+│   File Manager
+│
+├── Screen Size
+│      ▲
+│      │
+│ Terminal Interface
+│
+└── Viewport
+       ▲
+       │
+   Command Engine
+```
+
+Each component is responsible for maintaining the state that belongs to it.
+
+If another component needs that information, it simply reads it from the Editor State rather than attempting to modify it.
+
+This ownership model was introduced in Chapter 8 (System Architecture), where each major field of the Editor State was assigned a single responsible component.
+
+## Reading Is Different from Writing
+
+Ownership restricts **modification**, not **access**.
+
+Many components often need to read the same information.
+
+For example, the renderer needs access to the document in order to display it.
+
+The file manager also needs access to the document when saving it.
+
+```text
+             Document
+                 ▲
+         ┌───────┴────────┐
+         │                │
+         ▼                ▼
+   Renderer         File Manager
+      (Read)            (Read)
+```
+
+Neither component owns the document.
+
+Neither changes the document directly.
+
+They simply use the information already stored inside the Editor State.
+
+This distinction is important:
+
+- **Many readers are allowed.**
+- **Only one owner may modify the state.**
+
+## Following the Flow of an Edit
+
+Suppose the user types the letter **A**.
+
+The operation follows a predictable sequence.
+
+```text
+Keyboard
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Document updated
+    │
+    ▼
+Cursor updated
+    │
+    ▼
+Dirty Flag updated
+    │
+    ▼
+Renderer reads state
+    │
+    ▼
+Display refreshed
+```
+
+Notice that the renderer never inserts the character into the document.
+
+Likewise, the file manager never moves the cursor.
+
+Each component performs only the operations that belong to its own area of responsibility.
+
+This clear separation makes the execution of the program much easier to follow.
+
+## Ownership Reduces Coupling
+
+State ownership has another important benefit: it reduces coupling between components.
+
+Imagine that the renderer wanted to move the cursor directly.
+
+It would need to understand:
+
+- Cursor movement rules
+- Document boundaries
+- Preferred column handling
+- Line wrapping
+- Scrolling behavior
+
+The renderer would gradually become dependent on the cursor module.
+
+Instead, the renderer simply asks:
+
+> "Where is the cursor now?"
+
+It reads the answer from the Editor State and performs its own responsibility—drawing the screen.
+
+Each component remains focused on its own task without needing to understand the internal logic of other modules.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+State ownership is closely related to the **Single Responsibility Principle**. A component should not only have one primary responsibility—it should also be responsible for maintaining the state associated with that responsibility. When ownership is unclear, components begin modifying one another's data, responsibilities overlap, and the architecture gradually becomes tightly coupled. Clear ownership boundaries make it much easier to reason about how information flows through the system.
+
+</Aside>
+
+## Summary
+
+Although the Editor State serves as the application's single source of truth, not every component is allowed to modify every part of it. Each piece of runtime information has exactly one owner, and only that owner is responsible for updating it. Other components are free to read the state but must not modify it directly. This ownership model reduces coupling, prevents inconsistent updates, simplifies debugging, and ensures that every change to the editor's state has a clear and predictable origin. In the next section, we will follow an editing operation from beginning to end and see how multiple state components work together during a typical editing session.

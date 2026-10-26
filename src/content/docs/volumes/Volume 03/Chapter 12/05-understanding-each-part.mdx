@@ -1,0 +1,236 @@
+---
+title: 12.5 Understanding Each Part
+description: Describes the responsibility of each Editor State component and how they cooperate during a single edit.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we designed the Editor State as a collection of smaller, focused components. Rather than treating the editor as one large block of data, we organized it into logical parts, each with a clearly defined responsibility.
+
+Before we examine these components in detail in later chapters, it is helpful to understand the role each one plays within the overall system.
+
+Think of the Editor State as a small team. Each member has a specific job, and together they enable the editor to function correctly. Let us examine each of these components individually.
+
+## The Document
+
+The **Document** represents the text currently being edited.
+
+Whenever the user inserts, deletes, or modifies text, it is the document that changes.
+
+For example, if the user opens a file containing:
+
+```text
+Hello
+World
+```
+
+these lines become part of the document stored in memory.
+
+The document is responsible only for representing editable text. It does not know where the cursor is located, how the text is displayed on the screen, or how keyboard input is processed.
+
+Its sole responsibility is to maintain the document's contents.
+
+We will explore different ways of representing a document—including arrays of lines, gap buffers, piece tables, and ropes—in the next chapter.
+
+## The Cursor
+
+The **Cursor** represents the current editing position within the document.
+
+Whenever the user types a character, presses Backspace, or inserts a new line, the operation occurs at the cursor's current location.
+
+For example:
+
+```text
+Hello, World!
+      ^
+      Cursor
+```
+
+The cursor is responsible for knowing **where** editing takes place, but it does not modify the document itself.
+
+Similarly, it does not decide how the cursor is drawn on the screen. That responsibility belongs to the renderer.
+
+Keeping the cursor separate from the document allows each component to focus on a single responsibility.
+
+## The Viewport
+
+Most documents are larger than the visible terminal window.
+
+The **Viewport** determines which portion of the document is currently visible.
+
+Consider a document containing one thousand lines.
+
+```text
+Entire Document
+│
+├── Line 1
+├── Line 2
+├── ...
+├── Line 500
+├── ...
+└── Line 1000
+```
+
+The terminal can display only a small number of those lines at once.
+
+For example:
+
+```text
+Viewport
+
+Line 496
+Line 497
+Line 498
+Line 499
+Line 500
+```
+
+The viewport remembers where the visible window begins, allowing the renderer to display only the appropriate section of the document.
+
+Without the viewport, the editor would have no concept of scrolling.
+
+## The Screen Size
+
+The **Screen Size** component stores information about the terminal window itself.
+
+Examples include:
+
+- Number of rows
+- Number of columns
+
+```text
+Screen Size
+
+Rows    : 40
+Columns : 120
+```
+
+The renderer uses this information to determine:
+
+- How many document lines can be displayed
+- Where to place the status bar
+- How much horizontal space is available
+
+Whenever the terminal window is resized, the Screen Size component is updated to reflect the new dimensions.
+
+## The Current File
+
+The **Current File** identifies the file associated with the document currently being edited.
+
+For example:
+
+```text
+Current File
+
+notes.txt
+```
+
+If the user presses **Save**, the File Manager uses this information to determine where the document should be written.
+
+If the editor was started without specifying a filename, the Current File simply indicates that the document has not yet been named.
+
+Notice that the Current File does **not** contain the document itself. It merely identifies where that document is stored on disk.
+
+## The Dirty Flag
+
+The **Dirty Flag** records whether the document has been modified since it was last saved.
+
+Initially:
+
+```text
+Dirty Flag
+
+false
+```
+
+After the user inserts a single character:
+
+```text
+Dirty Flag
+
+true
+```
+
+The Dirty Flag allows the editor to answer questions such as:
+
+- Does the document contain unsaved changes?
+- Should the user be warned before exiting?
+- Is saving necessary?
+
+Although it stores only a single piece of information, it plays an important role in protecting the user's work.
+
+## The Status Message
+
+Editors frequently display temporary messages to communicate with the user.
+
+Examples include:
+
+```text
+File saved.
+
+Cannot open file.
+
+Press Ctrl+Q to quit.
+```
+
+The **Status Message** component stores the message that should currently appear in the message bar.
+
+These messages usually change frequently and often disappear after a short period, but while they are visible they form part of the application's runtime state.
+
+## The Configuration
+
+The **Configuration** component stores settings that control the editor's behavior.
+
+Examples might include:
+
+- Tab width
+- Display preferences
+- Future editor options
+
+Tab width is read by the Renderer when it expands TAB characters into screen cells (Chapter 19); changing it never modifies the Document.
+
+Unlike the document or cursor, configuration typically changes infrequently. Nevertheless, it still belongs in the Editor State because it influences how the editor behaves during execution.
+
+Our initial implementation will use only a small number of configuration settings, but organizing them into a dedicated component makes it straightforward to add more in the future.
+
+## Working Together
+
+Although each component has its own responsibility, they rarely operate in isolation.
+
+Suppose the user types the character **A**.
+
+Several components participate in handling this single action:
+
+```text
+User presses A
+        │
+        ▼
+Document
+Insert character
+        │
+        ▼
+Cursor
+Move forward
+        │
+        ▼
+Dirty Flag
+Mark modified
+        │
+        ▼
+Renderer
+Redraw screen
+```
+
+Each component performs its own specific task, yet together they produce the behavior the user experiences.
+
+This separation of responsibilities keeps the architecture modular and makes each component easier to understand, implement, and test.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Notice that none of these components attempts to do everything. The Document does not know how to render itself, the Cursor does not modify the document, and the Screen Size does not handle keyboard input. This clear separation of responsibilities is an example of the **Single Responsibility Principle**, which states that each component should have one primary reason to change. Following this principle reduces coupling and makes the system easier to extend as new features are added.
+
+</Aside>
+
+## Summary
+
+The Editor State is composed of several specialized components, each responsible for a different aspect of the editor's runtime behavior. The Document stores editable text, the Cursor tracks the editing position, the Viewport determines what is visible, the Screen Size describes the terminal dimensions, the Current File identifies the associated file, the Dirty Flag records unsaved changes, the Status Message communicates with the user, and the Configuration stores editor settings. Together, these components provide a complete representation of the editor's current state. In the next section, we will examine how state ownership ensures that each of these components is modified only by the component responsible for it.

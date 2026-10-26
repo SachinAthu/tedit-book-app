@@ -1,0 +1,32 @@
+---
+title: Conclusion
+description: Recaps application state, state ownership, and the update-then-render cycle, with exercises and a preview.
+---
+
+Application **state** is the information a program maintains while it is running—its current condition, existing only in memory during execution. A text editor is a **stateful program**: every editing operation depends on the current document, cursor, viewport, and other runtime information, and the same key press can produce different results depending on the editor's current state.
+
+Our editor's state consists of the **Document**, **Cursor**, **Viewport**, **Screen Size**, **Current File**, **Dirty Flag**, **Status Message**, and **Configuration**. Rather than scattering this data, we collect it into a single **EditorState** structure that groups related information into focused components through composition.
+
+The principle of **state ownership** ensures each piece of state has exactly one component responsible for modifying it; other components may read freely but must not write. As the user interacts, every event follows the same sequence: **process the event, update the state, and render the result**. Finally, this modular design supports growth—new features like search or undo history can be added as new components without redesigning the core architecture.
+
+## Exercises
+
+### Review Questions
+
+1. What is application state?
+2. Why is a text editor considered stateful?
+3. What information must the editor maintain while running?
+4. Why should there be a single source of truth?
+5. What problems arise when multiple components maintain copies of the same data?
+6. What does state ownership mean?
+
+### Thought Experiments
+
+1. Which parts of the Editor State should persist when saving a file, and which should exist only while the editor is running?
+2. If the editor supported multiple open documents, how might the Editor State change?
+
+## Preview of the Next Chapter
+
+Chapter 12 has focused on identifying _what_ information the editor must maintain and _how_ that information should be organized. We established that the Editor State is a single, well-defined structure composed of smaller focused components, each with a clear owner and a distinct responsibility. Among these components, however, one stands out as the most fundamental: the **Document**.
+
+In Chapter 13, we turn our attention to the document itself. We will explore several data structures for representing editable text—ranging from a simple array of lines to more sophisticated designs such as gap buffers, piece tables, and ropes. We will examine the trade-offs each structure makes between insertion performance, memory usage, and implementation complexity, and we will decide which representation best suits the needs of our terminal text editor.
