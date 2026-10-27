@@ -296,6 +296,6 @@ It also establishes an important foundation for Chapter 23. The basic save opera
 
 ## Summary
 
-Saving is the explicit operation that serializes the Document, writes its contents to disk, and clears the Dirty Flag only after persistence succeeds. This keeps editing in memory and persistence to disk cleanly separated.
+Saving is the explicit operation that serializes the Document, writes its contents to disk, and clears the Dirty Flag only after persistence succeeds. This keeps editing in memory and persistence to disk cleanly separated. Because the in-memory Document is a collection of lines while a file is a byte sequence, saving must first serialize the lines, then open or create the destination, write every byte, and close the descriptor. Partial writes must be continued until the whole document is persisted or an error occurs. The Dirty Flag is cleared only after the complete save succeeds, so a failed or incomplete write cannot make the editor report unsaved changes as safely stored.
 
 In the next section, we will examine **file I/O errors** and why failure must be treated as a normal part of file operations rather than an unexpected exception.

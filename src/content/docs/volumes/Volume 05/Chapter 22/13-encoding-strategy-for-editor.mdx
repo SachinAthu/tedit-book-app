@@ -1,0 +1,453 @@
+---
+title: 22.13 Encoding Strategy for Our Editor
+description: Consolidates the loading, editing, and saving rules into one UTF-8 encoding boundary with canonical LF output.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+We have now examined the individual pieces of text representation:
+
+- Unicode code points
+- UTF-8
+- valid and invalid byte sequences
+- logical lines
+- LF and CRLF
+- line-ending normalization
+- encoding during saving
+
+We can now bring these decisions together into one encoding strategy for the editor.
+
+The goal is not to introduce another representation. It is to define the **boundary contract** that connects the file on disk to the logical Document used by the rest of the editor.
+
+## The Chosen Representation
+
+Our editor uses two primary representations of text.
+
+### External representation
+
+Files contain:
+
+```text
+UTF-8 bytes
++
+line-ending bytes
+```
+
+### Internal representation
+
+The Document contains:
+
+```text
+Unicode code points
+organized into logical lines
+```
+
+The relationship is:
+
+```text
+File
+ │
+ │ UTF-8 bytes
+ │ LF / CRLF line endings
+ ▼
+Decoder
+ │
+ │ Unicode code points
+ ▼
+Document
+ │
+ │ logical lines
+ ▼
+Editor
+```
+
+When saving, the process is reversed:
+
+```text
+Editor
+ │
+ │ logical lines
+ │ Unicode code points
+ ▼
+Document
+ │
+ ▼
+UTF-8 Encoder
+ │
+ │ UTF-8 bytes
+ │ canonical LF
+ ▼
+File
+```
+
+This is the encoding boundary for the baseline architecture.
+
+## Loading Strategy
+
+When a file is opened, the File Manager reads its contents as bytes.
+
+The loading process then performs two related tasks:
+
+1. Decode UTF-8 byte sequences into Unicode code points.
+2. Recognize line-ending sequences and construct logical lines.
+
+Both LF and CRLF are accepted:
+
+```text
+LF
+0A
+ │
+ └──────────► line boundary
+
+
+CRLF
+0D 0A
+ │
+ └──────────► line boundary
+```
+
+For example:
+
+```text
+File
+
+Hello\r\n
+World\n
+Editor\r\n
+```
+
+becomes:
+
+```text
+Document
+
+Line 0 → "Hello"
+Line 1 → "World"
+Line 2 → "Editor"
+```
+
+The original line-ending bytes do not become part of the Document.
+
+This means that the editor can work with one consistent internal representation even when files originate from different environments.
+
+## Editing Strategy
+
+Once the file has been decoded, editing operates entirely on the Document representation.
+
+The Cursor works with logical positions:
+
+```text
+row
+column
+```
+
+The Document works with Unicode code points.
+
+Line boundaries are represented by the Document's collection of lines.
+
+Therefore, editing operations do not need to understand UTF-8 byte sequences.
+
+For example, inserting a character conceptually looks like:
+
+```text
+Cursor
+   │
+   ▼
+Document
+   │
+   ▼
+Insert code point
+```
+
+It does not look like:
+
+```text
+Cursor
+   │
+   ▼
+Find UTF-8 byte offset
+   │
+   ▼
+Shift encoded bytes
+```
+
+This is an important consequence of the chosen architecture.
+
+The core editor works with logical text rather than the serialized representation of that text.
+
+## Saving Strategy
+
+When the user saves, the Document is serialized.
+
+The encoder converts each Unicode code point into its UTF-8 representation.
+
+At each logical line boundary, the serializer writes the canonical LF sequence:
+
+```text
+0A
+```
+
+Therefore:
+
+```text
+Document
+    │
+    ├── "Hello"
+    ├── "World"
+    └── "Editor"
+            │
+            ▼
+       UTF-8 encoding
+            │
+            ▼
+       LF line endings
+            │
+            ▼
+           File
+```
+
+A document originally loaded from CRLF therefore becomes an LF file when saved.
+
+For example:
+
+```text
+Before loading:
+
+Hello\r\n
+World\r\n
+```
+
+After loading:
+
+```text
+"Hello"
+"World"
+```
+
+After saving:
+
+```text
+Hello\n
+World\n
+```
+
+The logical contents are unchanged.
+
+Only the external representation has been normalized.
+
+## Why We Do Not Store UTF-8 Bytes in the Document
+
+An alternative would be to store the original UTF-8 byte sequences directly in each line.
+
+That approach initially appears attractive because the file is already encoded as UTF-8.
+
+However, it would make the core editing model byte-oriented.
+
+A single Unicode code point may occupy multiple UTF-8 bytes:
+
+```text
+Code point
+    │
+    ▼
+UTF-8
+    │
+    ├── byte
+    ├── byte
+    └── byte
+```
+
+The editor would then need to distinguish between:
+
+```text
+byte position
+```
+
+and:
+
+```text
+character position
+```
+
+throughout its editing operations.
+
+That complexity is unnecessary for our baseline architecture.
+
+By decoding at the boundary, the Document can work directly with Unicode code points.
+
+This is consistent with the cursor model established earlier, where the cursor's column represents a logical position between characters rather than a raw byte offset.
+
+## Why We Do Not Preserve CRLF by Default
+
+We also considered preserving the original line-ending style.
+
+That would mean remembering whether a file was loaded using:
+
+```text
+LF
+```
+
+or:
+
+```text
+CRLF
+```
+
+and using that style during saving.
+
+Preservation would reduce unnecessary changes to existing Windows files.
+
+However, it introduces additional state and creates a more complicated policy for mixed line endings.
+
+Our baseline editor instead uses:
+
+```text
+Input:
+    LF   ──┐
+          ├──► logical lines
+    CRLF ──┘
+
+Output:
+    logical lines
+          │
+          ▼
+         LF
+```
+
+This gives the editor a deterministic output format.
+
+The trade-off is explicit: saving a CRLF file normalizes its line endings to LF.
+
+This choice is made for simplicity and consistency with the project's Linux-primary environment rather than because LF is inherently more correct than CRLF.
+
+## The Encoding Boundary
+
+The final architecture can therefore be summarized as:
+
+```text
+                    FILE SYSTEM
+                         │
+                         │ UTF-8 bytes
+                         │ LF / CRLF
+                         ▼
+                 +----------------+
+                 |  File Manager  |
+                 +----------------+
+                         │
+                         ▼
+                 +----------------+
+                 | UTF-8 Decoder  |
+                 +----------------+
+                         │
+                         │ Unicode
+                         │ code points
+                         ▼
+                 +----------------+
+                 |    Document    |
+                 |                |
+                 |  Logical Lines |
+                 +----------------+
+                         │
+                         ▼
+                  Editor Operations
+                         │
+             ┌───────────┼───────────┐
+             │           │           │
+             ▼           ▼           ▼
+           Cursor     Editing     Renderer
+                         │
+                         ▼
+                  UTF-8 Encoder
+                         │
+                         │ UTF-8 bytes
+                         │ canonical LF
+                         ▼
+                    File Manager
+                         │
+                         ▼
+                    FILE SYSTEM
+```
+
+The important boundary is:
+
+```text
+External bytes
+      │
+      ▼
+   Decode
+      │
+      ▼
+Logical text
+      │
+      ▼
+   Encode
+      │
+      ▼
+External bytes
+```
+
+Everything between decoding and encoding operates on the logical representation.
+
+## The Architectural Contract
+
+The encoding strategy establishes several invariants for the rest of the editor:
+
+1. **Files are external byte streams.**
+2. **UTF-8 is the supported text encoding.**
+3. **The Document contains decoded Unicode code points.**
+4. **The Document stores logical lines without line-ending bytes.**
+5. **LF and CRLF are both accepted during loading.**
+6. **CRLF is converted into a logical line boundary rather than storing `CR` in the Document.**
+7. **Saving encodes Unicode code points as UTF-8.**
+8. **Saving uses canonical LF line endings.**
+9. **The original line-ending style is not preserved by the baseline implementation.**
+10. **Editing operations do not manipulate UTF-8 byte sequences directly.**
+
+These rules give the rest of the architecture a stable contract.
+
+The Cursor does not need to understand UTF-8.
+
+The Renderer does not need to understand CRLF.
+
+The Document does not need to understand files.
+
+The File Manager does not need to expose file-format details to the editing logic.
+
+Each component can operate at the appropriate abstraction level.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The most important decision in this strategy is not actually **UTF-8**.
+
+It is the decision to establish a clear boundary between **serialized text** and **logical text**.
+
+```text
+Serialized text
+      │
+      │ decode
+      ▼
+Logical text
+      │
+      │ edit
+      ▼
+Logical text
+      │
+      │ encode
+      ▼
+Serialized text
+```
+
+Once that boundary exists, the rest of the editor can reason about text without continually asking how that text happens to be encoded in a file.
+
+This is the same architectural principle used elsewhere in the project: low-level representations are translated into forms that are easier for higher-level components to work with. The Input Parser translates terminal byte sequences into abstract key events, while the text encoding boundary translates file bytes into logical text.
+
+The result is a simpler core model:
+
+> **Bytes belong at the boundaries. Logical text belongs in the editor.**
+
+</Aside>
+
+## Summary
+
+The encoding strategy defines a clear boundary between serialized text and logical text: decode UTF-8 bytes into code points on load, edit those code points, and encode them back to bytes on save. Bytes belong at the boundaries; logical text belongs in the editor. Loading accepts both LF and CRLF and converts them into logical lines, while saving emits UTF-8 with canonical LF and does not preserve the original line-ending style. This means the Cursor, Renderer, and editing operations never need to understand UTF-8 or CRLF, and the Document never needs to understand files. The contract is what allows the core editor to reason about characters rather than byte sequences.
+
+In the next section, we will evaluate the **complexity and trade-offs** of this representation.

@@ -1,0 +1,341 @@
+---
+title: 22.7 Byte Positions vs Character Positions
+description: Explains why file byte offsets differ from Document character positions and how the Cursor uses code-point positions.
+---
+
+Now that we have established the relationship between the file representation and the Text Buffer, we can revisit an important distinction introduced earlier:
+
+> **A byte position in a file is not the same thing as a character position in the Document.**
+
+This distinction exists because UTF-8 is a variable-width encoding, while our Text Buffer operates on decoded Unicode code points.
+
+Consider the text:
+
+```text
+café
+```
+
+On disk, its UTF-8 representation is:
+
+```text
+63 61 66 C3 A9
+```
+
+There are five bytes.
+
+After decoding, the Document contains four Unicode code points:
+
+```text
+[c] [a] [f] [é]
+```
+
+Therefore:
+
+```text
+File representation:
+5 bytes
+
+Document representation:
+4 code points
+```
+
+The two representations describe the same text, but their positions are measured differently.
+
+## Byte Positions
+
+A byte position refers to a location within the encoded UTF-8 data.
+
+For:
+
+```text
+café
+```
+
+the bytes can be viewed as:
+
+```text
+63 61 66 C3 A9
+0  1  2  3  4
+```
+
+Here, position `3` refers to the first byte of the UTF-8 encoding of `é`.
+
+Position `4` refers to its second byte.
+
+Neither position represents a separate character.
+
+This is why manipulating UTF-8 text directly as bytes requires knowledge of UTF-8 boundaries.
+
+## Character Positions
+
+The decoded Document has a different representation:
+
+```text
+| c | a | f | é |
+0   1   2   3   4
+```
+
+These are the same cursor positions we established in Chapter 14.
+
+Here, position `3` means:
+
+> The position immediately before the fourth code point, `é`.
+
+It does **not** mean the third byte of the original file.
+
+The distinction can be summarized as:
+
+```text
+File:
+
+UTF-8 bytes
+    ↓
+byte offsets
+
+
+Document:
+
+Unicode code points
+    ↓
+character/code-point positions
+```
+
+## Why the Cursor Uses Character Positions
+
+Our Cursor is concerned with editing the logical Document, not with the byte layout of the file.
+
+Suppose the Document contains:
+
+```text
+café
+```
+
+and the Cursor is here:
+
+```text
+caf|é
+```
+
+Its position is:
+
+```text
+row    = ...
+column = 3
+```
+
+The Cursor does not need to know that `é` occupies two bytes in UTF-8.
+
+This is an important benefit of decoding the file before placing its contents into the Document.
+
+The Cursor can operate consistently:
+
+```text
+ASCII:
+
+| H | e | l | l | o |
+0   1   2   3   4   5
+```
+
+and:
+
+```text
+UTF-8:
+
+| c | a | f | é |
+0   1   2   3   4
+```
+
+The Cursor's model does not change when the text contains multi-byte UTF-8 characters.
+
+## Editing Becomes Character-Oriented
+
+Consider Backspace at:
+
+```text
+caf|é
+```
+
+The character immediately before the Cursor is:
+
+```text
+f
+```
+
+so Backspace removes `f`:
+
+```text
+ca|é
+```
+
+The editor does not need to determine which UTF-8 bytes represent `f` and manipulate them directly.
+
+Likewise, if the Cursor is:
+
+```text
+café|
+```
+
+Backspace removes the code point `é` as one logical editing unit.
+
+The editor can therefore maintain the semantics established in Chapter 14:
+
+```text
+Backspace
+    ↓
+code point before Cursor
+
+
+Delete
+    ↓
+code point at Cursor
+```
+
+The UTF-8 encoding is handled separately when the Document is eventually saved.
+
+## Searching Uses the Same Logical Representation
+
+The same separation is useful for search.
+
+Suppose the Document contains:
+
+```text
+The café is here.
+```
+
+and the user searches for:
+
+```text
+café
+```
+
+The search query can be decoded into Unicode code points:
+
+```text
+[c] [a] [f] [é]
+```
+
+The Document contains the same logical representation:
+
+```text
+[T] [h] [e] [ ] [c] [a] [f] [é] ...
+```
+
+A search algorithm can therefore compare code points directly.
+
+It does not need to reason about:
+
+```text
+C3 A9
+```
+
+as two separate bytes.
+
+This will become particularly useful when we implement search and find-and-replace in Chapter 30.
+
+## There Is Still Another Unicode Layer
+
+There is one important qualification.
+
+We have chosen **Unicode code points** as the logical unit of our Text Buffer. However, a code point is not always identical to what a user perceives as a single character.
+
+Some visible characters can consist of multiple Unicode code points.
+
+Conceptually:
+
+```text
+User-perceived character
+          │
+          ▼
+One or more code points
+          │
+          ▼
+One or more UTF-8 byte sequences
+```
+
+This means that there are actually several different notions of position:
+
+```text
+Byte position
+     ↓
+Code-point position
+     ↓
+Grapheme-cluster position
+     ↓
+Visual position
+```
+
+Our baseline editor will use **code-point positions** for its logical text operations.
+
+We are deliberately not implementing full grapheme-cluster-aware editing in this chapter. That would introduce another layer of Unicode text processing beyond the requirements of the current editor.
+
+## Why This Separation Is Useful
+
+We can now assign each representation a clear responsibility:
+
+| Representation       | Used for                           |
+| -------------------- | ---------------------------------- |
+| UTF-8 bytes          | Files and external input/output    |
+| Unicode code points  | Text Buffer and editing            |
+| Code-point positions | Cursor and basic text operations   |
+| Screen positions     | Rendering and terminal coordinates |
+
+This prevents one representation from leaking unnecessarily into another part of the system.
+
+For example, the Renderer does not need to know where UTF-8 byte boundaries occur merely to display the logical text. Similarly, the File Manager does not need to understand cursor positions when writing the Document to disk.
+
+The architecture becomes:
+
+```text
+                 File
+                  │
+             UTF-8 bytes
+                  │
+                decode
+                  ▼
+              Document
+                  │
+          Unicode code points
+                  │
+        ┌─────────┴─────────┐
+        ▼                   ▼
+      Cursor              Search
+        │                   │
+        └─────────┬─────────┘
+                  ▼
+             Text editing
+                  │
+                encode
+                  ▼
+             UTF-8 bytes
+                  │
+                  ▼
+                 File
+```
+
+This separation is a direct consequence of choosing a decoded Unicode representation for the Text Buffer.
+
+## The Key Lesson
+
+The most important distinction to retain is:
+
+```text
+File position
+    ≠
+Document position
+```
+
+A file position is measured in **bytes**.
+
+A Document position is measured in **Unicode code points**.
+
+For ASCII-only text, these positions often happen to coincide, which is why the distinction can remain hidden for a long time. Once the editor encounters multi-byte UTF-8 text, the difference becomes unavoidable.
+
+By decoding UTF-8 when loading the Document, we keep this complexity at the file boundary and allow the core editor to operate on a consistent logical representation.
+
+This gives us a much cleaner foundation for cursor movement, editing, searching, and eventually find-and-replace.
+
+## Summary
+
+A file position is measured in bytes, while a Document position is measured in Unicode code points. The two coincide for ASCII but diverge once multi-byte UTF-8 characters appear, which is why the Cursor works on logical character positions. For example, a short string can occupy five UTF-8 bytes but only four code points, so a byte offset of four may point into the middle of a character's encoding. Backspace, Delete, cursor movement, and search all operate on code-point positions, avoiding any need to understand UTF-8 boundaries. There is a further distinction above code points-grapheme clusters and visual positions-but the baseline editor deliberately stops at code-point positions.
+
+In the next section, we will examine **valid and invalid UTF-8** and how the decoder decides which byte sequences become code points.

@@ -169,6 +169,6 @@ The result is a simple but important separation:
 
 ## Summary
 
-The File Manager is the single boundary between the editor's in-memory Document and the file system. It owns the transfer of data in both directions—loading and saving—without taking on input, rendering, or terminal responsibilities.
+The File Manager is the single boundary between the editor's in-memory Document and the file system. It owns the transfer of data in both directions-loading and saving-without taking on input, rendering, or terminal responsibilities. It does not own the Document itself: the Document remains part of the Editor State, while the File Manager only moves its contents across the persistence boundary. On load it opens and reads the file, constructs the Document, and places it into the Editor State; on save it serializes the current Document, opens or creates the destination, writes it, and reports the result. Keeping this dependency localized prevents POSIX file APIs from leaking into the Command Engine, Document, Renderer, or input pipeline.
 
 In the next section, we will examine the first of those two operations in detail: **loading a file** from disk into the Document.

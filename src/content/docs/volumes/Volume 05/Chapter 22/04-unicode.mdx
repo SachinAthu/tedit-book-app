@@ -1,0 +1,157 @@
+---
+title: 22.4 Unicode
+description: Introduces Unicode code points as abstract character values distinct from their bytes and from user-perceived characters.
+---
+
+ASCII is sufficient for a relatively small set of characters, but a modern text editor must be able to work with text from many languages and writing systems. This is the problem Unicode is designed to address.
+
+Unicode provides a common system for assigning **code points** to characters across a very large character repertoire.
+
+The important relationship is:
+
+```text
+Character
+    │
+    ▼
+Unicode Code Point
+```
+
+A Unicode code point is an abstract numerical value associated with a character. It is not the same thing as the bytes stored in a file.
+
+## From Characters to Code Points
+
+Consider the character:
+
+```text
+A
+```
+
+It has a Unicode code point.
+
+Another character, such as:
+
+```text
+é
+```
+
+also has its own Unicode code point.
+
+The important point is that these code points are independent of how the characters are eventually stored as bytes.
+
+We can therefore separate the concepts:
+
+```text
+Character
+    │
+    ▼
+Unicode Code Point
+    │
+    ▼
+Encoding
+    │
+    ▼
+Bytes
+```
+
+The encoding step is what turns an abstract Unicode code point into a concrete byte sequence.
+
+## Unicode Does Not Specify the File Bytes
+
+Unicode itself does not mean that every character occupies a particular number of bytes in a file.
+
+For example:
+
+```text
+Unicode Code Point
+        │
+        ├── UTF-8
+        │
+        ├── UTF-16
+        │
+        └── Other encodings
+```
+
+Different encodings can represent the same Unicode code point using different byte sequences.
+
+Our editor will use **UTF-8**, so the relevant path for the project is:
+
+```text
+Unicode Code Point
+        │
+        │ UTF-8
+        ▼
+    UTF-8 Bytes
+```
+
+This is why it is important not to use _Unicode_ and _UTF-8_ as interchangeable terms.
+
+## Code Points Are Not Always Visual Characters
+
+There is another distinction worth establishing.
+
+A Unicode code point is not necessarily identical to what a user perceives as one complete visual character.
+
+Some visible text can be constructed from multiple Unicode code points. For example, a base character can be combined with another code point representing a combining mark.
+
+Conceptually:
+
+```text
+Visual text
+    │
+    ▼
+One or more Unicode code points
+```
+
+This is an important distinction for sophisticated text editors because cursor movement and text selection may need to operate on **grapheme clusters** rather than individual code points.
+
+Our baseline editor will not attempt to implement full grapheme-cluster handling. That would introduce a substantially more advanced layer of Unicode text processing than is required by the project's current scope.
+
+For this book, the important relationship is:
+
+```text
+Bytes
+   │
+   ▼
+Unicode Code Points
+   │
+   ▼
+Text
+```
+
+with the understanding that the final visual representation may involve more than one code point.
+
+## Why Unicode Matters to Our Editor
+
+Without Unicode, the editor would be limited to a small character repertoire.
+
+With Unicode and UTF-8, the Document can represent text from many writing systems while retaining a relatively simple storage representation based on decoded code points.
+
+This also introduces an important engineering consequence:
+
+```text
+ASCII
+
+1 character
+     =
+1 byte
+```
+
+but more generally:
+
+```text
+Unicode text
+
+1 code point
+     ≠
+necessarily 1 byte
+```
+
+That difference will affect operations that need to locate or traverse characters.
+
+The next step is therefore to examine **UTF-8 itself**: how Unicode code points are encoded into one or more bytes, and what properties of that encoding are important to a text editor.
+
+## Summary
+
+Unicode assigns an abstract code point to each character independent of its byte representation. A code point is not the same as its bytes, and it is not always the same as a single user-perceived character. Encoding turns each code point into a concrete byte sequence, and different encodings may produce different sequences for the same code point. Some visible characters are built from multiple code points, such as a base character plus a combining mark, which is why sophisticated editors eventually need grapheme-cluster handling. The baseline editor deliberately operates on code points and leaves full grapheme-cluster support out of scope.
+
+In the next section, we will examine **UTF-8**, the encoding that turns Unicode code points into one or more bytes.

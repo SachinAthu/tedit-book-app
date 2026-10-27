@@ -1,0 +1,412 @@
+---
+title: 22.10 LF vs CRLF
+description: Compares LF and CRLF byte sequences, showing how loading recognizes both without letting carriage returns leak into the Document.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The two line-ending conventions most relevant to our editor are **LF** and **CRLF**.
+
+They differ in the bytes used to represent a line boundary:
+
+| Representation | Bytes   | Common environment |
+| -------------- | ------- | ------------------ |
+| LF             | `0A`    | Unix/Linux         |
+| CRLF           | `0D 0A` | Windows            |
+
+Both conventions can represent the same logical document.
+
+For example:
+
+```text
+Logical document:
+
+Hello
+World
+```
+
+can be stored as:
+
+```text
+LF:
+
+48 65 6C 6C 6F 0A
+57 6F 72 6C 64 0A
+```
+
+or:
+
+```text
+CRLF:
+
+48 65 6C 6C 6F 0D 0A
+57 6F 72 6C 64 0D 0A
+```
+
+The text itself has not changed. Only the byte representation of the line boundaries is different.
+
+## LF
+
+**LF**, or Line Feed, is represented by the byte:
+
+```text
+0A
+```
+
+It is the conventional line-ending representation on Unix-like systems, including Linux.
+
+A file containing:
+
+```text
+Hello
+World
+```
+
+might therefore be represented as:
+
+```text
+Hello\n
+World\n
+```
+
+or, at the byte level:
+
+```text
+48 65 6C 6C 6F 0A
+57 6F 72 6C 64 0A
+```
+
+When the UTF-8 decoder and line-ending logic encounter `0A`, the editor recognizes a logical line boundary.
+
+The resulting Document can simply contain:
+
+```text
+Line 0 → "Hello"
+Line 1 → "World"
+```
+
+The LF byte itself does not need to remain in either line.
+
+## CRLF
+
+**CRLF** consists of two bytes:
+
+```text
+0D 0A
+```
+
+The first byte is Carriage Return (`CR`), and the second is Line Feed (`LF`).
+
+CRLF is the traditional line-ending convention associated with Windows text files.
+
+For example:
+
+```text
+Hello\r\n
+World\r\n
+```
+
+is represented as:
+
+```text
+48 65 6C 6C 6F 0D 0A
+57 6F 72 6C 64 0D 0A
+```
+
+The important point is that the two bytes together represent **one line boundary**.
+
+They should not be interpreted as:
+
+```text
+"Hello\r"
+"World\r"
+```
+
+The `CR` is part of the line-ending sequence.
+
+## Why CRLF Matters During Loading
+
+Consider an editor loading this file:
+
+```text
+File
+Hello\r\n
+World\r\n
+      │
+      ▼
+Document
+"Hello"
+"World"
+```
+
+The loader reads bytes from the file.
+
+When it encounters:
+
+```text
+0D 0A
+```
+
+it should recognize the pair as a CRLF line ending.
+
+The resulting Document should contain:
+
+```text
+Line 0 → "Hello"
+Line 1 → "World"
+```
+
+not:
+
+```text
+Line 0 → "Hello\r"
+Line 1 → "World\r"
+```
+
+If the carriage return were accidentally stored as an ordinary character, it would become part of the Document's text.
+
+That would violate the separation established earlier between **logical text** and **file representation**.
+
+## The `\r` Must Not Leak Into the Document
+
+This is one of the most important details when implementing file loading.
+
+Suppose the loader simply splits lines whenever it encounters `\n` but does nothing with the preceding `\r`.
+
+For this input:
+
+```text
+Hello\r\n
+World\r\n
+```
+
+the intermediate result could incorrectly become:
+
+```text
+"Hello\r"
+"World\r"
+```
+
+The Document would then contain an unexpected code point at the end of every line.
+
+Conceptually:
+
+```text
+Incorrect:
+
+File
+Hello \r \n
+      │
+      └── becomes document text
+
+Document
+"Hello\r"
+```
+
+The correct interpretation is:
+
+```text
+Correct:
+
+File
+Hello \r\n
+      └──┬──┘
+       CRLF
+         │
+         ▼
+     line boundary
+
+Document
+"Hello"
+```
+
+The `\r` is not part of the user's logical line content.
+
+It belongs to the file's line-ending representation.
+
+## The Decoder and Line Parser Work Together
+
+Strictly speaking, recognizing UTF-8 validity and recognizing line endings are related but distinct responsibilities.
+
+The UTF-8 decoder answers:
+
+> What Unicode code point does this byte sequence represent?
+
+The line-ending logic answers:
+
+> Does this sequence represent a boundary between logical lines?
+
+For the ASCII control characters involved here, the distinction is straightforward:
+
+```text
+0A → LF
+0D → CR
+```
+
+When the input contains:
+
+```text
+0D 0A
+```
+
+the loader should interpret the pair as one line boundary rather than two independent characters.
+
+Conceptually:
+
+```text
+File bytes
+    │
+    ▼
+UTF-8 decoding
+    │
+    ▼
+Decoded code points
+    │
+    ▼
+Line-ending recognition
+    │
+    ├── ordinary code point ──► line content
+    │
+    ├── LF ───────────────────► line boundary
+    │
+    └── CRLF ─────────────────► line boundary
+```
+
+This keeps the resulting Document independent of whether the original file used LF or CRLF.
+
+## Why the Document Should Not Store CRLF
+
+Our Document representation is a vector of lines:
+
+```text
+Document
+    │
+    ├── Line 0
+    ├── Line 1
+    ├── Line 2
+    └── ...
+```
+
+Each line contains its logical characters.
+
+Therefore, the Document does not need to store:
+
+```text
+Line 0 → "Hello\r"
+Line 1 → "World\r"
+```
+
+Instead:
+
+```text
+Line 0 → "Hello"
+Line 1 → "World"
+```
+
+The line boundary is represented structurally by the separation between lines.
+
+This is particularly useful for editing.
+
+When the user presses Enter:
+
+```text
+"HelloWorld"
+```
+
+might become:
+
+```text
+"Hello"
+"World"
+```
+
+The Command Engine does not need to decide whether the eventual file should contain:
+
+```text
+Hello\nWorld
+```
+
+or:
+
+```text
+Hello\r\nWorld
+```
+
+That is a serialization decision made when the Document is written back to the file.
+
+This follows the established architecture in which the Document owns the editable text and the File Manager owns persistence.
+
+## The Same Document Can Produce Different Files
+
+Once the line-ending distinction is separated from the Document, the relationship becomes clear:
+
+```text
+             Document
+          ┌─────────────┐
+          │ "Hello"     │
+          │ "World"     │
+          └──────┬──────┘
+                 │
+          Serialization
+            /          \
+           /            \
+          ▼              ▼
+       LF file        CRLF file
+
+     Hello\n         Hello\r\n
+     World\n         World\r\n
+```
+
+Both files represent the same logical document.
+
+This is an important property of the architecture.
+
+The Document does not need to change merely because the external file representation changes.
+
+Only the serialization policy changes.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+**Line endings are a property of the file representation, not the logical text model.**
+
+The editor should therefore avoid allowing `CR` to leak into the Document when loading CRLF files.
+
+The clean boundary is:
+
+```text
+File
+  │
+  │ UTF-8 + line-ending bytes
+  ▼
+File Manager
+  │
+  │ decoded logical text
+  ▼
+Document
+  │
+  │ vector of lines
+  ▼
+Editing
+```
+
+This keeps cursor movement, insertion, deletion, rendering, and other editing operations independent of the platform's line-ending convention.
+
+The File Manager can later serialize the same Document using the selected line-ending policy.
+
+That gives us a clean separation:
+
+```text
+Logical text
+     ≠
+File representation
+```
+
+The next question is therefore not how the Document should represent LF or CRLF, but **which line-ending policy the editor should use when loading and saving files**.
+
+</Aside>
+
+## Summary
+
+LF (`0A`) and CRLF (`0D 0A`) both represent a single line boundary, and the `\r` must not leak into the Document's line content during loading. The Document stores logical lines, leaving the line-ending representation to serialization. A loader that splits only on `\n` would leave a stray carriage return at the end of every line from a CRLF file, so the pair must be recognized and consumed as one boundary. Conversely, a document can later be serialized with either convention without changing its logical contents. Keeping line endings out of line content ensures cursor movement, editing, and rendering remain independent of the platform that produced the file.
+
+In the next section, we will define the editor's explicit **line ending policy** for loading and saving.

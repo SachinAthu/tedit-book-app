@@ -177,6 +177,6 @@ For the current architecture, however, the simple model gives us something more 
 
 ## Summary
 
-Loading, saving, and document storage are all `O(n)` in the size of the document—a deliberate full-save, in-memory trade-off whose simplicity and predictability are appropriate for this educational editor.
+Loading, saving, and document storage are all `O(n)` in the size of the document-a deliberate full-save, in-memory trade-off whose simplicity and predictability are appropriate for this educational editor. Every byte of the file must be decoded and used to build the Document on load, and every code point must be encoded and written on save, even after a one-character edit. Memory also grows with the document rather than with the terminal, unlike the bounded Screen Buffer, so document size and screen size are separate cost domains. Incremental persistence could reduce the bytes written for small edits, but it would require tracking modified regions and handling partial updates, consistency, and crash recovery; the baseline deliberately avoids that complexity.
 
 In the next section, the **chapter summary** consolidates the File I/O model and previews the next chapter.

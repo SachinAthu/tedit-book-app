@@ -232,6 +232,6 @@ This keeps the File Manager predictable while allowing the operating system to r
 
 ## Summary
 
-The operating system remains the authority over file access. Reading and writing are separate permissions, and a successful load does not imply a successful save; the editor's job is to handle denials correctly rather than attempt to work around them.
+The operating system remains the authority over file access. Reading and writing are separate permissions, and a successful load does not imply a successful save; the editor's job is to handle denials correctly rather than attempt to work around them. Existing files are governed by their own permissions, while creating a new file depends on the permissions of the containing directory. The File Manager should perform the requested operation and translate the operating system's refusal into a useful message instead of duplicating or predicting the permission model. This keeps access control in the operating system and preserves the editor's existing state when an operation is denied.
 
 In the next section, we will examine **large files** and how the in-memory Document model ties file size directly to memory usage.

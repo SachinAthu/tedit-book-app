@@ -1,0 +1,437 @@
+---
+title: 22.12 Encoding and Saving
+description: Traces serialization from code points to UTF-8 bytes, including line-ending insertion, final newlines, empty lines, and empty documents.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Loading a file converts its external byte representation into the logical representation used by the Document.
+
+Saving performs the reverse operation.
+
+The Document contains Unicode code points arranged into logical lines. The file, however, must contain bytes. Therefore, saving requires the editor to **serialize the Document into a byte stream**.
+
+The complete process is:
+
+```text
+Document
+    │
+    │ Unicode code points
+    │ logical lines
+    ▼
+UTF-8 Encoder
+    │
+    │ UTF-8 bytes
+    │ canonical LF line endings
+    ▼
+File
+```
+
+The important point is that saving is not simply a matter of writing the Document's memory directly to disk. The internal representation and file representation are different.
+
+## Encoding the Document
+
+Consider a Document containing:
+
+```text
+Line 0 → "Hello"
+Line 1 → "World"
+```
+
+The characters are stored internally as Unicode code points.
+
+Before they can be written to the file, each code point must be encoded as UTF-8.
+
+For ASCII characters, each code point produces one byte.
+
+For example:
+
+```text
+H → 48
+e → 65
+l → 6C
+l → 6C
+o → 6F
+```
+
+The encoder therefore transforms:
+
+```text
+"Hello"
+```
+
+into:
+
+```text
+48 65 6C 6C 6F
+```
+
+For non-ASCII characters, the encoder may produce multiple bytes for a single Unicode code point.
+
+Conceptually:
+
+```text
+Unicode code point
+        │
+        ▼
+   UTF-8 encoder
+        │
+        ▼
+One to four UTF-8 bytes
+```
+
+The Document does not need to know how many bytes will be produced.
+
+That is the encoder's responsibility.
+
+## Encoding a Line
+
+A logical line does not contain its line-ending bytes.
+
+For example:
+
+```text
+Line → "Hello"
+```
+
+contains only the characters belonging to the line.
+
+When saving, the encoder writes the characters and then writes the selected line-ending representation.
+
+For our baseline policy, that representation is LF:
+
+```text
+Logical line
+    │
+    ▼
+Encode "Hello"
+    │
+    ▼
+48 65 6C 6C 6F
+    │
+    ▼
+Append LF
+    │
+    ▼
+48 65 6C 6C 6F 0A
+```
+
+The line ending is therefore added during serialization rather than stored inside the line.
+
+## Serializing Multiple Lines
+
+For a Document containing:
+
+```text
+Line 0 → "Hello"
+Line 1 → "World"
+Line 2 → "Editor"
+```
+
+serialization conceptually proceeds as:
+
+```text
+"Hello"  → UTF-8 bytes → 48 65 6C 6C 6F 0A
+"World"  → UTF-8 bytes → 57 6F 72 6C 64 0A
+"Editor" → UTF-8 bytes → 45 64 69 74 6F 72 0A
+```
+
+The resulting file is:
+
+```text
+Hello\n
+World\n
+Editor\n
+```
+
+The Document remains unchanged throughout this process.
+
+The encoder creates an external byte representation from it.
+
+This distinction is important because the Document is the editor's logical source of truth, while the file is its persistent representation. The File Manager is responsible for crossing this boundary.
+
+## The Final Line
+
+A subtle question appears when the Document contains a final line:
+
+```text
+Line 0 → "Hello"
+Line 1 → "World"
+```
+
+Should the saved file be:
+
+```text
+Hello\n
+World\n
+```
+
+or:
+
+```text
+Hello\n
+World
+```
+
+These represent slightly different file structures.
+
+The first has a line-ending sequence after the final line:
+
+```text
+Hello\n
+World\n
+       ^
+       final LF
+```
+
+The second does not:
+
+```text
+Hello\n
+World
+     ^
+     end of file
+```
+
+This is commonly described as whether the file has a **final newline**.
+
+For the baseline editor, this behavior should be treated as part of the serialization policy rather than as a property of the individual line.
+
+The important architectural point is that the Document does not need to store an LF character merely to represent this choice.
+
+Instead:
+
+```text
+Document
+    │
+    ▼
+Serialization policy
+    │
+    ├── line content
+    ├── line boundaries
+    └── final newline policy
+    │
+    ▼
+File
+```
+
+For the baseline editor, saving always writes a trailing LF after the final line, so every line boundary—including the last one—is serialized as `0A`. This keeps one simple deterministic rule, consistent with the canonical-LF policy established in the previous section.
+
+The exact final-newline policy can therefore be changed without redesigning the Document representation.
+
+## Empty Lines
+
+Empty lines demonstrate why line boundaries belong to serialization rather than to the characters themselves.
+
+Consider:
+
+```text
+Line 0 → "Hello"
+Line 1 → ""
+Line 2 → "World"
+```
+
+The empty line contains no Unicode code points.
+
+Nevertheless, it represents a real line in the Document.
+
+When serialized using LF:
+
+```text
+Hello\n
+\n
+World\n
+```
+
+The empty line is represented by two consecutive line-ending boundaries:
+
+```text
+Hello
+     LF
+     LF
+World
+```
+
+The Document therefore does not need a special character to represent an empty line.
+
+Its structure already represents the existence of the line.
+
+## Empty Documents
+
+An empty Document is another useful boundary case.
+
+If the Document contains no text, the serializer must decide what byte stream represents it.
+
+The key observation is that an empty Document contains **no logical lines**, and therefore no line boundaries to serialize:
+
+```text
+Empty Document
+    │
+    ▼
+No lines, no line boundaries
+    │
+    ▼
+Empty file (zero bytes)
+```
+
+That produces a file with zero bytes.
+
+This is consistent with the canonical-LF policy rather than an exception to it. The rule is that every logical line boundary — including the one after the final line — is serialized as `0A`. A Document with one or more lines therefore always ends with a trailing newline, while an empty Document has no line boundaries and simply ends as an empty file.
+
+Again, this is a serialization concern.
+
+The Document does not need to contain a special "empty file" character.
+
+## Saving Does Not Modify the Document
+
+The encoder should be conceptually one-way during a save operation:
+
+```text
+Document
+    │
+    ▼
+Encode
+    │
+    ▼
+File bytes
+```
+
+It should not modify the Document while performing this operation.
+
+For example, saving a CRLF file that has been loaded into the editor does not require adding `\r` characters back into the Document.
+
+The Document remains:
+
+```text
+"Hello"
+"World"
+```
+
+while the serializer produces:
+
+```text
+Hello\n
+World\n
+```
+
+according to the baseline LF policy.
+
+This preserves the separation between editing and persistence.
+
+## The Complete Save Pipeline
+
+Putting the pieces together:
+
+```text
+                    Document
+                       │
+                       │ Unicode code points
+                       │ logical lines
+                       ▼
+                ┌───────────────┐
+                │ UTF-8 Encoder │
+                └───────┬───────┘
+                        │
+                        │ UTF-8 bytes
+                        ▼
+                Add canonical LF
+                        │
+                        ▼
+                 File byte stream
+                        │
+                        ▼
+                  File Manager
+                        │
+                        ▼
+                       Disk
+```
+
+In the actual architecture, the File Manager owns the file-system interaction, while serialization converts the Document's logical representation into the byte representation that the File Manager writes. This keeps POSIX file operations isolated from the Document and higher-level editing logic.
+
+The corresponding loading path is the reverse:
+
+```text
+Disk
+  │
+  ▼
+File Manager
+  │
+  │ UTF-8 bytes
+  ▼
+Decoder
+  │
+  │ Unicode code points
+  ▼
+Line-ending recognition
+  │
+  ▼
+Document
+```
+
+The two operations therefore form a clear pair:
+
+```text
+LOAD:
+
+bytes → decode → logical Document
+
+
+SAVE:
+
+logical Document → encode → bytes
+```
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+**Serialization is the boundary between how the editor understands text and how the file stores it.**
+
+Inside the editor:
+
+```text
+Unicode code points
++
+logical lines
+```
+
+At the file boundary:
+
+```text
+UTF-8 bytes
++
+line-ending bytes
+```
+
+Neither representation is inherently "the text." Each is appropriate for a different responsibility.
+
+This separation allows the Document to remain simple and character-oriented while the File Manager handles the details required to persist that Document.
+
+It also means that changing the external serialization policy—for example, supporting CRLF output in the future—does not require changing the fundamental Document representation.
+
+The architecture therefore remains:
+
+```text
+              LOGICAL TEXT
+                   │
+              ┌────▼────┐
+              │Document │
+              └────┬────┘
+                   │
+              Serialization
+                   │
+              ┌────▼────┐
+              │File     │
+              │Manager  │
+              └────┬────┘
+                   │
+              File System
+```
+
+This boundary is the foundation for the encoding strategy selected for the baseline editor.
+
+</Aside>
+
+## Summary
+
+Saving serializes the Document into a byte stream by UTF-8 encoding each code point and appending canonical LF at each line boundary, without modifying the Document. This is the reverse of loading and defines the save pipeline. ASCII code points become single bytes, non-ASCII code points may become several bytes, and an empty line is represented by consecutive line boundaries because it contains no characters of its own. An empty Document has no lines and therefore serializes to an empty file, while every non-empty document ends with a trailing LF under the baseline policy. Serialization never changes the in-memory text: a file originally loaded with CRLF is still saved as LF.
+
+In the next section, we will consolidate loading, editing, and saving into a single **encoding strategy** for the editor.

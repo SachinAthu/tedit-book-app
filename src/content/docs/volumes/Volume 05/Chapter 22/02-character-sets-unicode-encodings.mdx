@@ -1,0 +1,163 @@
+---
+title: 22.2 Character Sets, Unicode, and Encodings
+description: Distinguishes character sets, Unicode code points, and encodings, clarifying why Unicode is not the same thing as UTF-8.
+---
+
+The distinction between bytes and characters leads to three related concepts that are often used interchangeably but describe different things:
+
+- **Character set**
+- **Unicode**
+- **Encoding**
+
+Understanding the difference between them is important because a text editor deals with all three at different levels.
+
+## Character Sets
+
+A character set defines a collection of characters that can be represented.
+
+For example, ASCII defines a relatively small set of characters, including:
+
+```text
+A B C ... Z
+a b c ... z
+0 1 2 ... 9
+```
+
+along with punctuation and control characters.
+
+A character set answers a question such as:
+
+> **Which characters are available?**
+
+It does not, by itself, necessarily describe how those characters are stored as bytes.
+
+## Unicode
+
+Unicode provides a much larger system for representing characters from languages and writing systems around the world.
+
+Instead of limiting text to a small collection of characters, Unicode assigns each character a **code point**.
+
+Conceptually:
+
+```text
+Character
+    │
+    ▼
+Unicode Code Point
+```
+
+For example, the character `A` has a Unicode code point. Other characters from different writing systems have different code points.
+
+The important point is that a Unicode code point is an abstract value representing a character. It is not itself a sequence of bytes stored in a file.
+
+## Encodings
+
+An encoding defines how Unicode code points are represented as bytes.
+
+UTF-8 is one such encoding.
+
+The relationship can therefore be viewed as:
+
+```text
+Character
+    │
+    ▼
+Unicode Code Point
+    │
+    │ UTF-8 encoding
+    ▼
+Bytes
+```
+
+This gives us a useful distinction:
+
+```text
+Unicode
+    = defines the code points
+
+UTF-8
+    = defines how those code points are encoded as bytes
+```
+
+They solve different problems.
+
+## Unicode Is Not UTF-8
+
+It is common to say that a file is "encoded in Unicode" or that "Unicode and UTF-8 are the same thing." Technically, they are not.
+
+Unicode provides the system of code points.
+
+UTF-8 provides one method of encoding those code points into bytes.
+
+Other Unicode encodings exist as well, but UTF-8 is particularly important for our editor because it is widely used for text files and remains compatible with ASCII.
+
+The relationship can be summarized as:
+
+```text
+                 Unicode
+              Code Points
+                   │
+          ┌────────┴────────┐
+          │                 │
+        UTF-8             Other
+       Encoding          Encodings
+          │
+          ▼
+        Bytes
+```
+
+For our editor, the relevant path is:
+
+```text
+Unicode Code Point
+        │
+        ▼
+      UTF-8
+        │
+        ▼
+      Bytes
+```
+
+This distinction will become increasingly important as we examine UTF-8 in detail.
+
+## Why This Matters to the Editor
+
+When the editor loads a file, it receives bytes.
+
+Those bytes must be interpreted according to an encoding:
+
+```text
+File
+ │
+ │ bytes
+ ▼
+UTF-8 decoding
+ │
+ ▼
+Unicode text
+```
+
+When the editor saves the document, the conceptual process works in the opposite direction:
+
+```text
+Unicode text
+ │
+ │ UTF-8 encoding
+ ▼
+Bytes
+ │
+ ▼
+File
+```
+
+The File Manager is responsible for the file-system boundary, while the encoding defines how the textual data crossing that boundary is represented.
+
+This separation is important. File I/O answers **how bytes are read and written**. Encoding answers **how those bytes represent text**.
+
+With that distinction established, we can now look more closely at ASCII and its special relationship with UTF-8.
+
+## Summary
+
+A character set defines which characters are available, Unicode assigns each character an abstract code point, and an encoding such as UTF-8 maps those code points to bytes. These are three distinct concepts, and confusing them hides the byte/character distinction. Unicode does not by itself specify a file's byte layout; several encodings, including UTF-8 and UTF-16, can represent the same code point differently. UTF-8 is the chosen encoding because it covers the full Unicode repertoire and remains byte-compatible with ASCII. Keeping character set, code point, and encoding separate lets the editor decode bytes on load and encode code points on save without conflating the text model with its file representation.
+
+In the next section, we will examine **ASCII**, the simple case whose one-byte characters provide the baseline for understanding UTF-8.

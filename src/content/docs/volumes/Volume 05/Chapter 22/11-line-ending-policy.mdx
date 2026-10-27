@@ -1,0 +1,491 @@
+---
+title: 22.11 Line Ending Policy
+description: "Defines the editor's line-ending policy: accept LF and CRLF on load, store logical lines, and save with canonical LF."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Now that we understand the difference between LF and CRLF, we need to make an explicit architectural decision for our editor.
+
+This is not merely an implementation detail.
+
+The choice affects how files are loaded, how they are represented in memory, and what happens when a document is saved. If the policy is left unspecified, different parts of the implementation may make different assumptions.
+
+Our policy should therefore be defined at the architecture level.
+
+## Internal Representation
+
+The Document stores **logical lines without their line-ending bytes**.
+
+For example, a document containing:
+
+```text
+Hello
+World
+```
+
+is represented as:
+
+```text
+Document
+    │
+    ├── Line 0 → "Hello"
+    └── Line 1 → "World"
+```
+
+It does not store:
+
+```text
+Line 0 → "Hello\n"
+Line 1 → "World\n"
+```
+
+or:
+
+```text
+Line 0 → "Hello\r\n"
+Line 1 → "World\r\n"
+```
+
+The line boundary is represented structurally by the fact that the text belongs to separate lines.
+
+This is consistent with the project's vector-of-lines Document representation. The Document is responsible for the logical text being edited, not for preserving the byte-level representation used by a particular file.
+
+## Loading LF and CRLF
+
+When loading a file, the editor recognizes both major line-ending conventions:
+
+```text
+LF
+
+0A
+```
+
+and:
+
+```text
+CRLF
+
+0D 0A
+```
+
+Both are converted into the same logical representation.
+
+For example:
+
+```text
+LF file:
+
+Hello\n
+World\n
+```
+
+becomes:
+
+```text
+Document
+
+"Hello"
+"World"
+```
+
+Likewise:
+
+```text
+CRLF file:
+
+Hello\r\n
+World\r\n
+```
+
+becomes:
+
+```text
+Document
+
+"Hello"
+"World"
+```
+
+The source file's line-ending representation therefore does not affect the basic structure of the Document.
+
+Conceptually:
+
+```text
+                 File
+                  │
+          ┌───────┴───────┐
+          │               │
+         LF              CRLF
+          │               │
+          ▼               ▼
+     Line boundary   Line boundary
+          │               │
+          └───────┬───────┘
+                  ▼
+              Document
+          "Hello"
+          "World"
+```
+
+This gives the editor one consistent internal representation regardless of the platform that produced the file.
+
+## Canonical Line Ending on Save
+
+For the baseline editor, we will use **LF as the canonical line-ending representation when saving files**.
+
+Therefore, every logical line boundary in the Document is serialized as:
+
+```text
+0A
+```
+
+The save operation conceptually becomes:
+
+```text
+Document
+    │
+    │ logical lines
+    ▼
+UTF-8 Encoder
+    │
+    │ Unicode text + LF line endings
+    ▼
+File
+```
+
+For example:
+
+```text
+Document
+
+"Hello"
+"World"
+```
+
+is saved as:
+
+```text
+Hello\n
+World\n
+```
+
+regardless of whether the file originally used LF or CRLF.
+
+## Why Choose LF?
+
+The choice of LF is deliberate.
+
+Our project targets Linux as its primary platform and is designed around POSIX-compatible systems. The project's requirements also explicitly identify Linux as the primary development and reference environment.
+
+Using LF therefore gives the baseline editor a simple and natural canonical representation.
+
+It also means that the save operation has one deterministic rule:
+
+> Every logical line boundary becomes one LF byte.
+
+There is no need for the serializer to maintain additional state merely to decide whether a particular line should end with LF or CRLF.
+
+This keeps the architecture easier to understand and gives the editor a single, predictable output format.
+
+## The Cost of Normalization
+
+Choosing canonical LF has an important consequence.
+
+Suppose the user opens a Windows-style file:
+
+```text
+Hello\r\n
+World\r\n
+```
+
+The editor loads it as:
+
+```text
+"Hello"
+"World"
+```
+
+If the user saves the document, the resulting file becomes:
+
+```text
+Hello\n
+World\n
+```
+
+The logical text is unchanged, but the file's line-ending representation has changed.
+
+Therefore:
+
+```text
+Original file
+    │
+    │ CRLF
+    ▼
+Document
+    │
+    │ LF
+    ▼
+Saved file
+```
+
+The editor has **normalized** the file's line endings.
+
+This can make the entire file appear modified to external tools even though the visible text did not change.
+
+For example, a version-control system may report every line as changed simply because the line-ending convention was converted.
+
+This is a real trade-off, not an implementation mistake.
+
+## The Alternative: Preserve the Original Style
+
+A more user-friendly alternative would be to detect the line-ending convention while loading and remember it for saving.
+
+For example:
+
+```text
+File
+    │
+    ▼
+Detect line endings
+    │
+    ├── LF ────► remember LF
+    │
+    └── CRLF ──► remember CRLF
+                     │
+                     ▼
+                 Document
+```
+
+Then saving could use the detected convention:
+
+```text
+Loaded with LF
+    │
+    ▼
+Save with LF
+```
+
+or:
+
+```text
+Loaded with CRLF
+    │
+    ▼
+Save with CRLF
+```
+
+This avoids unnecessary line-ending conversion for existing files.
+
+However, it introduces additional state and policy questions.
+
+What should happen when the file contains mixed line endings?
+
+Should the editor:
+
+- preserve each individual line ending?
+- choose the first detected style?
+- choose the dominant style?
+- normalize the file?
+- warn the user?
+
+Preserving line-ending style therefore provides better compatibility but requires a more complicated persistence policy.
+
+## Mixed Line Endings
+
+Consider a file containing:
+
+```text
+Line one\r\n
+Line two\n
+Line three\r\n
+```
+
+The Document can still be represented simply as:
+
+```text
+Line 0 → "Line one"
+Line 1 → "Line two"
+Line 2 → "Line three"
+```
+
+But there is no single original line-ending style to preserve.
+
+This exposes an important difference between the two policies.
+
+### Canonical LF
+
+With our chosen policy:
+
+```text
+Load
+  │
+  ▼
+Normalize internally
+  │
+  ▼
+Save everything as LF
+```
+
+The mixed input becomes:
+
+```text
+Line one\n
+Line two\n
+Line three\n
+```
+
+The behavior is deterministic.
+
+### Preservation
+
+With preservation, the editor would need to remember information about the individual line endings:
+
+```text
+Line 0 → CRLF
+Line 1 → LF
+Line 2 → CRLF
+```
+
+That information would no longer be part of the logical text itself, but it would have to be stored somewhere in the editor's state if exact preservation were required.
+
+This makes the representation and save logic more complicated.
+
+For the baseline editor, that complexity is not justified.
+
+## Our Baseline Policy
+
+The resulting policy is therefore:
+
+### Internal representation
+
+Store logical lines without line-ending bytes.
+
+### Loading
+
+Recognize:
+
+```text
+LF
+CRLF
+```
+
+and convert both into the same logical line representation.
+
+### Saving
+
+Serialize every logical line boundary using:
+
+```text
+LF
+```
+
+### Mixed line endings
+
+Accept them during loading and normalize them to LF when saving.
+
+The complete model is:
+
+```text
+                    LOAD
+
+        LF ────────────────┐
+                           │
+        CRLF ──────────────┤
+                           ▼
+                    Logical Document
+                           │
+                           │
+                           ▼
+                         SAVE
+                           │
+                           ▼
+                         LF
+```
+
+This is intentionally simple.
+
+The editor accepts the two common input conventions but produces one canonical output convention.
+
+## Why This Is an Architectural Decision
+
+This policy affects more than the File Manager.
+
+It establishes a contract between:
+
+```text
+File Manager
+      │
+      ▼
+Document
+      │
+      ▼
+UTF-8 Encoder
+```
+
+The Document does not need to know whether its source file used LF or CRLF.
+
+The File Manager does not need to preserve per-line terminators.
+
+The encoder does not need to choose between multiple output conventions.
+
+Every layer has a clear responsibility.
+
+This follows the project's broader architecture principle that components should have one primary responsibility and that file-system concerns should remain isolated within the File Manager.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+**Canonicalization is a trade-off between simplicity and preservation.**
+
+A canonical representation gives the system one predictable form:
+
+```text
+Many valid inputs
+       │
+       ▼
+One internal representation
+       │
+       ▼
+One canonical output
+```
+
+That makes the implementation easier to reason about.
+
+Preservation, on the other hand, minimizes changes to existing files but requires the editor to remember additional information about how those files were originally represented.
+
+For our educational baseline, we choose **simplicity and determinism over exact preservation**.
+
+This decision is recorded as **ADR-021: Text Encoding Strategy**, so the canonical-LF policy is an explicit architectural contract rather than an accidental consequence of the file-loading or saving code. A future version of the editor can revisit the decision if user expectations or compatibility requirements change.
+
+The important point is that such a change would be a deliberate policy change—not an accidental consequence of implementation.
+
+</Aside>
+
+<Aside type="note">
+Canonical LF does **not** mean that the editor only accepts Linux files.
+
+The editor accepts both LF and CRLF during loading.
+
+The policy is:
+
+```text
+Input:
+    LF   ──┐
+          ├──► accepted
+    CRLF ──┘
+
+Output:
+    LF
+```
+
+This distinction is important.
+
+**Input compatibility** and **output policy** are separate decisions.
+
+</Aside>
+
+## Summary
+
+The Document stores logical lines without line-ending bytes; loading recognizes both LF and CRLF, and saving serializes every boundary as canonical LF. This simple canonical policy trades exact preservation for determinism and simplicity. It gives the save pipeline one rule with no need to remember the original file's style or track per-line terminators, and mixed-ending files are normalized automatically. The cost is that saving a CRLF file rewrites its line endings, which can make an otherwise unchanged file appear fully modified to external tools such as version control. The decision is deliberately explicit: input compatibility is broad, while output uses one predictable convention suited to the project's Linux-primary environment.
+
+In the next section, we will look at how this policy plays out in the mechanics of **encoding and saving**.

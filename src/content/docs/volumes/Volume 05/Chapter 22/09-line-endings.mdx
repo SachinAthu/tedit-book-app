@@ -1,0 +1,444 @@
+---
+title: 22.9 Line Endings
+description: Explains line endings as file-level representations of logical line boundaries, including mixed conventions and serialization choices.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+So far, we have treated text primarily as a sequence of characters. A text file, however, contains more than characters.
+
+It also has a representation for **where one line ends and the next begins**.
+
+This is called a **line ending**.
+
+At first glance, line endings appear simple. A text editor displays:
+
+```text
+Hello
+World
+```
+
+and it seems obvious that the document contains two lines.
+
+But the file on disk does not contain an abstract concept called "new line." It contains bytes.
+
+Different systems and file formats have historically used different byte sequences to represent the end of a line.
+
+The two most important conventions are:
+
+```text
+LF
+CRLF
+```
+
+where:
+
+- **LF** means Line Feed.
+- **CRLF** means Carriage Return followed by Line Feed.
+
+Understanding this distinction is important because our editor has two different representations:
+
+```text
+File
+    │
+    │ bytes
+    ▼
+Decoder
+    │
+    │ logical text
+    ▼
+Document
+    │
+    │ lines
+    ▼
+Editor
+```
+
+The Document should not have to treat the file's physical line-ending representation as part of every editing operation.
+
+## What Is a Line Ending?
+
+A line ending is a sequence of characters or bytes used to indicate that one line has ended.
+
+For example, a file using LF line endings can be represented conceptually as:
+
+```text
+Hello\nWorld\n
+```
+
+The `\n` represents an LF character.
+
+A file using CRLF line endings can be represented as:
+
+```text
+Hello\r\nWorld\r\n
+```
+
+Here, each line ends with two characters:
+
+```text
+\r\n
+```
+
+The important observation is that these are different byte sequences representing the same basic document structure:
+
+```text
+Line 1: Hello
+Line 2: World
+```
+
+Therefore:
+
+```text
+LF:
+Hello\nWorld\n
+
+CRLF:
+Hello\r\nWorld\r\n
+```
+
+can describe the same logical sequence of lines even though their file representations differ.
+
+## Carriage Return and Line Feed
+
+The names **Carriage Return** and **Line Feed** come from the mechanical behavior of early printing terminals.
+
+A carriage return moved the printing position back toward the beginning of a line.
+
+A line feed moved the printing position down to the next line.
+
+They were separate operations:
+
+```text
+Carriage Return
+        │
+        ▼
+Move horizontally to the beginning
+
+Line Feed
+        │
+        ▼
+Move vertically to the next line
+```
+
+Modern software does not normally need to think about physical printer mechanisms, but the historical characters remain part of computing systems.
+
+They are represented as:
+
+```text
+CR = \r
+LF = \n
+```
+
+The combination:
+
+```text
+\r\n
+```
+
+is therefore called **CRLF**.
+
+The single character:
+
+```text
+\n
+```
+
+is called **LF**.
+
+## Line Endings Are Not Unicode Characters in the Same Sense
+
+There is an important distinction between the characters contained within a line and the mechanism used to separate lines.
+
+Consider:
+
+```text
+Hello
+World
+```
+
+The letters:
+
+```text
+H e l l o
+W o r l d
+```
+
+are ordinary Unicode code points belonging to the text.
+
+The line boundary is different.
+
+The editor's Document representation can model the file as:
+
+```text
+Document
+│
+├── Line 1 → H e l l o
+└── Line 2 → W o r l d
+```
+
+The line ending does not need to remain attached to the end of every line as part of the line's character sequence.
+
+This is a natural consequence of the vector-of-lines representation established earlier in the book:
+
+```text
+Document
+    │
+    ├── Line
+    ├── Line
+    ├── Line
+    └── ...
+```
+
+The Document represents **logical lines**, while the file representation uses bytes to encode both text and line boundaries. The project's Document Representation decision intentionally favors a vector of independently stored lines because line-oriented operations such as splitting, merging, cursor movement, and rendering map naturally onto this structure.
+
+## A File and a Document Are Not Identical Representations
+
+This distinction becomes especially important when opening and saving files.
+
+Suppose the file contains:
+
+```text
+Hello\r\n
+World\r\n
+```
+
+After decoding and interpreting its line endings, the editor can represent it internally as:
+
+```text
+Document
+
+Line 0 → "Hello"
+Line 1 → "World"
+```
+
+The `\r\n` sequences do not need to become ordinary characters in those lines.
+
+When the document is saved, the editor must serialize those logical lines back into a byte stream:
+
+```text
+Document
+    │
+    ├── "Hello"
+    └── "World"
+          │
+          ▼
+       Encoder
+          │
+          ▼
+     Line endings
+          │
+          ▼
+Hello\r\nWorld\r\n
+```
+
+This is another example of the difference between **logical representation** and **external representation**.
+
+The user is editing lines.
+
+The file contains bytes.
+
+The encoding boundary translates between them.
+
+## Why Editors Must Care About Line Endings
+
+At first, line endings may seem like a minor file-format detail.
+
+They become important when a file moves between environments that use different conventions.
+
+For example:
+
+```text
+Environment A
+
+Hello\n
+World\n
+```
+
+and:
+
+```text
+Environment B
+
+Hello\r\n
+World\r\n
+```
+
+can represent the same visible text.
+
+However, if an editor does not recognize the difference, it may accidentally introduce unexpected carriage-return characters into the document or change the entire file's line-ending convention when saving.
+
+This can lead to several practical problems:
+
+- unexpected characters appearing in some tools
+- entire files appearing modified after a save
+- inconsistent line endings within the same file
+- unnecessary changes in version-control systems
+- compatibility problems with software expecting a particular convention
+
+Therefore, line-ending handling belongs to the text encoding boundary rather than being scattered throughout editing logic.
+
+## Mixed Line Endings
+
+A file does not necessarily use one convention consistently.
+
+It is possible to encounter a file containing:
+
+```text
+Line one\r\n
+Line two\n
+Line three\r\n
+```
+
+This is a **mixed line-ending file**.
+
+From the Document's perspective, it may still simply be:
+
+```text
+Line 0 → "Line one"
+Line 1 → "Line two"
+Line 2 → "Line three"
+```
+
+The question then becomes:
+
+> What should happen when the editor saves the document?
+
+There are several possible policies.
+
+The editor could:
+
+1. Preserve the original line-ending style of every line.
+2. Detect the dominant style and normalize the entire document to it.
+3. Normalize all files to a fixed convention.
+4. Reject or warn about mixed line endings.
+
+Each policy has different consequences.
+
+For the baseline editor, this is primarily a **serialization policy**, not a Document representation problem.
+
+The Document already knows where its logical lines are. The save process decides how those boundaries are represented as bytes.
+
+The specific policy we choose will be discussed in the following sections.
+
+## The Important Separation
+
+The architecture should therefore distinguish three concepts:
+
+```text
+1. Characters
+
+Unicode code points
+        │
+        ▼
+   "Hello"
+
+
+2. Lines
+
+Logical document structure
+        │
+        ▼
+   Line 0 → "Hello"
+   Line 1 → "World"
+
+
+3. File representation
+
+Encoded bytes
+        │
+        ▼
+   Hello\r\nWorld\r\n
+```
+
+These concepts are related, but they are not identical.
+
+A line is not defined by whether the file contains `\n` or `\r\n`.
+
+Instead, the file's line-ending bytes are one possible **serialization of the logical line structure**.
+
+This distinction keeps the architecture clean.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+**A file format is an external representation of a document, not the document itself.**
+
+The Document exists to make editing convenient.
+
+The file exists to make the document persistent.
+
+Those goals are different.
+
+That is why the architecture establishes the Document as the in-memory source of truth while the File Manager handles persistence. The File Manager loads the complete document into memory and later serializes the Document when saving.
+
+The same principle applies to line endings:
+
+```text
+              LOGICAL MODEL
+
+          Document
+        /     |     \
+     Line    Line    Line
+       │       │       │
+       └───────┴───────┘
+               │
+        Serialization
+               │
+               ▼
+        FILE REPRESENTATION
+
+       LF or CRLF bytes
+```
+
+Once this separation is understood, the remaining questions become much easier:
+
+- Which line-ending convention does a file use?
+- How should the editor detect it?
+- Should the editor preserve it?
+- Should it normalize it?
+- Which convention should be used when creating a new file?
+
+Those are policy decisions.
+
+They should be made explicitly rather than becoming accidental consequences of the implementation.
+
+</Aside>
+
+<Aside type="note">
+Line endings are closely related to encoding, but they are not the same problem.
+
+**Encoding** answers:
+
+> How are Unicode code points represented as bytes?
+
+**Line ending policy** answers:
+
+> How are logical line boundaries represented in the file?
+
+For example, both of these files may use UTF-8:
+
+```text
+UTF-8 + LF
+
+Hello\nWorld\n
+```
+
+and:
+
+```text
+UTF-8 + CRLF
+
+Hello\r\nWorld\r\n
+```
+
+The character encoding is the same. The line-ending convention is different.
+
+Keeping these concepts separate will make the editor's loading and saving design much easier to reason about.
+
+</Aside>
+
+## Summary
+
+A line ending is how a file represents the boundary between logical lines, and it is distinct from both the characters within a line and the Document's structural line representation. Encoding answers how code points become bytes; line-ending policy answers how line boundaries become bytes. The two dominant conventions are LF and CRLF, and both can describe the same visible document even though their byte sequences differ. Mixed line endings are also possible, so the editor needs an explicit policy rather than letting the choice emerge accidentally from the loader. Treating line boundaries as part of serialization keeps the Document focused on logical lines and avoids scattering platform-specific byte handling through editing code.
+
+In the next section, we will compare the two dominant conventions in detail: **LF versus CRLF**.

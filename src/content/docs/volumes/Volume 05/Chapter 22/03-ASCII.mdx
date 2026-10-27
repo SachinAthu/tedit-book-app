@@ -1,0 +1,145 @@
+---
+title: 22.3 ASCII
+description: "Explains ASCII's seven-bit character set, its 128 values, and why every ASCII file is also valid UTF-8."
+---
+
+ASCII is one of the simplest text encoding systems and provides a useful starting point for understanding UTF-8.
+
+The name **ASCII** stands for **American Standard Code for Information Interchange**. It defines a set of characters using seven bits, giving it 128 possible values.
+
+These values include:
+
+- Uppercase letters
+- Lowercase letters
+- Digits
+- Punctuation
+- Control characters
+
+For example:
+
+```text
+A → 0x41
+B → 0x42
+C → 0x43
+
+a → 0x61
+b → 0x62
+c → 0x63
+```
+
+A sequence such as:
+
+```text
+Hello
+```
+
+can therefore be represented as:
+
+```text
+48 65 6C 6C 6F
+```
+
+Each ASCII character occupies one byte when stored in the usual byte-oriented representation.
+
+## ASCII and UTF-8
+
+One of the most important properties of UTF-8 is that it preserves ASCII.
+
+The first 128 Unicode code points correspond directly to the ASCII character set, and their UTF-8 representations use exactly the same byte values.
+
+Therefore:
+
+```text
+ASCII
+
+A → 0x41
+```
+
+and:
+
+```text
+UTF-8
+
+A → 0x41
+```
+
+are identical.
+
+This gives us:
+
+```text
+ASCII text
+    │
+    ▼
+Valid UTF-8
+```
+
+An ASCII-only file is therefore also a valid UTF-8 file.
+
+This compatibility is one of the reasons UTF-8 works so well as a general-purpose text encoding. Existing ASCII text can be treated as UTF-8 without changing its byte representation.
+
+## ASCII as the Simple Case
+
+Consider the following document:
+
+```text
+Hello
+World
+```
+
+Its bytes can be represented as:
+
+```text
+48 65 6C 6C 6F 0A
+57 6F 72 6C 64 0A
+```
+
+Every visible character occupies one byte, and the line-feed character is also represented by a single byte.
+
+At this level, byte-oriented operations appear straightforward:
+
+```text
+next byte
+    ↓
+next character
+```
+
+But this relationship is a property of ASCII text, not a general property of text.
+
+Once a document contains characters outside the ASCII range, UTF-8 may represent those characters using multiple bytes.
+
+Therefore, an editor that works correctly with ASCII cannot automatically be assumed to work correctly with all UTF-8 text.
+
+## Why ASCII Still Matters
+
+ASCII remains important even though our editor will use UTF-8.
+
+It provides the foundation for understanding several concepts:
+
+```text
+ASCII
+  │
+  │ first 128 character values
+  ▼
+Unicode
+  │
+  │ UTF-8 encoding
+  ▼
+Bytes
+```
+
+It also gives us a simple baseline against which the additional complexity of Unicode and UTF-8 can be understood.
+
+The key property to remember is:
+
+> **ASCII characters have the same byte representation in UTF-8.**
+
+This means the editor can process ordinary ASCII text using the familiar one-byte representation while still supporting the much larger Unicode character set through UTF-8.
+
+The important complication begins when a character requires more than one byte. That is the behavior we examine next.
+
+## Summary
+
+ASCII defines 128 characters using seven bits, and UTF-8 deliberately preserves the exact ASCII byte values. As a result, every ASCII file is also valid UTF-8, but ASCII text is only the simple one-byte case of a wider system. For ASCII characters, the familiar rule that one byte equals one character holds, which makes such text convenient to process but can conceal the assumptions that break with broader Unicode input. UTF-8 keeps these 128 code points identical while extending the encoding to multi-byte sequences for everything outside that range. ASCII therefore serves as both a compatibility guarantee and a baseline for understanding where the one-byte model stops working.
+
+In the next section, we will examine **Unicode**, the code-point system that extends text beyond ASCII.

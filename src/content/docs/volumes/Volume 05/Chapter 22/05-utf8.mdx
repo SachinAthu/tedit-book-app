@@ -1,0 +1,227 @@
+---
+title: 22.5 UTF-8
+description: Describes UTF-8 as a variable-width encoding with one-to-four-byte sequences that preserves ASCII byte values.
+---
+
+UTF-8 is the encoding our editor will use to represent Unicode text as bytes. It is a **variable-width encoding**, which means that different Unicode code points can require different numbers of bytes.
+
+This is the point where the distinction between bytes and characters becomes especially important.
+
+## Variable-Width Encoding
+
+In UTF-8, a Unicode code point may be represented using between one and four bytes:
+
+```text
+ASCII characters       → 1 byte
+Other Unicode values   → 2–4 bytes
+```
+
+For example, the character `A` is represented by a single byte:
+
+```text
+A
+↓
+41
+```
+
+A non-ASCII character such as `é` requires multiple bytes:
+
+```text
+é
+↓
+C3 A9
+```
+
+The exact byte sequence is determined by the UTF-8 encoding rules for that Unicode code point.
+
+The important observation is:
+
+```text
+1 character
+     │
+     ├── may be 1 byte
+     ├── may be 2 bytes
+     ├── may be 3 bytes
+     └── may be 4 bytes
+```
+
+Therefore, the editor cannot generally determine the number of characters in a text simply by counting its bytes.
+
+## UTF-8 Structure
+
+UTF-8 uses specific bit patterns to distinguish different kinds of bytes.
+
+A single-byte sequence has the form:
+
+```text
+0xxxxxxx
+```
+
+A multi-byte sequence begins with a leading byte followed by continuation bytes.
+
+Conceptually:
+
+```text
+2-byte sequence
+
+110xxxxx 10xxxxxx
+
+
+3-byte sequence
+
+1110xxxx 10xxxxxx 10xxxxxx
+
+
+4-byte sequence
+
+11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+```
+
+Continuation bytes always begin with:
+
+```text
+10xxxxxx
+```
+
+These patterns allow software processing a UTF-8 byte stream to determine where code points begin and how many bytes belong to each sequence.
+
+For example:
+
+```text
+Leading byte
+     │
+     ▼
+110xxxxx
+   │
+   └─────── expects one continuation byte
+```
+
+This structure is one of the properties that makes UTF-8 practical for processing sequentially.
+
+## ASCII Compatibility
+
+UTF-8 deliberately preserves the original ASCII byte values.
+
+Any byte in the range used by ASCII represents the same character in UTF-8:
+
+```text
+A → 41
+B → 42
+C → 43
+```
+
+This means an ASCII-only document is also valid UTF-8.
+
+As a result, ordinary English text does not require any conversion when interpreted as UTF-8.
+
+```text
+ASCII bytes
+    │
+    ▼
+Same bytes
+    │
+    ▼
+UTF-8 interpretation
+```
+
+This compatibility is one of UTF-8's most useful properties.
+
+## Finding Character Boundaries
+
+Because UTF-8 is variable-width, an editor must be able to distinguish the beginning of one encoded code point from the continuation bytes belonging to another.
+
+Consider:
+
+```text
+C3 A9
+```
+
+The first byte:
+
+```text
+C3
+```
+
+is a leading byte.
+
+The second:
+
+```text
+A9
+```
+
+is a continuation byte.
+
+They together represent one Unicode code point.
+
+An editor that blindly treats them as two independent characters would be operating on the encoding incorrectly.
+
+This becomes particularly important for operations such as:
+
+- moving through text
+- inserting characters
+- deleting characters
+- determining character positions
+- rendering text
+
+The Document stores decoded Unicode code points, so its operations work with characters directly. The byte-level UTF-8 boundaries matter only at the boundary where text crosses between the file and the Document — during loading and saving.
+
+## Invalid UTF-8
+
+Not every arbitrary sequence of bytes is valid UTF-8.
+
+For example, a byte sequence may contain:
+
+- an unexpected continuation byte
+- a missing continuation byte
+- an incomplete multi-byte sequence
+- an invalid leading byte
+
+Conceptually:
+
+```text
+Valid bytes
+    │
+    ▼
+UTF-8 decoding
+    │
+    ▼
+Unicode text
+```
+
+whereas:
+
+```text
+Invalid byte sequence
+    │
+    ▼
+Decoding failure
+```
+
+A text editor therefore needs a defined policy for files containing invalid UTF-8. It could reject the file, report an error, replace invalid sequences, or adopt another strategy.
+
+Our editor's encoding policy will need to make this behavior explicit rather than allowing invalid input to produce unpredictable results.
+
+## The Important Consequence
+
+The central lesson of UTF-8 for our editor is:
+
+> **UTF-8 is a byte encoding, but those bytes represent Unicode code points of variable width.**
+
+Therefore:
+
+```text
+Byte offset
+     ≠
+Character position
+```
+
+in the general case.
+
+This distinction will become especially important when we examine how UTF-8 interacts with the Document and Cursor.
+
+## Summary
+
+UTF-8 is a variable-width encoding that represents a code point in one to four bytes, while preserving ASCII byte values exactly. Because of this, byte offsets and character positions differ in the general case. Leading bytes declare the sequence length and continuation bytes follow a fixed `10xxxxxx` pattern, allowing a decoder to find code-point boundaries in a byte stream. Not every byte sequence is valid, so the decoder must also reject malformed or incomplete sequences rather than treating arbitrary bytes as text. The practical consequence for the editor is that character-oriented operations must work on decoded code points, with UTF-8 boundaries handled only at the file boundary.
+
+In the next section, we will see how UTF-8 interacts with the **Text Buffer**, and why the Document stores decoded code points rather than UTF-8 bytes.

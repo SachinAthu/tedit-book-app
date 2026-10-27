@@ -327,6 +327,6 @@ The File Manager therefore has a simple but critical contract:
 
 ## Summary
 
-File operations can fail for reasons outside the editor's control, so the File Manager must always inspect system-call results, use `errno` to produce meaningful messages, and never let a failed operation appear successful.
+File operations can fail for reasons outside the editor's control, so the File Manager must always inspect system-call results, use `errno` to produce meaningful messages, and never let a failed operation appear successful. A missing file, denied permission, or interrupted transfer is an expected operational failure rather than a programming crash, so it should be reported and the session allowed to continue. The File Manager must also handle partial reads and writes, continuing until the requested data is fully transferred or a real error is returned. This preserves the key invariant that a failed load never becomes a valid Document and a failed save never leaves the document marked clean.
 
 In the next section, we will examine **file permissions and the operating system**, the access-control rules that determine whether a requested file operation is allowed at all.

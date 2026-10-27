@@ -244,6 +244,6 @@ More advanced data structures and large-document strategies are examined later i
 
 ## Summary
 
-Because the entire Document is held in memory, file size directly determines memory usage and read/write cost. This is a conscious, educational trade-off—the Viewport limits what is displayed, never what is stored.
+Because the entire Document is held in memory, file size directly determines memory usage and read/write cost. This is a conscious, educational trade-off-the Viewport limits what is displayed, never what is stored. Loading a large file requires reading all of its bytes and constructing the corresponding lines, and saving rewrites the complete document even if only one character changed. The cost also depends on whether a document is long in lines or contains a few extremely long lines, since both stress the representation in different ways. Techniques such as memory mapping, lazy loading, or partial document loading could reduce these costs, but they are deliberately excluded to keep the baseline persistence model simple and predictable.
 
 In the next section, we will see how **loading and saving fit into the runtime model**, tracing file operations through the command, state, and rendering pipeline.

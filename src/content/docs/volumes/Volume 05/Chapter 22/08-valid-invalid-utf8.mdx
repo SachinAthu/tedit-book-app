@@ -1,0 +1,428 @@
+---
+title: 22.8 Valid and Invalid UTF-8
+description: Explains UTF-8 validation, including continuation bytes, truncation, overlong encodings, code-point ranges, and invalid-input policy.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+UTF-8 is designed to encode Unicode text, but not every sequence of bytes is valid UTF-8.
+
+This distinction matters because the editor receives **bytes at the file boundary**, while the Document stores **decoded Unicode code points**. The decoder therefore has to determine whether the incoming byte sequence represents valid UTF-8 before those bytes become part of the Document.
+
+The important question is not simply:
+
+> "Can these bytes be stored in memory?"
+
+Any sequence of bytes can be stored in memory.
+
+The real question is:
+
+> "Do these bytes form a valid UTF-8 encoded text stream?"
+
+That is the responsibility of the UTF-8 decoder.
+
+## What Makes UTF-8 Valid?
+
+UTF-8 uses different byte patterns depending on the Unicode code point being encoded.
+
+The first byte identifies the length of the sequence:
+
+```text
+1-byte sequence:
+0xxxxxxx
+
+2-byte sequence:
+110xxxxx 10xxxxxx
+
+3-byte sequence:
+1110xxxx 10xxxxxx 10xxxxxx
+
+4-byte sequence:
+11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+```
+
+Continuation bytes always have this general form:
+
+```text
+10xxxxxx
+```
+
+Therefore, a decoder can examine the first byte and determine how many bytes belong to the current code point.
+
+For example, an ASCII character such as `A` is:
+
+```text
+01000001
+```
+
+It is a complete one-byte UTF-8 sequence.
+
+A character requiring multiple bytes might look conceptually like:
+
+```text
+1110xxxx 10xxxxxx 10xxxxxx
+```
+
+The decoder must consume all three bytes together. Treating each byte independently would produce an incorrect interpretation.
+
+## Invalid Continuation Bytes
+
+One common form of invalid UTF-8 occurs when a continuation byte appears where a new character should begin.
+
+For example:
+
+```text
+101xxxxx
+```
+
+cannot begin a UTF-8 sequence.
+
+A byte beginning with `10` is a continuation byte. It only has meaning as part of a preceding multi-byte sequence.
+
+Conceptually:
+
+```text
+Valid:
+
+1110xxxx 10xxxxxx 10xxxxxx
+^        ^        ^
+start    continuation bytes
+
+
+Invalid:
+
+101xxxxx
+^
+unexpected continuation byte
+```
+
+A decoder must therefore maintain enough context to know whether it is currently expecting continuation bytes.
+
+This is one reason UTF-8 decoding cannot simply treat a file as an array of independent characters.
+
+## Truncated Sequences
+
+A sequence can also be invalid because the file ends before the complete sequence is available.
+
+Suppose a three-byte sequence begins:
+
+```text
+1110xxxx 10xxxxxx
+```
+
+but the file ends at this point.
+
+The decoder has received the beginning of a valid sequence but not enough bytes to complete it.
+
+Conceptually:
+
+```text
+File:
+
+1110xxxx 10xxxxxx
+                  ↑
+               end of file
+```
+
+There is no complete Unicode code point to add to the Document.
+
+The important distinction is that the problem is discovered **while decoding the file**, before the resulting text enters the Document representation.
+
+## Invalid Leading Bytes
+
+Not every possible byte value is a valid first byte of a UTF-8 sequence.
+
+UTF-8 reserves certain byte patterns and restricts the ranges that may begin two-, three-, or four-byte sequences.
+
+Therefore, a decoder cannot simply apply the rule:
+
+> "If the high bit is set, read several more bytes."
+
+It must validate the structure of the sequence.
+
+The first byte determines the expected sequence length, and the following bytes must satisfy the continuation-byte rules.
+
+Conceptually:
+
+```text
+Read first byte
+      │
+      ▼
+Determine sequence length
+      │
+      ▼
+Read required continuation bytes
+      │
+      ▼
+Validate sequence
+      │
+      ▼
+Produce one Unicode code point
+```
+
+Only after validation should the resulting code point become part of the Document.
+
+## Overlong Encodings
+
+UTF-8 also has a more subtle validity rule: a Unicode code point must be represented using the shortest valid UTF-8 sequence.
+
+For example, an ASCII-range value must not be artificially represented using two, three, or four bytes.
+
+Such a representation is called an **overlong encoding**.
+
+The problem can be understood conceptually like this:
+
+```text
+Same logical value
+
+Shortest representation
+        │
+        ▼
+      valid
+
+Longer-than-necessary representation
+        │
+        ▼
+      invalid
+```
+
+Without this rule, the same Unicode value could have multiple byte representations. That would make comparisons, validation, and security-sensitive processing more difficult.
+
+A correct UTF-8 decoder therefore validates not only the shape of the byte sequence but also whether the sequence is the **shortest permitted representation** of the resulting code point.
+
+## Unicode Code Point Range
+
+UTF-8 uses up to four bytes per encoded Unicode code point.
+
+This does not mean that every four-byte value represents a valid Unicode code point.
+
+Unicode defines a finite range of code points, and certain ranges are reserved and cannot represent ordinary Unicode scalar values.
+
+In particular, the UTF-16 surrogate range is not valid as a UTF-8 encoded Unicode scalar value.
+
+Therefore, decoding requires more than reconstructing a number from several bytes:
+
+```text
+UTF-8 bytes
+     │
+     ▼
+Reconstruct value
+     │
+     ▼
+Is the value permitted?
+     │
+   ┌─┴─┐
+   │   │
+  Yes  No
+   │   │
+   ▼   ▼
+Code   Invalid
+point  sequence
+```
+
+The decoder is responsible for enforcing these rules.
+
+## What Should Our Editor Do?
+
+Once the editor encounters invalid UTF-8, it must make a deliberate policy decision.
+
+There are several possible approaches.
+
+### Reject the file
+
+The editor can refuse to open a file containing invalid UTF-8.
+
+```text
+File
+  │
+  ▼
+UTF-8 Decoder
+  │
+  ├── Valid ──────► Document
+  │
+  └── Invalid ────► Error
+```
+
+This is the strictest approach.
+
+It guarantees that every Document contains text that has passed UTF-8 validation.
+
+### Replace invalid data
+
+Another approach is to replace invalid sequences with a replacement character.
+
+Conceptually:
+
+```text
+Invalid bytes
+     │
+     ▼
+Replacement character
+     │
+     ▼
+Document
+```
+
+This allows the editor to display the file, but information may be lost during decoding.
+
+If the document is subsequently saved, the original invalid byte sequence may no longer be recoverable.
+
+### Preserve invalid bytes
+
+A third approach is to preserve the original bytes and allow them to pass through the editor.
+
+This would require the Document to retain information that is not represented by Unicode code points.
+
+That conflicts with the representation chosen for this project.
+
+Our Document is intended to contain decoded Unicode code points, while UTF-8 encoding and decoding occur at the file boundary. This keeps the core editing model independent of the external byte representation.
+
+Therefore, preserving arbitrary invalid byte sequences would require a different document model and is outside the scope of the baseline architecture.
+
+## The Boundary Between Bytes and Text
+
+This illustrates an important architectural principle.
+
+The File Manager deals with the persistent representation:
+
+```text
+File
+ │
+ │ UTF-8 bytes
+ ▼
+UTF-8 Decoder
+ │
+ │ Unicode code points
+ ▼
+Document
+```
+
+The rest of the editor operates on the Document.
+
+For example:
+
+```text
+Cursor
+   │
+   ▼
+Document
+   │
+   ▼
+Renderer
+```
+
+The Cursor does not need to know whether the original file used one byte, two bytes, or four bytes to represent a particular code point.
+
+Likewise, the Renderer should not need to inspect UTF-8 continuation bytes when reasoning about the logical contents of a line.
+
+This separation follows the project's broader architectural principle that components should have clearly defined responsibilities and dependencies. The Document owns the editable text, while the File Manager provides the boundary between that text and the file system.
+
+## Why Validation Matters
+
+UTF-8 validation is not merely an implementation detail.
+
+It establishes an important invariant:
+
+> **Once text enters the Document, it is represented as valid Unicode code points rather than an arbitrary sequence of file bytes.**
+
+That invariant simplifies everything above the encoding layer.
+
+The editor can reason about:
+
+```text
+Character
+```
+
+rather than:
+
+```text
+Possible UTF-8 byte sequence
+```
+
+The Cursor can operate on logical character positions.
+
+The Document can perform insertion and deletion using its character representation.
+
+The Renderer can convert characters back into UTF-8 when producing terminal output, since the terminal—like the file—is another external byte boundary.
+
+And the File Manager can encode the Document when saving.
+
+The overall boundary therefore remains:
+
+```text
+                 FILE BOUNDARY
+
+       UTF-8 bytes        Unicode code points
+            │                       │
+            ▼                       ▼
+        Decoder                 Document
+            │                       │
+            └───────────┬───────────┘
+                        │
+                 Editor Operations
+                        │
+                        ▼
+                    Encoder
+                        │
+                        ▼
+                   UTF-8 bytes
+                        │
+                        ▼
+                       File
+```
+
+This layered representation is one of the most important design decisions in the chapter.
+
+The editor does not need every component to understand every representation. Each layer can work with the representation appropriate to its responsibility.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+**Validation creates a useful boundary invariant.**
+
+A decoder is not simply converting bytes into numbers. It is establishing a contract between two representations.
+
+Before decoding:
+
+> The data is an external byte stream that may or may not contain valid UTF-8.
+
+After decoding:
+
+> The Document contains valid Unicode code points that the editor can safely manipulate as logical text.
+
+That contract reduces complexity throughout the rest of the system.
+
+The same principle appears elsewhere in the editor architecture: low-level components establish clean representations for higher-level components to consume. The Input Parser, for example, translates raw terminal bytes into abstract key events so that the Input Engine does not need to understand terminal protocols.
+
+Text encoding follows the same architectural pattern:
+
+```text
+External Representation
+        │
+        ▼
+     Decoder
+        │
+        ▼
+Internal Representation
+```
+
+and, in the opposite direction:
+
+```text
+Internal Representation
+        │
+        ▼
+     Encoder
+        │
+        ▼
+External Representation
+```
+
+This separation allows the core editing model to remain focused on editing text rather than managing the details of its external encoding.
+
+</Aside>
+
+## Summary
+
+Not every byte sequence is valid UTF-8. The decoder must validate sequence structure, reject overlong encodings, and enforce the Unicode code-point range, establishing the invariant that text entering the Document is valid. It must recognize continuation bytes, detect truncated or invalid leading bytes, and refuse encodings that use more bytes than necessary for a value. The editor then has to choose a policy for invalid input, such as rejecting the file, substituting a replacement character, or preserving raw bytes; the baseline favors a decoded code-point Document and keeps encoding concerns at the boundary. Validation is what allows every layer above the decoder to treat the Document as valid logical text rather than an arbitrary byte stream.
+
+In the next section, we will turn to a separate representation concern: **line endings**.

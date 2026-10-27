@@ -1,0 +1,465 @@
+---
+title: 22.6 UTF-8 and the Text Buffer
+description: Shows why the Text Buffer stores decoded Unicode code points rather than UTF-8 bytes, and how loading and saving convert between them.
+---
+
+Before continuing, one naming point deserves to be made explicit. Throughout this chapter, **Text Buffer** and **Document** refer to the same concept: the Document is the logical object that represents the text being edited, and the Text Buffer is its internal in-memory representation (see GLOSSARY.md). The two terms are used interchangeably.
+
+In Chapter 13, we chose a **vector of lines** as the representation of the Document. Each line was described as an independent sequence of characters:
+
+```text
+Document
+    │
+    ├── Line 0 → Characters
+    ├── Line 1 → Characters
+    └── Line 2 → Characters
+```
+
+At that point, we intentionally left the exact representation of those characters for later. Now that we understand Unicode and UTF-8, we can define this part of the model more precisely.
+
+The important distinction is between **how text is represented in a file** and **how text is represented inside the editor**.
+
+A file uses an encoding such as UTF-8:
+
+```text
+File
+ │
+ │ UTF-8 bytes
+ ▼
+63 61 66 C3 A9
+```
+
+The Document, however, works with the decoded text:
+
+```text
+Document
+ │
+ ▼
+[c] [a] [f] [é]
+```
+
+Conceptually, the boundary looks like this:
+
+```text
+             File Representation
+                    │
+                    │ UTF-8 bytes
+                    ▼
+              UTF-8 Decoder
+                    │
+                    │ Unicode code points
+                    ▼
+             Document / Buffer
+                    │
+                    │ editing
+                    ▼
+             Document / Buffer
+                    │
+                    │ Unicode code points
+                    ▼
+              UTF-8 Encoder
+                    │
+                    │ UTF-8 bytes
+                    ▼
+                    File
+```
+
+This gives the editor a clean separation between **external representation** and **internal text representation**.
+
+## The Text Buffer Stores Decoded Text
+
+For our editor, the Text Buffer will conceptually store **Unicode code points**, rather than raw UTF-8 bytes.
+
+Consider:
+
+```text
+café
+```
+
+On disk, its UTF-8 representation contains:
+
+```text
+63 61 66 C3 A9
+```
+
+After decoding, the Document can represent it conceptually as:
+
+```text
+U+0063  U+0061  U+0066  U+00E9
+   c       a       f       é
+```
+
+The Document therefore contains four logical elements:
+
+```text
+[c] [a] [f] [é]
+```
+
+even though the UTF-8 representation requires five bytes.
+
+This is consistent with the character-oriented Document model established in Chapter 13. Each line remains an independent sequence of text elements; UTF-8 is simply the representation used when text crosses the file boundary.
+
+## A Conceptual C Representation
+
+At the implementation level, a Unicode code point can be represented using a fixed-width integer type such as `uint32_t`.
+
+A line can therefore be thought of conceptually as:
+
+```text
+Line
+├── characters
+├── length
+└── capacity
+```
+
+where `characters` points to a dynamically allocated sequence of code points:
+
+```text
+uint32_t *characters;
+```
+
+For example:
+
+```text
+[c] [a] [f] [é]
+ │    │    │    │
+ ▼    ▼    ▼    ▼
+0063 0061 0066 00E9
+```
+
+The exact C structure and memory-management details will be introduced when we implement the Document module. The important architectural decision here is that the logical text stored by the editor consists of decoded Unicode code points rather than UTF-8 byte sequences.
+
+## Why Decode the Text?
+
+Keeping decoded code points in the Text Buffer gives higher-level editor operations a consistent unit to work with.
+
+Consider the Cursor.
+
+The Cursor model established in Chapter 14 treats the column as a position **between characters**:
+
+```text
+| c | a | f | é |
+0   1   2   3   4
+```
+
+The Cursor does not need to know that `é` occupied two bytes in the original file.
+
+It simply sees:
+
+```text
+c
+a
+f
+é
+```
+
+and therefore:
+
+```text
+cursor_column = 3
+```
+
+means the position immediately before `é`.
+
+This preserves the character-oriented Cursor model already established earlier.
+
+## Editing Works on Code Points
+
+The same principle applies to editing operations.
+
+Suppose the Document contains:
+
+```text
+café
+```
+
+and the Cursor is positioned here:
+
+```text
+caf|é
+```
+
+The Cursor is at position `3`.
+
+If the user inserts `X`, the Document becomes:
+
+```text
+cafX|é
+```
+
+The operation works on the logical sequence:
+
+```text
+[c] [a] [f] [é]
+```
+
+rather than manipulating the UTF-8 bytes:
+
+```text
+63 61 66 C3 A9
+```
+
+This prevents an editing operation from accidentally splitting a multi-byte UTF-8 encoding.
+
+The same applies to deletion. Backspace removes the code point immediately before the Cursor, while Delete removes the code point at the Cursor position, following the Cursor semantics established in Chapter 14.
+
+## Loading a Document
+
+When a file is opened, the File Manager reads the file's bytes.
+
+The process can be viewed as:
+
+```text
+File
+ │
+ │ UTF-8 bytes
+ ▼
+Read bytes
+ │
+ ▼
+Decode UTF-8
+ │
+ ▼
+Unicode code points
+ │
+ ▼
+Create Lines
+ │
+ ▼
+Document
+```
+
+For example:
+
+```text
+File bytes:
+
+63 61 66 C3 A9
+```
+
+become:
+
+```text
+Document:
+
+[c] [a] [f] [é]
+```
+
+The File Manager therefore handles the representation conversion at the boundary between persistent storage and the in-memory Document.
+
+This is consistent with the File Manager's architectural responsibility: it provides the boundary between the editor and the file system, while the Document remains the authoritative representation of the text being edited.
+
+## Saving a Document
+
+Saving performs the reverse operation.
+
+The Document contains:
+
+```text
+[c] [a] [f] [é]
+```
+
+The UTF-8 encoder converts the code points into:
+
+```text
+63 61 66 C3 A9
+```
+
+which the File Manager then writes to the file.
+
+The complete process is:
+
+```text
+Document
+    │
+    │ Unicode code points
+    ▼
+UTF-8 Encoder
+    │
+    │ UTF-8 bytes
+    ▼
+File Manager
+    │
+    ▼
+File
+```
+
+Thus, UTF-8 is the **external file representation**, while Unicode code points form the logical representation used by the editor.
+
+## TAB: One Code Point
+
+The examples above used letters such as `c`, `a`, and `é`. The boundary applies in exactly the same way to every other character, including control characters such as TAB.
+
+A literal TAB character is the Unicode code point:
+
+```text
+U+0009
+```
+
+Its UTF-8 encoding is the single byte:
+
+```text
+09
+```
+
+Because TAB is an ASCII character, its UTF-8 encoding is identical to its ASCII byte value, like any other ASCII character.
+
+During loading, the decoder converts:
+
+```text
+File:
+    09
+
+      │ UTF-8 decoding
+
+      ▼
+
+Document:
+    U+0009
+```
+
+and during saving, the encoder performs the reverse conversion:
+
+```text
+Document:
+    U+0009
+
+      │ UTF-8 encoding
+
+      ▼
+
+File:
+    09
+```
+
+This establishes several points:
+
+- U+0009 is **one logical character** — a single code point in the Document, exactly like `A` or `é`.
+- Its visual width is **not** determined by the encoding. The byte `09` says nothing about how many terminal columns the TAB occupies.
+- The Renderer later decides how many terminal columns the TAB occupies. That is a rendering concern, not an encoding concern.
+- The Document does **not** convert TAB into spaces. The Document always stores U+0009; any visual expansion belongs entirely to rendering.
+
+Encoding therefore answers only one question about TAB: which bytes represent it in a file.
+
+## The Trade-off
+
+This approach simplifies character-oriented operations, but it has a cost.
+
+A UTF-8 character may require only one to four bytes on disk, while our simple internal representation uses a fixed-width value for each code point.
+
+For example:
+
+```text
+File:
+
+é → 2 UTF-8 bytes
+```
+
+while conceptually:
+
+```text
+Document:
+
+é → 1 uint32_t value
+```
+
+The internal representation therefore uses more memory for many documents than storing the original UTF-8 bytes directly.
+
+We accept this trade-off because the project prioritizes:
+
+- simplicity
+- clear character-oriented operations
+- straightforward cursor behavior
+- understandable data structures
+- educational value
+
+over minimizing the memory footprint of the Text Buffer.
+
+More sophisticated editors can use compact or specialized text representations when memory usage and editing performance become important at larger scales. Those alternatives are examined later when we study advanced text-buffer data structures.
+
+## A Clear Separation of Responsibilities
+
+With this decision, the different layers of the editor have clear responsibilities:
+
+```text
+File
+ │
+ │ UTF-8 bytes
+ ▼
+File Manager
+ │
+ │ decode
+ ▼
+Document
+ │
+ │ Unicode code points
+ ├───────────────┐
+ ▼               ▼
+Cursor          Search
+ │               │
+ └───────┬───────┘
+         ▼
+    Text operations
+         │
+         ▼
+Document
+ │
+ │ encode
+ ▼
+UTF-8 bytes
+ │
+ ▼
+File
+```
+
+The File Manager deals with the file representation.
+
+The Document deals with logical text.
+
+The Cursor operates on positions within that logical text.
+
+Later, features such as search and find-and-replace can operate on the same code-point representation rather than having to understand UTF-8 byte boundaries themselves.
+
+This separation is one of the main reasons for choosing a decoded internal representation.
+
+## The Important Distinction
+
+We can now state the distinction precisely:
+
+> **UTF-8 is how the editor represents text at the file boundary. Unicode code points are the logical text representation used by the Text Buffer.**
+
+Therefore:
+
+```text
+File:
+UTF-8 bytes
+```
+
+while:
+
+```text
+Document:
+Unicode code points
+```
+
+And the conversion occurs at the boundary:
+
+```text
+UTF-8 bytes
+     │
+     │ decode
+     ▼
+Unicode code points
+     │
+     │ encode
+     ▼
+UTF-8 bytes
+```
+
+This model preserves the vector-of-lines architecture established in Chapter 13 and the character-position model established in Chapter 14, while giving those earlier concepts a precise Unicode foundation.
+
+## Summary
+
+The Document stores decoded Unicode code points rather than UTF-8 bytes, keeping the byte/character distinction at the file boundary. This keeps cursor positions and editing operations character-oriented at the cost of a larger in-memory representation. A line can be thought of as a sequence of fixed-width code-point values, so inserting, deleting, and moving through text never splits a multi-byte encoding. Loading decodes UTF-8 into code points and builds lines; saving encodes those code points back into bytes. The trade-off is higher memory use than storing compact UTF-8 directly, accepted in exchange for simpler cursor behavior, simpler text operations, and a clear separation between the Document and the File Manager.
+
+In the next section, we will make the difference explicit with **byte positions versus character positions**.

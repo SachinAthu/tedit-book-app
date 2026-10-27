@@ -237,6 +237,6 @@ Once this process is complete, normal editing operations work entirely against t
 
 ## Summary
 
-Loading is a one-way transfer that moves bytes from the file system into the in-memory Document: open the file, read its contents, build the Document, update the Editor State, and close the descriptor. The file on disk remains unchanged throughout.
+Loading is a one-way transfer that moves bytes from the file system into the in-memory Document: open the file, read its contents, build the Document, update the Editor State, and close the descriptor. The file on disk remains unchanged throughout. The File Manager must inspect every step, because a successful open does not guarantee a successful or complete read. If any stage fails, the editor preserves its existing state rather than replacing it with a partial or nonexistent Document. This establishes the asymmetric nature of the operation: loading reads persistent data into memory but never writes back to the source file.
 
 In the next section, we will reverse that direction and examine **saving a file**, which serializes the Document and writes its contents back to disk.

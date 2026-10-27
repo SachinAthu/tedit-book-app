@@ -393,6 +393,6 @@ This separation gives us a clean foundation for the next stage of the discussion
 
 ## Summary
 
-File I/O flows through the existing command, state, and rendering pipeline. The Command Engine decides when an operation is needed, the File Manager performs it, and the Renderer simply observes the resulting state, keeping persistence a focused subsystem.
+File I/O flows through the existing command, state, and rendering pipeline. The Command Engine decides when an operation is needed, the File Manager performs it, and the Renderer simply observes the resulting state, keeping persistence a focused subsystem. Loading replaces the Document and updates the Editor State; saving reads the current Document, serializes it, writes it, and reports the result so the Dirty Flag can be updated. Input parsing and command mapping never call file-system APIs directly, so POSIX knowledge stays below the File Manager boundary. This preserves the single source of truth: the Document in the Editor State remains the live editing representation, while the file is only persistent storage.
 
 In the next section, we will analyze the **complexity and trade-offs** of this persistence model, including its `O(n)` time and space costs.

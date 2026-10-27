@@ -1,0 +1,396 @@
+---
+title: 22.14 Complexity and Trade-offs
+description: Analyzes the O(n) decode/encode costs and higher memory use accepted in exchange for simpler code-point-based editing.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The encoding strategy gives the editor a clean separation between file bytes and logical text, but that separation has costs.
+
+The Document no longer stores the file's compact UTF-8 representation directly. Instead, the editor decodes the complete document into Unicode code points, keeps those code points in memory while editing, and encodes them again when saving.
+
+The important question is therefore:
+
+> What does this representation cost, and what do we gain from it?
+
+## Decoding Complexity
+
+Suppose a file contains `n` bytes.
+
+Loading requires the editor to examine those bytes and decode the UTF-8 sequences they contain.
+
+Conceptually:
+
+```text
+n file bytes
+     │
+     ▼
+UTF-8 decoder
+     │
+     ▼
+Unicode code points
+```
+
+Every input byte must be examined as part of the decoding process.
+
+Therefore, UTF-8 decoding is:
+
+```text
+Time: O(n)
+```
+
+where `n` is the number of bytes in the input file.
+
+The decoder does not need to repeatedly scan the file to determine the meaning of a byte. It processes the input sequentially.
+
+## Encoding Complexity
+
+Saving performs the reverse operation.
+
+```text
+Unicode code points
+        │
+        ▼
+   UTF-8 encoder
+        │
+        ▼
+UTF-8 byte stream
+```
+
+The encoder processes the Document's text once, producing the corresponding byte sequence.
+
+In terms of the resulting output size, encoding is linear:
+
+```text
+Time: O(n)
+```
+
+where `n` represents the size of the serialized output.
+
+The exact number of output bytes depends on the characters being encoded because different Unicode code points require different numbers of UTF-8 bytes.
+
+## Memory Usage
+
+The most important cost of our strategy is memory.
+
+The editor loads the entire file into the in-memory Document. This was already an intentional architectural choice in the project's file persistence model.
+
+The file on disk is encoded as UTF-8 bytes, while the Document stores Unicode code points.
+
+Conceptually:
+
+```text
+Disk
+
+UTF-8 bytes
+    │
+    ▼
+Document
+
+Unicode code points
+```
+
+A UTF-8 representation can use between one and four bytes for a Unicode code point, while our conceptual internal representation uses a fixed-width `uint32_t` value for each code point.
+
+This means the internal representation can require substantially more memory than the original UTF-8 file, particularly for documents containing mostly ASCII characters.
+
+For example, an ASCII-heavy file might require roughly:
+
+```text
+UTF-8:
+1 byte per code point
+
+Internal code-point representation:
+4 bytes per code point
+```
+
+This is a real cost.
+
+However, it provides a much simpler editing model because the editor no longer has to manipulate variable-length UTF-8 sequences during ordinary text operations.
+
+## Memory Trade-off
+
+The trade-off can be summarized as:
+
+```text
+UTF-8 bytes
+     │
+     │ compact
+     ▼
+Less memory
+     │
+     │ but variable-width characters
+     ▼
+More complicated editing
+
+
+Unicode code points
+     │
+     │ wider representation
+     ▼
+More memory
+     │
+     │ but fixed-width logical values
+     ▼
+Simpler editing
+```
+
+The project deliberately chooses the second approach.
+
+The purpose of the baseline Document representation is not to minimize memory at every possible cost. The project prioritizes simplicity, readability, and educational value.
+
+This is consistent with the existing Document Representation decision, which accepts the limitations of a vector-of-lines model in exchange for a representation that maps directly onto the editor's cursor, rendering, and line-oriented operations.
+
+## How Other Editors Represent Text
+
+Mature editors often use more compact representations. Vim and Neovim, for example, use UTF-8 internally, while Emacs uses a variable-length internal encoding based on UTF-8. Our fixed-width code-point representation is intentionally simpler: it makes the relationship between a logical character and an element in the text buffer explicit, at the cost of additional memory.
+
+| Editor               | Internal text representation                               |
+| -------------------- | ---------------------------------------------------------- |
+| **Vim**              | UTF-8 internally                                           |
+| **Neovim**           | UTF-8 internally                                           |
+| **Emacs**            | Its own variable-length multibyte encoding, based on UTF-8 |
+| **VS Code / Monaco** | JavaScript strings, effectively UTF-16 code units          |
+
+## Full-Document Loading and Saving
+
+The encoding costs also fit into the broader file persistence model.
+
+The editor loads the entire file:
+
+```text
+File
+  │
+  ▼
+Decode
+  │
+  ▼
+Complete Document in memory
+```
+
+and saves the entire Document:
+
+```text
+Complete Document
+  │
+  ▼
+Encode
+  │
+  ▼
+Complete file
+```
+
+Therefore, both loading and saving are fundamentally linear in the size of the data being processed.
+
+This matches the File Persistence Model established in Chapter 21, where full-document loading and full-document saving were deliberately chosen over incremental persistence, memory mapping, or lazy loading.
+
+Encoding does not change that architectural decision.
+
+It is simply one of the transformations performed at the boundary.
+
+## Editing Cost
+
+Once the text has been decoded, ordinary editing does not repeatedly pay the cost of UTF-8 decoding.
+
+For example, inserting a code point operates on the Document's internal representation:
+
+```text
+Document
+    │
+    ▼
+Insert code point
+    │
+    ▼
+Updated Document
+```
+
+The UTF-8 representation is reconstructed only when the document is serialized.
+
+This is an important benefit.
+
+If the editor stored raw UTF-8 bytes instead, inserting one logical character could require determining how many bytes represent the character and maintaining valid byte sequences throughout the editing operation.
+
+With the chosen representation:
+
+```text
+File bytes
+    │
+    ▼
+Decode once
+    │
+    ▼
+Edit logical text
+    │
+    ▼
+Encode when saving
+```
+
+The encoding cost is therefore concentrated at the file boundary rather than being distributed across every editing operation.
+
+## Character Width and Memory
+
+The fixed-width internal representation also has an important performance characteristic.
+
+Every code point occupies the same amount of storage in the conceptual representation, regardless of whether its UTF-8 encoding would have required one, two, three, or four bytes.
+
+That makes locating a code point within a line straightforward.
+
+Conceptually:
+
+```text
+Line
+
+[code point][code point][code point][code point]
+     0            1            2            3
+```
+
+The editor can reason about positions directly in terms of code points.
+
+This complements the cursor model established earlier:
+
+```text
+Cursor column = logical character position
+```
+
+rather than:
+
+```text
+Cursor column = UTF-8 byte offset
+```
+
+The benefit is simpler character-oriented navigation at the cost of a larger internal representation.
+
+## Cache and Locality Considerations
+
+A contiguous sequence of fixed-width code points also has a useful memory-access property.
+
+A line can conceptually be stored as:
+
+```text
+[cp0][cp1][cp2][cp3][cp4]...
+```
+
+The values are adjacent in memory.
+
+Sequential operations such as:
+
+- scanning a line
+- rendering a line
+- searching a line
+- encoding a line
+
+can therefore traverse the representation predictably.
+
+This does not mean that the representation is automatically faster in every workload.
+
+The larger memory footprint can reduce cache efficiency compared with a compact byte-oriented representation.
+
+The trade-off is therefore:
+
+```text
+Compact UTF-8
+    │
+    ├── less memory
+    └── variable-width decoding
+
+
+Fixed-width code points
+    │
+    ├── more memory
+    └── simpler sequential access
+```
+
+For the baseline editor, the predictable representation is preferred.
+
+## Scalability
+
+The chosen representation is appropriate for the scope of this project, but it is not universally optimal.
+
+For very large documents, several costs become significant:
+
+- memory required for the complete Document
+- time required to decode the entire file
+- time required to encode the entire file during saving
+- memory bandwidth consumed by the larger code-point representation
+
+These limitations are already consistent with the project's full-document persistence model.
+
+The editor is intentionally not designed around extremely large files or memory-constrained environments. If those requirements become important, the architecture could eventually be extended with alternative text-buffer representations or more sophisticated persistence strategies.
+
+Those alternatives belong to later chapters rather than to the baseline implementation.
+
+## Overall Trade-off
+
+The central trade-off of this chapter can be summarized as:
+
+| Choice                         | Benefit                          | Cost                                 |
+| ------------------------------ | -------------------------------- | ------------------------------------ |
+| UTF-8 on disk                  | Compact external representation  | Variable-width encoding              |
+| Unicode code points internally | Simple logical editing           | Higher memory usage                  |
+| Logical lines                  | Natural cursor and editing model | Requires serialization of boundaries |
+| Accept LF and CRLF             | Better input compatibility       | Requires line-ending recognition     |
+| Canonical LF on save           | Deterministic output             | CRLF files are normalized            |
+| Full-document conversion       | Simple architecture              | `O(n)` load/save work                |
+
+None of these decisions is universally correct.
+
+They are appropriate because they match the requirements and priorities of this editor:
+
+```text
+Simplicity
+    +
+Predictability
+    +
+Educational value
+    +
+Clear architecture
+```
+
+The project deliberately accepts higher memory usage and linear encoding/decoding work in exchange for a Document representation that is easier to understand and manipulate.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+**The purpose of an internal representation is not to preserve the external format. It is to make the system's most important operations easier.**
+
+UTF-8 is an efficient file representation.
+
+Unicode code points are a convenient logical representation for our editor.
+
+Neither needs to be forced to serve both purposes.
+
+The architecture therefore accepts a conversion cost at the boundary:
+
+```text
+             File
+              │
+          UTF-8 bytes
+              │
+              ▼
+           Decode
+              │
+              ▼
+      Unicode code points
+              │
+          Edit freely
+              │
+              ▼
+           Encode
+              │
+              ▼
+          UTF-8 bytes
+              │
+              ▼
+             File
+```
+
+This is a deliberate engineering trade-off.
+
+The editor spends some memory and processing time to keep the core editing model simple. For the baseline requirements, that is a favorable trade.
+
+</Aside>
+
+## Summary
+
+The chosen representation accepts higher memory usage and `O(n)` decoding/encoding at the boundary in exchange for a simpler, character-oriented editing model. This is a deliberate trade-off consistent with the project's priorities of simplicity, predictability, and educational value. Decoding scans every input byte once, encoding processes every code point once, and fixed-width code points make line traversal and cursor positioning straightforward. The memory cost is real: an ASCII-heavy document can require roughly four bytes per character internally compared with one byte in UTF-8, and large documents pay both the full-file conversion cost and the larger resident footprint. These costs fit the chapter's full-document persistence model and can be revisited if large-file or memory-constrained requirements later justify a more compact representation.
+
+In the next section, the **chapter summary** consolidates the Text Encoding strategy and previews the next chapter.
