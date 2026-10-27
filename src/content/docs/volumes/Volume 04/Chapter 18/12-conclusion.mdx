@@ -1,0 +1,117 @@
+---
+title: 18.12 Conclusion
+description: Recaps the Screen Buffer design, then offers review questions, thought experiments, common mistakes, and a Renderer preview.
+---
+
+The Screen Buffer answers a single question left open by the previous chapter: **where does the visual frame live before it is sent to the terminal?** It is an in-memory representation of the terminal's visible screen — an intermediate layer that sits between frame generation and terminal output.
+
+```text
+Editor State
+     │
+     ▼
+Frame Generation
+     │
+     ▼
+Screen Buffer
+     │
+     ▼
+Terminal Output
+```
+
+The Screen Buffer is **not** another representation of the document. The Text Buffer stores the logical contents of the document; the Screen Buffer stores a grid of **screen cells**, each representing what should appear at one visible terminal position. A cell can carry a character and, in principle, its visual attributes, so the buffer describes *what is visible* rather than *what exists*.
+
+Because it is produced from the current `EditorState`, the Screen Buffer is **derived rendering state**. `EditorState` — the Document, Cursor, Viewport, and screen size — remains the single source of truth, and information flows one way, from state into the buffer and never back. This follows the "one owner, many readers" principle and keeps rendering concerns from leaking into the core editor model.
+
+The buffer's dimensions are determined by the terminal, not the document. It needs `rows × columns` cells, so its time and space complexity are both `O(rows × columns)`, bounded by the visible surface. The buffer is allocated once, reused across rendering cycles, and resized or replaced only when the terminal changes size. This makes it reusable frame storage with a deliberately narrow lifecycle: allocate, initialize, generate, output, reuse.
+
+The chapter also examined dirty tracking — the idea of updating only the screen regions that have changed. The baseline editor does **not** use it. The full-redraw strategy from Chapter 17 regenerates the complete frame every cycle, which avoids the additional state and synchronization that dirty-region rendering requires. Dirty tracking remains a valid future optimization, but it is deferred until its complexity is justified by measurable rendering costs.
+
+Finally, the chapter compared alternative representations — direct terminal output, string-based buffers, and dirty-region buffers — and selected a **reusable in-memory Screen Buffer composed of screen cells**, stored contiguously and addressed with `row × columns + column`. This choice provides a clean boundary between logical and visual state, predictable memory, per-cell visual information, and a simple foundation for the Renderer.
+
+The central idea is that **the Screen Buffer describes what the screen should look like; it does not decide what belongs in each cell**. That decision is the Renderer's responsibility and is the subject of the next chapter.
+
+The concrete cell-based representation is recorded as **ADR-018: Screen Buffer Representation**, while the rendering model that motivates it is recorded in **ADR-017: Rendering Model and Frame Representation**.
+
+## Exercises
+
+### Review Questions
+
+1. Where does the Screen Buffer sit in the rendering pipeline?
+2. What is the difference between the Text Buffer and the Screen Buffer?
+3. What can a screen cell represent beyond a single character?
+4. How are the Screen Buffer's dimensions related to the terminal size?
+5. Why is the Screen Buffer considered derived state rather than authoritative application state?
+6. What is the difference between a document's dirty flag and screen dirty tracking?
+7. Why does the baseline editor regenerate the complete frame rather than track dirty regions?
+8. What happens to the Screen Buffer when the terminal is resized?
+
+### Thought Experiments
+
+1. Suppose the Screen Buffer also stored a copy of the document. What synchronization problems would appear between the two copies?
+2. What could go wrong if the renderer wrote directly to the terminal while it was still deciding what the frame should contain?
+3. If the editor adopted dirty-region rendering, what additional state and logic would it need to maintain between frames?
+
+## Common Mistakes
+
+### Treating the Screen Buffer as the Document
+
+The Text Buffer stores the logical contents of the document; the Screen Buffer stores what is currently visible. Using the buffer as the document's representation collapses two distinct concerns and makes it impossible to represent scrolling, wrapping, or interface elements correctly.
+
+### Writing directly to the terminal while constructing the frame
+
+Emitting terminal output before the frame is complete couples frame construction to the output stream and risks exposing a partially built screen. The frame should be assembled first, then converted to output as a separate step.
+
+### Making the Screen Buffer authoritative application state
+
+The Screen Buffer is derived state. If it became a second source of truth, the editor would need to keep it synchronized with the Document, Cursor, and Viewport — reintroducing exactly the duplication the intermediate-representation design avoids.
+
+### Mixing viewport calculations into the Screen Buffer
+
+The Viewport decides *which part* of the document is shown; the Screen Buffer only holds *what appears* at each visible position. Folding viewport logic into the buffer blurs the boundary between document selection and visual representation.
+
+### Confusing document dirty state with screen dirty state
+
+The document dirty flag records unsaved changes; screen dirty tracking records which visual regions need regeneration. A cursor move can dirty the screen without touching the document, and a document edit can be in memory before any frame is generated. The two states must remain separate.
+
+### Reallocating the entire buffer unnecessarily every frame
+
+The terminal dimensions normally stay constant across frames, so the buffer can be reused and overwritten each cycle. Reallocating on every render moves allocation into the hot path and wastes effort for no benefit.
+
+### Introducing dirty-region optimization prematurely
+
+Dirty-region rendering reduces output only when rendering costs justify the added state and synchronization. For a small terminal editor with a full-redraw strategy, that optimization is unnecessary and contradicts the project's priority on simplicity.
+
+## Preview of the Next Chapter
+
+This chapter established what a frame *is* and where it lives. The next question is how that frame is constructed:
+
+> We now have a representation of the screen, but a buffer by itself does not decide what belongs in each cell. The next chapter introduces the Renderer and defines how document content, the status bar, the message bar, and the cursor are transformed into a complete visual frame.
+
+Chapter 19 introduces the **Renderer**, the component that reads `EditorState` and populates the Screen Buffer. It will cover:
+
+- the Renderer's responsibilities and boundaries
+- how visible document lines are mapped into screen cells
+- how the status bar and message bar are drawn
+- how the cursor is represented in the frame
+- how the completed frame is converted into terminal output
+
+The progression across chapters is now clear:
+
+```text
+Chapter 17 — Rendering Theory
+       │
+       ▼
+Why construct a frame?
+       │
+       ▼
+Chapter 18 — Screen Buffer
+       │
+       ▼
+How is that frame represented?
+       │
+       ▼
+Chapter 19 — Renderer
+       │
+       ▼
+How is that representation populated and turned into terminal output?
+```

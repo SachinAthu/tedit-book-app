@@ -1,0 +1,225 @@
+---
+title: 18.4 The Screen Buffer and Editor State
+description: Shows why the Screen Buffer is derived state read-only from EditorState, following the one-owner-many-readers principle.
+---
+
+The Screen Buffer is closely related to `EditorState`, but it is not part of the editor's authoritative application state.
+
+`EditorState` remains the single source of truth for the logical state of the application. It contains information such as the Document, Cursor, Viewport, current file, screen dimensions, and other editor configuration.
+
+The Screen Buffer is different. It is **derived rendering state** produced from that information.
+
+The relationship can be represented as:
+
+```text
+EditorState
+     │
+     │ read
+     ▼
+Renderer / Frame Generation
+     │
+     │ produces
+     ▼
+Screen Buffer
+     │
+     │ converted to output
+     ▼
+Terminal
+```
+
+The important direction is that information flows **from** `EditorState` **into** the Screen Buffer. The Screen Buffer does not become another source of truth for the application.
+
+## Editor State Remains Authoritative
+
+Consider a cursor positioned at row 5, column 10.
+
+The logical position belongs to the Cursor and therefore to the editor's state:
+
+```text
+EditorState
+
+Cursor
+    row    = 5
+    column = 10
+```
+
+The Screen Buffer may contain the visual representation of that cursor at some screen position, but that visual representation does not determine where the logical cursor is.
+
+The same principle applies to document content.
+
+```text
+EditorState
+    │
+    └── Document
+          │
+          ▼
+     "Hello world"
+          │
+          ▼
+     Screen Buffer
+          │
+          ▼
+     H e l l o ...
+```
+
+The characters stored in the Screen Buffer are a visual result. The Document remains the authoritative representation of the text.
+
+This distinction prevents rendering concerns from leaking back into the core editor model.
+
+## The Renderer Reads State
+
+The architecture defines the Renderer as a consumer of `EditorState`. It reads the current state and generates the visual frame without modifying the Document or other application data.
+
+Conceptually:
+
+```text
+             Editor State
+                  │
+          ┌───────┴────────┐
+          │                │
+          ▼                │
+       Renderer            │
+          │                │
+          ▼                │
+    Screen Buffer          │
+          │                │
+          ▼                │
+     Terminal Output       │
+                           │
+         No state flows    │
+         back from the     │
+         screen buffer     │
+```
+
+This gives the rendering pipeline a useful one-way property.
+
+The renderer observes the current state and produces a frame. It does not use the frame to decide what the application's logical state should be.
+
+## Why the Screen Buffer Should Not Become Authoritative
+
+It might initially seem convenient to use the Screen Buffer as the main representation of what is currently displayed and then derive editor state from it.
+
+That would create several problems.
+
+Suppose the user moves the cursor. The logical cursor position belongs to the editor's navigation state. If the Screen Buffer also became responsible for that position, two representations would need to remain synchronized.
+
+The same problem would occur with document contents:
+
+```text
+Document
+    │
+    ├── authoritative text
+    │
+    └── Screen Buffer
+          └── copied visual text
+```
+
+If both representations could be modified independently, they could disagree.
+
+The architecture avoids this problem by assigning ownership to the logical components and treating the Screen Buffer as derived output.
+
+This follows the broader project principle:
+
+> **One owner, many readers.**
+
+Each important piece of application state has a defined owner, while other components read it when necessary.
+
+## A Frame Can Be Rebuilt
+
+Because the Screen Buffer is derived state, the editor does not need to preserve it as a historical record.
+
+A new frame can simply be generated from the current state:
+
+```text
+Previous Editor State
+        │
+        ▼
+Previous Frame
+        │
+        X
+     replaced
+
+Current Editor State
+        │
+        ▼
+New Frame
+```
+
+This fits naturally with the full-redraw strategy established earlier. Every rendering cycle produces a complete representation of the current screen rather than trying to preserve and incrementally modify a persistent visual model.
+
+If the cursor moves, the next frame reflects the new position.
+
+If text changes, the next frame reflects the new document contents.
+
+If the viewport changes, the next frame reflects the newly visible region.
+
+The Screen Buffer therefore represents **the current frame**, not the history of previous frames.
+
+## Screen Size Is Shared State
+
+There is one important relationship between the Screen Buffer and `EditorState`: the buffer's dimensions depend on the current terminal dimensions.
+
+The architecture already identifies screen size as part of the editor state, while the Terminal Interface is responsible for obtaining terminal dimensions.
+
+The flow is therefore:
+
+```text
+Terminal
+    │
+    │ reports dimensions
+    ▼
+Terminal Interface
+    │
+    ▼
+Editor State
+    │
+    │ current screen size
+    ▼
+Frame Generation
+    │
+    ▼
+Screen Buffer
+```
+
+This keeps the Screen Buffer independent of the mechanism used to discover the terminal dimensions.
+
+The buffer simply needs a valid width and height with which to represent the current frame.
+
+## Screen Buffer as Derived Rendering State
+
+The distinction can now be summarized:
+
+| Component     | Represents                | Authority              |
+| ------------- | ------------------------- | ---------------------- |
+| Document      | Logical document contents | Authoritative          |
+| Cursor        | Logical editing position  | Authoritative          |
+| Viewport      | Visible document region   | Authoritative          |
+| Editor State  | Application state         | Single source of truth |
+| Screen Buffer | Current visual frame      | Derived                |
+| Terminal      | Actual displayed output   | External system        |
+
+The Screen Buffer is therefore an intermediate representation, not another application model.
+
+That distinction keeps the architecture simple:
+
+```text
+Logical State
+     │
+     ▼
+Derived Visual State
+     │
+     ▼
+External Output
+```
+
+With this relationship established, the next step is to examine how the editor actually constructs a complete frame inside the Screen Buffer.
+
+## Summary
+
+The Screen Buffer is **derived rendering state**: it is produced from `EditorState` but never becomes a second source of truth. `EditorState` remains the single source of truth for the Document, Cursor, Viewport, and screen size, while the renderer reads that state and produces a frame without modifying it.
+
+This one-way flow keeps rendering concerns from leaking back into the core editor model and follows the "one owner, many readers" principle. Because the buffer is derived, every frame can simply be rebuilt from the current state, which fits the full-redraw strategy used by our editor.
+
+Now that the relationship to `EditorState` is established, the next section examines how the editor actually constructs a complete frame inside the Screen Buffer.
+
+Continue to **Section 18.5, Frame Generation**.

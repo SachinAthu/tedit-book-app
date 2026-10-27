@@ -1,0 +1,257 @@
+---
+title: 18.3 Screen Buffer Dimensions
+description: Explains how terminal dimensions determine buffer size, linear row-major storage, memory cost, resizing, and buffer reuse.
+---
+
+The Screen Buffer must represent the entire area that the editor can currently display. Its dimensions are therefore determined by the size of the terminal window.
+
+If the terminal reports a size of `rows × columns`, the Screen Buffer needs to represent that same rectangular area:
+
+```text
+Terminal Size
+
+            80 columns
+───────────────────────────────────────────────►
+
++----------------------------------------------+
+|                                              |
+|                                              |  ▲
+|                                              |  │
+|              Screen Buffer                   |  │ 24 rows
+|                                              |  │
+|                                              |  ▼
++----------------------------------------------+
+```
+
+For a terminal with 80 columns and 24 rows, the buffer contains enough cells to represent 80 positions across each of the 24 rows.
+
+Conceptually:
+
+```text
+screen_cells = rows × columns
+```
+
+The Screen Buffer is therefore bounded by the visible terminal surface rather than by the size of the document.
+
+## Terminal Dimensions and the Buffer
+
+The terminal dimensions are obtained from the terminal interface. The Screen Buffer uses those dimensions to determine how much storage is required.
+
+The relationship can be represented as:
+
+```text
+Terminal Interface
+        │
+        │ terminal dimensions
+        ▼
+   Screen Buffer
+        │
+        │ rows × columns
+        ▼
+  Visual Frame
+```
+
+The buffer does not determine the terminal size. It adapts to the dimensions provided by the terminal environment.
+
+This distinction keeps terminal-specific responsibilities in the appropriate layer. The Terminal Interface is responsible for interacting with the operating system and obtaining terminal dimensions, while the rendering system uses those dimensions to construct the visual frame.
+
+## A Two-Dimensional Conceptual Model
+
+The simplest way to reason about the buffer is as a two-dimensional grid:
+
+```text
+Screen Buffer
+
+        Column
+       0   1   2   3   4   5
+     +---+---+---+---+---+---+
+Row 0|   |   |   |   |   |   |
+     +---+---+---+---+---+---+
+Row 1|   |   |   |   |   |   |
+     +---+---+---+---+---+---+
+Row 2|   |   |   |   |   |   |
+     +---+---+---+---+---+---+
+Row 3|   |   |   |   |   |   |
+     +---+---+---+---+---+---+
+```
+
+Each cell can be addressed using its row and column.
+
+An implementation does not necessarily need to store this as a literal two-dimensional C array. A one-dimensional allocation can represent the same structure:
+
+```text
+index = row × columns + column
+```
+
+For example, with four columns:
+
+```text
+row 0 → 0  1  2  3
+row 1 → 4  5  6  7
+row 2 → 8  9 10 11
+```
+
+The conceptual model remains two-dimensional even if the memory representation is linear.
+
+This is a useful distinction between **logical structure** and **physical storage**. The renderer thinks in terms of rows and columns, while the implementation may choose the memory layout that makes storage and access convenient.
+
+## Buffer Size and Memory
+
+The memory required by the Screen Buffer grows with the number of visible cells.
+
+If each cell requires a fixed amount of storage, then:
+
+```text
+Memory ∝ rows × columns
+```
+
+Therefore, the space complexity of the Screen Buffer is:
+
+```text
+O(rows × columns)
+```
+
+This is different from the Text Buffer, whose memory consumption depends primarily on the size of the document.
+
+For example:
+
+```text
+Text Buffer
+    │
+    └── depends on document size
+
+Screen Buffer
+    │
+    └── depends on terminal dimensions
+```
+
+A very large document does not automatically require a larger Screen Buffer. Only the portion that belongs to the current visual frame needs to be represented.
+
+## Resizing the Terminal
+
+Terminal dimensions are not necessarily permanent. The user can resize the terminal while the editor is running.
+
+For example:
+
+```text
+Before resize
+
+80 × 24
++------------------------------+
+|                              |
+|                              |
++------------------------------+
+
+
+After resize
+
+120 × 40
++------------------------------------------+
+|                                          |
+|                                          |
+|                                          |
+|                                          |
++------------------------------------------+
+```
+
+When the terminal dimensions change, the existing Screen Buffer may no longer have the correct dimensions.
+
+The rendering system therefore needs to be able to resize or recreate the buffer so that it matches the new terminal size.
+
+The important architectural boundary is:
+
+```text
+Terminal detects dimensions
+            │
+            ▼
+      Editor State
+            │
+            ▼
+     Rendering System
+            │
+            ▼
+     Screen Buffer
+```
+
+The detailed handling of terminal resize events is outside the scope of this section. What matters here is that the Screen Buffer represents the **current** terminal surface and must therefore remain consistent with its dimensions.
+
+## The Buffer Is Not the Viewport
+
+It is also important to distinguish the Screen Buffer from the Viewport.
+
+The Screen Buffer answers:
+
+> How much screen space do we have, and what should appear in each position?
+
+The Viewport answers:
+
+> Which part of the document is currently being shown?
+
+For example, the document might contain hundreds of lines:
+
+```text
+Document
+──────────────
+Line 0
+Line 1
+Line 2
+...
+Line 500
+Line 501
+```
+
+while the terminal can display only a small portion:
+
+```text
+Screen Buffer
+──────────────
+Line 240
+Line 241
+Line 242
+...
+Line 260
+```
+
+The Screen Buffer provides the visible surface. The Viewport determines which document content is mapped onto that surface.
+
+We will examine that mapping and the movement of the visible region in detail in Chapter 20, where scrolling becomes the primary concern.
+
+## Reusing the Buffer
+
+Because the terminal dimensions normally remain unchanged across many frames, there is little reason to allocate a completely new Screen Buffer for every render.
+
+A more practical lifecycle is:
+
+```text
+Allocate Buffer
+       │
+       ▼
+Generate Frame
+       │
+       ▼
+Output Frame
+       │
+       ▼
+Reuse Buffer
+       │
+       ▼
+Generate Next Frame
+```
+
+When a new frame is generated, the existing cells can be overwritten with the new visual state.
+
+This keeps the memory cost predictable and avoids unnecessary allocation and deallocation during normal editing.
+
+The buffer is therefore best viewed as **reusable frame storage**, rather than as a permanent history of previously rendered frames.
+
+With the dimensions and storage model established, we can now examine how this buffer fits into the broader `EditorState` and rendering architecture.
+
+## Summary
+
+The Screen Buffer's dimensions are determined by the terminal size: it needs `rows × columns` cells to represent the visible surface. Although it is best reasoned about as a two-dimensional grid, it can be stored as a linear array addressed with `row × columns + column`. Its memory use is `O(rows × columns)`, bounded by the visible surface rather than by document size.
+
+The buffer adapts to terminal resizing, is distinct from the Viewport, and is best treated as reusable frame storage that is overwritten each rendering cycle rather than reallocated.
+
+Now that the dimensions and storage model are established, the next section examines how the buffer fits into the broader `EditorState` and rendering architecture.
+
+Continue to **Section 18.4, The Screen Buffer and Editor State**.

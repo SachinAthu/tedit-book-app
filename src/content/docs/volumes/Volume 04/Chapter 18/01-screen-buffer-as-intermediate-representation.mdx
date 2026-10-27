@@ -1,0 +1,137 @@
+---
+title: 18.1 The Screen Buffer as an Intermediate Representation
+description: Explains why the Screen Buffer is a derived intermediate representation separating frame construction from terminal output generation.
+---
+
+The Screen Buffer sits between the editor's internal state and the terminal output. Its purpose is to provide an intermediate representation of the frame that the editor wants to display.
+
+Without such a representation, the renderer would need to examine the `EditorState` and immediately emit terminal output while constructing the screen. That approach combines two different responsibilities: deciding **what should be displayed** and encoding **how that display should be sent to the terminal**.
+
+The Screen Buffer separates these responsibilities.
+
+```text
+Editor State
+     │
+     │ logical state
+     ▼
+Frame Generation
+     │
+     │ visual representation
+     ▼
+Screen Buffer
+     │
+     │ terminal representation
+     ▼
+Terminal Output
+     │
+     ▼
+Terminal
+```
+
+The first stage works with the editor's logical state. It determines which document content is visible, where interface elements belong, and where the cursor should appear. The result is stored in the Screen Buffer.
+
+The second stage takes that completed representation and produces the terminal output required to display it.
+
+This separation gives the rendering pipeline a clear boundary:
+
+> **The Screen Buffer describes what the screen should look like; terminal output describes how to make the terminal display it.**
+
+## Document State and Screen State
+
+It is important not to confuse the Screen Buffer with the Text Buffer.
+
+The Text Buffer represents the document itself:
+
+```text
+Text Buffer
+
+Line 0 → "Hello, world!"
+Line 1 → "This is an editor."
+Line 2 → "Another line."
+```
+
+The Screen Buffer represents the visible terminal surface:
+
+```text
+Screen Buffer
+
++--------------------------------+
+| Hello, world!                  |
+| This is an editor.             |
+| Another line.                  |
+|                                |
+|                                |
++--------------------------------+
+```
+
+The two representations answer different questions.
+
+The Text Buffer answers:
+
+> What text exists in the document?
+
+The Screen Buffer answers:
+
+> What should currently appear at each visible screen position?
+
+A document can contain many more lines than can fit on the terminal. Likewise, a long document line may extend beyond the visible terminal width. The Screen Buffer therefore represents only the visual result that belongs on the current screen.
+
+This makes the Screen Buffer **derived state**. It is produced from the current `EditorState`; it is not the authoritative source of the document.
+
+```text
+EditorState
+     │
+     ├── Document
+     ├── Cursor
+     ├── Viewport
+     ├── Screen Size
+     └── Other State
+             │
+             ▼
+        Frame Generation
+             │
+             ▼
+       Screen Buffer
+```
+
+If the document changes, the next frame is generated from the updated state. If the cursor moves, the next frame reflects the new cursor position. The Screen Buffer therefore represents the current visual result rather than maintaining an independent version of the editor's logical state.
+
+## Why Use an Intermediate Representation?
+
+The immediate benefit is separation of concerns.
+
+The renderer can focus on constructing a complete frame from `EditorState` without simultaneously managing the details of terminal output. Once the frame exists, the output stage can focus on converting that representation into terminal operations.
+
+This separation also gives us a useful property:
+
+```text
+Same Editor State
+        │
+        ▼
+Same Frame
+        │
+        ▼
+Same Visual Result
+```
+
+The rendering process becomes easier to reason about because the Screen Buffer represents a concrete intermediate result between application state and terminal output.
+
+It also prevents the terminal from becoming part of the state-construction process. The renderer does not need to construct half of a frame, write it to the terminal, construct another part, and continue until the screen is complete. Instead, the frame is assembled first and output afterwards.
+
+Building the frame in application-managed memory before presenting it is known as **off-screen rendering**. The Screen Buffer is our off-screen surface: the renderer draws the complete frame into it, and only then is the result sent to the terminal.
+
+For our editor, this is especially useful because we have already chosen a full-redraw rendering strategy. Each rendering cycle produces a complete frame, and the Screen Buffer provides the in-memory representation of that frame before it is emitted to the terminal.
+
+The Screen Buffer therefore does not introduce another authoritative model into the architecture. It introduces a **temporary visual representation** that makes the transition from application state to terminal output explicit and manageable.
+
+In the next section, we will examine the fundamental unit of this representation: the **screen cell**.
+
+## Summary
+
+The Screen Buffer is an intermediate representation that sits between the editor's logical state and the terminal. It separates the responsibility of deciding **what should be displayed** from the responsibility of encoding **how that display is sent to the terminal**. Frame generation first constructs the visual result, and the output stage then converts it into terminal output.
+
+Because it is produced from the current `EditorState`, the Screen Buffer is **derived state** rather than an authoritative model. It represents the current visual frame and is rebuilt whenever the document, cursor, or viewport changes.
+
+Now that the Screen Buffer is established as an intermediate representation, the next section examines its fundamental unit: the screen cell.
+
+Continue to **Section 18.2, What a Screen Cell Represents**.

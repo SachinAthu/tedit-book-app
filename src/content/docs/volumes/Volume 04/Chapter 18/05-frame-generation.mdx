@@ -1,0 +1,225 @@
+---
+title: 18.5 Frame Generation
+description: Describes how frame generation resets the buffer and fills the document, status, message, and cursor areas to produce a snapshot.
+---
+
+The Screen Buffer provides the storage for a visual frame, but it does not determine what belongs in that frame. The editor must first transform the current `EditorState` into a complete screen representation.
+
+This process is **frame generation**.
+
+The basic sequence is:
+
+```text
+Editor State
+     │
+     ▼
+Start Frame
+     │
+     ▼
+Populate Screen Buffer
+     │
+     ▼
+Completed Frame
+```
+
+The important property is that frame generation works from the **current logical state**. It does not modify the Document, Cursor, or other authoritative state while constructing the frame.
+
+## Starting a Frame
+
+Before generating a new frame, the Screen Buffer must represent a known initial state.
+
+Conceptually:
+
+```text
+Previous Frame
+      │
+      ▼
+Clear / Reset Buffer
+      │
+      ▼
+Empty Frame
+```
+
+The buffer can then be populated with the visual contents required for the current frame.
+
+For a full-redraw renderer, this is particularly straightforward. The editor does not need to determine which parts of the previous frame are still valid. It simply constructs the complete new frame.
+
+```text
+Current Editor State
+        │
+        ▼
+New Complete Frame
+```
+
+This is one of the practical consequences of the full-redraw decision established in Chapter 17.
+
+## Populating the Frame
+
+Frame generation conceptually proceeds through several areas of the screen:
+
+```text
++--------------------------------+
+|        Document Area           |
+|                                |
+|        Visible Text            |
+|                                |
+|                                |
++--------------------------------+
+|          Status Bar            |
++--------------------------------+
+|          Message Bar           |
++--------------------------------+
+```
+
+The document area receives the visible document content.
+
+The status and message areas receive their corresponding interface information.
+
+The cursor position is also represented as part of the resulting frame.
+
+At this stage, the important concern is not the detailed implementation of each area. The purpose is to establish that **all visible elements belong to the same frame**.
+
+The detailed logic for drawing document lines, the status bar, the message bar, and the cursor will be covered by the Renderer in Chapter 19.
+
+## A Frame Is a Snapshot
+
+A useful way to think about the completed Screen Buffer is as a snapshot of the editor's visual state at a particular point in time.
+
+Suppose the document initially contains:
+
+```text
+Hello
+World
+```
+
+The renderer reads the current state and produces a frame:
+
+```text
++------------------------------+
+| Hello                        |
+| World                        |
+|                              |
+|                              |
++------------------------------+
+| file.txt              1:6    |
++------------------------------+
+|                              |
++------------------------------+
+```
+
+If the user then inserts a character, the Document changes.
+
+The next rendering cycle produces a new snapshot:
+
+```text
++------------------------------+
+| Hello!                       |
+| World                        |
+|                              |
+|                              |
++------------------------------+
+| file.txt              1:7    |
++------------------------------+
+|                              |
++------------------------------+
+```
+
+The Screen Buffer does not need to understand why the document changed. It simply represents the result of the current state.
+
+## Complete Frames and Consistency
+
+Generating the complete frame before terminal output also establishes a useful consistency boundary.
+
+Conceptually:
+
+```text
+Build Frame
+    │
+    │ incomplete
+    ▼
+Screen Buffer
+    │
+    │ complete
+    ▼
+Output Frame
+```
+
+The terminal output is produced from the completed representation rather than from a partially constructed frame.
+
+This means the rendering process can be understood as two distinct stages:
+
+```text
+Stage 1
+Editor State
+     ↓
+Screen Buffer
+
+Stage 2
+Screen Buffer
+     ↓
+Terminal Output
+```
+
+The boundary is valuable because the Screen Buffer contains the complete visual result that the output stage is expected to represent.
+
+## One Frame Per Rendering Cycle
+
+Our runtime model performs rendering after state updates within an event-loop iteration:
+
+```text
+Wait for Event
+      │
+      ▼
+Parse Input
+      │
+      ▼
+Execute Command
+      │
+      ▼
+Update Editor State
+      │
+      ▼
+Generate Frame
+      │
+      ▼
+Output Frame
+      │
+      ▼
+Wait for Next Event
+```
+
+The Screen Buffer therefore represents the result of one rendering cycle.
+
+There is no need for a continuously running rendering loop. The editor generates a new frame when the event-processing cycle reaches its rendering stage, consistent with the event-driven runtime model established earlier.
+
+## Frame Generation and the Screen Buffer
+
+The relationship between the two concepts can now be made precise:
+
+> **Frame generation is the process; the Screen Buffer is the resulting representation.**
+
+```text
+Frame Generation
+       │
+       │ produces
+       ▼
+Screen Buffer
+       │
+       │ consumed by
+       ▼
+Terminal Output
+```
+
+This distinction will become important in the next chapter. The Screen Buffer defines **where the visual result is stored**, while the Renderer defines **how the editor constructs that result from the current state**.
+
+The next chapter will therefore move from the buffer itself to the Renderer and examine how the document area, status bar, message bar, and cursor are actually drawn into a complete frame.
+
+## Summary
+
+Frame generation is the process that transforms the current `EditorState` into a complete visual frame stored in the Screen Buffer. It starts by resetting the buffer, populates the document area along with the status bar, message bar, and cursor, and produces a finished snapshot of the editor's visual state.
+
+Because the complete frame is built before any output is produced, the rendering process has a clean consistency boundary and can be understood as two distinct stages: state to buffer, then buffer to output. Our event-driven runtime generates exactly one frame per rendering cycle.
+
+Now that frame generation is understood, the next section examines how the completed frame is converted into terminal output.
+
+Continue to **Section 18.6, From Frame to Terminal Output**.

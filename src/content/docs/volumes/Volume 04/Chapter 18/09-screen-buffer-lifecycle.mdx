@@ -1,0 +1,141 @@
+---
+title: 18.9 Screen Buffer Lifecycle
+description: Covers buffer allocation, initialization, reuse across frames, resizing when the terminal changes, and destruction on shutdown.
+---
+
+The Screen Buffer is reusable rendering storage. It is created with dimensions that match the terminal's current screen and remains available across rendering cycles.
+
+Its basic lifecycle is:
+
+```text
+Allocate
+   │
+   ▼
+Initialize
+   │
+   ▼
+Generate Frame
+   │
+   ▼
+Output Frame
+   │
+   ▼
+Reuse
+   │
+   └──────────► Generate Next Frame
+```
+
+## Allocation
+
+The buffer must be allocated when the editor knows the current terminal dimensions.
+
+For a terminal with `rows × columns`, enough storage is allocated to represent the corresponding number of screen cells.
+
+The allocation is independent of the document size. A larger document does not require a larger Screen Buffer unless the terminal's visible dimensions change.
+
+## Initialization
+
+After allocation, the buffer must be placed into a known state before it is used to generate a frame.
+
+For the baseline renderer, this means ensuring that every cell has a defined value before the frame is output.
+
+The buffer can then be populated with the contents of the current frame.
+
+## Reuse Across Frames
+
+The buffer does not need to be allocated and destroyed for every rendering cycle.
+
+Instead, the same storage can be reused:
+
+```text
+Frame 1
+   │
+   ▼
+Output
+   │
+   ▼
+Reuse Buffer
+   │
+   ▼
+Frame 2
+   │
+   ▼
+Output
+```
+
+Before generating the next frame, existing cell contents are overwritten or reset as necessary.
+
+This keeps allocation out of the normal rendering path and gives the renderer a predictable amount of memory to work with.
+
+## Resizing
+
+The terminal dimensions can change while the editor is running. When that happens, the existing Screen Buffer may no longer match the available screen.
+
+The buffer must therefore be resized or replaced:
+
+```text
+Old Terminal Size
+       │
+       ▼
+Old Screen Buffer
+       │
+       X
+       │
+Terminal Resize
+       │
+       ▼
+New Terminal Size
+       │
+       ▼
+New Screen Buffer
+```
+
+The old buffer should no longer be used once its dimensions no longer correspond to the current terminal size.
+
+The detailed handling of terminal resize events belongs to the terminal and runtime implementation. At the Screen Buffer level, the important rule is simply that **buffer dimensions must remain consistent with the current screen dimensions**.
+
+## Destruction
+
+When the editor shuts down, the Screen Buffer's allocated memory is released along with the other resources owned by the application.
+
+The buffer does not need to persist after the editor terminates because it represents only the application's current visual frame.
+
+## Lifecycle in the Rendering Pipeline
+
+The complete relationship can now be summarized:
+
+```text
+Terminal Dimensions
+        │
+        ▼
+Allocate / Resize Buffer
+        │
+        ▼
+Editor State
+        │
+        ▼
+Generate Frame
+        │
+        ▼
+Screen Buffer
+        │
+        ▼
+Output Frame
+        │
+        ▼
+Reuse Buffer
+```
+
+The lifecycle is deliberately simple. The Screen Buffer has one primary purpose: provide reusable storage for the current visual frame. It does not own document data, cursor state, viewport state, or terminal configuration.
+
+This narrow lifecycle keeps the buffer consistent with the architecture established for the editor: logical state remains authoritative, while the Screen Buffer remains derived rendering state.
+
+## Summary
+
+The Screen Buffer follows a simple lifecycle: it is **allocated** with dimensions matching the terminal, **initialized** to a known state, used to **generate and output** frames with the same storage **reused** across cycles, **resized** when the terminal dimensions change, and **destroyed** when the editor shuts down.
+
+The buffer owns no document, cursor, viewport, or terminal configuration. It is reusable rendering storage whose dimensions must remain consistent with the current screen, keeping it aligned with the editor's derived-state architecture.
+
+Now that the lifecycle is established, the next section examines alternative ways the visual frame could have been represented and why the cell-based buffer was selected.
+
+Continue to **Section 18.10, Design Alternatives**.

@@ -1,0 +1,114 @@
+---
+title: 18.11 Complexity and Trade-offs
+description: Analyzes the Screen Buffer's O(rows × columns) time and space costs and the deliberate simplicity-versus-work trade-off.
+---
+
+The Screen Buffer is intentionally simple, but it still has measurable costs. Understanding those costs helps explain why the selected design is appropriate for this editor.
+
+## Time Complexity
+
+Generating a complete frame requires the renderer to process the visible screen area.
+
+If the terminal has `rows` rows and `columns` columns, the amount of screen space is:
+
+```text
+rows × columns
+```
+
+Therefore, constructing a complete Screen Buffer has a time complexity of:
+
+```text
+O(rows × columns)
+```
+
+The cost depends on the size of the terminal rather than the size of the document.
+
+Outputting the completed frame has a similar relationship. The cost is proportional to the amount of terminal output generated for that frame. A larger frame generally requires more output than a smaller one.
+
+## Space Complexity
+
+The Screen Buffer stores a cell for each visible screen position.
+
+Its space complexity is therefore:
+
+```text
+O(rows × columns)
+```
+
+This memory usage is bounded by the dimensions of the terminal.
+
+That is different from the Text Buffer:
+
+```text
+Text Buffer
+    → depends on document size
+
+Screen Buffer
+    → depends on terminal size
+```
+
+A document containing thousands of lines does not require thousands of additional Screen Buffer cells. Only the portion represented by the current screen needs to be stored.
+
+## Allocation and Reuse
+
+The buffer should be allocated when the editor knows the current terminal dimensions and resized when those dimensions change.
+
+During normal rendering, the same allocation can be reused:
+
+```text
+Allocate
+   │
+   ▼
+Generate Frame
+   │
+   ▼
+Output Frame
+   │
+   ▼
+Reuse Buffer
+   │
+   ▼
+Generate Next Frame
+```
+
+This avoids repeatedly allocating and releasing memory during every rendering cycle.
+
+When the terminal is resized, the buffer must be adjusted so that its dimensions once again match the available screen.
+
+## Engineering Trade-offs
+
+The selected design deliberately accepts more work than an incremental renderer that updates only changed cells.
+
+A complete frame is generated even when only a small portion of the screen has changed. This can result in unnecessary processing and terminal output.
+
+The benefit is a much simpler rendering system.
+
+The editor does not need to maintain synchronization between previous and current screen regions, track invalidated cells, or determine which parts of the screen must be regenerated. The Screen Buffer simply represents the current frame.
+
+This gives the implementation:
+
+- predictable memory usage
+- straightforward frame generation
+- simple state management
+- no synchronization between previous and current screen regions
+- a clear relationship between terminal dimensions and buffer size
+
+The trade-off is therefore intentional: we accept some additional rendering work in exchange for substantially simpler architecture and implementation.
+
+## Why the Trade-off Is Acceptable
+
+Terminal screens are relatively small compared with the documents that an editor may hold in memory. The Screen Buffer is therefore bounded by a modest number of visible cells in normal use.
+
+More importantly, the project prioritizes simplicity, readability, and educational clarity. The purpose of the Screen Buffer is to provide a clear rendering pipeline that readers can understand and implement without introducing unnecessary optimization machinery.
+
+If performance later becomes a problem, the architecture leaves room for optimization. Profiling could identify whether frame generation or terminal output is actually a bottleneck, after which techniques such as dirty-region tracking could be considered.
+
+For the baseline editor, however, the predictable cost of a complete frame is an acceptable trade-off for a simpler and more maintainable rendering system.
+
+## Summary
+
+The Screen Buffer has time and space complexity of `O(rows × columns)`, bounded by the terminal dimensions rather than by document size. The buffer is allocated once, reused across rendering cycles, and resized only when the terminal changes, which keeps allocation out of the normal rendering path.
+
+The design deliberately accepts generating and outputting a complete frame even when only part of the screen changed. In exchange it avoids region tracking, invalidation, and synchronization between previous and current frames. Given the small size of terminal screens and the project's priority on simplicity, this trade-off is acceptable, and the architecture leaves room for optimizations such as dirty-region tracking if they are later justified.
+
+Continue to the **Chapter Summary**, which consolidates the Screen Buffer design, followed by exercises and a preview of the next chapter.

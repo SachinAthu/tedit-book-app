@@ -1,0 +1,55 @@
+---
+title: 18.8 Why Full Redraw Makes the Screen Buffer Simple
+description: Explains why full redraw reduces the Screen Buffer to current-frame storage that can be overwritten and reused every cycle.
+---
+
+The full-redraw strategy has a direct consequence for how we implement the Screen Buffer: **the buffer only needs to represent the current frame**.
+
+We do not need to preserve a detailed history of previous frames or maintain a collection of regions that must be updated. Each rendering cycle can prepare the buffer for the current state and overwrite its contents with the new frame.
+
+```text
+Current Editor State
+        │
+        ▼
+Prepare Screen Buffer
+        │
+        ▼
+Populate Current Frame
+        │
+        ▼
+Output Frame
+```
+
+This keeps the buffer's responsibilities narrow. It stores the visual representation required for one frame and does not need to coordinate changes between frames.
+
+It also makes buffer reuse straightforward. Once a frame has been output, the same allocated storage can be reused during the next rendering cycle:
+
+```text
+Screen Buffer
+     │
+     ▼
+Frame 1
+     │
+     ▼
+Output
+     │
+     ▼
+Reuse Buffer
+     │
+     ▼
+Frame 2
+```
+
+As a result, the implementation does not require separate structures for tracking unchanged and changed screen regions. The Screen Buffer remains a simple, bounded representation of the current terminal surface.
+
+This simplicity is intentional. The project prioritizes a predictable rendering pipeline over incremental rendering optimizations, consistent with the rendering decision established in Chapter 17.
+
+## Summary
+
+The full-redraw strategy keeps the Screen Buffer simple because the buffer only needs to represent the **current frame**. There is no need to preserve a history of previous frames or maintain a collection of changed regions. Each rendering cycle prepares the buffer from the current `EditorState` and overwrites its contents with the new frame.
+
+This narrows the buffer's responsibilities and makes reuse straightforward: the same allocated storage is used for every frame without separate tracking of unchanged and changed regions.
+
+Now that full redraw's simplicity is established, the next section examines the lifecycle of the buffer itself — from allocation and initialization through reuse, resizing, and destruction.
+
+Continue to **Section 18.9, Screen Buffer Lifecycle**.

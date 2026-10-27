@@ -1,0 +1,210 @@
+---
+title: 18.6 From Frame to Terminal Output
+description: Explains how a completed Screen Buffer is converted into characters and ANSI escape sequences without drawing to the terminal itself.
+---
+
+The Screen Buffer represents the completed visual frame, but the terminal cannot display the buffer directly. The terminal receives a stream of bytes, including characters and ANSI escape sequences, and interprets those bytes to produce the visible result.
+
+The Screen Buffer therefore forms a boundary between **frame representation** and **terminal output**.
+
+```text
+Screen Buffer
+     │
+     ▼
+Output Generation
+     │
+     ▼
+Characters + ANSI Escape Sequences
+     │
+     ▼
+Terminal
+```
+
+This distinction is important because the Screen Buffer describes **what should appear**, while the output stage determines **how that result is communicated to the terminal**.
+
+## The Screen Buffer Does Not Draw
+
+It is tempting to think of the Screen Buffer as something that directly displays characters. It does not.
+
+A cell might contain:
+
+```text
+Character:  H
+Attributes: default
+```
+
+The cell itself has no ability to move the terminal cursor or place `H` on the terminal.
+
+Instead, the output stage interprets the buffer and produces the appropriate terminal sequence:
+
+```text
+Screen Cell
+    │
+    ▼
+Output Representation
+    │
+    ▼
+Terminal Bytes
+    │
+    ▼
+Terminal Emulator
+```
+
+The terminal emulator then interprets those bytes and updates its own screen.
+
+This keeps terminal-specific behavior outside the logical representation of the frame.
+
+## Converting a Frame into Output
+
+Conceptually, output generation walks through the completed Screen Buffer:
+
+```text
+Screen Buffer
+
++---+---+---+---+
+| H | e | l | l |
++---+---+---+---+
+| W | o | r | l |
++---+---+---+---+
+       │
+       ▼
+Output Generation
+       │
+       ▼
+Terminal Output
+```
+
+The output stage can determine where each cell belongs and emit the necessary characters and control sequences.
+
+For example, a renderer might need to:
+
+1. Position the terminal cursor.
+2. Emit the contents of a row.
+3. Move to the next row.
+4. Emit status and message areas.
+5. Position the terminal cursor at its final location.
+
+The exact output strategy belongs to the Renderer and Terminal Interface rather than to the Screen Buffer itself.
+
+## Why Keep the Boundary?
+
+Keeping frame construction separate from terminal output gives each stage a narrower responsibility.
+
+```text
+Frame Generation
+    │
+    │ "What should be displayed?"
+    ▼
+Screen Buffer
+    │
+    │
+    ▼
+Output Generation
+    │
+    │ "How should it be displayed?"
+    ▼
+Terminal
+```
+
+Frame generation can therefore reason about document content, editor state, and screen positions without directly manipulating terminal control sequences.
+
+Conversely, terminal output can deal with ANSI escape sequences and terminal behavior without needing to understand how the editor's Document or Cursor is represented.
+
+This follows the architectural separation established earlier: platform-specific terminal behavior belongs to the platform layer, while the logical editor state remains independent of terminal output.
+
+## Complete Frame Before Output
+
+The Screen Buffer also provides a natural boundary for producing a complete frame before sending it to the terminal.
+
+```text
+Editor State
+     │
+     ▼
+Build Complete Frame
+     │
+     ▼
+Screen Buffer
+     │
+     ▼
+Generate Output
+     │
+     ▼
+Terminal
+```
+
+The output stage does not need to know which cells were produced first or last. It receives a representation of the complete frame.
+
+This is particularly useful for the full-redraw strategy chosen by our editor. Each rendering cycle constructs a complete frame, and that frame is then emitted as terminal output. The editor does not need to maintain a persistent record of which individual cells were previously displayed.
+
+## The Terminal Remains an External System
+
+The Screen Buffer is an application-side representation. The terminal maintains its own state independently.
+
+```text
+Editor Process
++------------------------+
+| Editor State           |
+|        ↓               |
+| Frame Generation       |
+|        ↓               |
+| Screen Buffer          |
+|        ↓               |
+| Terminal Output        |
++------------------------+
+             │
+             ▼
+      Terminal Emulator
+```
+
+Once the output leaves the editor process, the terminal emulator becomes responsible for interpreting it.
+
+This means the editor does not control the terminal's internal rendering mechanism. It communicates through the terminal interface that was introduced in the earlier chapters.
+
+The boundary is therefore:
+
+> **The editor constructs a frame; the terminal interprets the output that represents that frame.**
+
+## A Useful Mental Model
+
+The complete rendering pipeline can now be viewed as three distinct stages:
+
+```text
+Logical State
+     │
+     ▼
+Frame Generation
+     │
+     ▼
+Visual Representation
+     │
+     ▼
+Output Generation
+     │
+     ▼
+Terminal Representation
+     │
+     ▼
+Terminal Emulator
+```
+
+The Screen Buffer belongs to the middle of this pipeline.
+
+It is not the Document.
+
+It is not the terminal.
+
+It is the application's representation of the visual result that should be displayed.
+
+This separation gives the rendering system a clear structure and prepares us for the next question: **if the Screen Buffer represents a complete frame, do we really need to track which parts of that frame have changed?**
+
+That leads to the concept of **dirty tracking and dirty regions**.
+
+## Summary
+
+The Screen Buffer forms the boundary between frame representation and terminal output. It does not draw anything itself: the output stage interprets the completed buffer and produces the characters and ANSI escape sequences that the terminal consumes. This keeps frame construction focused on *what* should be displayed and output generation focused on *how* it is communicated.
+
+The terminal remains an external system that interprets the emitted bytes. The complete rendering pipeline therefore has three stages — logical state, frame generation into a visual representation, and output generation into a terminal representation.
+
+Now that the pipeline from frame to terminal output is understood, the next section examines whether we need to track which parts of the frame have changed.
+
+Continue to **Section 18.7, Dirty Tracking and Dirty Regions**.

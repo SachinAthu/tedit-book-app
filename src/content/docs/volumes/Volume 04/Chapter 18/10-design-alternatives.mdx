@@ -1,0 +1,165 @@
+---
+title: 18.10 Design Alternatives
+description: Compares direct output, string buffers, cell buffers, separate attribute buffers, and dirty-region buffers before selecting the cell buffer.
+---
+
+The Screen Buffer does not have to be implemented as a particular data structure. Several approaches can represent a terminal frame, each with different implications for memory usage, implementation complexity, and rendering behavior.
+
+The important distinction is that these alternatives concern **how the visual frame is represented**, not the rendering model itself. The immediate-mode and full-redraw decisions were established in Chapter 17 and are not being reconsidered here.
+
+## Direct Terminal Output
+
+The simplest approach is to skip the Screen Buffer entirely and write terminal output directly while generating the frame.
+
+```text
+Editor State
+     │
+     ▼
+Renderer
+     │
+     ▼
+Terminal
+```
+
+This requires less application-side storage, but it combines frame construction with terminal output.
+
+The renderer must simultaneously decide what should appear and emit the ANSI sequences required to display it. This makes the rendering pipeline harder to inspect and provides no complete intermediate representation of the frame.
+
+For our editor, this approach is rejected because the Screen Buffer provides a cleaner boundary between frame generation and terminal output.
+
+## String-Based Frame Buffer
+
+Another approach is to represent the frame as a collection of strings:
+
+```text
+Frame
+
+"Hello"
+"World"
+""
+""
+```
+
+This is simple and can work well when the frame contains only plain text.
+
+However, a terminal screen is fundamentally a grid of positions, and each position may eventually need visual attributes in addition to its character. A string-based representation can therefore become awkward when the renderer needs to represent more than plain characters.
+
+It also makes the relationship between screen coordinates and stored data less explicit.
+
+## Two-Dimensional Cell Buffer
+
+A more direct representation is a two-dimensional collection of screen cells:
+
+```text
++-----+-----+-----+
+|Cell |Cell |Cell |
++-----+-----+-----+
+|Cell |Cell |Cell |
++-----+-----+-----+
+|Cell |Cell |Cell |
++-----+-----+-----+
+```
+
+Each cell can contain the character and any visual attributes required by the renderer.
+
+This representation closely matches the conceptual structure of a terminal screen and makes row-and-column access straightforward.
+
+The underlying memory does not have to be a literal two-dimensional C array. A contiguous one-dimensional allocation can provide the same logical structure while using an index such as:
+
+```text
+index = row × columns + column
+```
+
+This is the approach that best matches our editor's requirements.
+
+## String Buffer with Separate Attributes
+
+A variation is to maintain character data and visual attributes separately:
+
+```text
+Character Buffer
+       │
+       ├── H
+       ├── e
+       ├── l
+       └── ...
+
+Attribute Buffer
+       │
+       ├── ...
+       ├── ...
+       ├── ...
+       └── ...
+```
+
+This can make certain operations more efficient when character data and attributes are processed independently.
+
+However, it introduces additional structures that must remain synchronized. For the small editor developed in this book, that additional complexity is not necessary.
+
+A cell-based representation keeps the information belonging to one screen position together and is easier to reason about.
+
+## Dirty-Region Buffer
+
+A more sophisticated design can combine the Screen Buffer with information about which cells or regions have changed:
+
+```text
+Current Frame
+     │
+     ▼
+Changed Regions
+     │
+     ▼
+Minimal Terminal Updates
+```
+
+This can reduce unnecessary terminal output, particularly when most of the screen remains unchanged.
+
+However, it requires additional state and logic to determine which regions are dirty and when they must be invalidated. That complexity is unnecessary for our full-redraw rendering strategy.
+
+Dirty-region rendering was therefore considered as an optimization rather than selected as part of the baseline design.
+
+## Selected Design
+
+Our editor uses a **reusable in-memory Screen Buffer composed of screen cells**.
+
+Conceptually:
+
+```text
+Editor State
+     │
+     ▼
+Frame Generation
+     │
+     ▼
++-----------------------+
+| Screen Cell | Cell    |
+| Cell        | Cell    |
+| Cell        | Cell    |
+| ...                 |
++-----------------------+
+     │
+     ▼
+Terminal Output
+```
+
+This design provides the properties we need:
+
+- a clear separation between logical state and visual state
+- direct correspondence with terminal rows and columns
+- predictable memory usage
+- support for per-cell visual information
+- reusable storage across rendering cycles
+- compatibility with full-screen redraw
+- a simple foundation for the Renderer
+
+More sophisticated representations remain possible in the future, but they are not necessary for the editor's baseline architecture. The selected design gives us enough structure to build a clean renderer without introducing complexity that the project does not currently require.
+
+## Summary
+
+Several representations for the terminal frame were considered: direct terminal output, a string-based frame buffer, a two-dimensional cell buffer, a separate attribute buffer, and a dirty-region buffer. Each was rejected for the baseline design because it either merged frame construction with terminal output, made visual attributes or coordinates awkward, or introduced synchronization complexity.
+
+The selected design is a **reusable in-memory Screen Buffer composed of screen cells**, stored contiguously and addressed with `row × columns + column`. It provides a clear separation between logical and visual state, direct correspondence with terminal rows and columns, predictable memory usage, per-cell visual information, and compatibility with full-screen redraw.
+
+Now that the design choice is justified, the next section examines the costs and trade-offs of this approach.
+
+Continue to **Section 18.11, Complexity and Trade-offs**.

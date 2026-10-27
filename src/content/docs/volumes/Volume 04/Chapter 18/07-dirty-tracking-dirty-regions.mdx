@@ -1,0 +1,285 @@
+---
+title: 18.7 Dirty Tracking and Dirty Regions
+description: Explains dirty cells and regions, why tracking them needs extra state, and why full redraw avoids dirty tracking in the baseline.
+---
+
+Once the editor has an in-memory representation of the screen, a natural question arises:
+
+> If only part of the screen changes, why regenerate the entire frame?
+
+This is the problem that **dirty tracking** attempts to solve.
+
+Instead of treating the entire Screen Buffer as needing regeneration after every state change, the renderer can track which cells or regions have changed and update only those portions.
+
+## What Does "Dirty" Mean?
+
+In rendering systems, a region is commonly described as **dirty** when its current visual representation may no longer match the desired state.
+
+For example, suppose the screen initially contains:
+
+```text
++--------------------+
+| Hello              |
+| World              |
+|                    |
+|                    |
++--------------------+
+```
+
+If the user changes `Hello` to `Hello!`, only part of the screen has changed:
+
+```text
++--------------------+
+| Hello!             | ← changed
+| World              |
+|                    |
+|                    |
++--------------------+
+```
+
+A dirty-region system could record that the affected area needs to be regenerated.
+
+Conceptually:
+
+```text
++--------------------+
+| DDDDDD             |
+|                    |
+|                    |
+|                    |
++--------------------+
+```
+
+The `D` cells represent a region whose previous visual state is no longer considered valid.
+
+## Dirty Cells and Dirty Regions
+
+Dirty tracking can operate at different levels of granularity.
+
+A system could track individual cells:
+
+```text
++---+---+---+---+
+|   |   | D |   |
++---+---+---+---+
+|   |   |   |   |
++---+---+---+---+
+```
+
+Or it could track larger regions:
+
+```text
++----------------+
+|                |
+|   DDDDDDDDDD   |
+|   DDDDDDDDDD   |
+|                |
++----------------+
+```
+
+The finer the granularity, the more precisely the renderer can determine what needs updating. However, finer tracking also requires more state and more bookkeeping.
+
+For a small terminal editor, this distinction matters because the amount of work saved may not justify the complexity introduced.
+
+## Why a Screen Might Become Dirty
+
+Many editor operations can affect the visual frame.
+
+For example:
+
+- inserting a character
+- deleting a character
+- moving the cursor
+- scrolling
+- changing the terminal size
+- updating the status bar
+- displaying a message
+
+A single logical operation can also affect more than one visual location.
+
+Moving the cursor, for example, changes at least two screen positions:
+
+```text
+Before:
+
+Hello
+  ^
+
+
+After:
+
+Hello
+     ^
+```
+
+The previous cursor position must no longer be rendered as the cursor, while the new position must be rendered as the cursor.
+
+Similarly, inserting a character can change every character after the insertion point on that line.
+
+This means determining exactly which screen cells have changed is not always as simple as identifying the location of the original edit.
+
+## Dirty Tracking Requires Additional State
+
+To use dirty rendering effectively, the editor must know more than the current desired frame.
+
+It must also have enough information to determine what has changed since the previous frame.
+
+Conceptually:
+
+```text
+Previous Frame
+      │
+      │ compare
+      ▼
+Current Frame
+      │
+      ▼
+Changed Regions
+```
+
+One approach is to maintain two screen representations:
+
+```text
+Previous Screen Buffer
+          │
+          │ compare
+          ▼
+Current Screen Buffer
+          │
+          ▼
+Changed Cells
+```
+
+Another approach is to explicitly mark affected regions as operations occur.
+
+Both approaches introduce additional state or processing.
+
+This is an important trade-off. Dirty rendering can reduce the amount of output produced, but the editor must spend additional effort determining what actually needs to be updated.
+
+## Dirty State Is Not the Document's Dirty Flag
+
+The term **dirty** can cause confusion because the editor also has a **document dirty flag**.
+
+These are unrelated concepts.
+
+The document dirty flag answers:
+
+> Has the document been modified since the last successful save?
+
+The rendering concept answers:
+
+> Does this screen region need to be regenerated or updated?
+
+For example:
+
+```text
+Document Dirty
+     │
+     └── Unsaved document changes
+
+
+Screen Dirty
+     │
+     └── Visual representation needs updating
+```
+
+A cursor movement can make part of the screen visually dirty without modifying the document at all.
+
+Conversely, a document could be modified in memory even before a frame is generated.
+
+These states must therefore remain separate.
+
+## Dirty Tracking and Full Redraw
+
+Our editor does **not** use dirty-region rendering as its baseline strategy.
+
+The rendering decision established in Chapter 17 is full redraw. The renderer generates a complete frame from the current `EditorState` rather than maintaining a system that identifies and updates only changed screen regions.
+
+The resulting pipeline is therefore:
+
+```text
+Editor State
+     │
+     ▼
+Generate Complete Frame
+     │
+     ▼
+Screen Buffer
+     │
+     ▼
+Output Complete Frame
+     │
+     ▼
+Terminal
+```
+
+There is no need to maintain a separate collection of dirty cells simply to determine which parts of the screen should be rebuilt.
+
+This does not mean dirty rendering is a bad technique. It means that its additional complexity is not justified by the requirements and scope of this editor.
+
+## Why Full Redraw Is Simpler
+
+With full redraw, the renderer can follow a predictable rule:
+
+> Every rendering cycle produces the complete visual frame.
+
+That gives us:
+
+```text
+Current State
+     │
+     ▼
+Complete Screen Buffer
+     │
+     ▼
+Complete Output
+```
+
+There is no need to ask:
+
+- Which cells changed?
+- Which rows are dirty?
+- Did the cursor movement affect another region?
+- Does a document edit invalidate the rest of the line?
+- Does a status change require another region to be redrawn?
+
+The renderer simply constructs the answer from the current state.
+
+This is one of the reasons full redraw was selected for the project: it keeps the rendering pipeline straightforward and makes the relationship between state and output easier to understand.
+
+## Dirty Tracking as a Future Optimization
+
+Dirty-region rendering remains an important technique to understand because it becomes valuable when rendering costs or output bandwidth become significant.
+
+A more sophisticated renderer could eventually use:
+
+```text
+Current Frame
+     │
+     ▼
+Compare with Previous Frame
+     │
+     ▼
+Changed Regions
+     │
+     ▼
+Minimal Terminal Updates
+```
+
+Such an approach can reduce unnecessary terminal output, but it introduces additional state and synchronization requirements.
+
+For our editor, that optimization is deliberately deferred. The Screen Buffer gives us the intermediate representation we need without requiring the complexity of incremental rendering.
+
+The important lesson is therefore not that dirty tracking is unnecessary in all rendering systems. It is that **rendering optimizations should be introduced when their benefits justify their complexity**.
+
+With the role of dirty tracking understood, we can now examine why the full-redraw strategy makes the Screen Buffer particularly simple in our editor.
+
+## Summary
+
+Dirty tracking marks screen regions whose visual representation may no longer match the desired state. It can operate at the granularity of individual cells or larger regions, but it always requires additional state and bookkeeping — either to compare previous and current frames or to record which regions were invalidated. The rendering concept of "dirty" is unrelated to the document dirty flag used for unsaved changes.
+
+Our editor deliberately does **not** use dirty-region rendering as its baseline. Full redraw regenerates the complete frame from the current `EditorState` each cycle, avoiding the need to track changed cells. Dirty tracking remains valuable as a future optimization, but only when its complexity is justified by rendering costs.
+
+Now that the role of dirty tracking is understood, the next section examines why the full-redraw strategy makes the Screen Buffer particularly simple in our editor.
+
+Continue to **Section 18.8, Why Full Redraw Makes the Screen Buffer Simple**.

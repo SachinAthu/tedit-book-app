@@ -1,0 +1,179 @@
+---
+title: 18.2 What a Screen Cell Represents
+description: Describes the screen cell, its character and attributes, screen coordinates, empty cells, and how cells differ from terminal state.
+---
+
+The Screen Buffer represents the terminal as a collection of individual screen positions. Each position is called a **screen cell**.
+
+A terminal screen can be viewed as a rectangular grid:
+
+```text
+        Columns
+    0   1   2   3   4   5
+  +---+---+---+---+---+---+
+0 |   |   |   |   |   |   |
+  +---+---+---+---+---+---+
+1 |   |   |   |   |   |   |
+  +---+---+---+---+---+---+
+2 |   |   |   |   |   |   |
+  +---+---+---+---+---+---+
+```
+
+Each intersection of a row and column represents one position where the terminal can display a character.
+
+The Screen Buffer mirrors this structure in memory. If the terminal has `rows` rows and `columns` columns, the buffer contains enough cells to represent those visible positions.
+
+## A Cell Is More Than a Character
+
+At its simplest, a screen cell needs to represent the character that should appear at that position.
+
+For example, the text:
+
+```text
+Hello
+```
+
+could be represented as:
+
+```text
++---+---+---+---+---+
+| H | e | l | l | o |
++---+---+---+---+---+
+```
+
+However, a terminal position can contain more information than just its character. A cell may also need visual attributes such as foreground and background information.
+
+Conceptually, a cell can therefore be viewed as:
+
+```text
+ScreenCell
+
++-------------------+
+| Character         |
+| Foreground        |
+| Background        |
+| Attributes        |
++-------------------+
+```
+
+The exact representation can be kept deliberately small in the baseline editor. The important architectural point is that the Screen Buffer stores the **visual properties of a screen position**, rather than storing another copy of the document.
+
+This distinction becomes useful when the editor eventually needs to represent interface elements or visual styling. The document may contain the character `A`, while the Screen Buffer can additionally describe how that `A` should appear on the terminal.
+
+## Screen Coordinates
+
+Each cell has a position within the screen.
+
+We can identify a cell using:
+
+```text
+(row, column)
+```
+
+For example:
+
+```text
+(0, 0) → top-left cell
+(0, 5) → sixth cell on the first row
+(3, 2) → third cell on the fourth row
+```
+
+This coordinate system belongs to the **screen**, not the document.
+
+That distinction is important because the document and the screen use different coordinate systems.
+
+```text
+Document Coordinates          Screen Coordinates
+
+(row, column)                 (row, column)
+      │                              │
+      │                              │
+      ▼                              ▼
+Text Buffer                    Screen Buffer
+```
+
+The document position identifies where a character exists in the text. The screen position identifies where something should appear in the current frame.
+
+The two positions may correspond directly for a simple document, but they are not inherently the same. Once the editor scrolls, for example, a document row may be displayed at a different screen row.
+
+Chapter 20 will examine that transformation in detail when we introduce viewport movement and scrolling.
+
+## Empty Cells
+
+Not every screen position contains document text.
+
+Suppose the terminal is larger than the visible document:
+
+```text
+Hello
+World
+```
+
+The Screen Buffer still represents the entire visible area:
+
+```text
++----------------------+
+| Hello                |
+| World                |
+|                      |
+|                      |
+|                      |
++----------------------+
+```
+
+The cells below the document therefore need a representation as well. They can contain blank characters and appropriate visual attributes.
+
+This is one of the advantages of representing the screen as a complete grid: every visible position has a defined state.
+
+The same principle applies to interface areas. The status bar and message bar occupy screen positions even though their contents do not come from the document.
+
+## Screen Buffer Versus Terminal
+
+The Screen Buffer should also not be confused with the terminal's own internal screen state.
+
+The terminal emulator maintains its own representation of what is currently displayed. Our Screen Buffer is an **application-side representation** of the frame that the editor intends to display.
+
+```text
+Editor (application)            Terminal Emulator (external)
+
+Screen Buffer                   Terminal Screen State
+     │                                  ▲
+     │                                  │
+     ▼                                  │
+Output Generation ──────────────► Terminal Output
+```
+
+The editor's buffer exists only so that the application can construct and organize its frame before producing terminal output.
+
+The terminal remains responsible for interpreting ANSI escape sequences and ultimately displaying the result.
+
+## Why Use Cells?
+
+Representing the frame as cells gives the rendering system a predictable structure.
+
+The renderer can reason about the screen as:
+
+```text
+row 0 → cells 0 ... columns - 1
+row 1 → cells 0 ... columns - 1
+row 2 → cells 0 ... columns - 1
+...
+```
+
+This provides a natural foundation for later rendering operations. The renderer can populate cells from the visible document, reserve space for interface elements, and establish the cursor position without modifying the underlying document.
+
+It also provides a clear boundary for future visual features. If the editor eventually supports syntax highlighting or richer terminal attributes, those features can affect the visual representation without changing the fundamental meaning of the Text Buffer.
+
+For the baseline implementation, however, the cell representation should remain intentionally simple. The purpose of the Screen Buffer is not to become a general graphics system. It is a compact representation of the terminal frame required by our editor.
+
+With the screen represented as a collection of cells, the next question is how many cells the editor needs and how that storage relates to the dimensions of the terminal.
+
+## Summary
+
+A screen cell is the fundamental unit of the Screen Buffer: it represents a single visible terminal position, storing the character and any visual attributes that should appear there. Cells are addressed using screen coordinates `(row, column)`, which are distinct from document coordinates. Every visible position has a defined state, even when no document content occupies it.
+
+Because the buffer is an application-side representation, it is not the terminal's own screen state. It is a compact, intentionally simple model of the frame that provides a predictable structure for later rendering operations.
+
+Now that the screen is represented as a collection of cells, the next section examines how many cells the editor needs and how that storage relates to the dimensions of the terminal.
+
+Continue to **Section 18.3, Screen Buffer Dimensions**.
