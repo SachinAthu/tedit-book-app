@@ -1,0 +1,237 @@
+---
+title: "25.1 Why Arrays Matter to a Text Editor"
+description: "Explains why text maps naturally to arrays and previews the trade-off between fast indexed access and costly middle edits."
+---
+
+A text editor spends much of its time storing and manipulating sequences of characters.
+
+Consider a simple document:
+
+```text
+Hello, world!
+This is a text editor.
+```
+
+At a conceptual level, each line is a sequence of characters:
+
+```text
+Line 0
+
++---+---+---+---+---+---+---+---+---+---+---+---+---+
+| H | e | l | l | o | , |   | w | o | r | l | d | ! |
++---+---+---+---+---+---+---+---+---+---+---+---+---+
+  0   1   2   3   4   5   6   7   8   9  10  11  12
+```
+
+This is the basic idea behind an array: a collection of elements stored in a defined order, where each element can be accessed using its position, or **index**.
+
+Arrays are important to text editors because text is naturally sequential. A line contains characters in a particular order, and editing operations frequently need to find, insert, remove, or move characters within that sequence.
+
+## Arrays Provide Direct Access
+
+One of the most useful properties of an array is indexed access.
+
+If a line is represented as an array of characters, the editor can ask for the character at a particular position:
+
+```text
+characters[5]
+```
+
+Conceptually:
+
+```text
+characters
+    │
+    ▼
++---+---+---+---+---+---+---+
+| H | e | l | l | o | , |   |
++---+---+---+---+---+---+---+
+  0   1   2   3   4   5   6
+                      ▲
+                      │
+                    index 5
+```
+
+This maps naturally to the way the editor thinks about a cursor.
+
+If the cursor is at row 10 and column 5, the column identifies a position within the sequence of characters belonging to that line.
+
+This relationship is one reason the simple array-based representation works well for an educational editor.
+
+## Arrays Store Elements Contiguously
+
+Arrays have another important property: their elements are stored next to one another in memory.
+
+Conceptually:
+
+```text
+Memory
+
++-----+-----+-----+-----+-----+
+| 'H' | 'e' | 'l' | 'l' | 'o' |
++-----+-----+-----+-----+-----+
+```
+
+The editor therefore has a compact representation of a sequence of characters.
+
+This also makes operations such as reading a range of characters straightforward. The characters belonging to a line occupy one continuous region of memory.
+
+The details of how the processor locates an indexed element, and why contiguous storage provides efficient access, were covered when we discussed complexity and memory behavior in Chapter 24. Here, the important point is simply that an array gives us a straightforward representation of ordered data.
+
+## But Text Editing Is Not Just Reading
+
+Arrays are particularly convenient when the editor only needs to read characters.
+
+Editing introduces a different problem.
+
+Suppose the line contains:
+
+```text
+HelloWorld
+```
+
+and the user moves the cursor between `Hello` and `World` and inserts a space:
+
+```text
+Hello World
+```
+
+The new character must be placed in the middle of the existing sequence.
+
+The characters after the insertion point cannot remain in exactly the same positions:
+
+```text
+Before:
+
+H e l l o W o r l d
+          ^
+       insert here
+
+
+After:
+
+H e l l o   W o r l d
+          ^
+```
+
+The existing characters need to make room for the new element.
+
+Deletion creates the opposite problem. If the user removes a character from the middle, the elements after it need to move so that the sequence remains continuous.
+
+This leads to an important characteristic of array-based text storage:
+
+> **Arrays provide simple and efficient indexed access, but inserting or deleting elements in the middle can require moving other elements.**
+
+That trade-off is central to text-editor design.
+
+## From Arrays to Dynamic Arrays
+
+A fixed-size array is not enough for an editor because the amount of text changes while the user is working.
+
+A line might begin with:
+
+```text
+Hello
+```
+
+and eventually become:
+
+```text
+Hello, this is a much longer line.
+```
+
+The storage therefore needs to grow when the existing space is exhausted.
+
+A **dynamic array** combines the contiguous storage of an array with the ability to allocate additional capacity when necessary.
+
+Conceptually:
+
+```text
++---+---+---+---+---+---+---+---+
+| H | e | l | l | o |   |   |   |
++---+---+---+---+---+---+---+---+
+<----- used ---->
+<----------- capacity --------->
+```
+
+The distinction between **length** and **capacity** becomes important:
+
+- **Length** is the number of elements currently stored.
+- **Capacity** is the amount of storage currently available.
+
+When the capacity is exhausted, the dynamic array can allocate a larger region and move the existing elements into it.
+
+We will examine that process later in this chapter.
+
+## Why This Matters to Our Editor
+
+Our editor does not edit the file directly. It maintains an in-memory `Document`, whose text is organized as lines. This representation was deliberately chosen because it maps naturally onto the operations performed by a simple text editor.
+
+At a simplified level:
+
+```text
+Document
+    │
+    ├── Line 0 → character sequence
+    ├── Line 1 → character sequence
+    ├── Line 2 → character sequence
+    └── Line 3 → character sequence
+```
+
+Every time the user edits a line, the editor may need to perform operations on that underlying character sequence.
+
+For example:
+
+```text
+Insert character
+        ↓
+Make room for the new character
+        ↓
+Place character at cursor position
+```
+
+or:
+
+```text
+Delete character
+        ↓
+Remove the character
+        ↓
+Close the resulting gap
+```
+
+Understanding how arrays handle these operations is therefore essential before we examine more sophisticated text-buffer structures.
+
+## The Bigger Picture
+
+Arrays are not necessarily the best possible representation for every text editor.
+
+They are, however, an excellent starting point because they expose the fundamental problem clearly:
+
+```text
+Simple representation
+        │
+        ▼
+Contiguous characters
+        │
+        ├── Fast indexed access
+        │
+        ├── Simple memory layout
+        │
+        └── Expensive middle insertion/deletion
+                    │
+                    ▼
+             Text-editing problem
+```
+
+The more sophisticated data structures introduced later in this volume exist largely because real text editors perform enormous numbers of insertions and deletions.
+
+Before we can understand why a **Gap Buffer**, **Piece Table**, or **Rope** can improve certain workloads, we first need to understand the simpler structure they are designed to improve upon.
+
+That structure begins with the array.
+
+## Summary
+
+Arrays give text a simple, ordered representation in which each character occupies a known position, so the editor can retrieve a character at the cursor's column directly rather than searching through the line. This direct indexed access makes arrays a natural fit for line-based text and the row-and-column cursor model. The advantage has a matching cost: inserting or deleting a character in the middle of a line requires the following characters to move so that the sequence stays contiguous. A fixed-size array cannot accommodate a line that grows as the user types, which leads to the dynamic array and its distinction between length and capacity. The chapter begins with arrays because this simple structure exposes the central text-editing problem that more sophisticated buffers are designed to improve.
+
+In the next section, we will look closely at the memory layout that enables this indexed access: **Contiguous Memory and Indexing**.

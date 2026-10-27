@@ -1,0 +1,298 @@
+---
+title: "25.2 Contiguous Memory and Indexing"
+description: "Shows how contiguous storage lets an array compute an element's address directly from its base, index, and element size."
+---
+
+An array is more than a collection of values arranged in a logical sequence. One of its defining properties is that its elements occupy a **contiguous region of memory**.
+
+Consider an array containing five characters:
+
+```text
++---+---+---+---+---+
+| H | e | l | l | o |
++---+---+---+---+---+
+  0   1   2   3   4
+```
+
+Conceptually, these elements are stored next to one another in memory:
+
+```text
+Memory addresses
+
+1000    1001    1002    1003    1004
+  │       │       │       │       │
+  ▼       ▼       ▼       ▼       ▼
++-------+-------+-------+-------+-------+
+|   H   |   e   |   l   |   l   |   o   |
++-------+-------+-------+-------+-------+
+```
+
+The exact addresses are not important. What matters is that each element follows the previous one at a predictable distance.
+
+## The Index Identifies a Position
+
+When we access:
+
+```c
+characters[3]
+```
+
+we are asking for the fourth element of the array.
+
+Arrays are zero-indexed, so:
+
+```text
+characters[0] → H
+characters[1] → e
+characters[2] → l
+characters[3] → l
+characters[4] → o
+```
+
+The index is therefore a logical position within the array.
+
+## How the Address Is Found
+
+Because the elements are contiguous, the address of an element can be calculated from three pieces of information:
+
+```text
+address =
+    base address
+    + index × element size
+```
+
+For example, imagine an array of four-byte elements beginning at address `1000`:
+
+```text
+Index 0 → 1000
+Index 1 → 1004
+Index 2 → 1008
+Index 3 → 1012
+```
+
+The system does not need to search through the earlier elements to find index 3. Its location follows directly from the array's layout.
+
+For a character array, where each element occupies one byte, the relationship is even simpler:
+
+```text
+Index 0 → base + 0
+Index 1 → base + 1
+Index 2 → base + 2
+Index 3 → base + 3
+```
+
+This predictable layout is the foundation of direct array access.
+
+## Why Contiguity Matters
+
+Suppose the editor needs the code point at column 500 of a line.
+
+With an array, the code point's location can be calculated directly from the beginning of the character sequence and its index.
+
+```text
+Line
+
++---+---+---+---+---+---+---+---+---+---+
+| 0 | 1 | 2 | 3 |...|497|498|499|500|...|
++---+---+---+---+---+---+---+---+---+---+
+                                ▲
+                                │
+                           requested
+                           position
+```
+
+There is no need to inspect characters 0 through 499 one by one.
+
+This property is particularly useful for a text editor because the editor constantly works with positions such as:
+
+- the character at the cursor
+- the beginning of a line
+- the character immediately before the cursor
+- the character immediately after the cursor
+- a range of characters within a line
+
+The array's indexing model maps naturally onto these operations.
+
+## Arrays and the Cursor
+
+This also explains why an array-based representation fits naturally with the cursor model introduced earlier.
+
+The Cursor maintains a logical row and column:
+
+```text
+Cursor
+
+row    = 4
+column = 7
+```
+
+The row identifies a line in the Document, while the column identifies a position within that line.
+
+Conceptually:
+
+```text
+Document
+   │
+   ├── Row 0 → [characters...]
+   ├── Row 1 → [characters...]
+   ├── Row 2 → [characters...]
+   ├── Row 3 → [characters...]
+   └── Row 4 → [A][B][C][D][E][F][G][H]
+                                      ▲
+                                      │
+                                   column 7
+```
+
+The Cursor does not need to know how the characters are physically stored. It simply identifies a logical position. The underlying array provides a convenient way for the Document to locate the corresponding element.
+
+## Contiguous Does Not Mean Fixed-Size
+
+There is an important distinction between **contiguous storage** and **fixed capacity**.
+
+A fixed-size array can be contiguous:
+
+```text
++---+---+---+---+---+
+| A | B | C | D | E |
++---+---+---+---+---+
+```
+
+But a dynamically growing array can also maintain contiguous storage.
+
+For example:
+
+```text
+Before growth
+
++---+---+---+---+
+| A | B | C | D |
++---+---+---+---+
+
+
+After growth
+
++---+---+---+---+---+---+---+---+
+| A | B | C | D |   |   |   |   |
++---+---+---+---+---+---+---+---+
+```
+
+The second array has more capacity, but its elements are still stored contiguously.
+
+The important question is therefore not:
+
+> "Can an array grow?"
+
+It is:
+
+> "When an array grows, how does it preserve its contiguous representation?"
+
+We will answer that when we examine dynamic arrays and resizing.
+
+## Contiguous Storage Has a Cost
+
+The same property that makes indexed access simple also creates a limitation.
+
+Suppose we want to insert a character into the middle:
+
+```text
+Before:
+
+A B C D E
+    ^
+```
+
+After inserting `X`:
+
+```text
+A B X C D E
+    ^
+```
+
+The existing elements after the insertion point must move.
+
+The array cannot simply place `X` between `B` and `C` unless there is already unused space available at that location.
+
+Similarly, deleting an element creates a gap:
+
+```text
+Before:
+
+A B C D E
+
+Delete C:
+
+A B   D E
+```
+
+To restore the contiguous sequence:
+
+```text
+A B D E
+```
+
+the elements after the deleted position must move.
+
+This is the fundamental trade-off we will explore throughout this chapter:
+
+```text
+Contiguous storage
+       │
+       ├── Direct indexed access
+       │
+       ├── Simple representation
+       │
+       └── Insertion/deletion may move elements
+```
+
+For a small editor, this simplicity can be very valuable. But as documents and editing workloads grow, the cost of moving elements becomes increasingly important.
+
+## A Note About the Editor's Text Representation
+
+There is one detail worth keeping separate from this discussion.
+
+A C `char` array stores bytes. Our editor's Document, however, is defined to store decoded Unicode code points rather than raw UTF-8 bytes. UTF-8 is used at the file boundary during loading and saving.
+
+Therefore, when we use character arrays in this chapter, they are primarily a way to understand **contiguous sequences and their operations**. They should not be interpreted as changing the editor's established encoding strategy.
+
+The underlying principle remains the same:
+
+```text
+Sequence of elements
+        ↓
+Contiguous storage
+        ↓
+Index identifies an element
+        ↓
+Insertion/deletion may require movement
+```
+
+That principle applies whether those elements are bytes, characters, code points, or another fixed-size value.
+
+## From Indexing to Editing
+
+We now have the basic storage model:
+
+```text
+Array
+ │
+ ├── Ordered elements
+ ├── Contiguous memory
+ ├── Index-based access
+ └── Predictable element locations
+```
+
+Reading an element is straightforward.
+
+Editing is where things become more interesting.
+
+The next question is therefore:
+
+> What happens when the amount of data changes?
+
+That begins with the simplest case: a fixed-size array.
+
+## Summary
+
+An array's elements occupy a contiguous region of memory, so the location of an indexed element follows directly from the base address, the index, and the element size. That calculation gives arrays their fast indexed access: finding the character at column 500 does not require inspecting the preceding 499 characters. The cursor's row and column map naturally onto this model, since the row selects a line and the column selects a position within that line's character storage. The same contiguity is also the source of the array's main limitation, because inserting or deleting in the middle shifts the elements that follow to keep them adjacent. Contiguous storage is therefore independent of fixed capacity: a growing array can still be contiguous, provided that it preserves that layout when it obtains new storage. The section also notes that using character arrays here illustrates contiguous sequences without changing the editor's decision to store decoded Unicode code points.
+
+In the next section, we will examine the simplest form of this storage: **Fixed-Size Arrays**.

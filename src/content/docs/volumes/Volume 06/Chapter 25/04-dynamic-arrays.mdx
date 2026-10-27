@@ -1,0 +1,413 @@
+---
+title: "25.4 Dynamic Arrays"
+description: "Introduces dynamic arrays with data, length, and capacity, showing how resizing preserves contiguous storage while moving elements."
+---
+
+A fixed-size array works well when the required amount of storage is known in advance. Text editing does not have that property.
+
+A document can grow as the user types, shrink as the user deletes, and change size repeatedly throughout an editing session.
+
+We therefore need a structure that preserves the useful properties of an array while allowing its capacity to change.
+
+This is the purpose of a **dynamic array**.
+
+## The Basic Idea
+
+A dynamic array still stores its elements in contiguous memory:
+
+```text
++---+---+---+---+---+---+---+---+
+| A | B | C | D |   |   |   |   |
++---+---+---+---+---+---+---+---+
+<--- length = 4 --->
+<--------- capacity = 8 --------->
+```
+
+The important difference is that its storage can be replaced with a larger allocation when the current capacity is no longer sufficient.
+
+A dynamic array therefore maintains at least two pieces of information:
+
+```text
+length
+capacity
+```
+
+and a reference to the memory containing the elements:
+
+```text
+data
+```
+
+Conceptually:
+
+```text
+Dynamic Array
+
++----------------+
+| data           | ────────► [A][B][C][D][ ][ ][ ][ ]
+| length = 4     |
+| capacity = 8   |
++----------------+
+```
+
+The `data` pointer identifies the beginning of the allocated memory.
+
+## Length and Capacity
+
+The distinction between length and capacity is especially important for dynamic arrays.
+
+Suppose:
+
+```text
+length   = 4
+capacity = 8
+```
+
+Then four elements belong to the current sequence:
+
+```text
++---+---+---+---+---+---+---+---+
+| A | B | C | D |   |   |   |   |
++---+---+---+---+---+---+---+---+
+<------ current elements ------->
+<----------- available capacity ----------->
+```
+
+The remaining four positions are available for future insertions.
+
+If another character is appended, the dynamic array does not need to allocate new memory immediately:
+
+```text
+Before:
+
+[A][B][C][D][ ][ ][ ][ ]
+                 ^
+              unused
+
+
+After:
+
+[A][B][C][D][E][ ][ ][ ]
+```
+
+The length becomes five, while the capacity remains eight.
+
+```text
+length   = 5
+capacity = 8
+```
+
+This ability to use already allocated space is one of the main advantages of a dynamic array.
+
+## What Happens When Capacity Is Exhausted?
+
+Eventually the available capacity may be consumed:
+
+```text
+length   = 8
+capacity = 8
+
+[A][B][C][D][E][F][G][H]
+```
+
+Suppose the user now wants to insert `I`.
+
+There is no free position.
+
+The dynamic array must obtain a larger region of contiguous memory.
+
+Conceptually:
+
+```text
+Old storage
+
+[A][B][C][D][E][F][G][H]
+
+
+        resize
+
+
+New storage
+
+[A][B][C][D][E][F][G][H][ ][ ][ ][ ][ ][ ][ ][ ]
+```
+
+The existing elements must be copied into the new allocation.
+
+Afterward:
+
+```text
+length   = 8
+capacity = 16
+```
+
+The new element can then be added:
+
+```text
+[A][B][C][D][E][F][G][H][I][ ][ ][ ][ ][ ][ ][ ]
+```
+
+The exact growth factor is a design choice. What matters at this stage is the mechanism:
+
+```text
+capacity exhausted
+        ↓
+allocate larger storage
+        ↓
+copy existing elements
+        ↓
+release old storage
+        ↓
+continue using new storage
+```
+
+## Why Not Allocate Exactly What We Need?
+
+A natural approach would be to increase the capacity by exactly one element every time the array becomes full.
+
+For example:
+
+```text
+8 → 9 → 10 → 11 → 12 → ...
+```
+
+This would work, but it would cause repeated allocations and repeated copying as the array grows.
+
+Imagine a document line growing one character at a time. If every new character required a new allocation, the editor would repeatedly move the entire existing sequence into a new memory region.
+
+A better strategy is to increase the capacity by a larger amount.
+
+For example:
+
+```text
+8 → 16 → 32 → 64 → ...
+```
+
+Now many subsequent insertions can use the newly available space without another allocation.
+
+This is one of the practical applications of the amortized-complexity ideas introduced in Chapter 24. The occasional expensive resize is balanced by many inexpensive operations that use the existing capacity.
+
+## Dynamic Arrays Still Use Contiguous Memory
+
+Resizing does not change the fundamental representation.
+
+Before resizing:
+
+```text
++---+---+---+---+
+| A | B | C | D |
++---+---+---+---+
+```
+
+After resizing:
+
+```text
++---+---+---+---+---+---+---+---+
+| A | B | C | D |   |   |   |   |
++---+---+---+---+---+---+---+---+
+```
+
+The storage may now begin at a different memory address, but the elements remain contiguous within the new allocation.
+
+This is an important distinction:
+
+> **A dynamic array changes the size of its storage, not the fundamental way its elements are arranged.**
+
+The array still provides indexed access because its elements remain in a continuous region of memory.
+
+## Resizing Can Move the Entire Array
+
+There is another important consequence.
+
+When a larger contiguous region cannot be obtained by extending the existing allocation, the dynamic array must move its elements.
+
+Conceptually:
+
+```text
+Old memory
+
+1000  1001  1002  1003
+  │     │     │     │
+  ▼     ▼     ▼     ▼
++---+---+---+---+
+| A | B | C | D |
++---+---+---+---+
+
+
+New memory
+
+5000  5001  5002  5003  5004  5005  5006  5007
+  │     │     │     │
+  ▼     ▼     ▼     ▼
++---+---+---+---+---+---+---+---+
+| A | B | C | D |   |   |   |   |
++---+---+---+---+---+---+---+---+
+```
+
+The characters themselves have not changed. Their memory location has.
+
+This is why a pointer to the old storage cannot necessarily remain valid after resizing.
+
+The dynamic array must update its `data` pointer to refer to the new allocation.
+
+## Dynamic Arrays and C
+
+In C, dynamic arrays are commonly implemented using dynamically allocated memory.
+
+A conceptual structure might look like:
+
+```c
+typedef struct
+{
+    char *data;
+    size_t length;
+    size_t capacity;
+} DynamicArray;
+```
+
+The structure does not contain the array elements directly.
+
+Instead:
+
+```text
+DynamicArray
+     │
+     ├── data ─────────► allocated memory
+     ├── length
+     └── capacity
+```
+
+The `data` pointer identifies where the elements are stored.
+
+When the array grows, the allocation associated with `data` may change, and the structure must continue to describe the new storage correctly.
+
+The exact implementation is less important here than understanding the relationship between the three pieces of state.
+
+## Dynamic Arrays and Text Lines
+
+This model maps naturally onto a line of editable text.
+
+Suppose a line contains:
+
+```text
+Hello
+```
+
+Its storage might conceptually be:
+
+```text
+length   = 5
+capacity = 8
+
++---+---+---+---+---+---+---+---+
+| H | e | l | l | o |   |   |   |
++---+---+---+---+---+---+---+---+
+```
+
+The user can continue typing:
+
+```text
+Hello, world
+```
+
+As long as the line's capacity is sufficient, the editor can use the existing allocation.
+
+When the capacity is exhausted, the line can be resized.
+
+This gives the editor a simple and flexible representation:
+
+```text
+Document
+    │
+    ├── Line 0 → Dynamic Array
+    ├── Line 1 → Dynamic Array
+    ├── Line 2 → Dynamic Array
+    └── ...
+```
+
+This is consistent with the vector-of-lines representation selected for the editor. More sophisticated text buffers can later replace this internal representation without changing the higher-level architecture.
+
+## The Problem Has Not Disappeared
+
+Dynamic arrays solve one problem:
+
+> **How can a contiguous sequence grow when its current storage is full?**
+
+They do not solve every problem associated with editing contiguous text.
+
+In particular, inserting a character near the beginning of a long sequence can still require many existing elements to move.
+
+For example:
+
+```text
+Before:
+
+A B C D E F G H I J
+    ^
+```
+
+Insert `X`:
+
+```text
+A B X C D E F G H I J
+    ^
+```
+
+The dynamic array has enough capacity, but the elements after the insertion position still need to shift.
+
+So we now have two different kinds of movement:
+
+```text
+Dynamic Array
+
+Growth
+  ↓
+Move the entire sequence
+to a new allocation
+
+
+Insertion
+  ↓
+Move elements within
+the existing allocation
+```
+
+These are separate problems.
+
+Dynamic arrays make storage growth manageable, but they do not eliminate the cost of inserting and deleting elements inside a contiguous sequence.
+
+That distinction will become important in the next sections.
+
+## The Dynamic Array Trade-off
+
+The dynamic array gives us a useful combination:
+
+```text
+Dynamic Array
+     │
+     ├── Contiguous storage
+     ├── Direct indexed access
+     ├── Flexible capacity
+     └── Simple representation
+```
+
+But it also introduces costs:
+
+```text
+     ├── Resizing may require copying
+     └── Middle insertion/deletion may require shifting
+```
+
+For a small editor, these characteristics make dynamic arrays an attractive starting point. They are simple enough to understand and powerful enough to represent ordinary text.
+
+The next question is therefore more specific:
+
+> **What exactly happens when an element is inserted into a dynamic array?**
+
+That is the operation we need to examine next.
+
+## Summary
+
+A dynamic array keeps the contiguous representation of a fixed-size array but adds the ability to replace its allocation when the current capacity is exhausted. It is described by three pieces of state: a data pointer to the storage, a length for the elements currently in the sequence, and a capacity for the elements the allocation can hold. Appending while length is below capacity writes into existing storage and changes only the length, so no allocation is required. When length reaches capacity, the array allocates a larger region, copies the existing elements, releases the old storage, and updates its data pointer. This solves growth, but it does not eliminate the separate cost of inserting or deleting in the middle, which still shifts elements within the allocation. The dynamic array therefore offers direct access and flexible capacity at the price of resizing copies and position-dependent editing costs.
+
+In the next section, we will examine how the array obtains more space: **Growing a Dynamic Array**.

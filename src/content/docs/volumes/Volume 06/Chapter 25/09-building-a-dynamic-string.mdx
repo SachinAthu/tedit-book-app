@@ -1,0 +1,371 @@
+---
+title: "25.9 Building a Dynamic String"
+description: "Describes a dynamic string built from data, length, and capacity, showing how explicit metadata separates logical text from allocated storage."
+---
+
+We can now combine the ideas from arrays, dynamic arrays, and C strings into one simple structure.
+
+A growable sequence of characters needs to answer three questions:
+
+1. **Where is the character storage?**
+2. **How many characters are currently stored?**
+3. **How much storage is available?**
+
+These questions correspond directly to three fields:
+
+```text
+data
+length
+capacity
+```
+
+Together, they describe the complete state of a dynamic string.
+
+## The Three-Part Structure
+
+Conceptually, we can represent a dynamic string as:
+
+```text
++----------------+
+| data           |
+| length         |
+| capacity       |
++----------------+
+```
+
+The `data` field identifies the memory containing the characters.
+
+The `length` field tells us how many characters currently belong to the string.
+
+The `capacity` field tells us how many elements can be stored in the allocated region before more storage is required.
+
+For example:
+
+```text
+data
+ │
+ ▼
++---+---+---+---+---+---+---+---+
+| H | e | l | l | o |   |   |   |
++---+---+---+---+---+---+---+---+
+<--- length = 5 --->
+<--------- capacity = 8 -------->
+```
+
+The three fields describe different aspects of the same storage.
+
+## `data` — Where the Characters Are
+
+The `data` field points to the beginning of the allocated character storage.
+
+Conceptually:
+
+```text
+String
+   │
+   ├── data ───────► +---+---+---+---+---+---+---+---+
+   │                 | H | e | l | l | o |   |   |   |
+   │                 +---+---+---+---+---+---+---+---+
+   │
+   ├── length = 5
+   │
+   └── capacity = 8
+```
+
+The string structure itself does not need to contain every character directly. It stores a reference to the separate memory region where the characters live.
+
+This is typical of dynamically allocated data structures in C.
+
+## `length` — What Belongs to the String
+
+The `length` field identifies the number of characters currently stored.
+
+For:
+
+```text
+Hello
+```
+
+we have:
+
+```text
+length = 5
+```
+
+The allocated storage may be larger:
+
+```text
++---+---+---+---+---+---+---+---+
+| H | e | l | l | o |   |   |   |
++---+---+---+---+---+---+---+---+
+<- logical string ->
+```
+
+Only the first five elements belong to the current logical string.
+
+The remaining elements are available storage.
+
+This distinction means that the physical allocation can be larger than the logical string without changing the string's contents.
+
+## `capacity` — How Much Storage Exists
+
+The `capacity` field describes the size of the allocated storage.
+
+For example:
+
+```text
+length   = 5
+capacity = 8
+```
+
+means:
+
+```text
+5 elements are currently used
+3 additional elements can be accommodated
+```
+
+Conceptually:
+
+```text
++---+---+---+---+---+---+---+---+
+| H | e | l | l | o |   |   |   |
++---+---+---+---+---+---+---+---+
+<--- length = 5 --->
+<-------- capacity = 8 --------->
+```
+
+Capacity is therefore a property of the **storage**, while length is a property of the **current contents**.
+
+This distinction allows the string to grow without changing its basic representation every time its length changes.
+
+## A Possible C Representation
+
+The structure can be represented in C as:
+
+```c
+typedef struct
+{
+    char *data;
+    size_t length;
+    size_t capacity;
+} DynamicString;
+```
+
+This structure contains no characters itself.
+
+Instead, it describes the character storage:
+
+```text
+DynamicString
+     │
+     ├── data ───────► character storage
+     ├── length ─────► current logical size
+     └── capacity ───► allocated size
+```
+
+The structure therefore acts as metadata describing another region of memory.
+
+## Keeping the Three Fields Consistent
+
+The three fields are useful only when they describe the same allocation correctly.
+
+For example:
+
+```text
+data     → allocated storage for 16 elements
+length   = 10
+capacity = 16
+```
+
+is a consistent state.
+
+The first ten elements belong to the string:
+
+```text
++---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+| A | B | C | D | E | F | G | H | I | J |   |   |   |   |   |   |
++---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+<------------- length = 10 ------------->
+<-------------------------- capacity = 16 ---------------------->
+```
+
+An invalid state would be:
+
+```text
+length   = 20
+capacity = 16
+```
+
+because the logical string claims to contain more elements than the allocated storage can hold.
+
+Similarly, if `data` points to an allocation that is no longer valid, neither `length` nor `capacity` can make the structure usable.
+
+The fields therefore form one logical unit.
+
+## Operations Become Simple State Changes
+
+Once the structure is established, basic operations can be described in terms of these fields.
+
+Appending a character that fits within the existing capacity conceptually changes:
+
+```text
+length
+```
+
+and writes the new character into the appropriate position.
+
+For example:
+
+```text
+Before:
+
+data
+ ↓
+[A][B][C][D][ ][ ][ ][ ]
+
+length   = 4
+capacity = 8
+```
+
+After appending `E`:
+
+```text
+data
+ ↓
+[A][B][C][D][E][ ][ ][ ]
+
+length   = 5
+capacity = 8
+```
+
+The allocation itself has not changed.
+
+The important observation is that **not every change to the string requires a change to its storage**.
+
+The logical contents can change while the underlying allocation remains the same.
+
+## The Structure Is More Important Than the Operation
+
+At this point, we are deliberately not focusing on the mechanics of resizing, insertion, or deletion.
+
+Those operations were already examined earlier in this chapter.
+
+The purpose here is to see how the three fields provide a compact description of a growable sequence:
+
+```text
+data
+  │
+  ▼
+Where is the storage?
+
+length
+  │
+  ▼
+How much of it is currently used?
+
+capacity
+  │
+  ▼
+How much storage is available?
+```
+
+Together:
+
+```text
+             Dynamic String
+                   │
+        +----------+----------+
+        │          │          │
+        ▼          ▼          ▼
+      data       length    capacity
+        │          │          │
+        ▼          ▼          ▼
+    storage     contents    space
+```
+
+This is the essential structure behind a simple dynamically stored sequence of characters.
+
+## Dynamic Strings and the Editor
+
+The same conceptual model can be used for the character sequence belonging to an individual line:
+
+```text
+Document
+    │
+    ├── Line 0
+    │      └── character storage
+    │
+    ├── Line 1
+    │      └── character storage
+    │
+    └── Line 2
+           └── character storage
+```
+
+Each line can maintain the information necessary to describe its character storage.
+
+This fits the editor's broader Document model, where the text is organized line by line rather than stored as one enormous character sequence. The project's architectural decision deliberately chose this representation because line-based editing maps naturally to cursor movement, rendering, line splitting, and line merging.
+
+The exact internal representation of each line can later be improved without changing the responsibilities of the Document itself.
+
+## One Important Difference from a C String
+
+A dynamic string structure and a C string are related, but they are not identical concepts.
+
+A C string uses:
+
+```text
+characters + '\0'
+```
+
+to identify where the string ends.
+
+A dynamic string structure can instead know its length explicitly:
+
+```text
+length = 5
+```
+
+This means the structure does not fundamentally need to discover the end by scanning for `'\0'`.
+
+If the data is being used specifically with C string APIs, a null terminator may still be required. But the logical length and the storage capacity remain separate pieces of metadata.
+
+This distinction becomes particularly important in an editor because the Document's established representation is based on Unicode code points rather than null-terminated UTF-8 strings.
+
+## The General Pattern
+
+The dynamic string gives us a pattern that appears throughout systems programming:
+
+```text
+Pointer to storage
+        +
+Logical size
+        +
+Allocated capacity
+```
+
+The same pattern can describe many growable collections:
+
+```text
+Dynamic array
+Dynamic string
+Buffer
+Vector-like collection
+```
+
+The element type changes, but the underlying idea remains the same.
+
+For our purposes, the important lesson is:
+
+> **A dynamic string separates the logical size of the text from the physical amount of memory allocated to store it.**
+
+That separation makes a growable sequence possible while preserving the simple contiguous-array representation.
+
+We now have all the pieces needed to examine the larger question: how well does this representation behave under the editing workload of a text editor?
+
+## Summary
+
+A dynamic string describes a growable sequence of characters with three fields: data, which points to the allocated character storage, length, which counts the characters currently in the string, and capacity, which records how many elements the allocation can hold. Only the first length elements belong to the logical string; the remaining capacity is available for future growth without changing the basic representation. The three fields must remain consistent with one another, because a length greater than capacity or a data pointer to a released allocation leaves the structure unusable. Appending within capacity writes the new character and increments length without changing the allocation, while an append that exhausts capacity requires the resize process studied earlier. This same pointer-plus-size-plus-capacity pattern describes dynamic arrays, buffers, and other growable collections in systems programming, with only the element type changing. For the editor, each line can use this model while the Document remains a vector of lines, separating the logical size of the text from the physical memory allocated to store it.
+
+In the next section, we will step back and compare this representation with its alternatives: **Design Alternatives and Trade-offs**.

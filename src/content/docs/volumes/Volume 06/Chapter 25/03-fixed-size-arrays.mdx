@@ -1,0 +1,256 @@
+---
+title: "25.3 Fixed-Size Arrays"
+description: "Describes fixed-size arrays, the distinction between length and capacity, and why document text cannot rely on a fixed capacity."
+---
+
+The simplest form of an array has a fixed capacity.
+
+When the array is created, the amount of storage is determined in advance. That storage remains available for the lifetime of the array, and the array cannot hold more elements than its capacity allows.
+
+For example:
+
+```c
+char characters[8];
+```
+
+creates space for eight `char` elements.
+
+Conceptually:
+
+```text
++---+---+---+---+---+---+---+---+
+|   |   |   |   |   |   |   |   |
++---+---+---+---+---+---+---+---+
+  0   1   2   3   4   5   6   7
+
+        capacity = 8
+```
+
+If the editor stores five characters:
+
+```text
++---+---+---+---+---+---+---+---+
+| H | e | l | l | o |   |   |   |
++---+---+---+---+---+---+---+---+
+<--------- used -------->
+<------------- capacity ------------>
+```
+
+The array still has space for three more elements.
+
+## Length and Capacity
+
+It is useful to distinguish two concepts:
+
+**Length** is the number of elements currently being used.
+
+**Capacity** is the total number of elements the array can hold.
+
+In the previous example:
+
+```text
+length   = 5
+capacity = 8
+```
+
+The unused elements are still part of the allocated array, but they are not part of the current sequence.
+
+This distinction becomes important when implementing editable text. A line may occupy only part of its allocated storage:
+
+```text
+capacity = 8
+
++---+---+---+---+---+---+---+---+
+| H | e | l | l | o |   |   |   |
++---+---+---+---+---+---+---+---+
+<------- length = 5 -------->
+<----------- capacity = 8 ----------->
+```
+
+The editor can use the unused capacity for future insertions without immediately allocating another array.
+
+## What Happens When the Array Is Full?
+
+Suppose the array has:
+
+```text
+length   = 8
+capacity = 8
+```
+
+and contains:
+
+```text
++---+---+---+---+---+---+---+---+
+| A | B | C | D | E | F | G | H |
++---+---+---+---+---+---+---+---+
+```
+
+There is no unused position available.
+
+If the user wants to insert another character, the existing array cannot simply become:
+
+```text
++---+---+---+---+---+---+---+---+---+
+| A | B | C | D | E | F | G | H | I |
++---+---+---+---+---+---+---+---+---+
+```
+
+The original array has only eight elements of storage.
+
+Something else must happen.
+
+For a fixed-size array, the storage itself cannot grow. The program therefore needs a different strategy, such as creating a larger array and moving the existing elements into it.
+
+That is the fundamental limitation of fixed-size storage.
+
+## Why Fixed-Size Arrays Are Still Useful
+
+Despite this limitation, fixed-size arrays are extremely useful.
+
+They are:
+
+- simple to understand
+- simple to allocate
+- simple to index
+- predictable in memory usage
+- efficient when the required size is known in advance
+
+For example, the editor's screen has a known number of visible rows and columns at any particular moment. A fixed-size representation can therefore be appropriate for certain kinds of screen-related data.
+
+The problem is that **document text is not fixed**.
+
+A user can continue typing:
+
+```text
+Hello
+```
+
+then:
+
+```text
+Hello, world
+```
+
+then:
+
+```text
+Hello, world! This is a much longer line.
+```
+
+The editor cannot know in advance how much text the user will enter.
+
+## Fixed Capacity and Text Editing
+
+Consider a line with capacity for ten characters:
+
+```text
+capacity = 10
+length   = 10
+
++---+---+---+---+---+---+---+---+---+---+
+| T | e | r | m | i | n | a | l | E | d |
++---+---+---+---+---+---+---+---+---+---+
+```
+
+The user presses a key to insert another character.
+
+The array has reached its capacity.
+
+The editor cannot simply write another character after the final element because that memory does not belong to the array.
+
+This means a text editor needs a mechanism for handling changing amounts of text.
+
+The simplest solution is to use a **dynamic array**.
+
+## Fixed-Size Storage vs Editable Text
+
+The difference can be summarized as:
+
+```text
+Fixed-size array
+
+Capacity determined at creation
+             │
+             ▼
++---+---+---+---+---+
+| A | B | C | D | E |
++---+---+---+---+---+
+             │
+             ▼
+        Cannot grow
+
+
+Dynamic array
+
+Capacity can change
+             │
+             ▼
++---+---+---+---+---+---+---+---+
+| A | B | C | D |   |   |   |   |
++---+---+---+---+---+---+---+---+
+             │
+             ▼
+        Can grow when needed
+```
+
+The dynamic array preserves the useful properties of contiguous storage while allowing the amount of storage to change.
+
+That is the model we need for editable sequences.
+
+## A Note About Unused Space
+
+It may seem wasteful to allocate more storage than the current length requires.
+
+For example:
+
+```text
+length   = 5
+capacity = 16
+```
+
+means that eleven positions are currently unused.
+
+However, having unused capacity can be useful.
+
+If the user adds another character, the editor can place it into existing unused storage instead of immediately allocating a new array.
+
+This leads to an important engineering trade-off:
+
+> **Using additional memory can reduce the frequency of memory allocation and copying.**
+
+The challenge is deciding how much additional capacity to allocate.
+
+We will examine that when we study dynamic arrays and resizing.
+
+## The Limitation We Are About to Solve
+
+Fixed-size arrays give us the fundamental storage model:
+
+```text
+contiguous memory
+        +
+indexed access
+        +
+known capacity
+```
+
+But editable text requires something more:
+
+```text
+contiguous memory
+        +
+indexed access
+        +
+variable capacity
+```
+
+The next step is therefore to make the array capable of growing while preserving its contiguous representation.
+
+That is the purpose of the dynamic array.
+
+## Summary
+
+A fixed-size array is allocated with a capacity chosen in advance, and it cannot hold more elements than that capacity allows. Its length records how many elements currently belong to the sequence, while its capacity records how many the allocation can hold, so unused elements remain part of the storage but not of the current text. This distinction lets a line use available capacity for future insertions without allocating another array immediately. When length reaches capacity, however, the array cannot simply extend itself, because the storage beyond its final element does not belong to it. Fixed-size arrays remain useful for data with a known bound, such as the visible rows and columns of the terminal, but document text has no such bound. Editable text therefore needs storage whose capacity can change while preserving indexed access.
+
+In the next section, we will introduce the structure that provides it: **Dynamic Arrays**.

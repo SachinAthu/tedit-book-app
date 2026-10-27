@@ -1,0 +1,452 @@
+---
+title: "25.7 Array Deletion"
+description: "Explains deletion in a contiguous array, the leftward shift that closes the gap, and why capacity usually stays allocated."
+---
+
+Deletion is the counterpart to insertion.
+
+When an element is removed from the middle of a contiguous array, the elements that follow it must move to close the resulting gap.
+
+Consider:
+
+```text
+[A][B][C][D][E]
+```
+
+If we delete `C`:
+
+```text
+[A][B][ ][D][E]
+```
+
+The array no longer represents a continuous sequence of elements. To restore that sequence, `D` and `E` must move one position to the left:
+
+```text
+[A][B][D][E]
+```
+
+The basic operation is therefore:
+
+```text
+Remove the element
+        ↓
+Shift following elements left
+        ↓
+Decrease the length
+```
+
+## Closing the Gap
+
+Suppose the array contains:
+
+```text
+Index
+
+  0   1   2   3   4
++---+---+---+---+---+
+| A | B | C | D | E |
++---+---+---+---+---+
+        ^
+     delete
+```
+
+After removing the element at index `2`, the elements after it need to shift left:
+
+```text
+D → index 2
+E → index 3
+```
+
+The resulting sequence is:
+
+```text
++---+---+---+---+
+| A | B | D | E |
++---+---+---+---+
+```
+
+The array's logical length decreases by one.
+
+## The Shift Direction
+
+Insertion and deletion require opposite movement directions.
+
+When inserting into an array, elements move **right** to make room:
+
+```text
+[A][B][C][D][E]
+       ↓  ↓  ↓
+
+[A][B][ ][C][D][E]
+```
+
+When deleting an element, elements move **left** to close the gap. Suppose the element that was at index 2 has already been removed:
+
+```text
+[A][B][ ][C][D][E]
+       ↑  ↑  ↑
+
+[A][B][C][D][E]
+```
+
+For deletion, processing the elements from left to right is natural because each element is moved into the position immediately before it. Here `C`, `D`, and `E` each move left by one position:
+
+```text
+C → index 2
+D → index 3
+E → index 4
+```
+
+After the shifts, the logical sequence ends one position earlier.
+
+## Deleting the Last Element
+
+Deleting the final element is the simplest case.
+
+Consider:
+
+```text
+[A][B][C][D][E]
+```
+
+Delete `E`:
+
+```text
+[A][B][C][D]
+```
+
+No other elements need to move.
+
+Only the logical length changes:
+
+```text
+Before:
+
+length   = 5
+capacity = 8
+
+
+After:
+
+length   = 4
+capacity = 8
+```
+
+Notice that the capacity does not necessarily decrease.
+
+The array still owns the same allocated storage:
+
+```text
++---+---+---+---+---+---+---+---+
+| A | B | C | D |   |   |   |   |
++---+---+---+---+---+---+---+---+
+<--- length = 4 --->
+<----------- capacity = 8 ----------->
+```
+
+The unused capacity can be reused by a later insertion.
+
+## Deleting from the Middle
+
+Now consider:
+
+```text
+[A][B][C][D][E][F]
+       ^
+```
+
+Delete `C`.
+
+The following elements shift left:
+
+```text
+D → position of C
+E → position of D
+F → position of E
+```
+
+The result is:
+
+```text
+[A][B][D][E][F]
+```
+
+The logical length decreases from six to five.
+
+The important point is that the array remains contiguous.
+
+## Deleting the First Element
+
+Deleting the first element causes the most movement.
+
+Before:
+
+```text
+[A][B][C][D][E]
+ ^
+```
+
+Delete `A`:
+
+```text
+[B][C][D][E]
+```
+
+Every remaining element must move one position toward the beginning.
+
+This is the deletion equivalent of inserting at the beginning.
+
+## Deletion and the Cursor
+
+Deletion has a direct relationship with the editor's Cursor.
+
+Suppose the cursor is positioned before `C`:
+
+```text
+A B C D E
+    ^
+```
+
+If the editor executes a Delete operation, the character at the cursor is removed:
+
+```text
+A B D E
+    ^
+```
+
+The Cursor remains at the same logical position, provided that position is still valid.
+
+Backspace is slightly different. If the cursor is after `B`:
+
+```text
+A B C D E
+    ^
+```
+
+Backspace removes the character before the cursor:
+
+```text
+A C D E
+  ^
+```
+
+The exact command semantics belong to the Command Engine and Cursor rules. The Document's responsibility is to perform the underlying modification to its character sequence.
+
+This distinction is important because deletion at the Document level is fundamentally the same operation regardless of which editor command caused it.
+
+## Deletion Does Not Necessarily Shrink Capacity
+
+A common misconception is that deleting an element should immediately reduce the allocated memory.
+
+Usually, that is unnecessary.
+
+Consider:
+
+```text
+Before:
+
+length   = 8
+capacity = 16
+```
+
+After deleting three elements:
+
+```text
+length   = 5
+capacity = 16
+```
+
+The unused space is valuable because the user may soon type more text.
+
+For example:
+
+```text
+Delete
+  ↓
+length decreases
+  ↓
+capacity remains available
+  ↓
+Insert later
+  ↓
+existing capacity is reused
+```
+
+This avoids repeatedly allocating and releasing memory as the document changes size.
+
+The distinction is therefore:
+
+```text
+length
+    = how much text currently exists
+
+
+capacity
+    = how much storage is currently available
+```
+
+Deletion changes the first value, but does not necessarily change the second.
+
+## Repeated Insertions and Deletions
+
+Consider a user editing a line repeatedly:
+
+```text
+Hello world
+```
+
+They delete several characters:
+
+```text
+Hello
+```
+
+and then type more:
+
+```text
+Hello again
+```
+
+A dynamic array can reuse the capacity that became available after deletion.
+
+Conceptually:
+
+```text
+Initial
+
+[A][B][C][D][E][F][ ][ ]
+ length = 6
+ capacity = 8
+
+
+After deletion
+
+[A][B][C][ ][ ][ ][ ][ ]
+ length = 3
+ capacity = 8
+
+
+After insertion
+
+[A][B][C][X][Y][ ][ ][ ]
+ length = 5
+ capacity = 8
+```
+
+No new allocation is required merely because the sequence grew again within its existing capacity.
+
+This is one of the practical benefits of separating **length** from **capacity**.
+
+## Deletion and Contiguous Storage
+
+The same fundamental trade-off that appeared with insertion appears here in reverse:
+
+```text
+Contiguous storage
+       │
+       ▼
+Delete from middle
+       │
+       ▼
+Gap appears
+       │
+       ▼
+Following elements shift left
+       │
+       ▼
+Contiguous sequence restored
+```
+
+The array remains simple and predictable, but maintaining that contiguous representation requires movement.
+
+For a short line, moving a few characters is insignificant.
+
+For a very long line, deleting near the beginning can require moving a large portion of the remaining text.
+
+## The Two Fundamental Editing Operations
+
+We can now place insertion and deletion side by side.
+
+```text
+Insertion
+
+[A][B][C][D]
+     │
+     ▼
+Shift right
+     │
+     ▼
+[A][B][ ][C][D]
+     │
+     ▼
+Insert X
+     │
+     ▼
+[A][B][X][C][D]
+```
+
+```text
+Deletion
+
+[A][B][C][D][E]
+     │
+     ▼
+Remove C
+     │
+     ▼
+[A][B][ ][D][E]
+     │
+     ▼
+Shift left
+     │
+     ▼
+[A][B][D][E]
+```
+
+Both operations are consequences of the same underlying rule:
+
+> **The elements of a contiguous array must remain adjacent in memory.**
+
+Insertion creates space by moving elements to the right.
+
+Deletion removes the gap by moving elements to the left.
+
+## Why This Matters for Text Editors
+
+Text editors perform insertion and deletion constantly.
+
+A user can:
+
+- type a character
+- press Backspace
+- press Delete
+- paste text
+- remove a word
+- insert text into the middle of an existing line
+
+At the lowest level, many of these operations eventually become modifications to a sequence of elements.
+
+For a simple editor, a dynamic array is attractive because these operations are easy to understand and implement.
+
+But the cost becomes more noticeable as the amount of text being moved increases.
+
+This gives us the central limitation of the representation:
+
+```text
+Simple representation
+        │
+        ▼
+Contiguous sequence
+        │
+        ├── Easy indexed access
+        ├── Easy to understand
+        └── Middle edits require movement
+```
+
+The next section shifts from individual array operations to the way these ideas apply specifically to **strings**, where the elements themselves represent text.
+
+## Summary
+
+Deletion is the inverse of insertion: after an element is removed, the elements that follow it shift left to close the gap and the logical length decreases. The shift proceeds from left to right because each element moves into the position immediately before it, leaving the array contiguous. Deleting the last element requires no movement at all, while deleting the first element moves every remaining element one position toward the beginning. Deleting does not normally reduce capacity, since the unused storage can be reused by a later insertion and shrinking eagerly would cause repeated allocation and copying as the user edits. Backspace and Delete both ultimately modify the same character sequence, even though the Command Engine and Cursor determine which position is affected. The cost of deletion therefore depends on position, just as insertion does, and deleting near the beginning of a long line can move most of the remaining text.
+
+In the next section, we will apply these ideas to text itself: **Strings as Arrays of Characters**.

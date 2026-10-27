@@ -1,0 +1,353 @@
+---
+title: "25.8 Strings as Arrays of Characters"
+description: "Explains C strings as null-terminated byte arrays, the cost of the terminator, and why the editor stores Unicode code points instead."
+---
+
+So far, we have discussed arrays as general-purpose sequences of elements. Text gives us a particularly familiar example of such a sequence: a **string**.
+
+In C, a string is represented as a sequence of characters stored in an array, followed by a special character called the **null terminator**.
+
+For example:
+
+```text
+"Hello"
+```
+
+is represented conceptually as:
+
+```text
++---+---+---+---+---+----+
+| H | e | l | l | o | \0 |
++---+---+---+---+---+----+
+  0   1   2   3   4   5
+```
+
+The `'\0'` character marks the end of the string.
+
+This is different from the string's visible text length. `"Hello"` contains five characters, but the array requires six elements to store the null terminator.
+
+## The Null Terminator
+
+The null terminator is a byte whose value is zero:
+
+```c
+'\0'
+```
+
+It is not the same thing as the character `'0'`.
+
+```text
+'\0'    → null character
+'0'     → character representing the digit zero
+```
+
+The null terminator allows C functions to determine where a string ends without separately storing its length.
+
+For example:
+
+```c
+char text[] = "Hello";
+```
+
+creates storage equivalent to:
+
+```text
++---+---+---+---+---+----+
+| H | e | l | l | o | \0 |
++---+---+---+---+---+----+
+```
+
+The compiler adds the terminating `'\0'` because the object is initialized from a string literal.
+
+## String Length and Array Size
+
+This creates an important distinction.
+
+For:
+
+```c
+char text[] = "Hello";
+```
+
+the visible string contains:
+
+```text
+5 characters
+```
+
+but the array contains:
+
+```text
+6 elements
+```
+
+because of the null terminator.
+
+Conceptually:
+
+```text
+String length = 5
+Array size    = 6
+```
+
+The terminator is part of the storage representation, but it is not part of the text itself.
+
+This distinction matters when calculating how much storage is required for a C string.
+
+## Finding the End of a C String
+
+Because the string does not store its length as part of the character sequence, code can determine its length by scanning until it encounters `'\0'`.
+
+Conceptually:
+
+```text
+H → e → l → l → o → \0
+                    ↑
+                  stop
+```
+
+This is the basis of operations such as `strlen()`.
+
+The important point is that the null terminator provides an **end marker** rather than a stored length.
+
+A dynamic text structure can instead maintain length explicitly:
+
+```text
+data
+length
+capacity
+```
+
+That avoids repeatedly searching for the end when the length is already known.
+
+## C Strings Are Byte Sequences
+
+There is another important detail.
+
+A C `char` represents a byte. Therefore, a C string is fundamentally a sequence of bytes terminated by a zero byte.
+
+For simple ASCII text, this often looks exactly like a sequence of characters:
+
+```text
+"Hello"
+
+H e l l o \0
+```
+
+Each visible character occupies one byte.
+
+However, this relationship does not hold for every encoding.
+
+For example, UTF-8 can represent a single Unicode code point using multiple bytes.
+
+Therefore:
+
+```text
+C string
+    ↓
+sequence of bytes
+```
+
+should not automatically be interpreted as:
+
+```text
+C string
+    ↓
+one array element per Unicode character
+```
+
+That distinction is especially important for our editor.
+
+## C Strings and Our Document
+
+The editor's Document does **not** use raw C strings as its fundamental text representation.
+
+The encoding strategy established earlier—recorded as **ADR-021: Text Encoding Strategy**—stores decoded Unicode code points in the Document, organized line by line. UTF-8 is handled when data crosses the file boundary during loading and saving.
+
+Conceptually:
+
+```text
+File
+ │
+ │ UTF-8 bytes
+ ▼
+File Manager
+ │
+ │ decode
+ ▼
+Document
+ │
+ │ Unicode code points
+ ▼
+Editing operations
+```
+
+When saving:
+
+```text
+Document
+ │
+ │ Unicode code points
+ ▼
+File Manager
+ │
+ │ encode
+ ▼
+File
+ │
+ │ UTF-8 bytes
+```
+
+Therefore, the C strings discussed in this section are useful primarily because they demonstrate how a sequence of text-related elements can be stored in contiguous memory.
+
+They are not a change to the editor's established Document representation.
+
+## Strings and Dynamic Storage
+
+A fixed-size C string can be represented with an array whose capacity is known in advance:
+
+```c
+char text[32];
+```
+
+Conceptually:
+
+```text
++---+---+---+---+---+---+---+---+---+---+ ... +---+
+| H | e | l | l | o | \0|   |   |   |   | ... |   |
++---+---+---+---+---+---+---+---+---+---+ ... +---+
+<--------- current string --------->
+<---------------- capacity ---------------------->
+```
+
+If the string grows beyond the available storage, the array cannot simply expand.
+
+A dynamically allocated string can instead maintain separate information about the data currently stored and the available capacity:
+
+```text
+String
+
++----------------+
+| data           | ───────► character storage
+| length         |
+| capacity       |
++----------------+
+```
+
+This is essentially the same dynamic-array model we examined earlier.
+
+The difference is that the elements now represent text, and a C string conventionally requires a null terminator.
+
+## The Terminator and Capacity
+
+The null terminator consumes storage.
+
+Suppose a string contains five characters:
+
+```text
+Hello
+```
+
+The string requires six array elements when represented as a C string:
+
+```text
+H e l l o \0
+```
+
+If the dynamic string has:
+
+```text
+length   = 5
+capacity = 8
+```
+
+then the allocated storage must provide enough room for the five characters, the terminator, and any additional capacity required by the implementation.
+
+This is one reason string length and storage capacity should not be treated as the same concept.
+
+```text
+length
+    ↓
+number of text characters
+
+
+capacity
+    ↓
+amount of allocated storage
+```
+
+The null terminator belongs to the representation, not to the logical text length.
+
+## Why This Model Is Useful
+
+C strings provide a simple example of the relationship between:
+
+```text
+logical text
+     ↓
+sequence of elements
+     ↓
+contiguous storage
+     ↓
+additional metadata or conventions
+```
+
+That same general idea appears in more sophisticated text representations.
+
+For a dynamic string, we might have:
+
+```text
++----------------------+
+| data                 |
+| length               |
+| capacity             |
++----------------------+
+```
+
+The `data` identifies the contiguous storage, `length` describes the portion currently belonging to the sequence, and `capacity` describes how much storage is available.
+
+The representation is simple because the logical sequence maps directly onto the physical arrangement of its elements.
+
+## The Important Limitation
+
+This simplicity comes with the same limitation we saw with arrays.
+
+Suppose the string contains:
+
+```text
+HelloWorld
+```
+
+and we insert a character between `Hello` and `World`.
+
+The existing elements after the insertion point must move to make room.
+
+Similarly, deleting a character from the middle requires later elements to move left.
+
+The fact that the elements represent characters does not change the underlying array behavior:
+
+```text
+Array behavior
+      ↓
+Contiguous elements
+      ↓
+Insertion may require shifting
+      ↓
+Deletion may require shifting
+```
+
+A string is therefore not a fundamentally different storage mechanism from an array. It is a **specialized use of sequential storage for text**, with conventions such as the null terminator in C.
+
+This distinction is important because the data structures we study later in this volume do not abandon the idea of storing text. They change how the text is organized so that common editing operations can be handled more efficiently.
+
+For now, the key idea is simple:
+
+> **A C string is a sequence of bytes stored contiguously and terminated by a null byte.**
+
+That provides a useful foundation for understanding dynamic strings and, ultimately, why text editors need specialized text-buffer structures.
+
+## Summary
+
+A C string is a sequence of bytes stored contiguously and followed by a null byte, which marks where the text ends. Because the length is not stored explicitly, functions such as strlen() must scan from the beginning until they encounter '\0', so the terminator trades storage for a search and costs one extra element in the array. A C char represents a byte, not necessarily one Unicode character, so a UTF-8 code point may occupy several array elements. The editor's Document deliberately does not use C strings: per ADR-021 it stores decoded Unicode code points line by line, with UTF-8 handled only at the file boundary during loading and saving. A dynamic string can instead store data, length, and capacity explicitly, avoiding repeated end scans while retaining the same contiguous-array model. The string's elements may represent text, but insertion and deletion in the middle still require shifting, so a string is a specialized use of sequential storage rather than a fundamentally different structure.
+
+In the next section, we will give that model a concrete shape: **Building a Dynamic String**.

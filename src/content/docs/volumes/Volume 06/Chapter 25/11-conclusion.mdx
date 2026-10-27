@@ -1,0 +1,117 @@
+---
+title: "25.11 Conclusion"
+description: "Reviews arrays and strings, then offers exercises, common mistakes, and a preview of the Gap Buffer in the next chapter."
+---
+
+This chapter studied the simplest data structure that can represent editable text: the **array**. A line maps naturally onto a sequence of characters, and the editor stores its Document as a vector of independently stored lines, each of which holds its own contiguous character sequence.
+
+We saw where arrays get their power. Their elements occupy a **contiguous region of memory**, so the address of an indexed element follows directly from the base address, the index, and the element size. The character at the cursor can therefore be found immediately rather than by stepping through every preceding element. This is why the cursor's row-and-column model fits an array-based representation so naturally.
+
+That same contiguity produces the central trade-off of the chapter:
+
+> **Arrays provide simple and efficient indexed access, but inserting or deleting elements in the middle can require moving other elements.**
+
+We made this concrete by distinguishing **length** (the elements that belong to the sequence) from **capacity** (the amount of storage available). A **fixed-size array** has a capacity set at creation and cannot grow, which makes it unsuitable for document text but still useful for data with a known bound, such as screen dimensions.
+
+A **dynamic array** keeps the contiguous representation and adds `data`, `length`, and `capacity`. When its capacity is exhausted, it grows by allocating larger storage, copying the existing elements, and releasing the old allocation—an operation that may move the entire sequence to a new address. Growing by a substantial factor keeps resizes rare, so the amortized cost of appending stays low, applying the complexity ideas from Chapter 24.
+
+We then traced the two operations that dominate editing. **Insertion** shifts elements to the right, moving from the end toward the insertion point so no element is overwritten before it has been moved, and only then places the new character. **Deletion** shifts the following elements to the left to close the gap and decreases the length, without necessarily shrinking the capacity. Both costs depend on position: editing near the beginning of a long line can require moving almost the entire sequence.
+
+Applied to text, a **C string** is a contiguous sequence of bytes terminated by a null byte; finding its end means scanning rather than consulting a stored length. The editor's Document deliberately does not use C strings: per **ADR-021: Text Encoding Strategy**, it stores decoded Unicode code points, line by line, with UTF-8 handled only at the file boundary. A **dynamic string** captures the growable pattern with three fields—`data`, `length`, and `capacity`—separating the logical size of the text from the physical memory allocated to store it.
+
+Finally, we placed this representation in context. A dynamic array is not the only way to store editable text. We compared fixed arrays, dynamic arrays, linked lists, Gap Buffers, Piece Tables, and Ropes, each balancing simplicity, indexed access, modification cost, memory usage, and complexity. There is no universally best representation; the appropriate choice depends on the workload.
+
+For our editor, the deliberate choice remains the one recorded as **ADR-013: Document Representation**:
+
+```text
+Document
+   │
+   ▼
+Vector of lines
+   │
+   ▼
+Contiguous character storage
+```
+
+A vector of lines maps directly onto the cursor's row-and-column model, line-by-line rendering, line splitting, and line merging, and it is simple enough to understand and debug while the rest of the editor is built. The more sophisticated structures this chapter surveyed exist because professional editors face workloads—enormous documents, cursor-local editing, frequent middle edits—that make the movement cost of a contiguous sequence significant. Understanding this baseline is what makes those structures meaningful.
+
+The most important takeaway:
+
+> **The representation of text determines which operations are cheap and which become expensive. Arrays give us a simple, direct baseline whose only real weakness—moving elements for middle edits—is exactly the problem the specialized text buffers we study next were designed to address.**
+
+## Exercises
+
+### Review Questions
+
+1. Why is an array a natural representation for a line of text?
+2. What two properties of an array make indexed access direct? Write the formula that computes the address of element `i`.
+3. What is the difference between **length** and **capacity**?
+4. Why can a fixed-size array not represent a line that grows while the user types?
+5. What three pieces of information does a dynamic array maintain, and what does each describe?
+6. Describe the steps of a resize. Why must the existing elements be copied into the new allocation?
+7. Why does growing the capacity by a larger amount make the amortized cost of appending lower than growing by one element at a time?
+8. During insertion, in which order must existing elements be shifted, and why?
+9. During deletion, which direction do elements move, and why does the capacity usually remain unchanged?
+10. Why does the cost of inserting or deleting a character depend on its position in the sequence?
+11. What is the null terminator, and what does it cost a C string compared with storing an explicit length?
+12. Why is a C `char` array better described as a sequence of **bytes** than of characters, and what does that mean for the editor's Document?
+13. What three fields describe a dynamic string, and what does each represent?
+14. For each of fixed array, dynamic array, linked list, Gap Buffer, Piece Table, and Rope, state the main strength and the main weakness as a text representation.
+15. Why does the editor choose a vector of lines with contiguous character storage, and how would a different Document representation such as a Gap Buffer remain compatible with the higher-level architecture?
+
+### Thought Experiments
+
+1. Using the insertion procedure from Section 25.6, consider a line of one million characters stored in a contiguous array. The user inserts a character at the cursor near the beginning of the line. How many elements move, and why is the operation effectively `O(n)`? What does that imply about latency for that key press?
+2. When would a fixed-size array be the right choice even though it cannot grow? Give an example from the editor where the amount of storage is known in advance.
+3. A dynamic string has `length = 10` and `capacity = 16`. How many more characters can be appended before a resize is required, and what happens on the resize if the array grows by doubling?
+4. What invariant is violated if `length` is allowed to exceed `capacity`? What kinds of bugs would that produce, and how would you detect them in a debug build?
+
+### Design Exercise
+
+1. Design the core operations for a `DynamicString`: `append`, `insert`, `delete`, and `resize`. For each, state how it updates `data`, `length`, and `capacity`, when a resize is triggered, and whether deletion ever shrinks the allocation. Trace `insert('X', 2)` on `{ data: [A,B,C,D,E], length: 5, capacity: 8 }`.
+
+### Optional Challenge
+
+1. Compare the dynamic string's explicitly stored length with a C string's null-terminated layout. Write out how `strlen()` must discover the length of a C string, and explain why an editor that frequently needs a character's position would prefer an explicit length. Investigate whether your C library provides a straightforward way to grow a string while avoiding resizing on every append.
+
+## Common Mistakes
+
+### Confusing length with capacity
+
+Length counts the elements that currently belong to the sequence; capacity counts the elements the allocated storage can hold. Treating them as interchangeable leads to writing into positions the allocation does not own, or believing a line is longer than its stored text.
+
+### Writing beyond capacity
+
+Placing an element at index `length` when `length == capacity` writes outside the allocated region. The editor must check capacity before every insertion and resize when it is exhausted, not after.
+
+### Shifting in the wrong direction during insertion
+
+Insertion must shift elements from the end toward the insertion point. Shifting from the insertion point toward the end overwrites the very data that still needs to move, destroying part of the sequence before it is relocated.
+
+### Forgetting to update length
+
+Insertion, deletion, and resizing all change the logical size of the sequence. Leaving `length` stale means the editor either reads elements that are no longer part of the text or silently drops elements it thinks were removed.
+
+### Keeping pointers into storage after reallocation
+
+A resize can move the entire allocation to a new address. Any pointer saved into the old storage no longer refers to the current text, so code that retains such pointers after a grow must be rederived from the new `data`.
+
+### Treating C strings and the editor's code-point representation as identical
+
+A C string is a null-terminated byte sequence; the Document stores decoded Unicode code points. Assuming they are the same conflates bytes with characters and would break cursor positions and editing semantics for non-ASCII text.
+
+### Assuming deletion must immediately shrink capacity
+
+Deleting elements reduces `length` but rarely needs to shrink the allocation. Shrinking eagerly causes repeated allocate-and-copy cycles as the user types and deletes. The available capacity is exactly what makes a later insertion cheap.
+
+### Growing by one element at a time
+
+Increasing capacity by exactly one on every resize turns each append into an allocate-and-copy of the entire sequence. A growth policy that multiplies the capacity (such as doubling) makes resizes rare and keeps the amortized cost low.
+
+## Preview of the Next Chapter
+
+In the next chapter, we move from the limitations of contiguous arrays to the **Gap Buffer**, a text representation designed specifically for interactive editing.
+
+We will see how placing unused space near the cursor can reduce the amount of text that must move during repeated insertions and deletions. We will also examine the gap's movement, resizing, cursor interaction, and the trade-offs of this approach.
+
+The goal is to understand **why a Gap Buffer works well for cursor-local editing—and where its limitations remain**.

@@ -1,0 +1,436 @@
+---
+title: "25.6 Array Insertion"
+description: "Traces insertion in a contiguous array, including the right-to-left shift that preserves order and how the cost varies with position."
+---
+
+Insertion is one of the most important operations to understand when working with arrays because it exposes the fundamental limitation of contiguous storage.
+
+Suppose an array contains:
+
+```text
+[A][B][C][D][E]
+```
+
+and we want to insert `X` at index `2`.
+
+The desired result is:
+
+```text
+[A][B][X][C][D][E]
+```
+
+The problem is that the positions where `C`, `D`, and `E` must end up—indexes `3`, `4`, and `5`—are already occupied, so those elements cannot stay where they are.
+
+The existing elements must therefore move.
+
+## Making Room for the New Element
+
+Before the insertion:
+
+```text
+Index
+
+  0   1   2   3   4
++---+---+---+---+---+
+| A | B | C | D | E |
++---+---+---+---+---+
+        ^
+        insertion position
+```
+
+The elements at and after the insertion position need to move one position to the right:
+
+```text
+Before:
+
+[A][B][C][D][E]
+       │  │  │
+       ▼  ▼  ▼
+```
+
+After shifting:
+
+```text
+[A][B][ ][C][D][E]
+```
+
+The empty position can now receive the new element:
+
+```text
+[A][B][X][C][D][E]
+```
+
+The fundamental operation is therefore:
+
+```text
+Shift elements right
+        ↓
+Create an empty position
+        ↓
+Store the new element
+```
+
+## Why the Shift Must Happen from Right to Left
+
+When moving elements within the same array, the order of the moves matters.
+
+Consider:
+
+```text
+[A][B][C][D][E]
+```
+
+To insert `X` at index `2`, we need:
+
+```text
+E → index 5
+D → index 4
+C → index 3
+```
+
+The movement must proceed from the end toward the insertion point:
+
+```text
+E → 5
+D → 4
+C → 3
+```
+
+Conceptually:
+
+```text
+Before:
+
+[A][B][C][D][E][ ]
+       ↑   ↑   ↑
+       C   D   E
+
+Step 1: copy E → index 5
+
+[A][B][C][D][E][E]
+              ↑
+        copied E
+
+Step 2: copy D → index 4
+
+[A][B][C][D][D][E]
+          ↑
+    copied D
+
+Step 3: copy C → index 3
+
+[A][B][C][C][D][E]
+       ↑
+ copied C
+```
+
+Finally:
+
+```text
+[A][B][X][C][D][E]
+```
+
+If we moved from left to right instead, we could overwrite data before it had been moved.
+
+For example:
+
+```text
+[A][B][C][D][E][ ]
+```
+
+Moving `C` first:
+
+```text
+[A][B][C][C][E][ ]
+```
+
+Now the original `D` has already been lost.
+
+This is a classic mistake when implementing in-place array insertion.
+
+> **When shifting elements to the right, move from the end toward the insertion point.**
+
+## Insertion at Different Positions
+
+The amount of movement depends on where the insertion occurs.
+
+### Inserting at the End
+
+Consider:
+
+```text
+[A][B][C][D]
+```
+
+Appending `E` produces:
+
+```text
+[A][B][C][D][E]
+```
+
+No existing elements need to move.
+
+Only the new element is written into the next available position.
+
+This is the simplest insertion case.
+
+### Inserting in the Middle
+
+Consider:
+
+```text
+[A][B][C][D][E]
+    ^
+```
+
+Insert `X`:
+
+```text
+[A][B][X][C][D][E]
+```
+
+The elements `C`, `D`, and `E` must move.
+
+The farther the insertion point is from the end, the more elements may need to move.
+
+### Inserting at the Beginning
+
+Consider:
+
+```text
+[A][B][C][D][E]
+^
+```
+
+Insert `X`:
+
+```text
+[X][A][B][C][D][E]
+```
+
+Every existing element must move one position to the right.
+
+This is the most movement-heavy insertion position for a contiguous array.
+
+## Insertion and Available Capacity
+
+Insertion does not always require resizing.
+
+Suppose:
+
+```text
+length   = 5
+capacity = 8
+
+[A][B][C][D][E][ ][ ][ ]
+```
+
+There is enough unused capacity for another element.
+
+Inserting `X` at index `2` can therefore be performed within the existing allocation:
+
+```text
+[A][B][X][C][D][E][ ][ ]
+```
+
+The capacity remains eight.
+
+```text
+length   = 6
+capacity = 8
+```
+
+The editor only needed to move elements within the existing storage.
+
+## Insertion When the Array Is Full
+
+Now consider:
+
+```text
+length   = 8
+capacity = 8
+
+[A][B][C][D][E][F][G][H]
+```
+
+Suppose we want to insert `X` at index `2`.
+
+There is no free position.
+
+The operation now has two stages:
+
+```text
+Resize
+   ↓
+Create additional capacity
+   ↓
+Shift elements
+   ↓
+Insert new element
+```
+
+Conceptually:
+
+```text
+Before resize:
+
+[A][B][C][D][E][F][G][H]
+
+
+After resize:
+
+[A][B][C][D][E][F][G][H][ ][ ][ ][ ]
+
+
+After shifting:
+
+[A][B][ ][C][D][E][F][G][H][ ][ ][ ]
+
+
+After insertion:
+
+[A][B][X][C][D][E][F][G][H][ ][ ][ ]
+```
+
+This is why insertion and resizing are separate concepts even though an insertion can trigger a resize.
+
+## Insertion Is About Preserving Order
+
+A text editor cannot simply place the new character into any available location.
+
+Consider:
+
+```text
+HelloWorld
+```
+
+If the user inserts a space between `Hello` and `World`, the result must be:
+
+```text
+Hello World
+```
+
+The relative order of the existing characters must remain unchanged:
+
+```text
+H e l l o W o r l d
+│ │ │ │ │ │ │ │ │ │
+│ │ │ │ │ │ │ │ │ └─ remains after the others
+│ │ │ │ │ │ │ │ └─── ...
+```
+
+The insertion operation therefore has two responsibilities:
+
+1. Create space for the new element.
+2. Preserve the order of all existing elements.
+
+This is why the shifting step is fundamental to contiguous-array insertion.
+
+## Insertion and the Text Editor
+
+Now consider the editor's Cursor.
+
+Suppose the current line is:
+
+```text
+HelloWorld
+     ^
+```
+
+The cursor is positioned between `Hello` and `World`.
+
+When the user types a space:
+
+```text
+Hello World
+     ^
+```
+
+At the Document level, the operation is conceptually:
+
+```text
+1. Identify the insertion position.
+2. Make room for one element.
+3. Shift the following elements.
+4. Store the new element.
+5. Increase the line length.
+```
+
+The Cursor and Command Engine determine _what_ operation should occur, while the Document owns the actual text modification.
+
+This separation is consistent with the architecture established earlier: higher-level components coordinate the editing operation, while the Document owns the text itself.
+
+## The Fundamental Cost of Contiguous Insertion
+
+The important observation is not simply that elements move.
+
+It is that **the number of elements that move depends on the insertion position**.
+
+For a sequence of length `n`:
+
+```text
+Insert at end
+    ↓
+Few or no existing elements move
+
+Insert near middle
+    ↓
+Some elements move
+
+Insert near beginning
+    ↓
+Many elements move
+```
+
+For example:
+
+```text
+[A][B][C][D][E][F][G][H][I][J]
+ ^
+ insert
+```
+
+requires moving almost the entire sequence.
+
+Whereas:
+
+```text
+[A][B][C][D][E][F][G][H][I][J]
+                         ^
+                       insert
+```
+
+requires moving only a small number of elements.
+
+This position-dependent movement is one of the central limitations of contiguous text storage.
+
+## Why This Matters for Text Editors
+
+Text editors are not append-only applications.
+
+Users frequently insert text:
+
+- near the beginning of a line
+- in the middle of a line
+- between existing words
+- before or after the cursor
+
+A simple editor may perform these operations thousands or millions of times during its lifetime.
+
+That means the cost of moving existing characters can become an important part of the editor's performance.
+
+This does not make arrays a bad choice.
+
+For a small editor, their simplicity, predictable memory layout, and direct access can outweigh the cost.
+
+But it does explain why more specialized text-buffer structures exist.
+
+The next operation is the natural counterpart to insertion:
+
+> **What happens when an existing element is removed from a contiguous array?**
+
+## Summary
+
+Inserting into a contiguous array begins by making room at the desired index, which means shifting the elements at and after that position one place to the right. The shift must proceed from the end toward the insertion point so that no element is overwritten before it has been copied to its new location. Once the gap exists, the new element is stored and the length increases, so the relative order of the existing characters is preserved. The amount of work depends on position: appending at the end moves no existing elements, while inserting at the beginning moves the entire sequence. If the array is already full, the insertion must first trigger a resize and then perform the shift within the new allocation. For a text editor this position-dependent movement matters because users routinely insert characters near the beginning or middle of a line, not only at its end.
+
+In the next section, we will examine the reverse operation: **Array Deletion**.

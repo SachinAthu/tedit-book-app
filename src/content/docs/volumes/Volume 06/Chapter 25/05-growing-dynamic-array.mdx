@@ -1,0 +1,429 @@
+---
+title: "25.5 Growing a Dynamic Array"
+description: "Explains the resize process, why existing elements must be copied, how growth policies reduce amortized cost, and why pointers can be invalidated."
+---
+
+A dynamic array becomes useful when its current capacity is no longer large enough to hold the sequence of elements.
+
+Suppose an array currently contains four elements and has a capacity of four:
+
+```text
+length   = 4
+capacity = 4
+
++---+---+---+---+
+| A | B | C | D |
++---+---+---+---+
+```
+
+If we need to add another element, there is no unused space.
+
+The dynamic array must therefore **grow**.
+
+## The Resize Process
+
+Growing a dynamic array means replacing its current storage with a larger contiguous allocation.
+
+Conceptually, the process is:
+
+```text
+Current storage
+      │
+      ▼
++---+---+---+---+
+| A | B | C | D |
++---+---+---+---+
+      │
+      │ capacity exhausted
+      ▼
+Allocate larger storage
+      │
+      ▼
++---+---+---+---+---+---+---+---+
+|   |   |   |   |   |   |   |   |
++---+---+---+---+---+---+---+---+
+      │
+      ▼
+Copy existing elements
+      │
+      ▼
++---+---+---+---+---+---+---+---+
+| A | B | C | D |   |   |   |   |
++---+---+---+---+---+---+---+---+
+```
+
+After the resize, the array has additional unused capacity.
+
+The important point is that **resizing does not simply add space to the end of the existing array**. The implementation may need to obtain a new region of memory and move the existing elements into it.
+
+## Why the Existing Elements Must Be Copied
+
+Suppose the original allocation occupies this region of memory:
+
+```text
+Old allocation
+
++---+---+---+---+
+| A | B | C | D |
++---+---+---+---+
+```
+
+The larger allocation may be somewhere else:
+
+```text
+New allocation
+
++---+---+---+---+---+---+---+---+
+|   |   |   |   |   |   |   |   |
++---+---+---+---+---+---+---+---+
+```
+
+The new allocation initially contains no knowledge of the old elements.
+
+The program must therefore copy them:
+
+```text
+A → A
+B → B
+C → C
+D → D
+```
+
+producing:
+
+```text
++---+---+---+---+---+---+---+---+
+| A | B | C | D |   |   |   |   |
++---+---+---+---+---+---+---+---+
+```
+
+Only after the existing elements have been preserved can the old storage be released.
+
+This is why resizing is more expensive than an ordinary insertion into available capacity.
+
+## Choosing the New Capacity
+
+The simplest strategy would be to increase the capacity by one element:
+
+```text
+4 → 5
+```
+
+Then:
+
+```text
+5 → 6
+```
+
+Then:
+
+```text
+6 → 7
+```
+
+and so on.
+
+Although this works, it causes frequent reallocations.
+
+A better strategy is to increase the capacity substantially:
+
+```text
+4 → 8 → 16 → 32 → 64
+```
+
+The exact growth policy is an implementation decision. The important idea is that **one resize should provide enough additional space for many future insertions**.
+
+For example:
+
+```text
+Before:
+
+length   = 4
+capacity = 4
+
+
+After:
+
+length   = 4
+capacity = 8
+```
+
+The next four insertions can use the existing allocation without another resize.
+
+## Growth and Amortized Cost
+
+This is where the amortized-complexity ideas from Chapter 24 become useful.
+
+A resize may require moving many elements:
+
+```text
+[A][B][C][D][E][F][G][H]
+ ↑  ↑  ↑  ↑  ↑  ↑  ↑  ↑
+       all copied
+```
+
+That individual operation is expensive compared with an insertion into unused capacity.
+
+However, if the capacity grows sufficiently each time, resizing does not happen for every insertion.
+
+The pattern becomes:
+
+```text
+Insert → cheap
+Insert → cheap
+Insert → cheap
+Insert → cheap
+Resize → expensive
+Insert → cheap
+Insert → cheap
+Insert → cheap
+Insert → cheap
+Resize → expensive
+```
+
+The expensive operations are separated by many inexpensive ones.
+
+The important lesson is not the mathematical derivation—the details belong to Chapter 24—but the engineering consequence:
+
+> **Growing by larger capacity increments allows a dynamic array to support many insertions without repeatedly moving the entire sequence.**
+
+## Resizing Changes the Storage Location
+
+A resize can also change where the elements physically live in memory.
+
+Before resizing:
+
+```text
+data
+ │
+ ▼
++---+---+---+---+
+| A | B | C | D |
++---+---+---+---+
+```
+
+After resizing:
+
+```text
+data
+ │
+ ▼
++---+---+---+---+---+---+---+---+
+| A | B | C | D |   |   |   |   |
++---+---+---+---+---+---+---+---+
+```
+
+The `data` pointer now refers to the new allocation.
+
+This has an important consequence in C:
+
+> **Pointers into the old allocation may no longer be valid after the storage is moved.**
+
+For example, suppose another part of the program stores a pointer to the first element:
+
+```text
+old_data
+   │
+   ▼
+[A][B][C][D]
+ ▲
+ │
+saved pointer
+```
+
+After resizing:
+
+```text
+new_data
+   │
+   ▼
+[A][B][C][D][ ][ ][ ][ ]
+
+saved pointer
+      │
+      ▼
+   old storage
+```
+
+The saved pointer does not automatically follow the elements to their new location.
+
+This is one reason data structures that own dynamically allocated storage must clearly define how that storage is accessed and who is allowed to retain pointers into it.
+
+## C's `realloc`
+
+C provides the `realloc()` function specifically for resizing dynamically allocated memory.
+
+Conceptually:
+
+```c
+new_data = realloc(data, new_capacity * sizeof(*data));
+```
+
+If the allocation can be resized appropriately, `realloc()` provides storage large enough for the new capacity and preserves the existing contents.
+
+The important conceptual model remains:
+
+```text
+old storage
+     │
+     ▼
+request larger storage
+     │
+     ▼
+preserve existing elements
+     │
+     ▼
+new storage
+```
+
+`realloc()` may be able to extend the existing allocation in place, or it may need to move the allocation elsewhere. The caller therefore must not assume that the memory address remains unchanged.
+
+This distinction matters when writing safe C code.
+
+## A Resize Is Not the Same as an Insertion
+
+It is useful to keep two operations separate.
+
+**Insertion** changes the logical contents of the array:
+
+```text
+[A][B][C][D]
+
+insert X
+
+[A][B][X][C][D]
+```
+
+**Resizing** changes the amount of allocated storage:
+
+```text
+capacity = 4
+
+resize
+
+capacity = 8
+```
+
+An insertion may trigger a resize, but they are conceptually different operations.
+
+For example, if there is unused capacity:
+
+```text
+length   = 4
+capacity = 8
+
+[A][B][C][D][ ][ ][ ][ ]
+```
+
+inserting `X` does not require resizing:
+
+```text
+[A][B][C][D][X][ ][ ][ ]
+```
+
+The capacity remains eight.
+
+If the array is already full:
+
+```text
+length   = 8
+capacity = 8
+
+[A][B][C][D][E][F][G][H]
+```
+
+then an insertion may first require:
+
+```text
+resize
+   ↓
+capacity = 16
+```
+
+and only then perform the insertion.
+
+Keeping these concepts separate will become important when we examine insertion itself.
+
+## Resizing and Text Editing
+
+For a text editor, resizing happens as a line grows beyond its current capacity.
+
+Imagine:
+
+```text
+length   = 8
+capacity = 8
+
+T e r m i n a l
+```
+
+The user enters another character.
+
+The editor can:
+
+```text
+1. Grow the line's storage.
+2. Preserve the existing characters.
+3. Update the capacity.
+4. Insert the new character.
+```
+
+Afterward:
+
+```text
+length   = 9
+capacity = 16
+
+T e r m i n a l !
+```
+
+The next several insertions can occur without another resize.
+
+This makes dynamic arrays practical for ordinary text editing.
+
+## What Resizing Does Not Solve
+
+Dynamic resizing solves the problem of **running out of capacity**.
+
+It does not solve the separate problem of inserting into the middle of an already allocated sequence.
+
+Consider:
+
+```text
+[A][B][C][D][E][ ][ ][ ]
+        ^
+```
+
+There is already free capacity.
+
+Yet inserting `X` at index 2 still requires the later elements to move:
+
+```text
+[A][B][X][C][D][E][ ][ ]
+```
+
+The resize mechanism was never needed.
+
+This distinction gives us two different sources of movement:
+
+```text
+Dynamic Array
+     │
+     ├── Resize
+     │      └── May move the entire allocation
+     │
+     └── Insert/Delete
+            └── May move elements within the allocation
+```
+
+The next section focuses on the second case.
+
+We now know how a dynamic array obtains additional space. The next question is:
+
+> **When we have enough space, how do we insert an element into the middle of the sequence without losing the existing elements?**
+
+## Summary
+
+Growing a dynamic array means replacing its current allocation with a larger contiguous region, copying the existing elements into that region, and updating the data pointer and capacity. The new allocation initially knows nothing about the old contents, so the elements must be copied before the old storage is released; the address of the array may therefore change entirely. Increasing capacity by a single element would force a resize on nearly every append, so a practical growth policy provides enough additional space for many future insertions. That policy is why the occasional expensive resize can still yield a low amortized cost, as the cost is spread across many inexpensive operations. In C, realloc() performs this kind of resizing and may extend the allocation in place or move it elsewhere, so callers cannot assume that pointers into the old storage remain valid. Resizing changes the amount of allocated storage, not the logical contents, and an insertion may trigger a resize without being the same operation.
+
+In the next section, we will examine the other source of movement: **Array Insertion**.

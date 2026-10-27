@@ -1,0 +1,290 @@
+---
+title: "25.10 Design Alternatives and Trade-offs"
+description: "Compares fixed and dynamic arrays, linked lists, Gap Buffers, Piece Tables, and Ropes as text representations and weighs their trade-offs."
+---
+
+A dynamic array is a useful baseline for storing editable text, but it is not the only possible representation.
+
+Different data structures make different trade-offs between simplicity, indexed access, insertion and deletion, memory usage, and implementation complexity.
+
+The goal here is not to learn how each alternative works internally. Those mechanisms belong to the following chapters. Instead, we want to understand **why several different representations exist and what kind of workload each one is intended to handle**.
+
+The project's architecture deliberately chose a vector of independently stored lines because it is simple, maps naturally to the cursor and renderer, and is appropriate for the scope of this editor. More sophisticated structures can provide better performance for particular workloads, but they introduce additional machinery.
+
+## Fixed Array
+
+A fixed array provides the simplest representation:
+
+```text
+[A][B][C][D][E][F][G][H]
+```
+
+Its capacity is determined when the storage is created.
+
+**Strengths:**
+
+- Very simple representation
+- Direct indexed access
+- Predictable memory layout
+- No resizing mechanism
+
+**Weaknesses:**
+
+- Capacity cannot grow
+- Wasted capacity may be necessary
+- Unsuitable when the amount of text is not known in advance
+
+A fixed array is therefore useful when the size is known or tightly constrained, but it is not a natural representation for continuously growing document text.
+
+## Dynamic Array
+
+A dynamic array keeps the same contiguous representation while allowing its capacity to grow:
+
+```text
+[A][B][C][D][ ][ ][ ][ ]
+```
+
+This is the natural extension of the fixed array for editable sequences.
+
+**Strengths:**
+
+- Simple conceptual model
+- Direct indexed access
+- Good memory locality
+- Efficient append operations when capacity is available
+- Relatively straightforward implementation
+
+**Weaknesses:**
+
+- Resizing can require moving existing elements
+- Insertion and deletion in the middle can require moving elements
+- Long lines can therefore become expensive to edit
+
+This is the baseline representation we have studied throughout this chapter.
+
+It is also consistent with the project's current design: the Document is organized as independently stored lines, each containing its own sequence of characters.
+
+## Linked List
+
+A linked list takes a very different approach.
+
+Instead of storing elements next to one another, each element is associated with a link to another element:
+
+```text
+[A] → [B] → [C] → [D] → [E]
+```
+
+The elements do not need to occupy one contiguous region of memory.
+
+This can make certain insertions and deletions attractive because elements do not have to be shifted as they would in an array.
+
+However, that advantage comes with an important cost: reaching an element at a particular position generally requires following the links through the sequence.
+
+**Strengths:**
+
+- No requirement for contiguous storage
+- Insertion and deletion can avoid shifting an entire suffix
+- Capacity does not need to be grown as one contiguous allocation
+
+**Weaknesses:**
+
+- Poorer direct positional access
+- Additional memory for links
+- Less favorable memory locality
+- More complicated representation
+
+For a text editor, this creates an important trade-off. Text editing frequently needs both **positional access** and **local modification**, so simply replacing an array with a linked list does not automatically produce a better text buffer.
+
+## Gap Buffer
+
+A Gap Buffer keeps text in a contiguous array but deliberately maintains an unused region, called a **gap**, near the current editing position.
+
+Conceptually:
+
+```text
+[A][B][C][D][ ][ ][ ][ ][E][F][G][H]
+             <---- gap ---->
+```
+
+The important idea is that the unused space is positioned where edits are expected to occur.
+
+This can make repeated insertions and deletions near the same location much more efficient than repeatedly shifting a large suffix of a normal dynamic array.
+
+**Strengths:**
+
+- Retains contiguous storage
+- Good indexed access
+- Efficient local editing around the gap
+- Conceptually well suited to cursor-oriented editing
+
+**Weaknesses:**
+
+- Moving the gap can itself require moving elements
+- Performance depends on where editing occurs
+- The representation is more complicated than a simple dynamic array
+
+The Gap Buffer is therefore a natural response to the workload problem identified earlier in this chapter.
+
+Its actual mechanics will be examined in Chapter 26.
+
+## Piece Table
+
+A Piece Table takes a different approach.
+
+Instead of repeatedly modifying one contiguous copy of the entire document, it represents the document as pieces referring to underlying text storage.
+
+Conceptually:
+
+```text
+Original text
+      │
+      ├── piece ──► original storage
+      │
+      └── piece ──► added storage
+                         ▲
+                         │
+                    inserted text
+```
+
+The document's current contents are described by an arrangement of pieces rather than by repeatedly rewriting one large character array.
+
+**Strengths:**
+
+- Well suited to editing workflows involving many modifications
+- Original text can remain unchanged
+- Inserted text can be stored separately
+- Can support efficient editing without repeatedly copying all surrounding text
+
+**Weaknesses:**
+
+- More complex representation
+- Requires management of pieces and their ordering
+- Access and maintenance involve more layers than a simple array
+
+The Piece Table is therefore attractive when the editing model benefits from preserving original content and recording modifications separately.
+
+Its architecture and operations will be studied in Chapter 27.
+
+## Rope
+
+A Rope addresses the problem from yet another direction.
+
+Instead of representing the entire sequence as one contiguous array, a Rope organizes text into smaller pieces arranged in a tree-like structure.
+
+Conceptually:
+
+```text
+             Document
+             /      \
+         Text A    Text B
+         /  \       /  \
+       ...  ...   ...  ...
+```
+
+The text is divided into manageable pieces rather than requiring one large contiguous allocation.
+
+**Strengths:**
+
+- Designed for large text sequences
+- Can avoid moving a large contiguous region for many modifications
+- Can support efficient operations on large documents
+
+**Weaknesses:**
+
+- More complicated data structure
+- More metadata and structural overhead
+- Requires maintaining a tree-like organization
+- Not necessary for small documents or a simple editor
+
+A Rope becomes more attractive as document size and editing workload increase, particularly when the limitations of contiguous storage become significant.
+
+Its balancing and performance characteristics will be examined in **Chapter 28**.
+
+## Comparing the Alternatives
+
+At a high level, the trade-offs look like this:
+
+| Representation | Indexed Access                      | Local Editing    | Growth | Complexity |
+| -------------- | ----------------------------------- | ---------------- | ------ | ---------- |
+| Fixed array    | Excellent                           | Poor             | Fixed  | Low        |
+| Dynamic array  | Excellent                           | Moderate to poor | Good   | Low        |
+| Linked list    | Poor                                | Good             | Good   | Medium     |
+| Gap Buffer     | Excellent                           | Good near gap    | Good   | Medium     |
+| Piece Table    | Depends on structure                | Good             | Good   | Higher     |
+| Rope           | Good, with structure-dependent cost | Good             | Good   | Higher     |
+
+These categories are intentionally broad. The actual performance depends on the workload, implementation, and operation being measured.
+
+The important lesson is that there is **no universally best text representation**.
+
+## Choosing for Our Editor
+
+Our editor currently favors the simplest representation:
+
+```text
+Document
+   │
+   ▼
+Vector of lines
+   │
+   ▼
+Contiguous character storage
+```
+
+This choice is deliberate.
+
+The project's requirements prioritize simplicity, readability, and educational value. A vector of lines maps naturally to the editor's row-and-column cursor, line-by-line rendering, line splitting, and line merging.
+
+The trade-off is that the underlying character sequences still have the costs we have studied:
+
+```text
+Simple representation
+        │
+        ├── Easy to understand
+        ├── Easy to debug
+        ├── Direct access
+        │
+        └── Middle edits may move elements
+```
+
+For the editor we are building, that trade-off is acceptable.
+
+More sophisticated structures become interesting when the workload justifies their additional complexity.
+
+## The Larger Design Lesson
+
+These alternatives demonstrate an important principle in data-structure design:
+
+> **A data structure is a collection of trade-offs, not simply an optimization of another structure.**
+
+A dynamic array does not become "bad" because a Gap Buffer can handle some editing workloads better.
+
+A Gap Buffer does not make a Piece Table unnecessary.
+
+A Rope does not automatically make every other representation obsolete.
+
+Each structure changes the balance between:
+
+```text
+simplicity
+     ↕
+access
+     ↕
+modification cost
+     ↕
+memory usage
+     ↕
+implementation complexity
+```
+
+The appropriate choice depends on the operations the application performs most often.
+
+For our editor, the simple contiguous representation is the starting point. The next chapters will examine the alternatives in enough detail to understand exactly how they change these trade-offs.
+
+Before doing that, however, we need one final conclusion from this chapter: **why do specialized text buffers exist at all?**
+
+## Summary
+
+No single text representation is universally best: fixed arrays, dynamic arrays, linked lists, Gap Buffers, Piece Tables, and Ropes each make different trade-offs among simplicity, indexed access, modification cost, memory usage, and implementation complexity. A fixed array offers the simplest access and layout but cannot grow, while a dynamic array adds flexible capacity at the cost of resizing copies and middle-edit shifts. A linked list avoids shifting but loses direct positional access and locality, and a Gap Buffer keeps contiguity while placing unused space near the cursor for efficient local editing. A Piece Table represents the document as pieces referring to original and added storage, and a Rope organizes text into a tree of smaller pieces for large sequences. Our editor deliberately stays with a vector of lines using contiguous character storage because it is simple, predictable, and appropriate for the project's scope, and more sophisticated structures become worthwhile only when the workload justifies their extra complexity.
+
+This completes Section 25.10. The **chapter summary** consolidates the chapter's key ideas, presents common mistakes and exercises, and previews the Gap Buffer in the next chapter.
