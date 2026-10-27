@@ -1,0 +1,649 @@
+---
+title: Appendix F — Common Terminal Bugs
+sidebar:
+  label: F — Common Terminal Bugs
+  order: 6
+---
+
+## Purpose
+
+Terminal bugs often appear mysterious because the visible symptom may originate in a different layer from the one that displays it. A cursor that appears one column too far right, for example, may be caused by an incorrect display-width calculation rather than by cursor movement itself.
+
+This appendix is a diagnostic handbook for the terminal text editor. Each entry moves from a visible symptom to likely causes, a focused diagnosis, a corrective action, and a regression test.
+
+The examples follow the editor's established architecture:
+
+- **Terminal Interface** — terminal attributes, dimensions, screen modes, and restoration.
+- **Input Handler** — reads terminal bytes and manages input timing.
+- **Input Parser** — converts bytes and escape sequences into input events.
+- **Input Engine** — maps input events to commands.
+- **Command Engine** — executes editing and navigation operations.
+- **Editor State** — owns the current editing state.
+- **Document** — stores logical text.
+- **Cursor** — maintains logical editing position and preferred visual position.
+- **Viewport** — determines which document area is visible.
+- **Renderer** — maps editor state to screen cells and terminal output.
+- **Event Loop** — coordinates input, state updates, rendering, resizing, and cleanup.
+
+### Evidence and implementation status
+
+The implementation records establish that several relevant problems have been addressed and tested: terminal restoration, signal-safe cleanup coordination, terminal resize handling, recovery from incomplete escape sequences, tab and Unicode display-column mapping, and cursor/viewport boundary invariants.
+
+Other entries describe general diagnostic procedures or known limitations. They are not claims that every possible terminal bug has been reproduced or fixed. In particular, terminal-specific Unicode width differences, complete grapheme-cluster handling, and exhaustive terminal-output failure injection remain limitations in the recorded implementation state.
+
+---
+
+## F.1 Terminal Remains in Raw Mode After Exit
+
+### Symptom
+
+After the editor exits, the shell stops echoing typed characters, waits for Enter before displaying input, or otherwise behaves as if the terminal is still in raw or noncanonical mode.
+
+### Likely cause
+
+The Terminal Interface changed the terminal attributes but failed to restore the original settings on an exit path.
+
+Possible causes include:
+
+- The saved original attributes were overwritten by the modified configuration.
+- Initialization failed after terminal configuration changed.
+- A shutdown path bypassed normal cleanup.
+- `tcsetattr()` failed, but the failure was ignored.
+- Cleanup marked raw mode as disabled before restoration actually succeeded.
+
+### Diagnosis
+
+1. Compare terminal behavior before and after running the editor.
+2. Inspect every path after terminal configuration begins, including partial initialization failures.
+3. Check whether the original terminal attributes are stored separately from the working configuration.
+4. Check the return value of the restoration call.
+5. Run the editor in a pseudo-terminal and compare terminal attributes before launch and after process exit.
+
+A shell command such as `stty -g` can record the terminal settings before and after a test when the test is run from a suitable terminal.
+
+### Corrective action
+
+Keep an immutable saved copy of the original terminal attributes. Track whether terminal configuration succeeded, and restore the saved attributes during normal cleanup and initialization failure.
+
+Do not mark raw mode as disabled until restoration succeeds. If restoration is interrupted by `EINTR`, handle the interruption deliberately.
+
+**Verified implementation status:** The implementation records document a restoration fix that uses a valid `tcsetattr()` action, retries interruption, and clears the raw-mode flag only after successful restoration. Pseudo-terminal tests cover normal exit, startup failure, and selected signal-driven exits.
+
+### Regression test
+
+- Capture terminal attributes before launching the editor.
+- Exercise normal exit.
+- Exercise failure while opening the startup file.
+- Exercise the supported signal-driven shutdown paths.
+- Compare terminal attributes after each process exit.
+- Confirm that the shell remains interactive.
+
+---
+
+## F.2 Input Is Echoed or Buffered Unexpectedly
+
+### Symptom
+
+Typed characters appear twice, appear before the Renderer redraws the screen, or are delivered only after Enter is pressed.
+
+### Likely cause
+
+The terminal is still applying canonical input processing or echoing characters. Alternatively, the configured `VMIN` and `VTIME` values do not match the Input Handler's expectations.
+
+These are separate behaviors:
+
+- **Echo** controls whether input characters are automatically displayed.
+- **Canonical mode** controls line-oriented input processing.
+- **`VMIN` and `VTIME`** influence when a noncanonical `read()` completes.
+
+### Diagnosis
+
+Inspect the terminal attributes used by the Terminal Interface:
+
+- Is `ICANON` disabled for interactive input?
+- Is `ECHO` disabled?
+- Are `VMIN` and `VTIME` set consistently with the Input Handler's read strategy?
+- Is another module changing terminal attributes after initialization?
+
+Test ordinary characters, Backspace, Enter, and arrow keys separately.
+
+### Corrective action
+
+Configure the terminal once through the Terminal Interface. Disable canonical processing and automatic echo when required by the editor's input design. Choose `VMIN` and `VTIME` deliberately and make the Input Handler's timeout behavior consistent with those settings.
+
+Avoid repeatedly modifying terminal attributes from the Input Parser or Renderer.
+
+### Regression test
+
+Run the editor in a pseudo-terminal. Type a short sequence of characters without pressing Enter. Verify that the Input Handler receives them promptly and that each character is displayed only by the Renderer.
+
+---
+
+## F.3 Arrow Keys Appear as Individual Characters
+
+### Symptom
+
+Pressing an arrow key inserts strange characters, produces unexpected commands, or appears to do nothing.
+
+### Likely cause
+
+Terminal arrow keys commonly produce multi-byte escape sequences rather than a single character. For example, an arrow key may send an Escape byte followed by `[` and a final character.
+
+The Input Parser may be treating the bytes as independent printable input or failing to recognize the sequence.
+
+### Diagnosis
+
+1. Inspect the raw bytes received by the Input Handler.
+2. Confirm that the Input Parser has explicit states for ordinary input and escape-sequence parsing.
+3. Check whether the complete sequence is recognized as one input event.
+4. Verify that the Input Engine maps the resulting event to the intended command.
+
+Do not diagnose this problem by looking only at the final screen; establish what bytes were received and which event was emitted.
+
+### Corrective action
+
+Keep terminal-byte recognition inside the Input Parser. Accumulate escape-sequence bytes until a complete supported sequence is recognized, then emit one abstract input event.
+
+Unsupported sequences should be handled according to an explicit policy rather than accidentally inserted into the Document.
+
+### Regression test
+
+Feed representative arrow-key byte sequences into the Input Parser. Verify that each complete sequence produces exactly one expected event and does not insert escape-sequence bytes into the Document.
+
+---
+
+## F.4 Escape Key Conflicts with Escape-Sequence Parsing
+
+### Symptom
+
+The Escape key responds slowly, cancels the wrong operation, or is swallowed when pressed during an incomplete arrow-key or other escape sequence.
+
+### Likely cause
+
+The Escape key and terminal escape sequences share the same initial byte. A parser cannot always know immediately whether an Escape byte represents a standalone key or the beginning of a longer sequence.
+
+A second failure occurs when an incomplete sequence is abandoned without correctly processing the next byte.
+
+### Diagnosis
+
+Test these cases separately:
+
+- Escape by itself.
+- Escape followed quickly by another key.
+- An incomplete CSI sequence followed by Escape.
+- An incomplete CSI sequence interrupted by Ctrl-S or another supported control key.
+- An escape sequence that exceeds the parser's supported parameter limits.
+- A sequence that remains incomplete until the Input Handler's timeout expires.
+
+Inspect parser state transitions and timeout recovery, not just the configured timeout duration.
+
+### Corrective action
+
+Use an explicit parser state machine and a deliberate timeout policy for standalone Escape. When an incomplete sequence is abandoned, reprocess a new control byte where appropriate instead of silently swallowing it.
+
+Keep the timeout decision in the Input Handler and sequence interpretation in the Input Parser.
+
+**Verified implementation status:** The implementation records identify a real parser defect in which control bytes arriving during incomplete CSI parsing could be swallowed. The parser was changed to reset the incomplete sequence and reprocess the control byte. Regression tests cover Ctrl-S interruption, Escape restarting parsing, oversized parameters, and recovery to subsequent printable input.
+
+### Regression test
+
+Feed incomplete escape sequences followed by Escape, Ctrl-S, and ordinary text. Verify that each supported key still produces its intended event and that subsequent input remains correctly synchronized.
+
+---
+
+## F.5 Screen Flickers or Stale Text Remains
+
+### Symptom
+
+The display flashes during editing, characters from the previous frame remain visible, or deleting text leaves fragments on the screen.
+
+### Likely cause
+
+The Renderer may not be producing a complete and consistent frame, or it may be sending terminal output in an inefficient sequence.
+
+Other possibilities include:
+
+- A row is not cleared before shorter text is rendered.
+- The Screen Buffer retains stale cells.
+- The Renderer uses outdated dimensions.
+- Output is divided into many small writes.
+- Some terminal output bypasses the Renderer and changes the display independently.
+
+### Diagnosis
+
+Compare the screen state expected by the Renderer with the frame it constructs. Check whether every visible row is initialized, whether shorter replacement text clears the remainder of a row, and whether the final cursor-positioning sequence is emitted after the frame.
+
+Determine whether the flicker originates in the frame construction, terminal output, or an external terminal behavior.
+
+### Corrective action
+
+Use the established full-screen redraw strategy consistently. Build the frame from the current Editor State, clear or overwrite all required cells, and send output through the Renderer.
+
+Where practical, construct the output before writing it and avoid unnecessary terminal-mode changes or redundant screen-clearing sequences. Full redraw does not automatically guarantee flicker-free behavior, but it provides a simpler correctness model than uncontrolled partial updates.
+
+### Regression test
+
+Render a long line, replace it with a shorter line, delete its remaining characters, and redraw the screen. Verify that no old characters remain. Repeat with empty lines and after scrolling.
+
+---
+
+## F.6 Cursor Appears in the Wrong Position
+
+### Symptom
+
+The visible terminal cursor is one or more columns away from the character being edited. The discrepancy may become more obvious after moving vertically, entering a tab, or editing Unicode text.
+
+### Likely cause
+
+The logical cursor position and the terminal display position are different coordinate systems.
+
+The Document and Cursor use logical code-point positions. The Renderer must translate those positions into visual columns, accounting for tabs and character display widths.
+
+Common mistakes include:
+
+- Treating UTF-8 byte offsets as logical character columns.
+- Using logical columns directly as terminal columns.
+- Calculating cursor placement differently from text rendering.
+- Forgetting to update the cursor after editing or viewport movement.
+
+### Diagnosis
+
+Compare three values:
+
+1. The logical Document row and column.
+2. The visual column calculated for that logical position.
+3. The terminal cursor coordinates emitted by the Renderer.
+
+Test a plain ASCII line first, then a line containing a tab, a wide character, and a combining mark.
+
+### Corrective action
+
+Use one shared text-layout policy for logical-to-visual mapping. The Cursor should maintain logical positions, while the Renderer translates them into display coordinates. Cursor placement and text rendering must use the same width rules.
+
+**Verified implementation status:** The implementation records document a shared text-layout utility and regression tests for tabs, wide Unicode code points, combining marks, and preferred visual-column navigation. They also establish that logical columns count code points rather than UTF-8 bytes.
+
+### Regression test
+
+Move the Cursor across ASCII, tabs, a CJK wide character, and a combining mark. Verify that the rendered cursor remains at the expected visual position after horizontal and vertical movement.
+
+---
+
+## F.7 Text Wraps or Crashes at the Right Edge
+
+### Symptom
+
+Text at the last terminal column wraps unexpectedly, the next rendered character appears on another row, a frame becomes misaligned, or cursor movement behaves differently at the right edge.
+
+### Likely cause
+
+Terminal emulators often have special behavior when output reaches the final column. A character written into that cell may leave the cursor in a pending-wrap state, and the next printable character may trigger wrapping.
+
+Potential causes include:
+
+- The Renderer writes beyond the available screen width.
+- The final column is handled as an ordinary column even though the terminal's wrap behavior requires special treatment.
+- A wide character would extend beyond the remaining columns.
+- The Renderer and Viewport disagree about the visible width.
+- The Renderer fails to account for a wide-character continuation cell.
+
+### Diagnosis
+
+Test progressively longer lines, ending at one column before the right edge, exactly at the edge, and beyond it. Repeat with a wide character near the boundary.
+
+Record the terminal width and the Renderer’s calculated visual columns. Check whether the output sequence causes an implicit wrap or whether the incorrect row was selected before output.
+
+### Corrective action
+
+Define an explicit policy for the final screen column. Ensure that the Renderer never emits a character or continuation cell outside the available display area. Keep horizontal visibility, cell placement, and cursor positioning consistent with the same visual-width calculations.
+
+If the implementation relies on terminal wrap-mode control, ensure that the mode is restored during cleanup. Do not assume every terminal emulator handles the last column identically.
+
+### Regression test
+
+Run the editor at several narrow terminal widths. Render lines that end immediately before, at, and beyond the right edge. Repeat with tabs and wide characters. Verify that the Renderer does not write out-of-bounds cells and that the visible Cursor position remains valid.
+
+**Implementation status:** The implementation records confirm restoration of terminal wrap mode during cleanup. They do not establish that every right-edge behavior across terminal emulators has been eliminated; treat terminal-specific wrapping as a behavior to verify on the target terminals.
+
+---
+
+## F.8 Scrolling and Cursor Coordinates Become Inconsistent
+
+### Symptom
+
+The Cursor disappears while moving through the Document, appears on the wrong visible row, jumps horizontally during vertical navigation, or becomes inconsistent after Page Up or Page Down.
+
+### Likely cause
+
+The logical Cursor, preferred visual column, Viewport offsets, and Renderer coordinates have become inconsistent.
+
+For vertical movement, the preferred column may need to remain stable even when the current line is shorter. Tabs and wide characters also mean that a logical column does not necessarily equal a display column.
+
+### Diagnosis
+
+Inspect the following values after each movement:
+
+- Logical Cursor row and column.
+- Preferred visual column.
+- Viewport row offset.
+- Viewport horizontal offset, if supported.
+- Available document rows and columns on screen.
+- Final screen row and column used by the Renderer.
+
+Check whether the Viewport adjustment occurs after the Cursor changes and before the frame is rendered.
+
+### Corrective action
+
+Keep logical document coordinates separate from screen coordinates. Adjust the Viewport to keep the Cursor visible, then render using the resulting offsets.
+
+Vertical navigation should preserve the preferred visual column when appropriate, while mapping that target to a valid logical position on the destination line.
+
+**Verified implementation status:** The implementation records document tests for Cursor and Viewport invariants, repeated forward and reverse Viewport movement, preferred visual-column navigation, and regression cases involving tabs and short lines.
+
+### Regression test
+
+Create a Document with long and short lines, tabs, and enough rows to scroll. Move in all four directions and use Page Up and Page Down. Verify after every operation that the Cursor remains within Document bounds and that its screen position is visible and consistent with the Viewport.
+
+---
+
+## F.9 Unicode Characters Occupy Unexpected Widths
+
+### Symptom
+
+A Unicode character shifts subsequent text, cursor placement differs between terminals, combining marks appear detached, or emoji sequences occupy a different number of columns than expected.
+
+### Likely cause
+
+UTF-8 byte length, Unicode code-point count, grapheme-cluster count, and terminal display width are different measurements.
+
+A character can occupy multiple UTF-8 bytes but one terminal column. Some code points occupy two columns; combining marks often occupy none by themselves. Emoji joined into a grapheme cluster can behave differently across terminals.
+
+`wcwidth()` provides a useful character-width estimate under the active locale, but it does not solve every grapheme or terminal-specific width problem.
+
+### Diagnosis
+
+Test categories separately:
+
+- ASCII characters.
+- Two-, three-, and four-byte UTF-8 sequences.
+- Wide CJK characters.
+- Combining marks.
+- Emoji and joined emoji sequences.
+- Invalid UTF-8 input.
+- Different locale configurations.
+
+Check the decoded code point, the Document's logical position, the width calculated by the text-layout layer, and the terminal's observed rendering.
+
+### Corrective action
+
+Decode UTF-8 into complete valid Unicode scalar values before editing. Do not move the Cursor by UTF-8 byte count. Centralize width calculations and use the same rules for rendering, cursor placement, and viewport visibility.
+
+Document any limits in grapheme-cluster support and terminal-specific width handling.
+
+**Verified implementation status:** The implementation supports Unicode scalar-value input, logical code-point editing, tabs, wide code points, and combining-mark attachment. A complete Unicode grapheme-width database and terminal-specific width equivalence remain known limitations.
+
+### Regression test
+
+Verify UTF-8 decoding and editing for representative one- through four-byte sequences. Test wide characters and combining marks in rendering and cursor placement. Treat complex emoji sequences as a separate compatibility test rather than assuming basic code-point tests cover them.
+
+---
+
+## F.10 Tabs Misalign Cursor Movement and Rendering
+
+### Symptom
+
+The Cursor appears to jump after a Tab, vertical movement fails to preserve alignment, or the status display reports a column that does not match the visible position.
+
+### Likely cause
+
+A tab is one logical character but advances the terminal display to a configured tab stop. Counting a tab as exactly one visual column causes incorrect display coordinates.
+
+A related error occurs when the Renderer expands tabs using one rule while the Cursor or Viewport uses another.
+
+### Diagnosis
+
+Create lines with tabs at different starting columns. Compare the logical code-point column with the visual column after tab expansion. Test horizontal movement, vertical movement, Page Up, Page Down, and cursor placement.
+
+### Corrective action
+
+Store Tab as a tab character in the Document. Expand it to the next configured tab stop when calculating display cells. Use the same shared text-layout calculations for rendering, cursor mapping, and viewport visibility.
+
+**Verified implementation status:** The implementation records specify that Tab is stored as U+0009 and expanded to the next configured tab stop. The built-in width is four columns. The status display distinguishes logical `Col` from visual `Visual` coordinates.
+
+### Regression test
+
+Insert tabs at the beginning of a line and after ordinary characters. Move vertically between lines with different tab arrangements, including a short intermediate line. Verify that the preferred visual column is preserved and that the Document still contains tab characters rather than expanded spaces.
+
+---
+
+## F.11 Terminal Resize Corrupts the Screen
+
+### Symptom
+
+After the terminal window changes size, text is clipped, the Cursor is misplaced, the screen remains partly blank, or the editor crashes.
+
+### Likely cause
+
+The Renderer and Viewport are still using the old dimensions, or the application has partially updated its dimensions and screen structures.
+
+Resizing can also expose allocation failures when a new Screen Buffer or Renderer must be created.
+
+### Diagnosis
+
+1. Resize the terminal while the editor is active.
+2. Check whether the application receives a resize notification.
+3. Verify that the Terminal Interface obtains valid, nonzero dimensions.
+4. Confirm that the replacement rendering structures are fully initialized before they become active.
+5. Verify that the Viewport keeps the Cursor visible after the dimensions change.
+
+### Corrective action
+
+Handle resize notification in normal Event Loop control flow rather than performing allocation or terminal rendering inside a signal handler.
+
+Query the current dimensions, initialize replacement rendering resources, and only then replace the active Renderer. If querying or allocation fails, retain a valid existing Renderer for cleanup. Adjust the Viewport before the next full redraw.
+
+**Verified implementation status:** The implementation records document this resize strategy and pseudo-terminal testing for `SIGWINCH` redraw. The replacement Renderer is initialized before the active one is replaced, and dimensions are committed only after initialization succeeds.
+
+### Regression test
+
+Run the editor in a pseudo-terminal, resize it to smaller and larger dimensions, and verify that it remains active. Check that the next frame uses the new dimensions and that the Cursor stays visible. Also test a resize followed by normal shutdown.
+
+---
+
+## F.12 Partial Writes Leave Incomplete Frames
+
+### Symptom
+
+Only part of a frame appears, terminal escape sequences are visibly truncated, or the display becomes corrupted during heavy output or an output error.
+
+### Likely cause
+
+The Renderer assumes that a successful `write()` transfers the entire requested buffer. POSIX permits a successful write to transfer fewer bytes than requested.
+
+Other causes include interrupted writes, invalid output descriptors, and a terminal or pseudo-terminal that no longer accepts output.
+
+### Diagnosis
+
+Inspect the output routine and determine whether it tracks the number of bytes written. Check its behavior when `write()` returns:
+
+- A positive value smaller than the requested count.
+- `-1` with `errno == EINTR`.
+- Another error.
+- Zero bytes of progress.
+
+The implementation's normal tests do not necessarily exercise every terminal-output failure.
+
+### Corrective action
+
+Use a write-all routine that advances an offset after each positive write and continues until the intended buffer is complete or a failure occurs. Retry interruption only when appropriate. Treat a zero-progress result as a failure or a defined stop condition instead of retrying forever.
+
+Define what the Renderer does after a permanent output failure. It should not silently report a complete frame when only part of the output was sent.
+
+### Regression test
+
+Test the write-all logic with a controllable output abstraction that simulates partial progress, interruption, zero progress, and permanent failure. Verify that offsets remain correct and that no infinite retry loop occurs.
+
+**Implementation status:** Exhaustive terminal-output write-failure injection remains an open hardening item in the implementation records. Do not claim that all such failures have been tested.
+
+---
+
+## F.13 Alternate-Screen or Cursor-Visibility State Is Not Restored
+
+### Symptom
+
+After the editor exits, the shell remains on a blank screen, previous terminal content is missing, the cursor is hidden, or terminal wrapping behaves differently.
+
+### Likely cause
+
+The editor entered a terminal display mode or changed a terminal presentation property but failed to reverse that change during cleanup.
+
+Examples include:
+
+- Entering the alternate screen without leaving it.
+- Hiding the cursor without showing it again.
+- Changing terminal wrap mode without restoring the expected state.
+- Sending cleanup output only on the normal exit path.
+
+These are terminal presentation states, distinct from `termios` input attributes.
+
+### Diagnosis
+
+Inspect terminal-control sequences sent during initialization and cleanup. Check every successful entry or modification against its corresponding restoration operation.
+
+Use a pseudo-terminal test to capture the output around shutdown and verify that expected restoration sequences are emitted.
+
+### Corrective action
+
+Treat terminal setup and restoration as a coordinated lifecycle. Track which changes were applied, and undo those changes during cleanup in a deliberate order. Make cleanup safe to call from partial initialization paths.
+
+Do not assume that restoring `termios` attributes automatically restores alternate-screen, cursor-visibility, or wrap-mode state.
+
+**Verified implementation status:** The implementation records confirm that the pseudo-terminal integration test checks alternate-screen exit and terminal wrap-mode restoration. It also checks restoration after normal exit, resize, and selected signal-driven shutdowns.
+
+### Regression test
+
+Capture terminal state before launching the editor. Exercise normal exit, startup failure, resize followed by exit, and supported signal-driven termination. Verify terminal attributes and inspect output for the required screen and cursor restoration sequences.
+
+---
+
+## F.14 Signal Handling Causes Unsafe Cleanup
+
+### Symptom
+
+The editor crashes while handling Ctrl-C or termination, hangs during shutdown, corrupts logging output, or leaves the terminal in an altered state.
+
+### Likely cause
+
+The signal handler performs operations that are not async-signal-safe, such as memory allocation, complex rendering, formatted logging, or ordinary cleanup routines.
+
+Another cause is performing terminal restoration directly inside the handler while normal Event Loop operations may be in progress.
+
+### Diagnosis
+
+Inspect each signal handler and list every operation it performs. Confirm whether it only records a minimal notification or whether it invokes ordinary application functions.
+
+Check that the Event Loop handles termination requests and that cleanup restores terminal attributes, display modes, and prior signal dispositions.
+
+### Corrective action
+
+Keep signal handlers minimal. For the signals supported by the application, set an appropriate `volatile sig_atomic_t` flag and let the Event Loop perform normal cleanup outside signal context.
+
+Preserve and restore previous signal dispositions. Do not promise restoration after every possible process failure: uncatchable termination and abrupt system failure cannot be handled by an ordinary signal handler.
+
+**Verified implementation status:** The implementation records state that handlers for `SIGWINCH`, `SIGINT`, `SIGTERM`, and `SIGHUP` set flags only. Resize handling and graceful termination occur in the Event Loop, and previous signal dispositions are restored during cleanup.
+
+### Regression test
+
+Use a pseudo-terminal to test Ctrl-Q, `SIGINT`, `SIGTERM`, and `SIGHUP`. Verify that supported termination paths restore terminal attributes, leave the alternate screen, restore wrap mode, and exit with the expected status. Check that signal handlers themselves do not allocate memory or perform complex cleanup.
+
+---
+
+## F.15 Diagnosing Terminal-Dependent Behavior
+
+### Symptom
+
+A bug occurs in one terminal emulator but not another, appears only over SSH, or disappears when the terminal dimensions or locale change.
+
+### Likely cause
+
+The behavior depends on terminal capabilities, locale, terminal dimensions, input timing, or terminal-emulator implementation.
+
+Possible differences include:
+
+- Escape-sequence variants.
+- Unicode character widths.
+- Right-edge wrapping.
+- Locale availability.
+- Resize notification timing.
+- Behavior of pseudo-terminals versus physical terminal sessions.
+
+A terminal editor should distinguish its own invariant violations from environment-dependent behavior.
+
+### Diagnosis
+
+Record the environment before changing code:
+
+1. Terminal emulator and operating system.
+2. Locale and character encoding.
+3. Terminal dimensions.
+4. Relevant terminal attributes.
+5. Raw input bytes and parsed events.
+6. Logical Cursor coordinates and calculated visual columns.
+7. Viewport offsets and Renderer dimensions.
+8. Terminal output surrounding the failure.
+
+Reproduce the same input sequence in a pseudo-terminal when possible. Use logging to observe state transitions without allowing diagnostics to mutate Editor State.
+
+### Corrective action
+
+Reduce the problem to the earliest incorrect layer. If the raw bytes are wrong, investigate terminal input and parsing. If events are correct but the Document changes incorrectly, inspect command execution. If Editor State is valid but the display is wrong, inspect layout, viewport calculations, and terminal output.
+
+When behavior genuinely depends on terminal capabilities or Unicode width data, document the supported assumptions and limits rather than introducing a platform-specific workaround without evidence.
+
+### Regression test
+
+Keep a reproducible input sequence and record the expected events, Document state, Cursor position, Viewport state, and rendered coordinates. Run the same test in the supported pseudo-terminal environment and on representative terminal emulators when practical.
+
+---
+
+## F.16 Diagnostic Order: Find the First Incorrect Layer
+
+When a terminal symptom is ambiguous, follow the data through the editor rather than modifying several modules at once.
+
+```text
+Terminal Input
+      |
+      v
+Input Handler
+      |
+      v
+Input Parser
+      |
+      v
+Input Engine
+      |
+      v
+Command Engine
+      |
+      v
+Editor State
+      |
+      +---- Document
+      +---- Cursor
+      +---- Viewport
+      |
+      v
+Renderer
+      |
+      v
+Terminal Output
+```
+
+For input problems, inspect the raw bytes first and then the generated event. For editing problems, inspect the command and the resulting Editor State. For visual problems, verify the logical state before examining the rendered frame and terminal output.
+
+This order avoids treating a display symptom as proof that the Document or Cursor is incorrect.
+
+## Conclusion
+
+Terminal bugs become easier to diagnose when each layer has a clear responsibility and its invariants can be checked independently. The key is not to patch the visible symptom immediately, but to identify the first incorrect byte, event, state transition, coordinate, or output operation.
+
+This appendix should evolve with the implementation. When a real defect is fixed, preserve its original symptom, the confirmed cause, the corrective change, and the regression test that prevents it from returning. Distinguish those verified fixes from remaining limitations and general advice so that the appendix remains a reliable engineering reference.

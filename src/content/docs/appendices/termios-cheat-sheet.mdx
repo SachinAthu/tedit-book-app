@@ -1,0 +1,305 @@
+---
+title: Appendix D — `termios` Cheat Sheet
+sidebar:
+  label: D — `termios` Cheat Sheet
+  order: 4
+---
+
+This appendix is a compact reference for configuring terminal input in a POSIX C99 application. It summarizes the structures, flags, functions, and restoration rules needed to manage terminal input safely without revisiting the full terminal-input chapter.
+
+The examples target Linux/POSIX terminals and use standard POSIX interfaces.
+
+## D.1 — The `struct termios` Structure
+
+The `struct termios` structure describes terminal input, output, control, and local processing settings.
+
+Include the required headers:
+
+```c
+#include <termios.h>
+#include <unistd.h>
+```
+
+The structure contains the following members:
+
+| Member    | Purpose                                     |
+| --------- | ------------------------------------------- |
+| `c_iflag` | Input processing flags                      |
+| `c_oflag` | Output processing flags                     |
+| `c_cflag` | Control and hardware-related flags          |
+| `c_lflag` | Local terminal processing flags             |
+| `c_cc`    | Array of special control-character settings |
+
+The control-character array, `c_cc`, contains values such as `VMIN`, `VTIME`, and the configured interrupt character. The available indices and their meanings are defined by the platform's terminal interface.
+
+A `struct termios` value is a complete configuration snapshot. Copying it preserves the settings that were active when it was read, allowing an application to derive a temporary configuration and later restore the original one.
+
+## D.2 — Reading and Restoring Terminal Settings
+
+Use `tcgetattr()` to retrieve the current terminal configuration.
+
+```c
+struct termios original;
+
+if (tcgetattr(STDIN_FILENO, &original) == -1) {
+    /* Handle error. */
+}
+```
+
+The first argument is a file descriptor referring to the terminal. `STDIN_FILENO` is appropriate when standard input is the terminal used by the editor. If standard input may be redirected, the application should instead open or otherwise obtain an appropriate terminal file descriptor.
+
+The function returns `0` on success and `-1` on failure, with `errno` indicating the error.
+
+To restore the saved settings:
+
+```c
+if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &original) == -1) {
+    /* Handle restoration failure. */
+}
+```
+
+`TCSAFLUSH` applies the new settings after queued output has been transmitted and discards unread input. This can be appropriate when leaving an interactive editing session, but discarding pending input is a behavioral choice, not a universal requirement.
+
+The available application modes are:
+
+| Mode        | Behavior                                                                |
+| ----------- | ----------------------------------------------------------------------- |
+| `TCSANOW`   | Apply settings immediately                                              |
+| `TCSADRAIN` | Apply after queued output has been transmitted                          |
+| `TCSAFLUSH` | Apply after queued output has been transmitted and discard unread input |
+
+Choose the mode according to the application's input and output requirements.
+
+> Critical rule: Never overwrite the saved original terminal configuration with the modified configuration.
+>
+> Keep the original `struct termios` unchanged for the entire period in which restoration may be required. Create a separate working copy, modify that copy, and apply it. If the saved configuration is overwritten, the application may lose the state needed to restore the terminal correctly.
+
+## D.3 — Input Flags, Output Flags, Local Flags, and Control Flags
+
+Terminal configuration flags are grouped by the kind of processing they control. The exact available flags and their behavior depend on the POSIX implementation and terminal driver.
+
+### Input flags — `c_iflag`
+
+These flags control the processing of incoming bytes.
+
+| Flag     | Purpose                                                     |
+| -------- | ----------------------------------------------------------- |
+| `BRKINT` | Defines break-condition handling                            |
+| `ICRNL`  | Maps carriage return to newline on input                    |
+| `INLCR`  | Maps newline to carriage return on input                    |
+| `IGNCR`  | Ignores carriage return on input                            |
+| `ISTRIP` | Strips the eighth bit from input bytes                      |
+| `IXON`   | Enables software output flow control using input characters |
+| `IXOFF`  | Enables software input flow control on applicable terminals |
+| `IGNBRK` | Ignores break conditions                                    |
+| `PARMRK` | Enables marking of certain parity and framing errors        |
+
+For an editor that reads UTF-8 input, avoid transformations that alter the byte stream unexpectedly. For example, `ISTRIP` can corrupt UTF-8 bytes, and carriage-return mappings can change the bytes delivered to the Input Handler.
+
+### Output flags — `c_oflag`
+
+These flags control transformations applied to terminal output.
+
+| Flag    | Purpose                                                            |
+| ------- | ------------------------------------------------------------------ |
+| `OPOST` | Enables output processing                                          |
+| `ONLCR` | Maps newline to carriage return plus newline on applicable systems |
+
+Disabling `OPOST` prevents the terminal driver from applying its normal output transformations. Whether that is necessary depends on how the Renderer generates terminal output.
+
+### Local flags — `c_lflag`
+
+These flags control line-oriented input and other terminal-local behavior.
+
+| Flag     | Purpose                                                               |
+| -------- | --------------------------------------------------------------------- |
+| `ICANON` | Enables canonical, line-oriented input                                |
+| `ECHO`   | Enables terminal input echo                                           |
+| `ECHOE`  | Enables visual erase behavior for echoed input                        |
+| `ECHONL` | Enables echoing of newline characters under the applicable conditions |
+| `ISIG`   | Enables signal-generating special characters                          |
+| `IEXTEN` | Enables implementation-defined extended input processing              |
+| `NOFLSH` | Controls flushing of queues when certain signals are generated        |
+
+Canonical mode normally makes input available line by line, typically after Enter. Disabling `ICANON` allows the application to receive input without waiting for a complete line.
+
+Disabling `ECHO` prevents the terminal from automatically displaying each input character. The Renderer can then control how edited text appears.
+
+Disabling `ISIG` prevents configured special characters such as Ctrl-C from generating their usual terminal signals. This changes the application's signal-handling design and must not be treated as an unconditional requirement.
+
+### Control flags — `c_cflag`
+
+These flags primarily control terminal hardware and connection characteristics.
+
+| Flag     | Purpose                                                |
+| -------- | ------------------------------------------------------ |
+| `CSIZE`  | Character-size field mask                              |
+| `CS8`    | Selects eight-bit characters when supported            |
+| `PARENB` | Enables parity generation and checking where supported |
+| `CSTOPB` | Selects the number of stop bits where supported        |
+| `CREAD`  | Enables the receiver where supported                   |
+
+A text editor generally should not change hardware-related settings unnecessarily. Flags such as `CS8` are often relevant to serial terminals, but changing them is not inherently required for an ordinary terminal emulator.
+
+### Frequently referenced flags and settings
+
+| Flag     | Purpose                                               |
+| -------- | ----------------------------------------------------- |
+| `ICANON` | Enables canonical, line-oriented input                |
+| `ECHO`   | Enables terminal input echo                           |
+| `ISIG`   | Enables signal-generating special characters          |
+| `IXON`   | Enables software flow control on applicable terminals |
+| `OPOST`  | Enables output processing                             |
+| `VMIN`   | Minimum input bytes for a noncanonical read           |
+| `VTIME`  | Read timeout in tenths of a second                    |
+
+`VMIN` and `VTIME` are control-character array indices, not flags in the four flag fields. They are included in the table because they directly affect noncanonical input behavior.
+
+## D.4 — Raw-Mode Configuration
+
+A terminal text editor typically needs immediate access to keyboard input rather than canonical, line-buffered input. It also usually needs to disable terminal echo so that the Renderer controls screen updates.
+
+POSIX noncanonical mode is not itself a standardized, universally identical “raw mode.” Noncanonical mode changes line-buffering behavior, but other input processing, output processing, signal handling, and special-character behavior depend on the remaining settings. The exact configuration required depends on the editor's input and signal-handling design.
+
+A common interactive-editor configuration is:
+
+```c
+struct termios raw;
+
+raw = original;
+
+raw.c_lflag &= (tcflag_t) ~(ICANON | ECHO);
+raw.c_cc[VMIN] = 1;
+raw.c_cc[VTIME] = 0;
+```
+
+This configuration:
+
+- Preserves the original settings as the starting point.
+- Disables canonical input processing.
+- Disables automatic terminal echo.
+- Requests at least one byte for a noncanonical read.
+- Sets the read timer to zero.
+
+This is a minimal noncanonical configuration, not a complete raw-mode recipe. Input transformations such as `ICRNL`, software flow control such as `IXON`, signal generation through `ISIG`, and output processing through `OPOST` remain unchanged unless the application explicitly modifies them.
+
+For example, an editor that must receive Ctrl-C as input rather than as a terminal-generated interrupt may disable `ISIG`. An editor that relies on ordinary signal generation may leave it enabled. Likewise, an editor that parses terminal key sequences and UTF-8 input directly may need to disable particular input transformations to receive the intended bytes.
+
+Do not use a fixed flag list without considering the editor's requirements. Derive the configuration from the saved settings, modify only the behaviors the application needs to change, and document those choices.
+
+## D.5 — `VMIN` and `VTIME`
+
+In noncanonical mode, `VMIN` and `VTIME` determine when a `read()` operation can return. Their interpretation depends on whether the read timer and minimum byte count are zero.
+
+`VMIN` specifies a minimum byte count. `VTIME` specifies a timeout in tenths of a second.
+
+| `VMIN` | `VTIME` | Read behavior                                                                                |
+| ------ | ------- | -------------------------------------------------------------------------------------------- |
+| `0`    | `0`     | Returns immediately with available input, possibly zero bytes                                |
+| `> 0`  | `0`     | Waits until the requested minimum number of bytes is available                               |
+| `0`    | `> 0`   | Waits for input up to the specified timeout; returns when input arrives or the timer expires |
+| `> 0`  | `> 0`   | Waits for input, then uses an inter-byte timer to determine when the read can return         |
+
+The last combination uses a timer that starts after the first byte arrives and is restarted as further bytes arrive. It is not a simple overall timeout measured from the start of the `read()` call.
+
+Important details:
+
+- `VTIME` is measured in tenths of a second. For example, `VTIME = 5` represents 0.5 seconds.
+- The timer granularity and actual timing behavior can vary with the platform.
+- `VMIN` specifies bytes, not Unicode characters or terminal key events.
+- A read may return fewer bytes than requested, even when the application needs more data to complete a logical input sequence.
+- Escape-sequence parsing and UTF-8 decoding must account for input arriving across multiple reads.
+
+For an editor that reads one or more bytes at a time and uses a separate Input Parser, `VMIN = 1` and `VTIME = 0` provide a straightforward blocking-input configuration. A parser that needs to distinguish a standalone Escape key from the beginning of a longer escape sequence may instead require a timeout strategy, potentially implemented through terminal read settings or another event-waiting mechanism.
+
+## D.6 — Applying Settings with `tcsetattr()`
+
+Use `tcsetattr()` to apply a terminal configuration:
+
+```c
+if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+    /* Handle error. */
+}
+```
+
+The function returns `0` on success and `-1` on failure.
+
+A complete save–modify–apply example is:
+
+```c
+#include <termios.h>
+#include <unistd.h>
+#include <stdio.h>
+
+int main(void)
+{
+    struct termios original;
+    struct termios raw;
+
+    if (tcgetattr(STDIN_FILENO, &original) == -1) {
+        perror("tcgetattr");
+        return 1;
+    }
+
+    /* Modify a copy; preserve the original for restoration. */
+    raw = original;
+
+    raw.c_lflag &= (tcflag_t) ~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+        perror("tcsetattr");
+        return 1;
+    }
+
+    /*
+     * Perform terminal input work here.
+     * This example does not implement an editor event loop.
+     */
+
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &original) == -1) {
+        perror("restore terminal");
+        return 1;
+    }
+
+    return 0;
+}
+```
+
+This example demonstrates the essential configuration pattern, but it is not a complete lifecycle-management implementation. A real editor must restore the terminal through its normal cleanup path and through every recoverable initialization-failure path after terminal modification has succeeded.
+
+## D.7 — Error Handling and Restoration
+
+Terminal settings are external process state shared with the user's terminal session. Leaving temporary settings active can make the shell difficult or impossible to use normally.
+
+A terminal-owning component should therefore track at least:
+
+- Whether the original settings were successfully captured.
+- Whether the temporary settings were successfully applied.
+- Whether restoration has already been attempted or completed.
+
+These states are distinct. Successfully reading the original configuration does not mean that temporary settings were applied, and a failed application attempt must not be treated as a successful transition into raw mode.
+
+### Signal handling
+
+Signal-related cleanup requires special care. A signal handler should not perform arbitrary terminal operations or call functions that are not async-signal-safe. A common design is for the handler to set a `volatile sig_atomic_t` flag and allow the Event Loop to initiate ordinary cleanup.
+
+If immediate termination or a fatal signal bypasses the normal cleanup path, the application cannot assume that terminal restoration will occur automatically. Any additional emergency strategy must respect POSIX signal-safety constraints.
+
+The practical invariant is:
+
+> If temporary terminal settings were successfully enabled, the application must attempt to restore the saved original settings before normal termination.
+
+This invariant belongs to the terminal lifecycle, not to the Input Parser, Renderer, or Command Engine. Keeping restoration centralized in the terminal-management component prevents individual features from independently changing or restoring terminal state.
+
+Reference summary
+
+- `tcgetattr()` — read the current terminal configuration.
+- `tcsetattr()` — apply a terminal configuration.
+- `ICANON` — control canonical input processing.
+- `ECHO` — control automatic input echo.
+- `ISIG` — control signal generation from special characters.
+- `VMIN` and `VTIME` — configure noncanonical read behavior.
+- `TCSANOW`, `TCSADRAIN`, `TCSAFLUSH` — select when settings are applied.
+- Always preserve the original configuration separately and restore it through normal cleanup and applicable failure paths.

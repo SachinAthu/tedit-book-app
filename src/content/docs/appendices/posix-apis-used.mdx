@@ -1,0 +1,1173 @@
+---
+title: Appendix E — POSIX APIs Used
+sidebar:
+  label: E — POSIX APIs Used
+  order: 5
+---
+
+## Purpose
+
+This appendix is a project-specific index of POSIX APIs and related C library facilities used or relevant to the terminal text editor.
+
+It is organized by responsibility to help readers identify:
+
+- Which system interfaces support each editor component.
+- Which header declares each API or type.
+- What arguments and return values matter.
+- Which failure conditions the implementation must handle.
+- Which common mistakes can cause data loss, incorrect terminal behavior, or resource leaks.
+
+This appendix is not a general POSIX programming guide. It summarizes the interfaces relevant to the editor and does not replace their authoritative documentation.
+
+## E.1 API Index by Responsibility
+
+| Responsibility                   | APIs and facilities                                  | Primary owner or user                        |
+| -------------------------------- | ---------------------------------------------------- | -------------------------------------------- |
+| Terminal configuration           | `tcgetattr()`, `tcsetattr()`, `struct termios`       | Terminal Interface                           |
+| Input and output                 | `read()`, `write()`, `STDIN_FILENO`, `STDOUT_FILENO` | Input Handler, Renderer                      |
+| File operations                  | `open()`, `close()`, `rename()`, `unlink()`          | File Manager                                 |
+| File metadata and permissions    | `stat()`, `fstat()`, `fchmod()`                      | File Manager                                 |
+| Temporary files                  | `mkstemp()`                                          | File Manager                                 |
+| Signals                          | `sigaction()`, `sigemptyset()`, `sig_atomic_t`       | Application lifecycle and Terminal Interface |
+| Memory and limits                | `malloc()`, `realloc()`, `free()`, `SIZE_MAX`        | Document and buffer modules                  |
+| Error reporting                  | `errno`, `EINTR`, `perror()`                         | System-call callers and diagnostics          |
+| Process and terminal environment | `isatty()`, `STDERR_FILENO`                          | Initialization and diagnostics               |
+| Unicode display support          | `wcwidth()`, `wchar_t`, locale functions             | Text display and Renderer                    |
+
+The architecture determines which module owns a responsibility. A system API should normally be called by the module responsible for that operation rather than scattered throughout unrelated components.
+
+---
+
+## E.2 Terminal Configuration
+
+### `tcgetattr()`
+
+**Purpose**
+
+Retrieves the current terminal attributes, including input, output, control, and local processing settings.
+
+**Header**
+
+```c
+#include <termios.h>
+```
+
+**Important parameters**
+
+```c
+int tcgetattr(int fd, struct termios *termios_p);
+```
+
+- `fd` — file descriptor referring to the terminal.
+- `termios_p` — pointer to a `struct termios` that receives the current settings.
+
+**Return value and failure behavior**
+
+Returns `0` on success and `-1` on failure, with `errno` set to describe the error.
+
+**How the editor uses it**
+
+The Terminal Interface uses this function to capture the terminal's original configuration before changing its behavior for interactive editing. That saved configuration is needed for restoration during cleanup.
+
+**Common mistake**
+
+Saving the original configuration only after modifying it. The saved copy must represent the settings that existed before the editor changed the terminal.
+
+### `tcsetattr()`
+
+**Purpose**
+
+Applies terminal attributes previously retrieved or constructed in a `struct termios`.
+
+**Header**
+
+```c
+#include <termios.h>
+```
+
+**Important parameters**
+
+```c
+int tcsetattr(int fd, int optional_actions,
+              const struct termios *termios_p);
+```
+
+- `fd` — terminal file descriptor.
+- `optional_actions` — specifies when the change should take effect:
+  - `TCSANOW` — apply immediately.
+  - `TCSADRAIN` — wait for queued output to be transmitted before applying.
+  - `TCSAFLUSH` — wait for queued output to be transmitted, then discard unread input before applying.
+- `termios_p` — pointer to the settings to apply.
+
+**Return value and failure behavior**
+
+Returns `0` on success and `-1` on failure. POSIX permits a failure if not all requested changes can be made. The caller must not assume that a failed call successfully established the requested configuration.
+
+**How the editor uses it**
+
+The Terminal Interface applies its noncanonical input configuration when interactive mode begins and restores the saved configuration when the editor exits.
+
+The choice between `TCSANOW`, `TCSADRAIN`, and `TCSAFLUSH` is a design decision. In particular, `TCSAFLUSH` can discard input already waiting in the terminal queue.
+
+**Common mistake**
+
+Treating `tcsetattr()` as a permanent configuration change or ignoring its return value. The editor must track whether enabling its terminal mode succeeded and restore the original settings whenever appropriate.
+
+### `struct termios`
+
+**Purpose**
+
+Represents terminal attributes that control how a terminal processes input and output.
+
+**Header**
+
+```c
+#include <termios.h>
+```
+
+**Important members**
+
+| Member                 | Responsibility                                               | Examples                 |
+| ---------------------- | ------------------------------------------------------------ | ------------------------ |
+| `c_iflag`              | Input processing flags                                       | `ICRNL`, `IXON`          |
+| `c_oflag`              | Output processing flags                                      | `OPOST`                  |
+| `c_cflag`              | Control settings                                             | `CSIZE`, `CS8`           |
+| `c_lflag`              | Local processing flags                                       | `ICANON`, `ECHO`, `ISIG` |
+| `c_cc`                 | Special control characters and timing values                 | `VMIN`, `VTIME`          |
+| `c_ispeed`, `c_ospeed` | Input and output speeds, where exposed by the implementation | Terminal speed settings  |
+
+**Return value and failure behavior**
+
+This is a structure, not a function. Its members are modified in memory; changes affect the terminal only when successfully applied with `tcsetattr()`.
+
+**How the editor uses it**
+
+The Terminal Interface maintains two distinct configurations:
+
+1. The saved original attributes.
+2. A working copy modified for interactive input.
+
+The working copy is derived from the original configuration so that settings not explicitly changed by the editor can be preserved.
+
+**Common mistake**
+
+Modifying the only saved copy and then using that modified copy as the restoration target. Keep the original configuration separate from the working configuration.
+
+---
+
+## E.3 Input and Output
+
+### `read()`
+
+**Purpose**
+
+Reads bytes from a file descriptor. The Input Handler uses it to obtain terminal input; file-reading code may also use it when loading a document.
+
+**Header**
+
+```c
+#include <unistd.h>
+```
+
+**Important parameters**
+
+```c
+ssize_t read(int fd, void *buf, size_t count);
+```
+
+- `fd` — descriptor to read from.
+- `buf` — destination buffer.
+- `count` — maximum number of bytes requested.
+
+**Return value and failure behavior**
+
+- A positive value indicates the number of bytes read.
+- `0` indicates end-of-file for ordinary file input; for a terminal in noncanonical mode, a zero-byte result can also occur depending on the `VMIN` and `VTIME` configuration.
+- `-1` indicates failure, with `errno` set.
+
+An interrupted call can fail with `EINTR`. The correct response depends on the operation and application state.
+
+**How the editor uses it**
+
+The Input Handler reads terminal bytes, which are subsequently interpreted by the Input Parser. File-loading code reads document bytes for decoding and conversion into the internal Document representation.
+
+**Common mistake**
+
+Assuming one `read()` fills the entire buffer or always returns a positive number of bytes. A read loop must account for partial reads, errors, interruption, and valid zero-byte results. It must not retry a zero-byte result indefinitely.
+
+### `write()`
+
+**Purpose**
+
+Writes bytes to a file descriptor. The Renderer uses it to send terminal output; the File Manager uses it to write serialized document data.
+
+**Header**
+
+```c
+#include <unistd.h>
+```
+
+**Important parameters**
+
+```c
+ssize_t write(int fd, const void *buf, size_t count);
+```
+
+- `fd` — descriptor to write to.
+- `buf` — source buffer.
+- `count` — number of bytes requested.
+
+**Return value and failure behavior**
+
+- A positive value indicates how many bytes were written.
+- `0` indicates that no bytes were written.
+- `-1` indicates failure, with `errno` set.
+
+A successful call may write fewer bytes than requested. An interrupted call may return `-1` with `errno == EINTR`; if bytes were written before interruption, the call may instead return the positive number written.
+
+**How the editor uses it**
+
+The Renderer sends the constructed screen frame to the terminal. The File Manager writes encoded document bytes to a file or temporary file.
+
+Callers that require the entire buffer must maintain an offset and continue writing the unwritten portion. The correct policy for errors depends on the destination and the surrounding operation.
+
+**Common mistake**
+
+Assuming one successful call writes the complete buffer. Another serious mistake is retrying indefinitely when `write()` returns `0`. A write-all routine must detect a zero-progress result and report or otherwise handle it rather than entering an infinite loop.
+
+### `STDIN_FILENO`
+
+**Purpose**
+
+The conventional POSIX file descriptor for standard input.
+
+**Header**
+
+```c
+#include <unistd.h>
+```
+
+**Important parameters**
+
+No function parameters; `STDIN_FILENO` is a file descriptor constant, conventionally equal to `0`.
+
+**Return value and failure behavior**
+
+Not a function. The descriptor may be closed, redirected, or connected to something other than a terminal.
+
+**How the editor uses it**
+
+The Input Handler commonly reads keyboard input from standard input. The editor should establish whether that descriptor actually refers to a terminal before relying on terminal-specific operations.
+
+**Common mistake**
+
+Assuming standard input always refers to an interactive terminal. Input can be redirected from a file or pipe.
+
+### `STDOUT_FILENO`
+
+**Purpose**
+
+The conventional POSIX file descriptor for standard output.
+
+**Header**
+
+```c
+#include <unistd.h>
+```
+
+**Important parameters**
+
+No function parameters; `STDOUT_FILENO` is conventionally equal to `1`.
+
+**Return value and failure behavior**
+
+Not a function. Writes can fail if the descriptor is invalid or the destination cannot accept the output.
+
+**How the editor uses it**
+
+The Renderer commonly writes terminal escape sequences and rendered screen contents to standard output.
+
+**Common mistake**
+
+Assuming standard output is always connected to the terminal. If output is redirected, terminal control sequences may be written into a file or pipe instead of being displayed.
+
+---
+
+## E.4 File Operations
+
+### `open()`
+
+**Purpose**
+
+Opens a file and returns a file descriptor. Depending on the flags, it can also create a file.
+
+**Header**
+
+```c
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+```
+
+**Important parameters**
+
+```c
+int open(const char *path, int oflag, ...);
+```
+
+- `path` — path to the file.
+- `oflag` — access mode and additional options, such as `O_RDONLY`, `O_WRONLY`, `O_RDWR`, `O_CREAT`, and `O_TRUNC`.
+- `mode` — required when `O_CREAT` is used; supplies creation permission bits before the process umask is applied.
+
+**Return value and failure behavior**
+
+Returns a nonnegative file descriptor on success and `-1` on failure.
+
+**How the editor uses it**
+
+The File Manager opens a document for reading and may open or create a temporary file for saving. The access flags should match the intended operation.
+
+**Common mistake**
+
+Using `O_TRUNC` before confirming that the save strategy is safe. Truncating the destination too early can destroy its existing contents if a subsequent write fails. For safe replacement, write a separate temporary file and replace the destination only after the new contents have been written successfully.
+
+### `close()`
+
+**Purpose**
+
+Closes a file descriptor and releases the associated descriptor resource.
+
+**Header**
+
+```c
+#include <unistd.h>
+```
+
+**Important parameters**
+
+```c
+int close(int fd);
+```
+
+- `fd` — descriptor to close.
+
+**Return value and failure behavior**
+
+Returns `0` on success and `-1` on failure.
+
+A successful sequence of writes does not guarantee that closing the file will succeed. Close-time errors can matter when saving data.
+
+**How the editor uses it**
+
+The File Manager closes files after loading and closes the temporary output file during the save process. A save operation should treat a reported close failure as a failure rather than proceed as if the output were unquestionably complete.
+
+**Common mistake**
+
+Ignoring the return value when closing a file being saved. Another dangerous mistake is blindly retrying `close()` after an error: the descriptor's state can be platform-dependent, and it may already have been released. Follow the target platform's documented semantics and avoid accidentally closing a reused descriptor.
+
+### `rename()`
+
+**Purpose**
+
+Changes a filesystem object's name or location. When used to replace a destination file with a prepared temporary file, it is a central part of the editor's safe-save strategy.
+
+**Header**
+
+```c
+#include <stdio.h>
+```
+
+**Important parameters**
+
+```c
+int rename(const char *oldpath, const char *newpath);
+```
+
+- `oldpath` — source path, typically the completed temporary file.
+- `newpath` — destination path to be replaced.
+
+**Return value and failure behavior**
+
+Returns `0` on success and `-1` on failure, with `errno` set.
+
+When the source and destination are on the same filesystem, a successful POSIX rename provides the namespace replacement behavior needed for atomic replacement: observers do not see the destination half-written as a result of the rename itself. If the paths cross filesystem boundaries, the operation can fail with `EXDEV`.
+
+Other failures are possible, including permission problems and filesystem restrictions. Exact replacement behavior must be considered for the target platform and filesystem.
+
+**How the editor uses it**
+
+The File Manager writes the new document contents to a temporary file, checks the relevant write and close operations, and then renames the temporary file over the destination. Creating the temporary file in the destination directory helps keep the replacement on the same filesystem.
+
+The rename step should occur only after the new file has been prepared successfully. If replacement fails, the implementation should preserve the existing destination and attempt to remove the unused temporary file.
+
+**Common mistake**
+
+Creating the temporary file in an arbitrary system temporary directory and assuming it can always be renamed over the destination. Different filesystems can cause `EXDEV`. Also, atomic namespace replacement is not the same as guaranteed persistence after sudden power loss; stronger durability requirements can require synchronizing file contents and directory metadata.
+
+### `unlink()`
+
+**Purpose**
+
+Removes a directory entry, commonly used to delete a file.
+
+**Header**
+
+```c
+#include <unistd.h>
+```
+
+**Important parameters**
+
+```c
+int unlink(const char *pathname);
+```
+
+- `pathname` — path to the directory entry to remove.
+
+**Return value and failure behavior**
+
+Returns `0` on success and `-1` on failure.
+
+Removing a name does not necessarily destroy the underlying file immediately if another hard link or open descriptor still refers to it.
+
+**How the editor uses it**
+
+The File Manager can remove a temporary file when saving fails before replacement, or when a prepared temporary file is no longer needed.
+
+**Common mistake**
+
+Removing the destination file as a separate step before renaming the new file over it. That creates a window in which the destination does not exist and undermines the intended replacement strategy. Rename the prepared temporary file directly over the destination where the platform's semantics permit it.
+
+---
+
+## E.5 File Metadata and Permissions
+
+### `stat()`
+
+**Purpose**
+
+Retrieves metadata about a filesystem object identified by a path.
+
+**Header**
+
+```c
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+```
+
+**Important parameters**
+
+```c
+int stat(const char *pathname, struct stat *statbuf);
+```
+
+- `pathname` — path to inspect.
+- `statbuf` — destination structure for metadata.
+
+The resulting `struct stat` can contain information such as file type, size, ownership, permissions, and timestamps.
+
+**Return value and failure behavior**
+
+Returns `0` on success and `-1` on failure.
+
+**How the editor uses it**
+
+The File Manager may use path-based metadata when checking a document or inspecting the destination before a save. Whether it is needed depends on the implementation's file-preservation policy.
+
+**Common mistake**
+
+Assuming the metadata remains unchanged between `stat()` and a later file operation. The path can be replaced or modified between calls. When the decision concerns the file already opened, descriptor-based inspection with `fstat()` is often more appropriate.
+
+### `fstat()`
+
+**Purpose**
+
+Retrieves metadata about the file associated with an open file descriptor.
+
+**Header**
+
+```c
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+```
+
+**Important parameters**
+
+```c
+int fstat(int fd, struct stat *statbuf);
+```
+
+- `fd` — open file descriptor.
+- `statbuf` — destination structure for metadata.
+
+**Return value and failure behavior**
+
+Returns `0` on success and `-1` on failure.
+
+**How the editor uses it**
+
+The File Manager can inspect an already-open file without resolving its pathname again. This is useful when decisions must relate to the object represented by that descriptor.
+
+**Common mistake**
+
+Treating `fstat()` as a way to eliminate every filesystem race. It describes the opened object, but it does not guarantee that the pathname still refers to that same object.
+
+### `fchmod()`
+
+**Purpose**
+
+Changes the permission bits of a file identified by an open file descriptor.
+
+**Header**
+
+```c
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+```
+
+**Important parameters**
+
+```c
+int fchmod(int fd, mode_t mode);
+```
+
+- `fd` — descriptor for the file whose permissions should change.
+- `mode` — requested permission bits, such as a value derived from `S_IRUSR` and `S_IWUSR`.
+
+**Return value and failure behavior**
+
+Returns `0` on success and `-1` on failure.
+
+**How the editor uses it**
+
+This API is relevant if the File Manager's save policy requires preserving selected permission bits from the existing destination when replacing it with a newly created temporary file. It should not be assumed necessary unless that policy is implemented.
+
+**Common mistake**
+
+Assuming a newly created temporary file automatically inherits the destination's permissions. It normally receives permissions based on its creation mode and the process umask. If permissions must be preserved, the implementation needs an explicit policy and must handle metadata-setting failures.
+
+---
+
+## E.6 Temporary Files
+
+### `mkstemp()`
+
+**Purpose**
+
+Creates and opens a unique temporary file from a mutable filename template.
+
+**Header**
+
+```c
+#include <stdlib.h>
+```
+
+**Important parameters**
+
+```c
+int mkstemp(char *template);
+```
+
+- `template` — writable string ending in six `X` characters, which the function replaces with a unique suffix.
+
+The function opens the newly created file securely with exclusive creation semantics and returns its file descriptor.
+
+**Return value and failure behavior**
+
+Returns a nonnegative file descriptor on success and `-1` on failure. On success, the template contains the generated filename.
+
+**How the editor uses it**
+
+The File Manager can create a temporary file in the destination directory, serialize the Document into it, check writes and close, and then replace the destination with `rename()`.
+
+Using the destination directory helps ensure that the temporary file and destination are on the same filesystem.
+
+**Common mistake**
+
+Generating a temporary filename manually and then opening it without exclusive creation. This can create a race in which another process creates or substitutes the file first. Another mistake is forgetting to remove the temporary file after a failed save.
+
+---
+
+## E.7 Signals
+
+### `sigaction()`
+
+**Purpose**
+
+Installs or queries a signal disposition, including a signal handler.
+
+**Header**
+
+```c
+#include <signal.h>
+```
+
+**Important parameters**
+
+```c
+int sigaction(int signum,
+              const struct sigaction *act,
+              struct sigaction *oldact);
+```
+
+- `signum` — signal to configure.
+- `act` — new disposition, or `NULL` when only querying.
+- `oldact` — optional destination for the previous disposition.
+
+**Return value and failure behavior**
+
+Returns `0` on success and `-1` on failure.
+
+**How the editor uses it**
+
+A terminal editor may handle selected signals to coordinate shutdown or respond to terminal events. Signal policy must be designed with terminal restoration and event-loop behavior in mind.
+
+The exact set of handled signals is an implementation decision; listing this API does not mean every signal should be intercepted.
+
+**Common mistake**
+
+Performing complex cleanup inside a signal handler. Most library functions are not async-signal-safe, and operations such as allocation, formatted logging, or ordinary terminal-management code should not be called indiscriminately from a handler.
+
+A safer design is often to record a minimal notification in a permitted way and let normal control flow perform cleanup. Terminal restoration after abrupt termination cannot be guaranteed for every signal or process failure.
+
+### `sigemptyset()`
+
+**Purpose**
+
+Initializes a signal set to contain no signals.
+
+**Header**
+
+```c
+#include <signal.h>
+```
+
+**Important parameters**
+
+```c
+int sigemptyset(sigset_t *set);
+```
+
+- `set` — pointer to the signal set to initialize.
+
+**Return value and failure behavior**
+
+Returns `0` on success and `-1` on failure.
+
+**How the editor uses it**
+
+When configuring a `struct sigaction`, the implementation can initialize its handler mask before adding any signals that should be blocked while the handler runs.
+
+**Common mistake**
+
+Using an uninitialized `sigset_t` as if it were an empty set. Initialize the set before configuring it.
+
+### `sig_atomic_t`
+
+**Purpose**
+
+A C type intended for certain accesses to objects that can be safely used between normal execution and an asynchronous signal handler.
+
+**Header**
+
+```c
+#include <signal.h>
+```
+
+**Important parameters**
+
+Not a function. It is a type used to declare a variable, for example:
+
+```c
+static volatile sig_atomic_t termination_requested;
+```
+
+**Return value and failure behavior**
+
+Not applicable. The type does not provide a function return value or report errors.
+
+**How the editor uses it**
+
+A minimal signal handler may set a flag that the Event Loop checks later. The Event Loop can then initiate ordinary shutdown and terminal restoration outside the handler.
+
+**Common mistake**
+
+Treating `volatile sig_atomic_t` as a general-purpose synchronization primitive. It is not a replacement for locks or atomic operations in multithreaded code, and it does not make arbitrary operations signal-safe.
+
+---
+
+## E.8 Memory and Limits
+
+### `malloc()`
+
+**Purpose**
+
+Allocates a block of memory of the requested size.
+
+**Header**
+
+```c
+#include <stdlib.h>
+```
+
+**Important parameters**
+
+```c
+void *malloc(size_t size);
+```
+
+- `size` — number of bytes to allocate.
+
+**Return value and failure behavior**
+
+Returns a pointer to the allocated block on success, or `NULL` if allocation fails. The contents of the allocated memory are uninitialized.
+
+**How the editor uses it**
+
+The Document, line storage, input buffers, and rendering buffers may allocate memory dynamically as needed.
+
+**Common mistake**
+
+Using the returned pointer without checking for `NULL`, or assuming the memory is initialized. Also ensure the requested size is calculated safely before allocation.
+
+### `realloc()`
+
+**Purpose**
+
+Changes the size of an existing dynamically allocated block.
+
+**Header**
+
+```c
+#include <stdlib.h>
+```
+
+**Important parameters**
+
+```c
+void *realloc(void *ptr, size_t size);
+```
+
+- `ptr` — pointer previously returned by a compatible allocation function, or `NULL`.
+- `size` — requested new size.
+
+**Return value and failure behavior**
+
+On success, returns a pointer to the resized block; the address may change. On allocation failure for a nonzero requested size, returns `NULL` and leaves the original allocation valid.
+
+A request with size zero has special portability and semantic concerns and should not be used as a substitute for an explicit `free()` policy.
+
+**How the editor uses it**
+
+Dynamic arrays and text buffers may use `realloc()` when their capacity needs to grow.
+
+**Common mistake**
+
+Overwriting the only pointer to the original allocation before checking the result:
+
+```c
+buffer = realloc(buffer, new_size);
+```
+
+If allocation fails, the original pointer is lost. Use a temporary pointer:
+
+```c
+void *new_buffer = realloc(buffer, new_size);
+
+if (new_buffer == NULL)
+{
+    /* Preserve and handle the original allocation. */
+}
+else
+{
+    buffer = new_buffer;
+}
+```
+
+### `free()`
+
+**Purpose**
+
+Releases memory previously allocated by a compatible allocation function.
+
+**Header**
+
+```c
+#include <stdlib.h>
+```
+
+**Important parameters**
+
+```c
+void free(void *ptr);
+```
+
+- `ptr` — pointer to the allocation, or `NULL`.
+
+**Return value and failure behavior**
+
+Returns no value. Passing `NULL` is safe. Passing an invalid pointer or freeing the same allocation more than once results in undefined behavior.
+
+**How the editor uses it**
+
+The owning module releases Document storage, line buffers, and temporary allocations when they are no longer needed.
+
+**Common mistake**
+
+Freeing memory while another part of the program still uses it, or freeing memory owned by another module. Ownership must be clear: each allocation should have a defined lifetime and responsible owner.
+
+### `SIZE_MAX`
+
+**Purpose**
+
+Defines the maximum value representable by `size_t`.
+
+**Header**
+
+```c
+#include <stdint.h>
+```
+
+**Important parameters**
+
+Not a function. It is a limit constant.
+
+**Return value and failure behavior**
+
+Not applicable. `SIZE_MAX` is used in calculations to detect whether a size expression would overflow the range of `size_t`.
+
+**How the editor uses it**
+
+The Document and buffer modules can use it to validate allocation sizes and capacity calculations before allocating or resizing storage.
+
+For example, before computing `count + extra`, verify that `extra <= SIZE_MAX - count`.
+
+**Common mistake**
+
+Checking for overflow only after performing the arithmetic. Unsigned arithmetic can wrap before the result is compared with a limit. Validate the operands before addition or multiplication.
+
+---
+
+## E.9 Error Reporting
+
+### `errno`
+
+**Purpose**
+
+Provides an error indicator used by many C library and POSIX functions.
+
+**Header**
+
+```c
+#include <errno.h>
+```
+
+**Important parameters**
+
+Not a function. `errno` is a modifiable integer expression whose value is meaningful when a function indicates an error.
+
+Common values include `EINTR`, `EACCES`, `ENOENT`, `EIO`, `ENOMEM`, and `EXDEV`.
+
+**Return value and failure behavior**
+
+Not applicable. A caller should inspect `errno` when the API's return value indicates failure and the API documents that it sets `errno`.
+
+**How the editor uses it**
+
+The File Manager, Terminal Interface, and other modules use error codes to determine why a system operation failed and whether it can be retried, reported, or safely abandoned.
+
+**Common mistake**
+
+Checking `errno` after a successful operation or assuming it is automatically reset to zero. The return value determines whether an error occurred; `errno` then helps explain that error. If a cleanup operation may overwrite `errno`, save the original error first when it must be preserved.
+
+### `EINTR`
+
+**Purpose**
+
+Identifies an interrupted operation that did not complete because a signal was caught.
+
+**Header**
+
+```c
+#include <errno.h>
+```
+
+**Important parameters**
+
+Not a function. It is an error-code constant.
+
+**Return value and failure behavior**
+
+It is observed through `errno` after an API returns its documented failure indicator, commonly `-1`.
+
+**How the editor uses it**
+
+Input, output, and other blocking operations may need a deliberate policy for interruption. A read or write routine may retry when appropriate, while other operations may need to return control to the Event Loop or abort the current action.
+
+**Common mistake**
+
+Retrying every interrupted operation without considering the operation's state or purpose. Also, do not assume that every interrupted `read()` or `write()` returns `EINTR`: if some bytes were transferred, it can return a positive byte count instead.
+
+### `perror()`
+
+**Purpose**
+
+Prints a message followed by a description of the current `errno` value.
+
+**Header**
+
+```c
+#include <stdio.h>
+```
+
+**Important parameters**
+
+```c
+void perror(const char *s);
+```
+
+- `s` — optional contextual message; if nonempty, it is printed before the error description.
+
+**Return value and failure behavior**
+
+Returns no value. It does not provide a reliable way to detect whether the diagnostic itself was successfully written.
+
+**How the editor uses it**
+
+It can be useful during initialization failures, development, or simple command-line diagnostics. A full-screen editor may instead need to route errors through its Message Bar or logging mechanism.
+
+**Common mistake**
+
+Calling `perror()` long after the failing operation, when `errno` may have changed, or allowing diagnostic text to corrupt the terminal interface. Preserve the relevant error code and choose an output channel appropriate to the current terminal state.
+
+---
+
+## E.10 Process and Terminal Environment
+
+### `isatty()`
+
+**Purpose**
+
+Determines whether a file descriptor refers to a terminal.
+
+**Header**
+
+```c
+#include <unistd.h>
+```
+
+**Important parameters**
+
+```c
+int isatty(int fd);
+```
+
+- `fd` — descriptor to test.
+
+**Return value and failure behavior**
+
+Returns `1` if the descriptor refers to a terminal. Otherwise it returns `0`; `errno` can provide additional information.
+
+**How the editor uses it**
+
+Initialization can use `isatty()` to determine whether interactive terminal behavior is available on the expected input or output descriptor. This is particularly relevant when standard input or output has been redirected.
+
+**Common mistake**
+
+Assuming that a valid file descriptor must refer to a terminal. A file or pipe can be a valid descriptor but cannot necessarily support terminal attribute operations.
+
+### `STDERR_FILENO`
+
+**Purpose**
+
+The conventional POSIX file descriptor for standard error.
+
+**Header**
+
+```c
+#include <unistd.h>
+```
+
+**Important parameters**
+
+No function parameters; `STDERR_FILENO` is conventionally equal to `2`.
+
+**Return value and failure behavior**
+
+Not a function. The descriptor can be redirected or closed, and writes to it can fail.
+
+**How the editor uses it**
+
+Standard error is useful for diagnostics that should remain separate from rendered screen output. It can be particularly useful when standard output is reserved for terminal rendering.
+
+**Common mistake**
+
+Assuming standard error is guaranteed to be visible independently of standard output. Both streams can be redirected, and diagnostic output written while the editor is in full-screen mode may interfere with the display.
+
+---
+
+## E.11 Unicode Display Support
+
+### `wcwidth()`
+
+**Purpose**
+
+Returns the number of terminal columns required to display a wide character under the active locale's width rules.
+
+**Header**
+
+```c
+#include <wchar.h>
+```
+
+**Important parameters**
+
+```c
+int wcwidth(wchar_t wc);
+```
+
+- `wc` — wide character to measure.
+
+**Return value and failure behavior**
+
+Returns the number of columns required for a printable character, commonly `0`, `1`, or `2`. It returns `-1` when the character is not printable according to the function's rules.
+
+**How the editor uses it**
+
+The Renderer may use character-width calculations to map Unicode text to terminal columns and position the cursor correctly. This is distinct from the number of bytes used to encode a character in UTF-8.
+
+**Common mistake**
+
+Treating the result as a universal, terminal-independent truth about Unicode display width. Width depends on locale and implementation, and terminal emulators may differ. `wcwidth()` also operates on individual wide characters, not complete grapheme clusters. Emoji sequences, combining marks, and joined characters require additional care.
+
+### `wchar_t`
+
+**Purpose**
+
+A C wide-character type used by wide-character and locale-aware library facilities.
+
+**Header**
+
+```c
+#include <stddef.h>
+#include <wchar.h>
+```
+
+**Important parameters**
+
+Not a function. `wchar_t` is a type; its representation and width are implementation-dependent.
+
+**Return value and failure behavior**
+
+Not applicable.
+
+**How the editor uses it**
+
+It may be used as an intermediate representation when decoding or measuring Unicode text with wide-character functions. The editor's canonical document encoding and internal representation should remain explicitly defined rather than being inferred from `wchar_t`.
+
+**Common mistake**
+
+Assuming that `wchar_t` is always 16 bits, always 32 bits, or directly interchangeable with UTF-8 bytes. UTF-8 is a variable-length byte encoding, while `wchar_t` is an implementation-defined C type.
+
+### `setlocale()`
+
+**Purpose**
+
+Sets or queries the current program locale, which influences locale-sensitive library behavior.
+
+**Header**
+
+```c
+#include <locale.h>
+```
+
+**Important parameters**
+
+```c
+char *setlocale(int category, const char *locale);
+```
+
+- `category` — locale category, such as `LC_CTYPE`.
+- `locale` — locale name, or `NULL` to query the current setting.
+
+Using `setlocale(LC_CTYPE, "")` requests the locale configured by the process environment for character classification and conversion behavior.
+
+**Return value and failure behavior**
+
+Returns a pointer to a locale string on success, or `NULL` if the requested locale cannot be set. A `NULL` return must be handled when locale-sensitive behavior is required.
+
+**How the editor uses it**
+
+If the editor relies on locale-sensitive wide-character conversion or display-width functions, initialization should establish and validate an appropriate locale before using those facilities.
+
+**Common mistake**
+
+Assuming the environment's locale is always configured correctly, or changing the global locale unpredictably after other modules have begun locale-sensitive work. Establish the locale policy deliberately and document its relationship to UTF-8 decoding and display width.
+
+### `mbrtowc()`
+
+**Purpose**
+
+Converts a multibyte character sequence into a wide character according to the active locale.
+
+**Header**
+
+```c
+#include <wchar.h>
+```
+
+**Important parameters**
+
+```c
+size_t mbrtowc(wchar_t *restrict pwc,
+               const char *restrict s,
+               size_t n,
+               mbstate_t *restrict ps);
+```
+
+- `pwc` — destination for the converted wide character.
+- `s` — source byte sequence.
+- `n` — maximum number of bytes available.
+- `ps` — conversion state, which must be initialized appropriately.
+
+**Return value and failure behavior**
+
+Returns the number of bytes consumed on a completed conversion. It returns `0` for a converted null character, `(size_t)-1` for an invalid sequence, and `(size_t)-2` when the available bytes are insufficient to complete a character.
+
+**How the editor uses it**
+
+This function is relevant if the implementation uses locale-aware multibyte conversion for display processing. It is not required merely because the document format is UTF-8; a dedicated UTF-8 decoder may instead be used.
+
+**Common mistake**
+
+Assuming every call converts a complete character or treating an incomplete sequence as necessarily invalid. The caller must preserve conversion state where required and distinguish incomplete input from malformed input. The editor should also avoid accidentally mixing locale-dependent conversion with a separately defined UTF-8 decoding policy.
+
+---
+
+## E.12 Reference Documentation
+
+The summaries above intentionally omit details that belong in the system documentation. Consult authoritative references when implementing or reviewing an API call.
+
+- **The Open Group Base Specifications:** [POSIX specifications](https://pubs.opengroup.org/onlinepubs/9799919799/)
+- **Linux man-pages project:** [man7.org](https://man7.org/linux/man-pages/)
+- **C language library reference:** [cppreference — C library](https://en.cppreference.com/w/c)
+
+Useful manual pages include:
+
+| Topic                         | Reference                                    |
+| ----------------------------- | -------------------------------------------- |
+| Terminal attributes           | `termios(3)`, `tcgetattr(3)`, `tcsetattr(3)` |
+| File descriptors and I/O      | `open(2)`, `read(2)`, `write(2)`, `close(2)` |
+| File replacement and removal  | `rename(2)`, `unlink(2)`                     |
+| File metadata and permissions | `stat(2)`, `fstat(2)`, `fchmod(2)`           |
+| Temporary files               | `mkstemp(3)`                                 |
+| Signals                       | `sigaction(2)`, `sigemptyset(3)`             |
+| Memory allocation             | `malloc(3)`, `realloc(3)`, `free(3)`         |
+| Error handling                | `errno(3)`, `perror(3)`                      |
+| Terminal detection            | `isatty(3)`                                  |
+| Wide characters and locale    | `wcwidth(3)`, `mbrtowc(3)`, `setlocale(3)`   |
+
+Manual-page section numbers can differ across operating systems. The function name and the target platform's documentation are the important references.

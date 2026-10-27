@@ -1,0 +1,1223 @@
+---
+title: Appendix C — UTF-8 Reference
+sidebar:
+  label: C — UTF-8 Reference
+  order: 3
+---
+
+## C.1 Purpose and Scope
+
+Unicode provides a universal system for identifying characters used by the world's writing systems, mathematical notation, technical symbols, and other forms of text. UTF-8 is a variable-length encoding that represents Unicode code points as sequences of one to four bytes.
+
+For a terminal text editor, UTF-8 is more than a file-format detail. It affects how the editor loads and saves documents, interprets input, maintains cursor positions, deletes text, calculates display positions, and renders the visible document.
+
+This appendix provides a practical reference for implementing and debugging UTF-8 support in the editor developed throughout this book.
+
+It covers:
+
+- Unicode terminology and the distinction between bytes, code points, grapheme clusters, and display cells.
+- UTF-8 byte structure and encoding patterns.
+- Encoding and decoding examples.
+- Validation of UTF-8 input.
+- Invalid sequences and error handling.
+- Unicode normalization and the Byte Order Mark.
+- Cursor movement, deletion, and document positions.
+- Terminal display width, combining marks, and emoji.
+- C99 implementation considerations.
+- Testing strategies and official Unicode references.
+
+The appendix describes the principles needed for a reliable UTF-8 implementation. It does not claim that the baseline editor implements every Unicode text-processing or rendering algorithm.
+
+### C.1.1 The Editor's UTF-8 Policy
+
+The editor described in this book adopts the following baseline policy:
+
+1. Documents are loaded from and saved to files as UTF-8 text.
+2. UTF-8 is decoded and validated at appropriate input boundaries.
+3. The Document model stores logical lines without their line-ending bytes.
+4. LF and CRLF input line endings are normalized to the internal logical-line representation.
+5. Saved documents use canonical LF line endings.
+6. Internal text positions are measured in Unicode code points rather than UTF-8 bytes.
+7. The Renderer converts logical text positions into terminal display positions.
+8. Invalid UTF-8 must not be silently interpreted as valid text.
+9. Full grapheme-cluster editing and complete Unicode display-width handling are outside the baseline implementation's guaranteed capabilities.
+
+These decisions provide a clear foundation while keeping the architecture small enough to understand and extend.
+
+---
+
+## C.2 Unicode Terminology
+
+Correct Unicode handling begins with precise terminology. Several units that appear similar during ordinary text editing represent different concepts.
+
+### C.2.1 Character
+
+The word _character_ is often used informally to mean a visible symbol or an element of text. In Unicode engineering, that usage can be ambiguous.
+
+For example, the visible letter `é` can be represented by:
+
+- A single Unicode code point, U+00E9.
+- Two Unicode code points, U+0065 followed by U+0301.
+
+Both sequences can render as the same visible letter, depending on the font and rendering environment.
+
+Consequently, the number of Unicode code points in a string does not always equal the number of user-perceived characters.
+
+### C.2.2 Unicode Code Point
+
+A **Unicode code point** is a numeric value in the range U+0000 through U+10FFFF.
+
+Examples:
+
+| Character or symbol | Code point | Decimal value |
+| ------------------- | ---------- | ------------: |
+| `A`                 | U+0041     |            65 |
+| `a`                 | U+0061     |            97 |
+| `é`                 | U+00E9     |           233 |
+| `€`                 | U+20AC     |          8364 |
+| `中`                | U+4E2D     |         20013 |
+| `😀`                | U+1F600    |        128512 |
+
+A code point identifies a position in the Unicode codespace. Not every possible code point is assigned to a character, and some code points are reserved for special purposes.
+
+For example, the range U+D800 through U+DFFF is reserved for UTF-16 surrogate code points. These values are not Unicode scalar values and must not be encoded directly as UTF-8.
+
+In the baseline editor, logical text positions are measured in code points. This makes cursor movement independent of the number of UTF-8 bytes used to represent each code point.
+
+### C.2.3 Unicode Scalar Value
+
+A **Unicode scalar value** is any Unicode code point except the surrogate range U+D800 through U+DFFF.
+
+The scalar-value ranges are:
+
+```text
+U+0000–U+D7FF
+U+E000–U+10FFFF
+```
+
+A valid UTF-8 decoder must reject encodings that attempt to represent surrogate code points.
+
+The distinction matters because a numeric value may fall within the overall code-point range but still be invalid as a Unicode scalar value.
+
+### C.2.4 UTF-8 Byte
+
+UTF-8 represents a Unicode scalar value using one to four bytes.
+
+For example:
+
+```text
+Character: A
+Code point: U+0041
+UTF-8:      41
+```
+
+The same character requires only one byte because ASCII values are preserved by UTF-8.
+
+A character outside the ASCII range may require multiple bytes:
+
+```text
+Character: é
+Code point: U+00E9
+UTF-8:      C3 A9
+```
+
+The two bytes form one encoded scalar value. They must not be treated as two independent text characters.
+
+### C.2.5 Grapheme Cluster
+
+A **grapheme cluster** is a sequence of one or more Unicode code points that represents a user-perceived character under Unicode text-segmentation rules.
+
+Consider the sequence:
+
+```text
+e + COMBINING ACUTE ACCENT
+```
+
+Its code points are:
+
+```text
+U+0065 U+0301
+```
+
+The sequence contains two code points but normally appears as one accented letter.
+
+Other examples include emoji sequences formed from multiple code points, such as some family emoji and flags.
+
+Unicode Standard Annex #29 defines default grapheme-cluster boundaries, along with word and sentence boundaries.
+
+A code-point-oriented editor can move through such a sequence one code point at a time. That is a valid implementation choice, but it does not guarantee that every cursor movement or deletion corresponds to one user-perceived character.
+
+### C.2.6 Terminal Display Cell
+
+A terminal positions its cursor using rows and columns of display cells. A Unicode code point does not necessarily occupy exactly one cell.
+
+Typical examples include:
+
+- Ordinary Latin letters: usually one cell.
+- Many East Asian wide characters: usually two cells.
+- Combining marks: often zero additional cells.
+- Emoji sequences: width can depend on terminal and rendering behavior.
+
+The number of bytes, code points, grapheme clusters, and display cells can therefore differ.
+
+For a terminal editor, these units must remain separate:
+
+| Unit                  | Primary concern                       |
+| --------------------- | ------------------------------------- |
+| UTF-8 byte            | File I/O and encoding                 |
+| Unicode code point    | Baseline logical text position        |
+| Grapheme cluster      | User-perceived character operations   |
+| Terminal display cell | Rendering and screen cursor placement |
+
+---
+
+## C.3 UTF-8 Encoding Structure
+
+UTF-8 is a variable-length encoding. It uses one byte for ASCII code points and multiple bytes for larger scalar values.
+
+The leading bits of each byte indicate its role in the encoding.
+
+### C.3.1 Byte Patterns
+
+| Sequence length | First-byte pattern | Continuation-byte pattern | Valid lead-byte range |
+| --------------- | ------------------ | ------------------------- | --------------------- |
+| 1 byte          | `0xxxxxxx`         | None                      | `0x00–0x7F`           |
+| 2 bytes         | `110xxxxx`         | `10xxxxxx`                | `0xC2–0xDF`           |
+| 3 bytes         | `1110xxxx`         | `10xxxxxx`                | `0xE0–0xEF`           |
+| 4 bytes         | `11110xxx`         | `10xxxxxx`                | `0xF0–0xF4`           |
+
+A continuation byte has the pattern:
+
+```text
+10xxxxxx
+```
+
+Its hexadecimal range is:
+
+```text
+0x80–0xBF
+```
+
+The ranges shown above are the valid lead-byte ranges for UTF-8 scalar-value encodings. Not every bit pattern that resembles a multi-byte lead is valid. For example, `0xC0`, `0xC1`, and values above `0xF4` cannot begin a valid UTF-8 encoding.
+
+### C.3.2 One-Byte Sequences
+
+Code points from U+0000 through U+007F use one byte.
+
+The byte is identical to the corresponding ASCII value.
+
+```text
+Code point: U+0041
+Binary:     01000001
+Hex:        0x41
+UTF-8:      41
+```
+
+This compatibility is one of UTF-8's most important properties. ASCII punctuation, digits, letters, and control-byte values retain their familiar encodings.
+
+### C.3.3 Two-Byte Sequences
+
+Code points from U+0080 through U+07FF use two bytes.
+
+The general structure is:
+
+```text
+110xxxxx 10xxxxxx
+```
+
+The first byte carries five payload bits. The second byte carries six payload bits.
+
+Together, they represent eleven bits of code-point data.
+
+For example, U+00E9 (`é`) has the binary value:
+
+```text
+00000 11101001
+```
+
+Dividing the payload into five and six bits gives:
+
+```text
+00011 101001
+```
+
+Insert the UTF-8 prefixes:
+
+```text
+11000011 10101001
+```
+
+The resulting bytes are:
+
+```text
+C3 A9
+```
+
+Therefore:
+
+```text
+U+00E9 -> C3 A9
+```
+
+### C.3.4 Three-Byte Sequences
+
+Code points from U+0800 through U+FFFF use three bytes, excluding the surrogate range.
+
+The general structure is:
+
+```text
+1110xxxx 10xxxxxx 10xxxxxx
+```
+
+For example, U+20AC (`€`) is encoded as:
+
+```text
+E2 82 AC
+```
+
+Its bit pattern is divided into four, six, and six payload bits, then prefixed with the corresponding UTF-8 lead and continuation patterns.
+
+A three-byte sequence must be checked for overlong encodings and surrogate values. A byte pattern that has the correct number of bytes is not necessarily valid UTF-8.
+
+### C.3.5 Four-Byte Sequences
+
+Code points from U+10000 through U+10FFFF use four bytes.
+
+The general structure is:
+
+```text
+11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+```
+
+For example, U+1F600 (`😀`) is encoded as:
+
+```text
+F0 9F 98 80
+```
+
+Four-byte sequences are necessary for supplementary-plane characters, including many emoji and historical writing-system characters.
+
+A valid UTF-8 lead byte cannot exceed `0xF4`. Any sequence beginning with `0xF5` through `0xFF` is invalid.
+
+---
+
+## C.4 UTF-8 Reference Table
+
+The following table summarizes the encoding ranges.
+
+| Code-point range                    | Bytes | First byte | Remaining bytes                           |
+| ----------------------------------- | ----: | ---------- | ----------------------------------------- |
+| U+0000–U+007F                       |     1 | `00–7F`    | None                                      |
+| U+0080–U+07FF                       |     2 | `C2–DF`    | `80–BF`                                   |
+| U+0800–U+FFFF, excluding surrogates |     3 | `E0–EF`    | `80–BF`, subject to validity restrictions |
+| U+10000–U+10FFFF                    |     4 | `F0–F4`    | `80–BF`, subject to validity restrictions |
+
+The byte count gives the encoded length of a scalar value. It does not determine how many terminal display cells the corresponding text will occupy.
+
+### C.4.1 Important Restrictions
+
+A valid decoder must enforce all of the following:
+
+- Continuation bytes must have the form `10xxxxxx`.
+- Two-byte sequences must not begin with `0xC0` or `0xC1`.
+- Three-byte sequences must not encode values below U+0800.
+- Surrogate code points U+D800 through U+DFFF are invalid.
+- Four-byte sequences must not encode values below U+10000.
+- Four-byte sequences must not encode values above U+10FFFF.
+- Lead bytes above `0xF4` are invalid.
+- Every multi-byte sequence must contain the required number of continuation bytes.
+
+These checks prevent malformed input from being mistaken for valid text.
+
+---
+
+## C.5 Encoding and Decoding Examples
+
+### C.5.1 Example: ASCII Letter
+
+For `A`:
+
+```text
+Code point: U+0041
+Decimal:    65
+UTF-8 bytes: 41
+```
+
+The code point is represented by one byte.
+
+### C.5.2 Example: Latin Letter Outside ASCII
+
+For `é`:
+
+```text
+Code point: U+00E9
+UTF-8 bytes: C3 A9
+```
+
+The editor must decode both bytes into one code point.
+
+### C.5.3 Example: Euro Sign
+
+For `€`:
+
+```text
+Code point: U+20AC
+UTF-8 bytes: E2 82 AC
+```
+
+Three bytes represent one code point.
+
+### C.5.4 Example: Supplementary-Plane Emoji
+
+For `😀`:
+
+```text
+Code point: U+1F600
+UTF-8 bytes: F0 9F 98 80
+```
+
+Four bytes represent one code point.
+
+A code-point-based cursor must advance by one logical position when moving across this code point, even though the file contains four bytes.
+
+### C.5.5 Decoding a Two-Byte Sequence
+
+Given the bytes:
+
+```text
+C3 A9
+```
+
+The first byte matches the two-byte pattern:
+
+```text
+110xxxxx
+```
+
+Its payload bits are:
+
+```text
+00011
+```
+
+The continuation byte matches:
+
+```text
+10xxxxxx
+```
+
+Its payload bits are:
+
+```text
+101001
+```
+
+Combining the payloads:
+
+```text
+00011 101001
+```
+
+produces:
+
+```text
+00000111 101001
+```
+
+The resulting value is:
+
+```text
+U+00E9
+```
+
+### C.5.6 Decoding a Three-Byte Sequence
+
+Given:
+
+```text
+E2 82 AC
+```
+
+The payload bits are:
+
+```text
+E2: 0010
+82: 000010
+AC: 101100
+```
+
+Combining them yields:
+
+```text
+0010 000010 101100
+```
+
+The resulting code point is:
+
+```text
+U+20AC
+```
+
+The decoder must validate the entire sequence before treating it as a valid scalar value.
+
+---
+
+## C.6 Validating UTF-8
+
+A UTF-8 decoder must validate input rather than merely count bytes or identify lead-byte patterns.
+
+Invalid UTF-8 can arise from truncated files, corrupted data, faulty encoders, or arbitrary byte sequences.
+
+### C.6.1 Invalid Lead Bytes
+
+The following byte values cannot begin valid UTF-8 sequences:
+
+```text
+80–BF  Standalone continuation bytes
+C0–C1  Invalid overlong-sequence leads
+F5–FF  Outside the valid UTF-8 lead-byte range
+```
+
+A continuation byte is valid only when it occurs in the expected position of a multi-byte sequence.
+
+### C.6.2 Missing Continuation Bytes
+
+Suppose a file ends with:
+
+```text
+E2 82
+```
+
+The first byte indicates a three-byte sequence, but only two bytes are available.
+
+This is an incomplete sequence.
+
+The decoder must not read beyond the available buffer or treat the incomplete bytes as a complete code point.
+
+### C.6.3 Overlong Encodings
+
+An overlong encoding uses more bytes than necessary for a code point.
+
+For example, the ASCII value U+0041 should be encoded as:
+
+```text
+41
+```
+
+A multi-byte encoding that represents the same value is invalid.
+
+Overlong encodings must be rejected because they violate UTF-8's unique encoding rules and can undermine byte-level validation and security checks.
+
+### C.6.4 Surrogate Values
+
+The Unicode surrogate range is:
+
+```text
+U+D800–U+DFFF
+```
+
+These code points are not Unicode scalar values. UTF-8 must not encode them directly.
+
+For example, a three-byte sequence that decodes to U+D800 is invalid, even if its continuation-byte patterns appear structurally correct.
+
+### C.6.5 Values Above U+10FFFF
+
+The maximum Unicode code point is:
+
+```text
+U+10FFFF
+```
+
+Any UTF-8 sequence that decodes to a larger value is invalid.
+
+The first byte of a valid four-byte sequence must be in the range `0xF0–0xF4`, with additional restrictions on the second byte to prevent values below U+10000 or above U+10FFFF.
+
+### C.6.6 Invalid-Input Policy
+
+The editor should define a clear policy for malformed UTF-8.
+
+Possible policies include:
+
+1. Reject the file and report an encoding error.
+2. Replace invalid sequences with U+FFFD, the replacement character.
+3. Preserve the original bytes through a separate byte-oriented editing mode.
+
+These policies are not interchangeable.
+
+Replacement makes the text editable but may lose the original byte sequence when the file is saved. Rejecting invalid input preserves the original file by avoiding an automatic rewrite, but prevents the user from opening it in the normal editor mode. A byte-oriented mode requires a different set of editing and display guarantees.
+
+For the baseline editor, invalid sequences should be detected and reported rather than silently accepted as valid UTF-8. The exact recovery behavior should be documented and tested.
+
+### C.6.7 Validation Must Precede Use
+
+A safe processing pipeline is:
+
+```text
+Input bytes
+    |
+    v
+Check sequence length
+    |
+    v
+Validate lead byte
+    |
+    v
+Validate continuation bytes
+    |
+    v
+Decode code point
+    |
+    v
+Reject invalid scalar values
+    |
+    v
+Accept validated code point
+```
+
+The decoder must not modify Document state with a partially validated sequence.
+
+---
+
+## C.8 Encoding a Unicode Scalar Value
+
+Encoding performs the inverse operation: it converts a valid Unicode scalar value into its UTF-8 byte sequence.
+
+The number of bytes depends on the code point.
+
+| Scalar-value range                  | Encoded length |
+| ----------------------------------- | -------------: |
+| U+0000–U+007F                       |         1 byte |
+| U+0080–U+07FF                       |        2 bytes |
+| U+0800–U+FFFF, excluding surrogates |        3 bytes |
+| U+10000–U+10FFFF                    |        4 bytes |
+
+An encoder must reject surrogate values and values above U+10FFFF.
+
+### C.8.1 Round-Trip Property
+
+For every valid Unicode scalar value, a correct encoder and decoder should satisfy this property:
+
+```text
+Decode(Encode(code_point)) = code_point
+```
+
+The encoded bytes must also conform to the shortest valid UTF-8 representation.
+
+Round-trip tests are useful for checking encoding logic, but they do not replace tests for invalid input. An encoder and decoder can share the same defect and still appear to pass a limited set of round-trip tests.
+
+---
+
+## C.9 Unicode Normalization
+
+Unicode allows certain text to be represented by different code-point sequences that are canonically equivalent.
+
+For example, an accented letter may be represented as a precomposed character or as a base character followed by a combining mark.
+
+```text
+Precomposed:
+U+00E9
+
+Decomposed:
+U+0065 U+0301
+```
+
+Both may display as `é`.
+
+Their UTF-8 bytes are different:
+
+```text
+U+00E9:
+C3 A9
+
+U+0065 U+0301:
+65 CC 81
+```
+
+Although the sequences can be canonically equivalent, their byte representations are not identical.
+
+### C.9.1 Normalization Forms
+
+Unicode defines four commonly used normalization forms:
+
+| Form | Name                        | General purpose                                                       |
+| ---- | --------------------------- | --------------------------------------------------------------------- |
+| NFC  | Canonical Composition       | Uses canonical decomposition followed by composition where applicable |
+| NFD  | Canonical Decomposition     | Decomposes canonically equivalent sequences                           |
+| NFKC | Compatibility Composition   | Applies compatibility decomposition and composition                   |
+| NFKD | Compatibility Decomposition | Applies compatibility decomposition                                   |
+
+NFC and NFD preserve canonical equivalence. NFKC and NFKD also apply compatibility mappings, which can change distinctions that some applications need to preserve.
+
+### C.9.2 The Editor's Normalization Policy
+
+The baseline editor should not silently normalize all document text unless normalization is an explicit feature with documented behavior.
+
+Automatic normalization can change the byte representation of a file even when the text appears unchanged. It can also affect cursor positions and assumptions made by applications that compare or process text at the code-point or byte level.
+
+The editor's baseline policy is therefore to preserve the decoded code-point sequence rather than silently convert it to NFC, NFD, NFKC, or NFKD.
+
+Normalization can be introduced as a deliberate feature if required. If so, the implementation should define when normalization occurs and how it interacts with saving, cursor positions, and dirty-state tracking.
+
+### C.9.3 Reference
+
+The normative reference for normalization is [Unicode Standard Annex #15 — Unicode Normalization Forms](https://www.unicode.org/reports/tr15/).
+
+---
+
+## C.10 Byte Order Mark (BOM)
+
+The Byte Order Mark is the Unicode code point U+FEFF. In UTF-8, its byte sequence is:
+
+```text
+EF BB BF
+```
+
+At the beginning of a file, this sequence is sometimes used as a signature indicating that the file is UTF-8 encoded.
+
+### C.10.1 UTF-8 Does Not Need a BOM for Byte Order
+
+Unlike UTF-16 and UTF-32, UTF-8 has a fixed byte order. It does not require a BOM to determine endianness.
+
+A UTF-8 BOM is therefore optional in contexts where the format permits it.
+
+### C.10.2 Handling a Leading BOM
+
+A text editor must define what happens when the file begins with `EF BB BF`.
+
+Possible policies include:
+
+- Recognize and remove a leading BOM when loading, then omit it when saving.
+- Recognize a leading BOM and preserve its presence as file metadata.
+- Treat the bytes as encoded U+FEFF according to a clearly documented text-file policy.
+
+The appropriate behavior depends on the editor's compatibility requirements.
+
+For the baseline editor, the handling of a leading BOM should be explicit and tested. It must not be removed accidentally by a generic UTF-8 decoder that discards valid text.
+
+### C.10.3 BOM Within a File
+
+U+FEFF may also occur within text. Its interpretation depends on the context and the text-processing rules being applied.
+
+An implementation should not remove every occurrence of the byte sequence `EF BB BF` from a document. Such a rule would confuse a possible initial signature with actual content.
+
+### C.10.4 Reference
+
+See the Unicode Consortium's [UTF-8, UTF-16, UTF-32 & BOM FAQ](https://www.unicode.org/faq/utf_bom.html).
+
+---
+
+## C.11 Cursor Positions and Editing Operations
+
+UTF-8 introduces a critical distinction between byte offsets and logical text positions.
+
+Consider this text:
+
+```text
+Aé😀B
+```
+
+Its code points are:
+
+```text
+U+0041 U+00E9 U+1F600 U+0042
+```
+
+Its UTF-8 bytes are:
+
+```text
+41 C3 A9 F0 9F 98 80 42
+```
+
+The string contains:
+
+- 8 UTF-8 bytes.
+- 4 Unicode code points.
+- A terminal display width that is typically greater than or equal to the number of code points, depending on the characters and terminal.
+
+A cursor position measured in bytes cannot be used directly as a code-point index.
+
+### C.11.1 Code-Point-Based Cursor
+
+The baseline editor measures logical positions in Unicode code points.
+
+For the example above:
+
+| Character   | Code-point index | Byte offset |
+| ----------- | ---------------: | ----------: |
+| `A`         |                0 |           0 |
+| `é`         |                1 |           1 |
+| `😀`        |                2 |           3 |
+| `B`         |                3 |           7 |
+| End of line |                4 |           8 |
+
+This representation makes logical cursor movement predictable for code-point-based editing.
+
+However, translating a logical index into a byte offset requires UTF-8 decoding or an auxiliary indexing structure.
+
+### C.11.2 Insertion
+
+When inserting a code point, the editor must encode it as UTF-8 before writing the resulting bytes into a UTF-8-backed text buffer or serializing the document.
+
+Insertion must not split an existing multi-byte sequence.
+
+If the internal Document stores decoded code points rather than UTF-8 bytes, the encoding step occurs when text is serialized or written to a byte-oriented buffer.
+
+### C.11.3 Deletion
+
+Deleting one code point means removing its complete UTF-8 encoding, not deleting one byte.
+
+For example:
+
+```text
+Before:
+41 C3 A9 42
+
+After deleting U+00E9:
+41 42
+```
+
+Removing only `C3` would leave `A9` as an invalid standalone continuation byte.
+
+A byte-backed text buffer must identify code-point boundaries before deleting encoded text. A code-point-backed Document can perform logical deletion first and encode the remaining text when necessary.
+
+### C.11.4 Grapheme-Cluster Editing
+
+Code-point deletion is not always equivalent to deleting one user-perceived character.
+
+For example:
+
+```text
+U+0065 U+0301
+```
+
+contains a base letter and a combining mark. Deleting one code point may leave the other behind, potentially changing the displayed result.
+
+A more advanced editor can use Unicode grapheme-cluster boundaries to make cursor movement and deletion operate on user-perceived characters.
+
+The baseline editor's code-point model should not be described as providing complete grapheme-cluster editing.
+
+### C.11.5 Buffer Invariants
+
+The text representation should preserve these invariants:
+
+- Every accepted code point is a valid Unicode scalar value.
+- UTF-8-backed text contains no malformed or partial encoding sequences.
+- Byte offsets and code-point indices are not confused.
+- Insertion and deletion preserve valid encoding boundaries.
+- Cursor positions remain within valid logical bounds.
+- The Renderer calculates display positions separately from logical positions.
+
+These invariants should be covered by unit tests and regression tests.
+
+---
+
+## C.12 Rendering Unicode in a Terminal
+
+Correct UTF-8 decoding does not guarantee correct terminal rendering.
+
+After decoding, the Renderer must determine where text should appear in the terminal grid. Unicode display width is more complicated than assigning one cell to every code point.
+
+### C.12.1 The `wcwidth()` Function
+
+On POSIX systems, the C library commonly provides `wcwidth()` to estimate the number of terminal columns required to display a wide character.
+
+It is declared in `<wchar.h>` and is affected by locale and implementation behavior.
+
+Conceptually:
+
+```c
+#include <wchar.h>
+
+int width = wcwidth(wide_character);
+```
+
+Common return values are:
+
+- `0`: the character occupies zero columns.
+- `1`: the character occupies one column.
+- `2`: the character occupies two columns.
+- `-1`: the character is not printable according to the function's rules.
+
+The result depends on the character, locale, and implementation. It is not a complete grapheme-cluster or emoji-width algorithm.
+
+### C.12.2 Locale Considerations
+
+Character-width functions depend on the active locale. The application should establish and document its locale assumptions before relying on their results.
+
+A common initialization step is:
+
+```c
+#include <locale.h>
+
+setlocale(LC_CTYPE, "");
+```
+
+This requests locale settings from the environment for character classification and related operations.
+
+Locale initialization should be deliberate and consistent. If the application uses locale-dependent wide-character functions without establishing a suitable locale, non-ASCII behavior may differ from expectations.
+
+The editor must also ensure that any conversion between UTF-8 and wide-character representations follows the relevant library interfaces and error rules.
+
+### C.12.3 Combining Marks
+
+Combining marks commonly occupy zero additional display cells.
+
+For example, the combining acute accent U+0301 is often rendered together with a preceding base character.
+
+A Renderer that assumes every code point occupies one cell may advance too far, producing cursor-position errors and misaligned screen content.
+
+The Renderer must use a width model that accounts for zero-width and wide characters, while recognizing the limitations of that model.
+
+### C.12.4 East Asian Width
+
+Many characters used in East Asian writing systems are displayed using two terminal columns. However, width is not determined by Unicode code-point value alone through a universally reliable one-to-one rule.
+
+The Unicode East Asian Width property provides relevant character data, but terminal rendering behavior also depends on the terminal emulator and its width conventions.
+
+The normative reference is [Unicode Standard Annex #11 — East Asian Width](https://www.unicode.org/reports/tr11/).
+
+### C.12.5 Emoji and Variation Selectors
+
+Emoji presentation can depend on variation selectors and sequence-level rules.
+
+A sequence may contain:
+
+- An emoji-capable code point.
+- A variation selector.
+- A skin-tone modifier.
+- A zero-width joiner.
+- Additional code points that combine into one displayed emoji.
+
+Some terminal emulators render these sequences as one visual symbol, while others may show separate symbols or use different cell widths.
+
+Consequently, the width of an emoji sequence cannot always be calculated by summing the widths of its individual code points.
+
+The baseline editor does not guarantee correct rendering for every emoji sequence, especially sequences involving zero-width joiners or complex grapheme clusters.
+
+For the full specification, see [Unicode Technical Standard #51 — Unicode Emoji](https://www.unicode.org/reports/tr51/).
+
+### C.12.6 Right-to-Left Text
+
+Unicode text is stored in logical order, but some scripts require bidirectional layout for correct visual presentation.
+
+The Unicode Bidirectional Algorithm defines how the display ordering of mixed-direction text is determined.
+
+A terminal editor that simply renders decoded code points from left to right does not implement the complete Unicode Bidirectional Algorithm.
+
+For the baseline implementation, this should be treated as a documented limitation rather than an assumption that UTF-8 decoding alone provides correct display for every writing system.
+
+The normative reference is [Unicode Standard Annex #9 — Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/).
+
+### C.12.7 Rendering Responsibilities
+
+The Renderer should:
+
+1. Read the Document's logical text and cursor state.
+2. Calculate the visible portion of each line.
+3. Translate code-point positions into display-cell positions.
+4. Account for tabs and the selected character-width model.
+5. Handle the limitations of combining marks and wide characters.
+6. Position the terminal cursor using display coordinates.
+7. Avoid modifying the Document or Cursor state while rendering.
+
+This separation keeps Unicode display behavior out of the Document model and makes the Renderer easier to test.
+
+---
+
+## C.13 UTF-8 and Line Endings
+
+Line endings are a separate concern from UTF-8 encoding.
+
+Common text-file conventions include:
+
+| Convention | Bytes   |
+| ---------- | ------- |
+| LF         | `0A`    |
+| CRLF       | `0D 0A` |
+| CR         | `0D`    |
+
+The first two are the primary input formats supported by the baseline editor.
+
+CR and LF are ASCII control characters, and their byte values remain unchanged in UTF-8.
+
+### C.13.1 Loading
+
+When loading a file, the File Manager should:
+
+1. Read the file bytes.
+2. Validate UTF-8 according to the editor's input policy.
+3. Recognize supported line-ending conventions.
+4. Convert the file into the internal Document representation.
+5. Store logical lines without line-ending bytes.
+
+The implementation must avoid interpreting the CR in a CRLF pair as ordinary content when it is part of the line-ending convention.
+
+### C.13.2 Saving
+
+When saving:
+
+1. Serialize the Document's logical lines as UTF-8.
+2. Insert canonical LF line endings between logical lines.
+3. Write the resulting bytes through the established file-saving procedure.
+4. Update the Dirty Flag only after the save has succeeded according to the editor's save contract.
+
+The File Manager should not change the code-point sequence simply because the file is being saved.
+
+### C.13.3 Empty Lines and Final Newlines
+
+An empty logical line is not the same thing as an absent line. Similarly, a file ending with LF can represent a document whose serialized form ends with a line separator.
+
+The Document model and File Manager must define how empty files, empty lines, and final line endings are represented and serialized.
+
+UTF-8 encoding does not determine these semantics. They belong to the document and file-format design.
+
+---
+
+## C.14 UTF-8 and File Safety
+
+UTF-8 validation should be integrated into the File Manager without compromising the editor's file-safety guarantees.
+
+### C.14.1 Loading Errors
+
+A malformed UTF-8 sequence should produce a clear and controlled error or follow the explicitly documented recovery policy.
+
+The editor should not partially replace the active Document with a corrupted or incomplete representation because loading failed midway.
+
+If the editor later supports multiple documents, the same principle should apply to document switching: a failed load must not destroy unrelated valid state.
+
+### C.14.2 Saving Errors
+
+The save procedure must distinguish encoding errors from file-system errors.
+
+Examples include:
+
+- Invalid internal scalar value.
+- Failure while allocating an output buffer.
+- Failure while writing the encoded bytes.
+- Failure while closing or replacing the destination file.
+
+A failed save must not clear the Dirty Flag merely because serialization began.
+
+The editor's safe-save procedure should remain responsible for temporary-file handling, atomic replacement where supported, and error reporting.
+
+### C.14.3 Preserve Text, Not Assumed Byte Layout
+
+If the editor loads valid UTF-8 and stores decoded code points, it may reconstruct the same UTF-8 byte sequence when it saves without text transformation, provided the encoding and code-point sequence are preserved.
+
+However, byte-for-byte identity is not guaranteed if the editor normalizes line endings, removes a leading BOM, normalizes Unicode, or otherwise transforms the document.
+
+These are separate policies and should be documented explicitly.
+
+---
+
+## C.15 Testing UTF-8 Support
+
+Unicode handling requires tests for both valid and invalid data. Testing only ASCII text is insufficient because ASCII exercises only the one-byte encoding path.
+
+### C.15.1 Valid Encoding Tests
+
+The following cases should be tested:
+
+| Test input | Expected code point | Expected UTF-8 bytes |
+| ---------- | ------------------- | -------------------- |
+| `A`        | U+0041              | `41`                 |
+| `é`        | U+00E9              | `C3 A9`              |
+| `€`        | U+20AC              | `E2 82 AC`           |
+| `中`       | U+4E2D              | `E4 B8 AD`           |
+| `😀`       | U+1F600             | `F0 9F 98 80`        |
+
+For each valid test case, verify that decoding returns the expected scalar value and consumes exactly the expected number of bytes.
+
+### C.15.2 Invalid Encoding Tests
+
+At minimum, test:
+
+- A standalone continuation byte.
+- An invalid lead byte such as `C0`.
+- A truncated two-byte sequence.
+- A truncated three-byte sequence.
+- A truncated four-byte sequence.
+- An overlong encoding.
+- A sequence that encodes a surrogate.
+- A sequence that exceeds U+10FFFF.
+- A continuation byte in an incorrect position.
+
+The decoder must not read beyond the supplied input length or accept malformed sequences.
+
+### C.15.3 Document Editing Tests
+
+Test insertion, cursor movement, and deletion across code points that use different numbers of bytes.
+
+For example:
+
+```text
+Aé😀B
+```
+
+Verify that:
+
+- The Cursor Engine advances by one logical code point for each code point.
+- Insertion occurs at a valid code-point boundary.
+- Deletion removes the intended code point.
+- UTF-8 serialization produces valid output.
+- The Document remains valid after each operation.
+
+### C.15.4 Rendering Tests
+
+Include text containing:
+
+- ASCII.
+- Two-byte UTF-8 characters.
+- Three-byte UTF-8 characters.
+- Four-byte UTF-8 characters.
+- Combining marks.
+- Wide characters.
+- Tabs adjacent to wide characters.
+- Text close to the right edge of the terminal.
+
+Verify that the Viewport and Renderer do not confuse code-point indices with display columns.
+
+Because terminal width behavior varies, rendering tests should state the environment and expected width assumptions rather than treating every terminal emulator as identical.
+
+### C.15.5 File-Handling Tests
+
+Test:
+
+- An empty file.
+- An ASCII-only file.
+- A valid UTF-8 file containing multi-byte characters.
+- LF line endings.
+- CRLF line endings.
+- A file with a final LF.
+- A file without a final LF.
+- A file with a leading UTF-8 BOM, according to the documented BOM policy.
+- A file containing malformed UTF-8.
+- Save failure after successful loading.
+
+The test suite should confirm that failed loads and failed saves preserve the editor's documented state invariants.
+
+---
+
+## C.16 Common UTF-8 Bugs
+
+| Symptom                                        | Likely cause                                            | Corrective action                                                             |
+| ---------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Non-ASCII characters appear corrupted          | Incorrect decoding or invalid input handling            | Validate byte sequences and decode according to UTF-8                         |
+| Cursor jumps by several positions              | Byte offsets used as logical positions                  | Convert between byte offsets and code-point indices                           |
+| Deleting one character corrupts following text | Only part of a multi-byte sequence was removed          | Delete at validated encoding boundaries                                       |
+| Cursor columns drift                           | Code-point count used as terminal width                 | Calculate display-cell positions separately                                   |
+| Combining marks appear detached                | Base character and combining mark handled independently | Document the limitation or implement grapheme-aware operations                |
+| Wide characters overwrite adjacent text        | Renderer assumes every code point occupies one cell     | Use an appropriate width model and boundary checks                            |
+| Emoji alignment differs between terminals      | Width and sequence-rendering behavior varies            | Document terminal limitations and test target environments                    |
+| Files change unexpectedly after saving         | Line endings, BOM, or normalization policy is unclear   | Define and test serialization behavior                                        |
+| Decoder reads beyond the buffer                | Sequence length was not checked                         | Validate available length before accessing continuation bytes                 |
+| Invalid input is accepted                      | Only lead-byte patterns were checked                    | Validate continuation bytes, shortest form, scalar range, and sequence length |
+
+---
+
+## C.17 Unicode References and Further Reading
+
+The following links point to official Unicode Consortium resources or standards organizations. Use the version-independent links to access the latest documents. When documenting conformance or reproducing a test result, cite a specific version so that the rules and data used are unambiguous.
+
+### C.17.1 Core Unicode Standards
+
+1. **[The Unicode Standard — Latest Version](https://www.unicode.org/versions/latest/)**  
+   The core specification for Unicode characters, encoding forms, conformance, and text processing. This is the primary reference for Unicode concepts and terminology.
+
+2. **[Unicode Standard — About the Standard](https://www.unicode.org/standard/standard.html)**  
+   Explains the components of the Unicode Standard, including the core specification, code charts, Unicode Standard Annexes, and Unicode Character Database.
+
+3. **[Unicode Releases and Version History](https://www.unicode.org/releases/)**  
+   Provides release information and links to current and earlier Unicode specifications and data.
+
+4. **[Unicode Code Charts](https://www.unicode.org/charts/)**  
+   Visual character charts organized by Unicode blocks. Useful for looking up code points and examining the characters assigned to a range.
+
+5. **[Unicode Character Database (UCD)](https://www.unicode.org/reports/tr44/)**  
+   Unicode Standard Annex #44 documents the character database and its properties. The data is important for character classification, width-related properties, segmentation, and other Unicode algorithms.
+
+6. **[Unicode Online Data Files](https://www.unicode.org/Public/)**  
+   The official repository of downloadable Unicode data files and versioned resources.
+
+### C.17.2 UTF-8 and Encoding
+
+7. **[RFC 3629 — UTF-8, a Transformation Format of ISO 10646](https://www.rfc-editor.org/rfc/rfc3629.html)**  
+   The IETF specification defining UTF-8. This is a key technical reference for valid UTF-8 byte sequences, encoding constraints, and compatibility with ASCII.
+
+8. **[Unicode FAQ — UTF-8, UTF-16, UTF-32 & BOM](https://www.unicode.org/faq/utf_bom.html)**  
+   Practical explanations of Unicode transformation formats, byte-order marks, and common encoding questions.
+
+9. **[Unicode Standard Annex #15 — Unicode Normalization Forms](https://www.unicode.org/reports/tr15/)**  
+   Defines NFC, NFD, NFKC, and NFKD and explains canonical and compatibility equivalence.
+
+### C.17.3 Text Segmentation and Rendering
+
+10. **[Unicode Standard Annex #29 — Unicode Text Segmentation](https://www.unicode.org/reports/tr29/)**  
+    Defines default grapheme-cluster, word, and sentence boundaries. Essential reading for implementing user-perceived character movement and deletion.
+
+11. **[Unicode Standard Annex #11 — East Asian Width](https://www.unicode.org/reports/tr11/)**  
+    Defines the East Asian Width property and discusses character-width considerations.
+
+12. **[Unicode Standard Annex #9 — Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/)**  
+    Specifies the handling of mixed left-to-right and right-to-left text.
+
+13. **[Unicode Standard Annex #14 — Unicode Line Breaking Algorithm](https://www.unicode.org/reports/tr14/)**  
+    Defines line-break opportunities for Unicode text. Relevant to future soft-wrapping or line-layout features.
+
+14. **[Unicode Technical Standard #51 — Unicode Emoji](https://www.unicode.org/reports/tr51/)**  
+    Describes emoji characters, sequences, variation selectors, modifiers, and related data. Useful for understanding why emoji rendering cannot always be determined from individual code points.
+
+### C.17.4 Additional Unicode Standards
+
+15. **[Unicode Standard Annex #41 — Common References for Unicode Standard Annexes](https://www.unicode.org/reports/tr41/)**  
+    A shared reference source for Unicode Standard Annexes and related documents.
+
+16. **[Unicode Technical Standard #10 — Unicode Collation Algorithm](https://www.unicode.org/reports/tr10/)**  
+    Defines Unicode-aware text collation. Relevant if the editor later introduces locale-sensitive sorting or comparison features.
+
+17. **[Unicode Technical Standard #39 — Unicode Security Mechanisms](https://www.unicode.org/reports/tr39/)**  
+    Covers Unicode security considerations, including visually confusable characters and identifier-related concerns. Useful for understanding text-security issues in development tools.
+
+18. **[Unicode Technical Standard #35 — Unicode Locale Data Markup Language (LDML)](https://www.unicode.org/reports/tr35/)**  
+    Documents locale data and internationalization behavior, including locale-sensitive formatting and character-related information.
+
+### C.17.5 Recommended Reading Order
+
+For a developer implementing the editor, the following order is practical:
+
+1. Read [RFC 3629](https://www.rfc-editor.org/rfc/rfc3629.html) for UTF-8 encoding and validation.
+2. Consult the [Unicode Standard](https://www.unicode.org/versions/latest/) for authoritative terminology.
+3. Read [UAX #15](https://www.unicode.org/reports/tr15/) before implementing normalization.
+4. Read [UAX #29](https://www.unicode.org/reports/tr29/) before implementing grapheme-aware cursor movement or deletion.
+5. Read [UAX #11](https://www.unicode.org/reports/tr11/) and the documentation for the target terminal environment when investigating display-width problems.
+6. Consult [UTS #51](https://www.unicode.org/reports/tr51/) when addressing emoji sequences.
+7. Consult [UAX #9](https://www.unicode.org/reports/tr9/) before claiming correct bidirectional text rendering.
+
+The baseline editor does not need to implement every Unicode algorithm. The purpose of these references is to make future decisions informed, explicit, and testable.
+
+---
+
+## C.18 Summary
+
+UTF-8 provides a compact, variable-length representation of Unicode scalar values. Its compatibility with ASCII makes it suitable for modern text files and terminal applications, but correct implementation requires more than reading bytes into a string.
+
+The editor must distinguish four separate concepts:
+
+```text
+UTF-8 bytes
+    |
+    v
+Unicode code points
+    |
+    v
+Grapheme clusters
+    |
+    v
+Terminal display cells
+```
+
+Each layer solves a different problem. UTF-8 defines the byte representation. Unicode defines code points and their properties. Text-segmentation rules define boundaries for user-perceived characters. The terminal Renderer must then determine how the resulting text occupies display cells.
+
+The baseline editor uses code-point-based logical positions, validates UTF-8, normalizes supported line endings, and calculates display positions separately. This provides a coherent foundation while leaving full grapheme-cluster editing, complete emoji handling, normalization, and comprehensive bidirectional rendering as explicitly scoped extensions.
+
+The central engineering rule is simple: **never assume that a byte, a code point, a user-perceived character, and a terminal column are interchangeable.**

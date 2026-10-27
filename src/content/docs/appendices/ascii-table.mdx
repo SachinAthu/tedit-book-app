@@ -1,0 +1,726 @@
+---
+title: Appendix B — ASCII Table
+sidebar:
+  label: B — ASCII Table
+  order: 2
+---
+
+## B.1 Purpose and Scope
+
+The American Standard Code for Information Interchange (ASCII) is a character encoding standard that assigns numeric values to a defined set of characters. It includes control characters, punctuation, digits, uppercase and lowercase letters, and other symbols.
+
+Although modern text editors commonly process UTF-8, ASCII remains important for terminal programming because the first 128 Unicode code points have the same numeric values as ASCII. UTF-8 preserves this compatibility by encoding those code points as single bytes.
+
+This appendix provides a practical ASCII reference for the terminal text editor developed in this book. It covers:
+
+- The structure of the ASCII character set.
+- Control characters and their numeric values.
+- Printable ASCII characters.
+- Decimal, hexadecimal, and binary representations.
+- Characters relevant to terminal input and control sequences.
+- The distinction between ASCII bytes, keyboard events, and terminal escape sequences.
+
+The tables are intended for implementation, debugging, and reference. They do not replace the discussion of character encoding in the chapter on UTF-8.
+
+---
+
+## B.2 ASCII Character Set Overview
+
+ASCII defines 128 character values, numbered from decimal `0` through `127`.
+
+| Range  | Hexadecimal range | Category             | Description                                      |
+| ------ | ----------------- | -------------------- | ------------------------------------------------ |
+| 0–31   | `0x00–0x1F`       | Control characters   | Non-printing control codes                       |
+| 32–126 | `0x20–0x7E`       | Printable characters | Space, punctuation, digits, letters, and symbols |
+| 127    | `0x7F`            | Control character    | Delete (DEL)                                     |
+
+The corresponding binary range is `00000000` through `01111111`. ASCII uses seven bits of information, although its values are commonly stored in eight-bit bytes.
+
+### B.2.1 Important Properties
+
+1. ASCII contains 128 defined values.
+2. The first printable character is SPACE (`0x20`).
+3. The last printable character is TILDE (`0x7E`).
+4. The values `0x00` through `0x1F` are control characters.
+5. The value `0x7F` represents DEL, another control character.
+6. ASCII values are identical to the byte values used for the corresponding characters in UTF-8.
+
+The word _printable_ describes the conventional ASCII classification. It does not guarantee that a character will always be displayed visibly in every terminal or application context.
+
+---
+
+## B.3 ASCII Control Characters
+
+ASCII control characters were originally designed to control communication equipment, data streams, and text-handling devices. Many remain relevant to terminal applications.
+
+The following table lists all 33 ASCII control characters.
+
+| Decimal |    Hex | Abbreviation | Name                      |
+| ------: | -----: | ------------ | ------------------------- |
+|       0 | `0x00` | NUL          | Null                      |
+|       1 | `0x01` | SOH          | Start of Heading          |
+|       2 | `0x02` | STX          | Start of Text             |
+|       3 | `0x03` | ETX          | End of Text               |
+|       4 | `0x04` | EOT          | End of Transmission       |
+|       5 | `0x05` | ENQ          | Enquiry                   |
+|       6 | `0x06` | ACK          | Acknowledge               |
+|       7 | `0x07` | BEL          | Bell                      |
+|       8 | `0x08` | BS           | Backspace                 |
+|       9 | `0x09` | HT           | Horizontal Tab            |
+|      10 | `0x0A` | LF           | Line Feed                 |
+|      11 | `0x0B` | VT           | Vertical Tab              |
+|      12 | `0x0C` | FF           | Form Feed                 |
+|      13 | `0x0D` | CR           | Carriage Return           |
+|      14 | `0x0E` | SO           | Shift Out                 |
+|      15 | `0x0F` | SI           | Shift In                  |
+|      16 | `0x10` | DLE          | Data Link Escape          |
+|      17 | `0x11` | DC1          | Device Control 1          |
+|      18 | `0x12` | DC2          | Device Control 2          |
+|      19 | `0x13` | DC3          | Device Control 3          |
+|      20 | `0x14` | DC4          | Device Control 4          |
+|      21 | `0x15` | NAK          | Negative Acknowledge      |
+|      22 | `0x16` | SYN          | Synchronous Idle          |
+|      23 | `0x17` | ETB          | End of Transmission Block |
+|      24 | `0x18` | CAN          | Cancel                    |
+|      25 | `0x19` | EM           | End of Medium             |
+|      26 | `0x1A` | SUB          | Substitute                |
+|      27 | `0x1B` | ESC          | Escape                    |
+|      28 | `0x1C` | FS           | File Separator            |
+|      29 | `0x1D` | GS           | Group Separator           |
+|      30 | `0x1E` | RS           | Record Separator          |
+|      31 | `0x1F` | US           | Unit Separator            |
+|     127 | `0x7F` | DEL          | Delete                    |
+
+Not every control character has a practical role in the editor. The following characters are particularly important for terminal input, text processing, and debugging.
+
+### B.3.1 NUL — Null
+
+- Decimal: `0`
+- Hexadecimal: `0x00`
+- C character constant: `'\0'`
+
+NUL is the zero-valued byte. In C, it terminates a conventional null-terminated string.
+
+```c
+const char *message = "hello";
+```
+
+The in-memory representation includes a terminating NUL byte after the characters `hello`.
+
+However, an editor's document content is not necessarily a null-terminated string. If the editor stores explicit lengths for text, it can represent embedded zero bytes in its internal data structures, although the supported file format and editing policy determine whether those bytes are accepted as document content.
+
+**Important:** Do not use `strlen()` to determine the length of arbitrary data that may contain embedded NUL bytes.
+
+### B.3.2 BEL — Bell
+
+- Decimal: `7`
+- Hexadecimal: `0x07`
+- C escape: `'\a'`
+
+BEL historically requested an audible signal. A terminal emulator may produce a sound, a visual notification, or no visible effect.
+
+A terminal application can use BEL as a notification, but should not assume that the user will hear it.
+
+### B.3.3 BS — Backspace
+
+- Decimal: `8`
+- Hexadecimal: `0x08`
+- C escape: `'\b'`
+
+BS historically moves the active position backward by one position. Its meaning in terminal input depends on the terminal configuration and the application.
+
+Do not assume that pressing the physical Backspace key always produces `0x08`. Many terminal configurations send `0x7F` instead.
+
+The Input Parser should recognize the input representation or representations supported by the editor's input model.
+
+### B.3.4 HT — Horizontal Tab
+
+- Decimal: `9`
+- Hexadecimal: `0x09`
+- C escape: `'\t'`
+
+HT represents a horizontal tab.
+
+When displayed, a tab commonly advances to a tab stop rather than occupying a single display cell. Its width therefore depends on the current display column and tab-stop configuration.
+
+The editor must distinguish between the tab character stored in a document and the number of terminal cells used to display it.
+
+For example, with tab stops every four columns, a tab at display column zero may advance four cells, while a tab at column three may advance only one cell.
+
+The editor may choose to expand tabs into spaces as an editing policy, but that is a separate decision from the ASCII definition of HT.
+
+### B.3.5 LF — Line Feed
+
+- Decimal: `10`
+- Hexadecimal: `0x0A`
+- C escape: `'\n'`
+
+LF is commonly used as the line-ending byte in Unix and Linux text files.
+
+In this editor, logical document lines are represented internally without their line-ending bytes. The File Manager recognizes supported input line endings and the save process serializes the document using canonical LF line endings.
+
+A line feed is not universally identical to carriage return. Their terminal behavior depends on the output processing and terminal conventions in effect.
+
+### B.3.6 CR — Carriage Return
+
+- Decimal: `13`
+- Hexadecimal: `0x0D`
+- C escape: `'\r'`
+
+CR conventionally moves the active position to the beginning of the current line.
+
+Windows text files commonly use CRLF (`0x0D 0x0A`) as their line-ending representation. Unix and Linux text files commonly use LF alone.
+
+The editor should recognize CRLF and LF during file loading, according to its documented text-file policy, and avoid accidentally treating the CR byte in a CRLF pair as ordinary document content.
+
+### B.3.7 ESC — Escape
+
+- Decimal: `27`
+- Hexadecimal: `0x1B`
+- C hexadecimal escape: `"\x1B"`
+- C octal escape: `"\033"`
+
+ESC is the introducer for many terminal control sequences.
+
+For example:
+
+```text
+ESC [ A
+```
+
+is a common representation of the Up arrow key.
+
+Likewise:
+
+```text
+ESC [ 2 J
+```
+
+is a common sequence for clearing the visible display.
+
+The same ESC byte can represent a standalone Escape key or the beginning of a longer input sequence. The Input Parser must account for this ambiguity.
+
+For output, use explicit representations such as `"\x1B"` or `"\033"` rather than relying on an invisible literal control character embedded in source code.
+
+### B.3.8 DEL — Delete
+
+- Decimal: `127`
+- Hexadecimal: `0x7F`
+
+DEL is an ASCII control character historically associated with deletion.
+
+It is not the same thing as the physical Delete key on a modern keyboard.
+
+The physical Delete key commonly sends a multi-byte terminal escape sequence, such as:
+
+```text
+ESC [ 3 ~
+```
+
+The Backspace key may send `0x08` or `0x7F`, depending on terminal configuration.
+
+Therefore, the Input Parser must distinguish a single DEL byte from a recognized terminal sequence representing the physical Delete key.
+
+---
+
+## B.4 Printable ASCII Characters
+
+Printable ASCII contains 95 values, from decimal `32` through decimal `126`.
+
+The following table gives the characters in decimal order.
+
+| Decimal |    Hex | Character | Description          |
+| ------: | -----: | :-------: | -------------------- |
+|      32 | `0x20` |   SPACE   | Space                |
+|      33 | `0x21` |    `!`    | Exclamation mark     |
+|      34 | `0x22` |    `"`    | Quotation mark       |
+|      35 | `0x23` |    `#`    | Number sign          |
+|      36 | `0x24` |    `$`    | Dollar sign          |
+|      37 | `0x25` |    `%`    | Percent sign         |
+|      38 | `0x26` |    `&`    | Ampersand            |
+|      39 | `0x27` |    `'`    | Apostrophe           |
+|      40 | `0x28` |    `(`    | Left parenthesis     |
+|      41 | `0x29` |    `)`    | Right parenthesis    |
+|      42 | `0x2A` |    `*`    | Asterisk             |
+|      43 | `0x2B` |    `+`    | Plus sign            |
+|      44 | `0x2C` |    `,`    | Comma                |
+|      45 | `0x2D` |    `-`    | Hyphen-minus         |
+|      46 | `0x2E` |    `.`    | Full stop            |
+|      47 | `0x2F` |    `/`    | Solidus              |
+|      48 | `0x30` |    `0`    | Digit zero           |
+|      49 | `0x31` |    `1`    | Digit one            |
+|      50 | `0x32` |    `2`    | Digit two            |
+|      51 | `0x33` |    `3`    | Digit three          |
+|      52 | `0x34` |    `4`    | Digit four           |
+|      53 | `0x35` |    `5`    | Digit five           |
+|      54 | `0x36` |    `6`    | Digit six            |
+|      55 | `0x37` |    `7`    | Digit seven          |
+|      56 | `0x38` |    `8`    | Digit eight          |
+|      57 | `0x39` |    `9`    | Digit nine           |
+|      58 | `0x3A` |    `:`    | Colon                |
+|      59 | `0x3B` |    `;`    | Semicolon            |
+|      60 | `0x3C` |    `<`    | Less-than sign       |
+|      61 | `0x3D` |    `=`    | Equals sign          |
+|      62 | `0x3E` |    `>`    | Greater-than sign    |
+|      63 | `0x3F` |    `?`    | Question mark        |
+|      64 | `0x40` |    `@`    | At sign              |
+|      65 | `0x41` |    `A`    | Uppercase A          |
+|      66 | `0x42` |    `B`    | Uppercase B          |
+|      67 | `0x43` |    `C`    | Uppercase C          |
+|      68 | `0x44` |    `D`    | Uppercase D          |
+|      69 | `0x45` |    `E`    | Uppercase E          |
+|      70 | `0x46` |    `F`    | Uppercase F          |
+|      71 | `0x47` |    `G`    | Uppercase G          |
+|      72 | `0x48` |    `H`    | Uppercase H          |
+|      73 | `0x49` |    `I`    | Uppercase I          |
+|      74 | `0x4A` |    `J`    | Uppercase J          |
+|      75 | `0x4B` |    `K`    | Uppercase K          |
+|      76 | `0x4C` |    `L`    | Uppercase L          |
+|      77 | `0x4D` |    `M`    | Uppercase M          |
+|      78 | `0x4E` |    `N`    | Uppercase N          |
+|      79 | `0x4F` |    `O`    | Uppercase O          |
+|      80 | `0x50` |    `P`    | Uppercase P          |
+|      81 | `0x51` |    `Q`    | Uppercase Q          |
+|      82 | `0x52` |    `R`    | Uppercase R          |
+|      83 | `0x53` |    `S`    | Uppercase S          |
+|      84 | `0x54` |    `T`    | Uppercase T          |
+|      85 | `0x55` |    `U`    | Uppercase U          |
+|      86 | `0x56` |    `V`    | Uppercase V          |
+|      87 | `0x57` |    `W`    | Uppercase W          |
+|      88 | `0x58` |    `X`    | Uppercase X          |
+|      89 | `0x59` |    `Y`    | Uppercase Y          |
+|      90 | `0x5A` |    `Z`    | Uppercase Z          |
+|      91 | `0x5B` |    `[`    | Left square bracket  |
+|      92 | `0x5C` |    `\`    | Reverse solidus      |
+|      93 | `0x5D` |    `]`    | Right square bracket |
+|      94 | `0x5E` |    `^`    | Circumflex           |
+|      95 | `0x5F` |    `_`    | Low line             |
+|      96 | `0x60` |  `` ` ``  | Grave accent         |
+|      97 | `0x61` |    `a`    | Lowercase a          |
+|      98 | `0x62` |    `b`    | Lowercase b          |
+|      99 | `0x63` |    `c`    | Lowercase c          |
+|     100 | `0x64` |    `d`    | Lowercase d          |
+|     101 | `0x65` |    `e`    | Lowercase e          |
+|     102 | `0x66` |    `f`    | Lowercase f          |
+|     103 | `0x67` |    `g`    | Lowercase g          |
+|     104 | `0x68` |    `h`    | Lowercase h          |
+|     105 | `0x69` |    `i`    | Lowercase i          |
+|     106 | `0x6A` |    `j`    | Lowercase j          |
+|     107 | `0x6B` |    `k`    | Lowercase k          |
+|     108 | `0x6C` |    `l`    | Lowercase l          |
+|     109 | `0x6D` |    `m`    | Lowercase m          |
+|     110 | `0x6E` |    `n`    | Lowercase n          |
+|     111 | `0x6F` |    `o`    | Lowercase o          |
+|     112 | `0x70` |    `p`    | Lowercase p          |
+|     113 | `0x71` |    `q`    | Lowercase q          |
+|     114 | `0x72` |    `r`    | Lowercase r          |
+|     115 | `0x73` |    `s`    | Lowercase s          |
+|     116 | `0x74` |    `t`    | Lowercase t          |
+|     117 | `0x75` |    `u`    | Lowercase u          |
+|     118 | `0x76` |    `v`    | Lowercase v          |
+|     119 | `0x77` |    `w`    | Lowercase w          |
+|     120 | `0x78` |    `x`    | Lowercase x          |
+|     121 | `0x79` |    `y`    | Lowercase y          |
+|     122 | `0x7A` |    `z`    | Lowercase z          |
+|     123 | `0x7B` |    `{`    | Left curly bracket   |
+|     124 | `0x7C` |   `\|`    | Vertical line        |
+|     125 | `0x7D` |    `}`    | Right curly bracket  |
+|     126 | `0x7E` |    `~`    | Tilde                |
+
+The SPACE character is printable in the ASCII classification, even though it normally appears as an empty cell in the terminal.
+
+---
+
+## B.5 ASCII in Decimal, Hexadecimal, and Binary
+
+Character values are often represented in decimal, hexadecimal, or binary notation.
+
+For example, uppercase `A` has the value:
+
+| Representation | Value      |
+| -------------- | ---------- |
+| Decimal        | `65`       |
+| Hexadecimal    | `0x41`     |
+| Binary         | `01000001` |
+
+All three representations refer to the same numeric value.
+
+### B.5.1 Common Numeric Ranges
+
+| Character group           | Decimal range | Hexadecimal range |
+| ------------------------- | ------------: | ----------------- |
+| Control characters        |          0–31 | `0x00–0x1F`       |
+| Space                     |            32 | `0x20`            |
+| Digits `0`–`9`            |         48–57 | `0x30–0x39`       |
+| Uppercase letters `A`–`Z` |         65–90 | `0x41–0x5A`       |
+| Lowercase letters `a`–`z` |        97–122 | `0x61–0x7A`       |
+| DEL                       |           127 | `0x7F`            |
+
+### B.5.2 Numeric Relationships
+
+ASCII assigns consecutive values to digits and to the uppercase and lowercase English alphabet.
+
+For example:
+
+```c
+'A' == 65
+'B' == 66
+'C' == 67
+```
+
+Likewise:
+
+```c
+'a' == 97
+'b' == 98
+'c' == 99
+```
+
+The difference between the uppercase and lowercase values of the corresponding English letters is 32:
+
+```text
+'a' - 'A' = 32
+```
+
+This is an ASCII encoding property, not a general Unicode case-conversion rule. It must not be used as a substitute for Unicode-aware case conversion when processing non-ASCII text.
+
+### B.5.3 Hexadecimal Notation in C
+
+Hexadecimal constants are commonly written with the `0x` prefix:
+
+```c
+unsigned char escape = 0x1B;
+unsigned char line_feed = 0x0A;
+unsigned char delete_byte = 0x7F;
+```
+
+Hexadecimal notation is particularly useful when inspecting raw terminal input because escape sequences and control characters are easier to identify numerically than as invisible characters.
+
+For example, an arrow-key sequence might be logged as:
+
+```text
+1B 5B 41
+```
+
+This corresponds to:
+
+```text
+ESC [ A
+```
+
+A diagnostic log should use an explicit representation for control bytes rather than printing arbitrary input bytes directly to the terminal. Untrusted or unexpected control bytes may change terminal state or make log output difficult to interpret.
+
+---
+
+## B.6 ASCII and Keyboard Input
+
+ASCII describes character codes; it does not define a complete mapping from physical keyboard keys to input bytes.
+
+A terminal receives keyboard activity and produces input according to its configuration and supported protocols. Some keys produce ordinary bytes, while others produce control characters or multi-byte escape sequences.
+
+### B.6.1 Ordinary Printable Input
+
+When a user types an ordinary ASCII character such as `a`, a common terminal input representation is the single byte:
+
+```text
+0x61
+```
+
+The Input Handler receives the byte. The Input Parser and subsequent input-processing components determine whether it represents text input or another event under the editor's input policy.
+
+For ASCII characters, one byte is sufficient to encode the character. This is not true for every Unicode character.
+
+### B.6.2 Control-Key Combinations
+
+Control-key combinations commonly produce control-byte values.
+
+For example:
+
+| Key combination | Common byte | Hex    |
+| --------------- | ----------- | ------ |
+| Ctrl-A          | SOH         | `0x01` |
+| Ctrl-C          | ETX         | `0x03` |
+| Ctrl-D          | EOT         | `0x04` |
+| Ctrl-G          | BEL         | `0x07` |
+| Ctrl-H          | BS          | `0x08` |
+| Ctrl-I          | HT          | `0x09` |
+| Ctrl-J          | LF          | `0x0A` |
+| Ctrl-M          | CR          | `0x0D` |
+| Ctrl-[          | ESC         | `0x1B` |
+
+These are common mappings, not a complete keyboard protocol.
+
+The physical key combination does not always arrive at the application as an ordinary byte. For example, terminal signal processing may cause Ctrl-C to generate a signal rather than being delivered to the Input Handler as `0x03`.
+
+The editor must interpret input in the context of its configured terminal attributes and input-processing design.
+
+### B.6.3 Backspace and Delete Are Different Concepts
+
+Three concepts must be kept separate:
+
+1. **ASCII DEL:** the control byte `0x7F`.
+2. **Backspace key:** a physical key commonly configured to send `0x08` or `0x7F`.
+3. **Delete key:** a physical key commonly represented by a terminal escape sequence such as `ESC[3~`.
+
+A robust Input Parser should not assume that all three are equivalent.
+
+The Command Engine should receive abstract events such as `KEY_BACKSPACE` and `KEY_DELETE`, allowing editing operations to remain independent of terminal-specific byte representations.
+
+### B.6.4 Enter and Line Endings
+
+The Enter key is commonly represented through CR, LF, or a terminal-specific translation.
+
+These concepts must remain distinct:
+
+- A physical Enter key.
+- A byte received from the terminal.
+- A key event produced by the Input Parser.
+- A command that splits the current logical document line.
+- A line-ending representation used in a file.
+
+The Input Parser converts supported terminal input into an abstract event. The Command Engine interprets that event as an editing operation. The File Manager separately handles file line-ending conventions.
+
+This separation prevents terminal input conventions from dictating the internal document representation.
+
+---
+
+## B.7 ASCII and Terminal Escape Sequences
+
+Terminal escape sequences are constructed from control bytes and ordinary ASCII characters.
+
+For example:
+
+```text
+ESC [ 2 J
+```
+
+has the byte values:
+
+| Element | Decimal | Hex    |
+| ------- | ------: | ------ |
+| ESC     |      27 | `0x1B` |
+| `[`     |      91 | `0x5B` |
+| `2`     |      50 | `0x32` |
+| `J`     |      74 | `0x4A` |
+
+The complete sequence is:
+
+```text
+1B 5B 32 4A
+```
+
+The terminal interprets this as an erase-display command.
+
+Similarly, the commonly used Up arrow input sequence:
+
+```text
+ESC [ A
+```
+
+contains:
+
+```text
+1B 5B 41
+```
+
+The first byte introduces the escape sequence. The following bytes determine the operation or key representation.
+
+### B.7.1 Why Byte-Level Understanding Matters
+
+Byte-level knowledge helps when:
+
+- Debugging the Input Parser.
+- Identifying incomplete escape sequences.
+- Distinguishing ordinary text from control input.
+- Inspecting malformed input.
+- Understanding terminal output logs.
+- Diagnosing terminal-state problems.
+
+For the editor, the Input Handler should read bytes without assuming that every byte is printable text. The Input Parser should interpret recognized sequences and convert them into abstract events.
+
+Likewise, the Renderer should construct output deliberately rather than treating terminal control sequences as document content.
+
+### B.7.2 Do Not Confuse ASCII with Unicode
+
+A byte sequence such as:
+
+```text
+41
+```
+
+represents uppercase `A` in ASCII and in UTF-8.
+
+However, not every byte value represents an independent Unicode character in UTF-8. Bytes above `0x7F` may form part of a multi-byte encoding.
+
+Therefore, a parser that handles UTF-8 document text must not interpret each non-ASCII byte as an independent character. The editor's text-encoding rules are covered in Appendix C, _UTF-8 Reference_.
+
+---
+
+## B.8 ASCII and C Programming
+
+C provides character constants and escape sequences that are useful when working with ASCII values.
+
+### B.8.1 Character Constants
+
+Examples include:
+
+```c
+char letter = 'A';
+char digit = '7';
+char newline = '\n';
+char tab = '\t';
+char escape = '\033';
+```
+
+A character constant such as `'A'` is represented using the execution character set of the C implementation. On the ASCII-compatible POSIX platforms targeted by this book, ordinary ASCII characters use the familiar values shown in this appendix.
+
+For byte-oriented terminal processing, it is often clearer to use `unsigned char` when storing arbitrary byte values:
+
+```c
+unsigned char byte = 0x1B;
+```
+
+This avoids the implementation-defined signedness of plain `char` when representing values outside its positive range.
+
+### B.8.2 Escape Sequences in C Strings
+
+C string literals support several escape notations.
+
+| Escape   | Meaning                                     |
+| -------- | ------------------------------------------- |
+| `'\0'`   | Null character                              |
+| `'\a'`   | Alert (BEL)                                 |
+| `'\b'`   | Backspace                                   |
+| `'\t'`   | Horizontal tab                              |
+| `'\n'`   | Newline (LF)                                |
+| `'\v'`   | Vertical tab                                |
+| `'\f'`   | Form feed                                   |
+| `'\r'`   | Carriage return                             |
+| `'\033'` | Escape character using octal notation       |
+| `'\x1B'` | Escape character using hexadecimal notation |
+
+For terminal output, the following is a common representation:
+
+```c
+const char *clear_screen = "\x1B[2J";
+```
+
+Hexadecimal escapes in C consume hexadecimal digits until a non-hexadecimal character is encountered. When a hexadecimal escape is immediately followed by a character that is also a hexadecimal digit, the literal may not have the intended value. Separate adjacent string literals when necessary to make the boundary explicit.
+
+For example:
+
+```c
+const char *sequence = "\x1B" "A";
+```
+
+This creates a string containing ESC followed by `A`.
+
+### B.8.3 Character Classification
+
+C provides character-classification functions such as `isalpha()`, `isdigit()`, and `isspace()` through `<ctype.h>`.
+
+When passing a value to these functions, it must either be `EOF` or representable as `unsigned char`.
+
+A safe pattern is:
+
+```c
+#include <ctype.h>
+
+unsigned char byte = '7';
+
+if (isdigit(byte)) {
+    /* Handle an ASCII digit or another digit recognized by the locale. */
+}
+```
+
+The classification of some characters may depend on the active locale. If the editor needs strictly ASCII-specific behavior, it should define that behavior explicitly rather than assuming every locale-sensitive classification function is equivalent to a fixed ASCII table.
+
+These functions also do not decode UTF-8. Unicode-aware character processing requires decoding and appropriate Unicode handling.
+
+---
+
+## B.9 Common Mistakes
+
+### B.9.1 Assuming Every Key Produces One Byte
+
+Ordinary ASCII input often produces one byte, but arrow keys and other special keys commonly produce multi-byte escape sequences.
+
+**Correction:** Read input as bytes and use the Input Parser to recognize complete key representations.
+
+### B.9.2 Treating DEL as the Physical Delete Key
+
+The ASCII DEL byte is `0x7F`. The physical Delete key commonly produces an escape sequence.
+
+**Correction:** Distinguish the input byte from the abstract key event.
+
+### B.9.3 Treating CR and LF as Identical
+
+CR and LF have different character values and conventional meanings. File formats and terminal settings determine how they are used.
+
+**Correction:** Normalize supported file line endings through the File Manager and preserve the Document model's canonical internal representation.
+
+### B.9.4 Assuming Every Byte Is a Character
+
+A UTF-8 sequence may contain multiple bytes for a single Unicode code point.
+
+**Correction:** Use the UTF-8 decoding rules in Appendix C when processing non-ASCII document text.
+
+### B.9.5 Printing Arbitrary Input Bytes Directly
+
+Control bytes may alter terminal state or make diagnostic output unreadable.
+
+**Correction:** Format diagnostic bytes using hexadecimal or escaped notation.
+
+### B.9.6 Using ASCII Arithmetic for Unicode Case Conversion
+
+The numeric difference between ASCII uppercase and lowercase English letters does not generalize to Unicode.
+
+**Correction:** Restrict such arithmetic to explicitly ASCII-specific processing and use Unicode-aware methods when required.
+
+### B.9.7 Confusing a C String with Arbitrary Byte Data
+
+A null-terminated C string ends at its first NUL byte. Arbitrary byte buffers can contain NUL bytes internally.
+
+**Correction:** Use explicit lengths for buffers that may contain embedded zero bytes.
+
+---
+
+## B.10 Quick Reference for Terminal Editor Development
+
+The following table summarizes the most useful ASCII values when implementing and debugging the editor.
+
+| Purpose                      | Character | Decimal | Hex    |
+| ---------------------------- | --------- | ------: | ------ |
+| Null terminator in C strings | NUL       |       0 | `0x00` |
+| Notification                 | BEL       |       7 | `0x07` |
+| Backspace control character  | BS        |       8 | `0x08` |
+| Horizontal tab               | HT        |       9 | `0x09` |
+| Line feed                    | LF        |      10 | `0x0A` |
+| Carriage return              | CR        |      13 | `0x0D` |
+| Escape-sequence introducer   | ESC       |      27 | `0x1B` |
+| Space                        | SPACE     |      32 | `0x20` |
+| Digit zero                   | `0`       |      48 | `0x30` |
+| Digit nine                   | `9`       |      57 | `0x39` |
+| Uppercase A                  | `A`       |      65 | `0x41` |
+| Uppercase Z                  | `Z`       |      90 | `0x5A` |
+| Lowercase a                  | `a`       |      97 | `0x61` |
+| Lowercase z                  | `z`       |     122 | `0x7A` |
+| Delete control character     | DEL       |     127 | `0x7F` |
+
+---
+
+## B.11 Summary
+
+ASCII provides a compact and predictable mapping between 128 numeric values and a defined set of control and printable characters. It remains essential for terminal programming because terminal control sequences and many common keyboard inputs are constructed from ASCII control bytes and printable characters.
+
+For this editor, the most important principles are:
+
+1. Treat terminal input as a stream of bytes before interpreting it as key events or text.
+2. Recognize that special keys may produce multi-byte escape sequences.
+3. Distinguish control characters such as BS, LF, CR, ESC, and DEL.
+4. Keep terminal input conventions separate from the Document model's logical line representation.
+5. Use explicit lengths when handling arbitrary byte buffers.
+6. Decode UTF-8 correctly when processing non-ASCII document text.
+7. Represent control bytes safely in diagnostics instead of printing arbitrary bytes directly.
+
+ASCII is the starting point for understanding terminal input and control sequences. UTF-8 extends the character-encoding model while preserving the ASCII values for its first 128 code points. The next appendix builds on this foundation and explains UTF-8 byte structure, validation, code points, and the encoding considerations relevant to the editor.

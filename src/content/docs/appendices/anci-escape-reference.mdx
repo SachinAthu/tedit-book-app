@@ -1,0 +1,1193 @@
+---
+title: Appendix A — ANSI Escape Reference
+sidebar:
+  label: A — ANSI Escape Reference
+  order: 1
+---
+
+## A.1 Purpose and Scope
+
+A terminal text editor must control the terminal display without relying on a graphical window system. It must position the cursor, clear outdated content, display text attributes, and manage the visible screen while the user edits a document.
+
+Terminals provide these capabilities through **control sequences**: special byte sequences interpreted by a terminal emulator as instructions rather than ordinary text.
+
+This appendix provides a practical reference to the sequences most relevant to the terminal text editor developed in this book. It covers:
+
+- Escape-sequence structure and notation.
+- Cursor positioning and movement.
+- Screen and line erasure.
+- Text attributes and colors.
+- Cursor visibility.
+- Alternate screen buffers.
+- Terminal input sequences.
+- Terminal modes and compatibility considerations.
+- Safe practices for using sequences in the Renderer and Input Parser.
+
+This is a practical reference, not an exhaustive catalog of every terminal control sequence. The examples primarily target ANSI-compatible terminals implementing commonly used VT-style behavior, as found in Linux terminal emulators.
+
+> **Important distinction:** ANSI escape sequences do not constitute a complete, universally identical terminal interface. Many terminals support common sequences, but some behavior depends on the terminal emulator, its configuration, or the particular control-sequence family being used.
+
+The editor's baseline rendering strategy is a full-screen redraw. The Renderer constructs the visible frame from the Document Area, Status Bar, Message Bar, and cursor position, then sends the output to the terminal. The sequences in this appendix support that process.
+
+---
+
+## A.2 Escape-Sequence Notation
+
+### A.2.1 The Escape Character
+
+An escape sequence begins with a special control character or another sequence introducer recognized by the terminal.
+
+The most important character is **ESC**, whose ASCII value is decimal `27` and hexadecimal `0x1B`.
+
+In C, it can be represented as:
+
+```c
+"\x1B"
+```
+
+The shorter octal representation is also valid:
+
+```c
+"\033"
+```
+
+For example, the following C string sends a cursor-positioning sequence:
+
+```c
+"\x1B[1;1H"
+```
+
+This sequence requests that the terminal move its cursor to row 1, column 1.
+
+The notation used throughout this appendix is:
+
+| Notation | Meaning                                                             |
+| -------- | ------------------------------------------------------------------- |
+| `ESC`    | The Escape control character, `0x1B`                                |
+| `CSI`    | Control Sequence Introducer                                         |
+| `ESC [`  | The seven-bit representation of CSI                                 |
+| `ESC ]`  | An Operating System Command (OSC) introducer                        |
+| `ESC c`  | A terminal reset sequence in commonly used VT-style terminals       |
+| `\x1B`   | C hexadecimal escape notation for ESC                               |
+| `...`    | Content omitted for explanatory purposes; not literal sequence data |
+
+The notation `ESC[2J`, for example, describes the bytes `0x1B`, `0x5B`, `0x32`, `0x4A`.
+
+### A.2.2 Control Sequence Introducer (CSI)
+
+The most frequently used sequence family in this editor begins with CSI.
+
+Its usual seven-bit representation is:
+
+```text
+ESC [
+```
+
+The general structure is:
+
+```text
+ESC [ parameter-bytes intermediate-bytes final-byte
+```
+
+For the sequences covered here, the structure is usually simpler:
+
+```text
+ESC [ parameters final-byte
+```
+
+For example:
+
+```text
+ESC [ 12 ; 5 H
+```
+
+This sequence requests cursor positioning at row 12, column 5.
+
+Its components are:
+
+| Component        | Value   | Purpose                             |
+| ---------------- | ------- | ----------------------------------- |
+| Introducer       | `ESC [` | Begins the CSI sequence             |
+| First parameter  | `12`    | Requested row                       |
+| Separator        | `;`     | Separates parameters                |
+| Second parameter | `5`     | Requested column                    |
+| Final byte       | `H`     | Selects cursor-positioning behavior |
+
+The final byte determines the operation. The parameters provide values for that operation.
+
+A sequence may contain no explicit parameters. When a sequence defines a default value, omitting the parameter usually requests that default.
+
+### A.2.3 CSI and C1 Characters
+
+The traditional seven-bit CSI representation is:
+
+```text
+ESC [
+```
+
+Some environments also recognize an eight-bit CSI control character, `0x9B`.
+
+For this book, use the seven-bit representation in generated terminal output. It is explicit, easy to inspect, and widely supported by terminal emulators.
+
+Do not confuse the seven-bit CSI representation with the UTF-8 encoding of a Unicode character. In UTF-8, byte values `0x80` through `0xBF` are continuation bytes, and a standalone byte `0x9B` is not a valid UTF-8 encoding of the corresponding C1 control character.
+
+### A.2.4 Parameters and Final Bytes
+
+CSI parameters commonly use decimal numbers separated by semicolons.
+
+For example:
+
+```text
+ESC [ 1 ; 31 m
+```
+
+The final byte `m` selects Select Graphic Rendition (SGR), which changes text presentation attributes. The parameters `1` and `31` request bold intensity and a red foreground under the conventional SGR interpretation.
+
+The meaning of a parameter depends on the final byte. The number `31` does not mean the same thing in every CSI sequence.
+
+### A.2.5 Output Sequences and Input Sequences
+
+The same terminal environment handles two distinct data flows:
+
+```text
+Editor
+  |
+  | Output control sequences and text
+  v
+Terminal emulator
+
+Keyboard
+  |
+  | Input bytes and escape sequences
+  v
+Input Handler
+  |
+  v
+Input Parser
+```
+
+The Renderer sends control sequences to the terminal. The Input Handler reads bytes from the terminal, and the Input Parser interprets those bytes as key events.
+
+A cursor-positioning sequence sent by the Renderer is not the same thing as an arrow-key sequence received from the keyboard.
+
+This distinction is fundamental to the editor's architecture.
+
+---
+
+## A.3 Cursor Positioning and Movement
+
+Cursor-control sequences determine where subsequent terminal output appears. They do not directly modify the Document or the logical Cursor position stored in Editor State.
+
+The Renderer translates the editor's visible cursor position into terminal coordinates and emits the appropriate control sequence.
+
+### A.3.1 Absolute Cursor Positioning
+
+The principal cursor-positioning sequence is:
+
+```text
+ESC [ row ; column H
+```
+
+It is also commonly supported in the following form:
+
+```text
+ESC [ row ; column f
+```
+
+Both forms request an absolute cursor position using one-based row and column coordinates.
+
+| Sequence    | Meaning                                            |
+| ----------- | -------------------------------------------------- |
+| `ESC[H`     | Move to the home position, usually row 1, column 1 |
+| `ESC[1;1H`  | Move to row 1, column 1                            |
+| `ESC[5;10H` | Move to row 5, column 10                           |
+| `ESC[12;1H` | Move to row 12, column 1                           |
+| `ESC[5;10f` | Alternative cursor-positioning form                |
+
+A C example:
+
+```c
+printf("\x1B[%d;%dH", row, column);
+```
+
+This example assumes that `row` and `column` already contain valid, one-based terminal coordinates. Production code should also handle output errors rather than assuming that every write succeeds.
+
+### A.3.2 Terminal Coordinates Versus Editor Coordinates
+
+The editor normally represents positions using zero-based indices, whereas the terminal cursor-positioning sequences use one-based coordinates.
+
+The conversion is:
+
+```text
+Terminal row    = zero-based row + 1
+Terminal column = zero-based column + 1
+```
+
+For example, the terminal's first cell is:
+
+```text
+Editor coordinates:   row 0, column 0
+Terminal coordinates: row 1, column 1
+```
+
+This distinction must be applied consistently when converting Viewport-relative positions into terminal positions.
+
+For a document cursor at logical row `cursor_row` and a Viewport with `row_offset`, a simplified visible row conversion is:
+
+```text
+visible_row = cursor_row - row_offset
+terminal_row = visible_row + 1
+```
+
+The final terminal row must also account for the screen layout. If the Document Area begins below a header or another reserved row, its offset must be included.
+
+The terminal column requires similar care. The editor's logical column may count Unicode code points, while the terminal column represents display cells. These values are not always equal.
+
+### A.3.3 Relative Cursor Movement
+
+Relative movement sequences move the terminal cursor from its current location.
+
+| Sequence | Meaning                  |
+| -------- | ------------------------ |
+| `ESC[A`  | Move up one row          |
+| `ESC[B`  | Move down one row        |
+| `ESC[C`  | Move right one column    |
+| `ESC[D`  | Move left one column     |
+| `ESC[5A` | Move up five rows        |
+| `ESC[3B` | Move down three rows     |
+| `ESC[8C` | Move right eight columns |
+| `ESC[4D` | Move left four columns   |
+
+The general forms are:
+
+```text
+ESC [ n A    Move up n rows
+ESC [ n B    Move down n rows
+ESC [ n C    Move right n columns
+ESC [ n D    Move left n columns
+```
+
+When the parameter is omitted or zero, commonly used terminal implementations interpret the movement amount as one.
+
+Relative movement is useful for small terminal applications, but an editor that redraws the complete screen generally benefits from absolute cursor positioning. Absolute positioning makes the intended location explicit and reduces dependence on the terminal's previous cursor state.
+
+### A.3.4 Horizontal and Vertical Positioning
+
+Additional CSI sequences control one coordinate independently.
+
+| Sequence | Meaning                                             |
+| -------- | --------------------------------------------------- |
+| `ESC[5G` | Move to column 5                                    |
+| `ESC[5d` | Move to row 5                                       |
+| `ESC[2E` | Move down two rows and to the beginning of the line |
+| `ESC[2F` | Move up two rows and to the beginning of the line   |
+
+The `G` and `d` forms are useful when only the horizontal or vertical coordinate needs to change. The `E` and `F` forms combine vertical movement with movement to the beginning of a line.
+
+These sequences are not necessary for a basic full-screen redraw Renderer, but they are useful when examining terminal behavior or implementing more selective screen updates.
+
+### A.3.5 Cursor Position Reports
+
+A terminal can report its cursor position in response to a query.
+
+A commonly used request is:
+
+```text
+ESC[6n
+```
+
+A terminal that supports this request may respond with a sequence resembling:
+
+```text
+ESC[12;40R
+```
+
+This response indicates row 12, column 40.
+
+Cursor-position reports are input data, not direct function return values. If the editor sends a query, the response arrives through the same input stream used for keyboard input. The Input Parser must therefore distinguish a terminal response from ordinary key input.
+
+This editor should not depend on cursor-position queries for ordinary rendering when it can calculate the cursor position from Editor State and terminal dimensions.
+
+Terminal queries should be introduced only when the architecture explicitly accounts for their asynchronous responses, parsing, and possible absence.
+
+---
+
+## A.4 Erasing Screen Content
+
+Erasure sequences remove visible terminal content. They do not erase text from the Document in memory.
+
+This distinction matters because the Renderer is responsible for presenting Editor State, not modifying it.
+
+### A.4.1 Erase in Display
+
+The Erase in Display sequence uses the final byte `J`.
+
+| Sequence | Common meaning                                             |
+| -------- | ---------------------------------------------------------- |
+| `ESC[J`  | Erase from the cursor to the end of the display            |
+| `ESC[0J` | Same explicit mode as `ESC[J`                              |
+| `ESC[1J` | Erase from the beginning of the display through the cursor |
+| `ESC[2J` | Erase the entire display                                   |
+| `ESC[3J` | Erase saved lines from scrollback where supported          |
+
+The most frequently used form is:
+
+```text
+ESC[2J
+```
+
+A C string representation is:
+
+```c
+"\x1B[2J"
+```
+
+This clears the visible display according to the terminal's interpretation. It does not necessarily clear scrollback, reset text attributes, or reposition the cursor.
+
+For that reason, applications often combine display erasure with explicit cursor positioning.
+
+### A.4.2 Erase in Line
+
+The Erase in Line sequence uses the final byte `K`.
+
+| Sequence | Common meaning                                          |
+| -------- | ------------------------------------------------------- |
+| `ESC[K`  | Erase from the cursor to the end of the current line    |
+| `ESC[0K` | Same explicit mode as `ESC[K`                           |
+| `ESC[1K` | Erase from the beginning of the line through the cursor |
+| `ESC[2K` | Erase the entire current line                           |
+
+For example:
+
+```c
+write(STDOUT_FILENO, "\x1B[2K", 4);
+```
+
+This requests that the terminal erase the current line. The example assumes that the program has included the appropriate declarations and that the output operation's return value is checked in production code.
+
+Erasing a line before redrawing its contents can prevent characters from an earlier, longer message from remaining visible.
+
+### A.4.3 Full-Screen Redraw
+
+The editor uses a full-screen redraw strategy. A simplified rendering sequence is:
+
+```text
+1. Prepare the frame
+2. Position the cursor
+3. Clear or overwrite outdated display content
+4. Draw the Document Area
+5. Draw the Status Bar
+6. Draw the Message Bar
+7. Position the visible cursor
+8. Send the frame to the terminal
+```
+
+A simple renderer may begin with:
+
+```c
+write(STDOUT_FILENO, "\x1B[2J", 4);
+write(STDOUT_FILENO, "\x1B[H", 3);
+```
+
+These calls illustrate the sequence, not a complete error-safe output implementation. A production Renderer should use the project's output helpers, handle partial writes and interruptions, and avoid silently ignoring failures.
+
+Clearing the screen on every frame is straightforward, but it may cause visible flicker on some terminals. More advanced renderers can reduce unnecessary erasure and output. Those optimizations should preserve the separation between Editor State and rendering.
+
+### A.4.4 Erasure Does Not Reset Everything
+
+Clearing the display is not equivalent to resetting the terminal.
+
+For example:
+
+```text
+ESC[2J
+```
+
+does not necessarily:
+
+- Return the cursor to the home position.
+- Reset foreground or background colors.
+- Restore normal text intensity.
+- Show a hidden cursor.
+- Exit the alternate screen buffer.
+- Restore terminal input settings.
+
+When a renderer needs a known state, it should issue the required operations explicitly instead of assuming that one erasure sequence resets all terminal state.
+
+---
+
+## A.5 Text Attributes and Colors
+
+Select Graphic Rendition (SGR) sequences change the appearance of subsequent terminal output.
+
+They use the final byte `m`:
+
+```text
+ESC [ parameters m
+```
+
+SGR affects presentation, not document content. A terminal emulator may support only a subset of available attributes, and the appearance of colors can depend on its configuration.
+
+### A.5.1 Resetting Attributes
+
+The sequence:
+
+```text
+ESC[0m
+```
+
+requests that graphic rendition attributes be reset to their default state.
+
+It is commonly used after drawing highlighted text:
+
+```text
+ESC[1;31m
+Error
+ESC[0m
+```
+
+The `Error` text is requested in bold intensity and red foreground, after which the Renderer returns to the default rendition.
+
+Resetting attributes at known boundaries reduces the risk that one part of the interface accidentally inherits the styling of another.
+
+### A.5.2 Common SGR Attributes
+
+| Parameter | Meaning                                       |
+| --------: | --------------------------------------------- |
+|       `0` | Reset graphic rendition                       |
+|       `1` | Bold or increased intensity                   |
+|       `2` | Faint or decreased intensity, where supported |
+|       `3` | Italic, where supported                       |
+|       `4` | Underline                                     |
+|       `5` | Slow blink, where supported                   |
+|       `7` | Inverse video                                 |
+|       `8` | Conceal, where supported                      |
+|       `9` | Crossed-out text, where supported             |
+|      `22` | Normal intensity; cancel bold and faint       |
+|      `23` | Cancel italic                                 |
+|      `24` | Cancel underline                              |
+|      `25` | Cancel blink                                  |
+|      `27` | Cancel inverse video                          |
+|      `28` | Cancel conceal                                |
+|      `29` | Cancel crossed-out text                       |
+
+Support for attributes such as italic, faint, blink, conceal, and crossed-out text varies. An application should not rely on every terminal rendering them identically.
+
+### A.5.3 Standard Foreground Colors
+
+The conventional SGR foreground color parameters are:
+
+| Parameter | Color                    |
+| --------: | ------------------------ |
+|      `30` | Black                    |
+|      `31` | Red                      |
+|      `32` | Green                    |
+|      `33` | Yellow                   |
+|      `34` | Blue                     |
+|      `35` | Magenta                  |
+|      `36` | Cyan                     |
+|      `37` | White                    |
+|      `39` | Default foreground color |
+
+For example:
+
+```text
+ESC[31m
+```
+
+requests red foreground text.
+
+### A.5.4 Standard Background Colors
+
+The conventional background color parameters are:
+
+| Parameter | Color                    |
+| --------: | ------------------------ |
+|      `40` | Black                    |
+|      `41` | Red                      |
+|      `42` | Green                    |
+|      `43` | Yellow                   |
+|      `44` | Blue                     |
+|      `45` | Magenta                  |
+|      `46` | Cyan                     |
+|      `47` | White                    |
+|      `49` | Default background color |
+
+For example:
+
+```text
+ESC[44m
+```
+
+requests a blue background.
+
+A Status Bar can use a contrasting background to distinguish it from the Document Area. The Renderer should still reset or explicitly set attributes when moving between interface regions.
+
+### A.5.5 Bright Foreground and Background Colors
+
+Many ANSI-compatible terminals support the following extended conventional color ranges.
+
+| Foreground | Background | Color                                 |
+| ---------: | ---------: | ------------------------------------- |
+|       `90` |      `100` | Bright black, often displayed as gray |
+|       `91` |      `101` | Bright red                            |
+|       `92` |      `102` | Bright green                          |
+|       `93` |      `103` | Bright yellow                         |
+|       `94` |      `104` | Bright blue                           |
+|       `95` |      `105` | Bright magenta                        |
+|       `96` |      `106` | Bright cyan                           |
+|       `97` |      `107` | Bright white                          |
+
+These parameters are widely supported but should not be interpreted as guaranteeing exact RGB colors. The terminal's palette and theme may affect the displayed result.
+
+### A.5.6 Combining Attributes
+
+Multiple SGR parameters can be combined using semicolons.
+
+For example:
+
+```text
+ESC[1;33m
+```
+
+requests bold intensity and a yellow foreground.
+
+A Status Bar could be rendered using:
+
+```c
+write(STDOUT_FILENO, "\x1B[1;37;44m", 10);
+/* Render status text here. */
+write(STDOUT_FILENO, "\x1B[0m", 4);
+```
+
+This is an illustrative fragment. As with all output examples, the actual application should handle errors and use its established rendering and output abstractions.
+
+### A.5.7 Eight-Bit and Twenty-Four-Bit Color
+
+Many terminals support additional color modes.
+
+**256-color foreground:**
+
+```text
+ESC[38;5;n m
+```
+
+**256-color background:**
+
+```text
+ESC[48;5;n m
+```
+
+Here, `n` is a palette index, commonly ranging from `0` to `255`.
+
+For example:
+
+```text
+ESC[38;5;196m
+```
+
+requests foreground palette entry 196.
+
+Some terminals also support direct RGB color requests:
+
+```text
+ESC[38;2;r;g;bm
+ESC[48;2;r;g;bm
+```
+
+For example:
+
+```text
+ESC[38;2;255;80;80m
+```
+
+requests a foreground color with red, green, and blue components of 255, 80, and 80.
+
+These extended forms are useful for richer interfaces, but they are not necessary for the baseline editor. Their support and exact interpretation depend on the terminal environment.
+
+### A.5.8 Styling Rules for the Renderer
+
+The Renderer should follow a few practical rules:
+
+1. Set attributes explicitly when a region requires a known appearance.
+2. Reset or replace attributes at clear boundaries.
+3. Do not assume that clearing the screen resets styling.
+4. Avoid allowing a Status Bar's background color to leak into the Message Bar or Document Area.
+5. Treat colors as presentation choices, not as part of the document's text.
+6. Test the interface with the terminal themes and environments the editor intends to support.
+
+A predictable rendering sequence is easier to debug than one that relies on hidden terminal state.
+
+---
+
+## A.6 Cursor Visibility
+
+A terminal cursor can usually be hidden or shown using private-mode CSI sequences.
+
+| Sequence   | Meaning         |
+| ---------- | --------------- |
+| `ESC[?25l` | Hide the cursor |
+| `ESC[?25h` | Show the cursor |
+
+The final character `l` disables the selected mode, while `h` enables it. The parameter `?25` selects a commonly used private cursor-visibility mode.
+
+In C:
+
+```c
+/* Hide the cursor. */
+write(STDOUT_FILENO, "\x1B[?25l", 6);
+
+/* Show the cursor. */
+write(STDOUT_FILENO, "\x1B[?25h", 6);
+```
+
+The editor may hide the cursor while preparing a frame and show it again when the final cursor position has been established. This can reduce visible cursor movement during some rendering operations, although the exact effect depends on the terminal.
+
+### A.6.1 Cursor Restoration
+
+A hidden cursor can make the terminal appear unresponsive after the editor exits. Therefore, the application should explicitly restore cursor visibility during cleanup.
+
+A useful lifecycle is:
+
+```text
+Initialization
+    |
+    +-- Enter interactive screen mode
+    +-- Hide cursor if required
+    |
+    v
+Event Loop
+    |
+    v
+Exit and Cleanup
+    |
+    +-- Show cursor
+    +-- Restore screen mode
+    +-- Restore terminal settings
+    |
+    v
+Return to shell
+```
+
+The cleanup procedure should account for partial initialization. For example, if initialization fails after the cursor is hidden but before the Event Loop begins, the program must still restore the visible terminal state.
+
+Do not assume that the terminal automatically restores cursor visibility when a process exits.
+
+---
+
+## A.7 The Alternate Screen Buffer
+
+Many terminal emulators support a separate screen buffer intended for full-screen interactive applications.
+
+The commonly used private-mode sequences are:
+
+| Sequence     | Common meaning                    |
+| ------------ | --------------------------------- |
+| `ESC[?1049h` | Enter the alternate screen buffer |
+| `ESC[?1049l` | Leave the alternate screen buffer |
+
+The exact behavior is terminal-dependent, but in common implementations the alternate screen provides a separate display area so that an interactive application can leave the shell's previous screen contents intact.
+
+### A.7.1 Entering the Alternate Screen
+
+A typical initialization sequence is:
+
+```c
+write(STDOUT_FILENO, "\x1B[?1049h", 8);
+```
+
+After entering the alternate screen, the Renderer can draw the editor interface without replacing the shell's ordinary display buffer.
+
+This is particularly useful for full-screen editors because the application continuously redraws the terminal while the user edits a document.
+
+### A.7.2 Leaving the Alternate Screen
+
+During cleanup:
+
+```c
+write(STDOUT_FILENO, "\x1B[?1049l", 8);
+```
+
+This requests a return to the normal screen buffer.
+
+The application should not assume that leaving the alternate screen also restores every other terminal property. Cursor visibility, text attributes, terminal input flags, and other modified state may require separate restoration.
+
+### A.7.3 Safe Lifecycle Management
+
+The alternate screen should be treated as a resource that the application enters and leaves deliberately.
+
+A robust lifecycle is:
+
+```text
+Program Start
+    |
+    v
+Save original terminal settings
+    |
+    v
+Enable required terminal input mode
+    |
+    v
+Enter alternate screen
+    |
+    v
+Run Event Loop and render frames
+    |
+    v
+Exit and Cleanup
+    |
+    +-- Restore cursor visibility
+    +-- Leave alternate screen
+    +-- Restore original terminal settings
+    +-- Release resources
+    |
+    v
+Return to shell
+```
+
+The order of operations may be adjusted to suit the implementation, but cleanup must be designed so that all successfully acquired terminal state is restored.
+
+The implementation should track which initialization steps succeeded. It must not attempt to restore uninitialized state or assume that every setup operation completed successfully.
+
+### A.7.4 Compatibility Note
+
+The `?1049` mode is a widely used terminal convention rather than a universal guarantee of identical behavior. The baseline editor assumes a terminal emulator that supports the required ANSI-compatible sequences, as stated in the project's Software Requirements Specification.
+
+If an environment does not support the alternate screen, the application may behave differently. Such behavior should be documented as a compatibility limitation rather than silently treated as a failure of the Document or Renderer.
+
+---
+
+## A.8 Other Useful Terminal Control Sequences
+
+This section lists additional sequences that may be encountered when developing or diagnosing a terminal application.
+
+### A.8.1 Carriage Return and Line Feed
+
+Carriage Return (CR) and Line Feed (LF) are control characters, not CSI sequences.
+
+| Character | Hexadecimal | Meaning                                                                                |
+| --------- | ----------: | -------------------------------------------------------------------------------------- |
+| CR        |      `0x0D` | Move to the beginning of the current line                                              |
+| LF        |      `0x0A` | Move down one line; exact column behavior depends on terminal settings and conventions |
+
+In a C string:
+
+```c
+"\r"
+"\n"
+"\r\n"
+```
+
+These characters have distinct roles. In particular, a line feed does not universally imply carriage return.
+
+Many applications use CRLF when they need both a new row and a return to the first column. In the editor developed in this book, document line endings are handled by the File Manager and Document model; terminal control characters should not be confused with the internal representation of document lines.
+
+### A.8.2 Bell
+
+The Bell character, BEL, is `0x07`.
+
+```c
+"\a"
+```
+
+It may cause a terminal to produce an audible or visual notification. Modern terminals may suppress the sound or display a visual effect instead.
+
+A text editor can use BEL to notify the user of an invalid command or an important event, but it should not depend on the terminal producing an audible sound.
+
+### A.8.3 Terminal Reset
+
+The sequence:
+
+```text
+ESC c
+```
+
+is commonly recognized by VT-style terminals as a terminal reset request.
+
+It can reset more terminal state than an application intends to modify. It is therefore not a suitable general-purpose cleanup mechanism for an editor.
+
+Prefer restoring the specific terminal modes and display state that the application changed.
+
+### A.8.4 Operating System Command (OSC)
+
+OSC sequences begin with:
+
+```text
+ESC ]
+```
+
+They are used for terminal functions such as setting a window title or interacting with terminal-specific features.
+
+An OSC sequence has a format that depends on the command and terminal implementation. The sequence is commonly terminated by BEL or by the two-character sequence `ESC \`, although supported termination conventions vary.
+
+Because OSC commands often implement terminal-specific behavior, they are outside the baseline rendering requirements of this editor. Do not emit arbitrary OSC data without understanding the target terminal's supported commands and termination rules.
+
+### A.8.5 Device-Status and Capability Queries
+
+Some terminals accept queries that request information about their current state or capabilities. Examples include cursor-position reports and terminal-specific capability protocols.
+
+These operations have an important architectural implication: a query written to the terminal may produce a response on the input stream.
+
+If the Input Parser expects only keyboard input, an unexpected terminal response can be mistaken for user keystrokes. Query-based features therefore require explicit support in the input protocol.
+
+For the baseline editor, prefer known terminal dimensions supplied by the application's terminal-size mechanism and deterministic cursor calculations over unnecessary terminal queries.
+
+---
+
+## A.9 Keyboard Input Sequences
+
+Terminal keyboards do not always send a unique byte for every physical key. Many keys are represented by escape sequences, and the precise bytes can depend on the terminal emulator, keyboard configuration, application mode, or protocol in use.
+
+The Input Handler reads bytes. The Input Parser interprets them and produces abstract key events for the rest of the editor.
+
+### A.9.1 Common Arrow-Key Sequences
+
+A widely used representation of the arrow keys is:
+
+| Key   | Common sequence |
+| ----- | --------------- |
+| Up    | `ESC[A`         |
+| Down  | `ESC[B`         |
+| Right | `ESC[C`         |
+| Left  | `ESC[D`         |
+
+For example, an Up key sequence may arrive as three bytes:
+
+```text
+0x1B 0x5B 0x41
+```
+
+These bytes represent ESC, `[`, and `A`.
+
+Some terminal configurations use a different representation for certain keys. For example, cursor keys may use sequences beginning with `ESC O` rather than `ESC [` in application cursor mode.
+
+The Input Parser must not assume that every terminal sends exactly one representation in all circumstances.
+
+### A.9.2 Home and End
+
+Common Home and End representations include:
+
+| Key               | Common sequence |
+| ----------------- | --------------- |
+| Home              | `ESC[H`         |
+| End               | `ESC[F`         |
+| Home, alternative | `ESC[1~`        |
+| End, alternative  | `ESC[4~`        |
+
+The available representation depends on the terminal and its modes. The parser should support the variants selected for the project's target environments and handle unknown sequences safely.
+
+### A.9.3 Insert, Delete, Page Up, and Page Down
+
+Common representations include:
+
+| Key       | Common sequence |
+| --------- | --------------- |
+| Insert    | `ESC[2~`        |
+| Delete    | `ESC[3~`        |
+| Page Up   | `ESC[5~`        |
+| Page Down | `ESC[6~`        |
+
+These are common conventions, not a guarantee that every keyboard and terminal configuration uses the same sequence.
+
+The parser should convert recognized sequences into abstract key events. The Command Engine should operate on those events rather than directly interpreting terminal bytes.
+
+### A.9.4 Function Keys
+
+Function keys often produce longer escape sequences. Their representation can vary significantly across terminal types and modes.
+
+The baseline editor does not need to recognize every function key. It should implement only the keys required by its documented input model, while handling unsupported sequences without corrupting Editor State.
+
+A parser should distinguish between:
+
+- A recognized key sequence.
+- A valid but unsupported sequence.
+- An incomplete sequence.
+- An invalid sequence.
+- A standalone Escape key.
+
+This distinction improves both correctness and diagnostics.
+
+### A.9.5 Escape-Key Ambiguity
+
+The Escape key creates a special parsing problem because the byte `0x1B` is also the first byte of many multi-byte terminal input sequences.
+
+For example:
+
+```text
+ESC
+```
+
+may represent the Escape key, while:
+
+```text
+ESC [ A
+```
+
+may represent the Up arrow.
+
+When the Input Handler receives ESC, it cannot always determine immediately whether the byte is a complete key event or the beginning of a longer sequence.
+
+A parser therefore needs a policy for incomplete sequences and timing. A common approach is to wait briefly for additional bytes, subject to a defined timeout or input-reading strategy.
+
+The exact policy belongs to the Input Parser design, not the Renderer. See the chapters on terminal input and input parsing for the complete treatment.
+
+### A.9.6 Control Keys and Ordinary Characters
+
+Not all keyboard input uses escape sequences.
+
+Examples include:
+
+| Key or action                             |                          Common byte |
+| ----------------------------------------- | -----------------------------------: |
+| Tab                                       |                               `0x09` |
+| Enter in many terminal configurations     | `0x0D`, `0x0A`, or a translated form |
+| Backspace in common configurations        |                     `0x08` or `0x7F` |
+| Escape                                    |                               `0x1B` |
+| Ctrl-C in a common terminal configuration |                               `0x03` |
+| Ctrl-D                                    |                               `0x04` |
+
+The bytes received for Enter and Backspace can depend on terminal settings. Control-C may be handled by the terminal line discipline as a signal rather than delivered as an ordinary input byte, depending on the configured flags.
+
+The editor uses non-canonical terminal input mode, but that does not automatically make every control character behave identically across all terminal configurations. The terminal settings and the Input Handler's behavior must be considered together.
+
+### A.9.7 Input Parser Responsibilities
+
+The Input Parser should translate terminal-specific byte sequences into a stable internal representation.
+
+For example:
+
+```text
+Terminal bytes
+      |
+      v
+Input Handler
+      |
+      v
+Input Parser
+      |
+      +-- ESC [ A  -> KEY_UP
+      |
+      +-- ESC [ B  -> KEY_DOWN
+      |
+      +-- ESC [ C  -> KEY_RIGHT
+      |
+      +-- ESC [ D  -> KEY_LEFT
+      |
+      +-- ordinary byte or decoded text
+      |
+      v
+Abstract input event
+      |
+      v
+Input Engine and Command Engine
+```
+
+This separation prevents terminal-specific details from spreading throughout the editor.
+
+The Command Engine should not need to know whether the Up key was represented by `ESC[A` or another supported terminal sequence. It should receive the appropriate abstract event.
+
+---
+
+## A.10 Terminal Modes and Escape Sequences Are Different
+
+A frequent source of confusion is the assumption that escape sequences alone control all terminal behavior.
+
+They do not.
+
+The editor interacts with the terminal through at least two different mechanisms:
+
+1. **Terminal control sequences**, written as output bytes and interpreted by the terminal emulator.
+2. **Terminal attributes**, configured through operating-system interfaces such as POSIX `termios`.
+
+For example:
+
+| Requirement                                 | Mechanism                          |
+| ------------------------------------------- | ---------------------------------- |
+| Position the cursor                         | Terminal control sequence          |
+| Clear the visible display                   | Terminal control sequence          |
+| Change foreground color                     | Terminal control sequence          |
+| Hide the cursor                             | Terminal control sequence          |
+| Enter the alternate screen                  | Terminal control sequence          |
+| Disable canonical input processing          | `termios` configuration            |
+| Disable terminal echo                       | `termios` configuration            |
+| Configure terminal signal handling behavior | `termios` configuration            |
+| Restore original input settings             | Restore saved `termios` attributes |
+
+Changing terminal attributes does not necessarily clear the display or move the cursor. Sending a cursor-positioning sequence does not enable non-canonical input mode.
+
+Both mechanisms are required for a functioning full-screen editor, and each must be managed according to its own lifecycle.
+
+See Appendix D, _termios Cheat Sheet_, for the terminal-attribute interface and restoration rules.
+
+---
+
+## A.11 Compatibility and Reliability Considerations
+
+Terminal emulators share a large set of conventions, but they are not identical. Reliable terminal applications should treat their supported environment as an explicit design assumption.
+
+### A.11.1 Do Not Assume Every Sequence Is Supported
+
+The editor's baseline design targets ANSI-compatible terminal emulators with the capabilities required for full-screen editing.
+
+Common sequences such as cursor positioning, display erasure, and basic SGR colors are broadly supported. Extended colors, private modes, and terminal queries may behave differently or may not be available.
+
+If the editor later requires additional capabilities, it should document the supported terminal environment or introduce a capability-detection layer rather than scattering terminal-specific assumptions across the codebase.
+
+### A.11.2 Use Explicit Cursor Positioning
+
+A full-screen Renderer should generally establish the intended cursor location explicitly.
+
+Relying on the terminal's previous cursor position creates hidden dependencies. A preceding line feed, an automatic wrap, or an unexpected output sequence can alter the location where subsequent text appears.
+
+Absolute positioning makes the Renderer easier to reason about because it describes the desired location rather than a movement relative to an assumed current state.
+
+### A.11.3 Be Careful at the Rightmost Column
+
+Writing a character into the terminal's rightmost column can interact with automatic line wrapping. The exact behavior depends on terminal state and implementation.
+
+A Renderer should not assume that writing exactly the screen width of characters leaves the cursor in a simple, universally defined position. It should account for the terminal's wrap behavior, especially when drawing Status Bar and Message Bar content.
+
+This concern is separate from the editor's logical line length. The terminal's display width and the Document's text positions are different concepts.
+
+### A.11.4 Unicode Display Width Is Not Character Count
+
+Terminal control sequences position the cursor using display cells. Unicode text, however, may contain code points with different display widths.
+
+Examples include:
+
+- ASCII characters that normally occupy one cell.
+- Wide characters that commonly occupy two cells.
+- Combining marks that commonly occupy zero additional cells.
+- Grapheme clusters consisting of multiple code points.
+- Emoji whose appearance and width may depend on the terminal.
+
+The editor must therefore distinguish logical text positions from display-cell positions.
+
+A code-point index cannot always be used directly as a terminal column. The Renderer must calculate display positions using the editor's chosen width model and account for its known limitations.
+
+### A.11.5 Terminal Size Can Change
+
+The terminal window may be resized while the editor is running. Previously calculated cursor positions and screen dimensions can then become invalid.
+
+After detecting a resize, the editor should update its terminal dimensions, adjust the Viewport, and render a frame appropriate to the new size.
+
+Escape sequences do not eliminate the need for resize handling. They are only interpreted relative to the terminal's current state and dimensions.
+
+### A.11.6 Check Output Results
+
+Writing a control sequence is still an I/O operation.
+
+A write operation can be interrupted, write fewer bytes than requested, or fail. A sequence that is only partially written may leave the terminal waiting for the rest of the sequence or may cause later bytes to be interpreted unexpectedly.
+
+The Renderer should use the application's established output helpers and error-handling strategy rather than assuming that a single write always transfers every byte.
+
+Output failures should be diagnosed and handled consistently with the runtime model.
+
+### A.11.7 Restore Terminal State During Cleanup
+
+A terminal application must not leave the user's terminal in an unintended state.
+
+Cleanup should restore every property that the application successfully changed, including terminal input settings and any display modes such as cursor visibility or the alternate screen.
+
+The implementation should track initialization progress and handle error paths. A program that exits after partial initialization must still restore the state it has already changed.
+
+This requirement is more important than issuing a particular sequence at shutdown. Cleanup must reflect the actual resources and modes acquired by the application.
+
+---
+
+## A.12 Quick Reference Tables
+
+### A.12.1 Essential Rendering Sequences
+
+| Operation              | Sequence       | Notes                            |
+| ---------------------- | -------------- | -------------------------------- |
+| Move to home position  | `ESC[H`        | Usually row 1, column 1          |
+| Position cursor        | `ESC[row;colH` | One-based coordinates            |
+| Move up                | `ESC[nA`       | Relative movement                |
+| Move down              | `ESC[nB`       | Relative movement                |
+| Move right             | `ESC[nC`       | Relative movement                |
+| Move left              | `ESC[nD`       | Relative movement                |
+| Erase display          | `ESC[2J`       | Does not necessarily home cursor |
+| Erase current line     | `ESC[2K`       | Erases the entire current line   |
+| Erase to end of line   | `ESC[K`        | From cursor to line end          |
+| Reset rendition        | `ESC[0m`       | Resets text attributes           |
+| Hide cursor            | `ESC[?25l`     | Common private mode              |
+| Show cursor            | `ESC[?25h`     | Common private mode              |
+| Enter alternate screen | `ESC[?1049h`   | Widely supported convention      |
+| Leave alternate screen | `ESC[?1049l`   | Widely supported convention      |
+
+### A.12.2 Essential Text Attributes
+
+| Operation          | Sequence  |
+| ------------------ | --------- |
+| Reset attributes   | `ESC[0m`  |
+| Bold intensity     | `ESC[1m`  |
+| Underline          | `ESC[4m`  |
+| Inverse video      | `ESC[7m`  |
+| Default foreground | `ESC[39m` |
+| Default background | `ESC[49m` |
+| Red foreground     | `ESC[31m` |
+| Green foreground   | `ESC[32m` |
+| Yellow foreground  | `ESC[33m` |
+| Blue foreground    | `ESC[34m` |
+| White foreground   | `ESC[37m` |
+| Red background     | `ESC[41m` |
+| Blue background    | `ESC[44m` |
+
+### A.12.3 Common Input Sequences
+
+| Key       | Common representation |
+| --------- | --------------------- |
+| Up        | `ESC[A`               |
+| Down      | `ESC[B`               |
+| Right     | `ESC[C`               |
+| Left      | `ESC[D`               |
+| Home      | `ESC[H` or `ESC[1~`   |
+| End       | `ESC[F` or `ESC[4~`   |
+| Insert    | `ESC[2~`              |
+| Delete    | `ESC[3~`              |
+| Page Up   | `ESC[5~`              |
+| Page Down | `ESC[6~`              |
+
+These tables summarize common conventions. They are not a guarantee that every terminal sends or supports every listed sequence.
+
+---
+
+## A.13 Summary
+
+ANSI-compatible terminal control sequences provide the basic operations required by a full-screen terminal text editor. Cursor positioning determines where output appears; erasure sequences remove outdated display content; SGR sequences control text appearance; and private modes can manage cursor visibility and the alternate screen buffer.
+
+These sequences operate at the terminal interface. They do not replace the editor's internal model, cursor logic, Viewport calculations, input parsing, or terminal-attribute management.
+
+The editor should preserve a clear division of responsibility:
+
+```text
+Input Handler
+    |
+    v
+Input Parser
+    |
+    v
+Abstract Input Events
+    |
+    v
+Command Engine
+    |
+    v
+Editor State
+    |
+    v
+Renderer
+    |
+    v
+Terminal Control Sequences
+    |
+    v
+Terminal Emulator
+```
+
+The Input Parser translates terminal input into meaningful events. The Command Engine updates Editor State. The Renderer converts that state into a visible frame and emits the required terminal output.
+
+This separation allows terminal-specific behavior to remain localized, makes rendering easier to test, and provides a foundation for extending the editor without allowing low-level terminal details to spread throughout the architecture.
+
+For further reference, consult Appendix B for ASCII control characters, Appendix C for UTF-8 encoding, and Appendix D for POSIX `termios` configuration and restoration.
