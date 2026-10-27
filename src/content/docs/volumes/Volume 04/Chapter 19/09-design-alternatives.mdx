@@ -1,0 +1,103 @@
+---
+title: 19.9 Design Alternatives
+description: Compares a monolithic render function, separate rendering functions, and renderer objects, selecting one Renderer with distinct internal stages.
+---
+
+The Renderer already has a defined rendering model. The remaining design question is how its implementation should be organized.
+
+There are several reasonable ways to structure the Renderer.
+
+## One Monolithic `render()` Function
+
+The simplest approach is to place all rendering logic inside a single function:
+
+```text
+render()
+    ├── document
+    ├── status bar
+    ├── message bar
+    └── cursor
+```
+
+This is straightforward for a very small program. However, as the Renderer grows, a single function can become difficult to read and maintain. Changes to one part of the interface can also make the function increasingly difficult to reason about.
+
+## Separate Rendering Functions
+
+Another approach is to keep one Renderer but divide its work into focused functions:
+
+```text
+render()
+    │
+    ├── render_document()
+    ├── render_status_bar()
+    ├── render_message_bar()
+    └── render_cursor()
+```
+
+This preserves a single Renderer while giving each visual region a clear implementation boundary.
+
+The top-level rendering process remains easy to follow:
+
+```text
+render()
+    ↓
+document
+    ↓
+status bar
+    ↓
+message bar
+    ↓
+cursor
+```
+
+This structure also mirrors the conceptual frame construction process developed earlier in the chapter.
+
+## Separate Renderer Objects or Components
+
+A more elaborate design could introduce separate objects or components:
+
+```text
+Renderer
+   │
+   ├── DocumentRenderer
+   ├── StatusBarRenderer
+   ├── MessageBarRenderer
+   └── CursorRenderer
+```
+
+This provides stronger separation between rendering responsibilities, but it also introduces additional abstractions and interfaces.
+
+For a small terminal editor, that additional structure is unlikely to provide enough benefit to justify its complexity.
+
+## Our Choice
+
+We will use **one Renderer with clearly separated internal rendering stages**, rather than creating a collection of independent renderer objects.
+
+Conceptually:
+
+```text
+Renderer
+   │
+   ├── render_document()
+   ├── render_status_bar()
+   ├── render_message_bar()
+   └── render_cursor()
+```
+
+This gives us the organizational benefits of separation without fragmenting a relatively small rendering subsystem.
+
+The important design principle is therefore not the number of classes or objects, but the clarity of the rendering stages:
+
+> **Keep the Renderer simple, while giving each part of frame construction a clear responsibility.**
+
+This structure also leaves room for the Renderer to evolve as later chapters introduce scrolling and additional viewport behavior without revisiting the fundamental rendering architecture.
+
+## Summary
+
+Several ways to organize the Renderer were considered: a single monolithic function, separate rendering functions, and independent renderer components. We chose a single Renderer with clearly separated internal stages.
+
+This gives each part of frame construction a clear responsibility without fragmenting a small subsystem, while leaving room for the Renderer to evolve as later chapters introduce scrolling and viewport behavior.
+
+Now that the design choice is justified, the next section examines the costs and trade-offs of the full-frame rendering approach.
+
+Continue to **Section 19.10, Complexity and Trade-offs**.

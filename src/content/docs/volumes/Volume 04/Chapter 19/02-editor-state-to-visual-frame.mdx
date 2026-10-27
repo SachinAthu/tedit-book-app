@@ -1,0 +1,409 @@
+---
+title: 19.2 From Editor State to a Visual Frame
+description: Traces how the Renderer combines document, cursor, viewport, and UI state into one frame, translating logical coordinates into screen positions.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The Renderer begins with the current Editor State and ends with a completed visual frame.
+
+The transformation can be summarized as:
+
+```text
+Editor State
+     │
+     ▼
+   Renderer
+     │
+     ▼
+Screen Buffer
+     │
+     ▼
+ Terminal Output
+```
+
+The important point is that the Renderer does not invent application state. It interprets the state that already exists and determines how that state should appear on the terminal.
+
+## The Editor State as the Source
+
+The Editor State is the single source of truth for the editor.
+
+The Renderer reads these values and combines them into a single visual representation.
+
+For example:
+
+```text
+Editor State
+│
+├── Document
+│     └── Text to display
+│
+├── Cursor
+│     └── Logical cursor position
+│
+├── Viewport
+│     └── Visible portion of document
+│
+├── Screen Size
+│     └── Available rows and columns
+│
+├── Current File
+│     └── Filename for Status Bar
+│
+├── Dirty Flag
+│     └── Modified indicator
+│
+└── Status Message
+      └── Message Bar content
+```
+
+Not every field needs to be used by every part of the Renderer. Instead, each piece of visual information is derived from the state relevant to it.
+
+## Constructing the Frame
+
+The Renderer can be viewed as a sequence of visual construction steps:
+
+```text
+Editor State
+     │
+     ▼
+Determine screen dimensions
+     │
+     ▼
+Determine visible document area
+     │
+     ▼
+Draw document
+     │
+     ▼
+Draw Status Bar
+     │
+     ▼
+Draw Message Bar
+     │
+     ▼
+Determine cursor screen position
+     │
+     ▼
+Screen Buffer
+```
+
+The exact implementation can be organized differently, but the conceptual process remains the same.
+
+The Renderer is taking information that exists in different parts of the Editor State and combining it into one coherent frame.
+
+## The Document Becomes Screen Content
+
+The Document contains logical text rather than screen cells.
+
+For example:
+
+```text
+Document
+
+Line 0 → "Hello"
+Line 1 → "Terminal"
+Line 2 → "Editor"
+```
+
+The Screen Buffer, however, represents positions on the terminal:
+
+```text
+Screen
+
+H e l l o
+T e r m i n a l
+E d i t o r
+```
+
+The Renderer performs the translation between these two representations.
+
+It reads a document line, determines where that line should appear on screen, and places its characters into the corresponding Screen Buffer cells.
+
+Most characters correspond to exactly one cell. TAB is different: one logical character can require several cells, as Section 19.3 will show.
+
+This distinction is important:
+
+```text
+Document
+   │
+   │ logical text
+   ▼
+Renderer
+   │
+   │ visual representation
+   ▼
+Screen Buffer
+```
+
+The Document does not need to know anything about terminal rows, screen columns, status bars, or ANSI escape sequences.
+
+Those concerns belong to the Renderer and the terminal-facing portion of the system.
+
+## The Viewport Determines What Can Be Seen
+
+The Document may contain more text than can fit on the terminal.
+
+For example, a document might contain:
+
+```text
+Line 0
+Line 1
+Line 2
+Line 3
+Line 4
+Line 5
+Line 6
+Line 7
+Line 8
+Line 9
+```
+
+while the document area might only have room for five lines.
+
+The Renderer therefore cannot simply draw every document line.
+
+Instead, it uses the Viewport to determine which portion of the Document is currently visible:
+
+```text
+Document
+│
+├── Line 0
+├── Line 1
+├── Line 2
+├── Line 3
+├── Line 4
+├── Line 5  ← visible region begins here
+├── Line 6
+├── Line 7
+├── Line 8
+└── Line 9
+
+          │
+          ▼
+
+      Viewport
+          │
+          ▼
+
+Screen
+├── Line 5
+├── Line 6
+├── Line 7
+├── Line 8
+└── Line 9
+```
+
+The Renderer therefore consumes the **visible portion** of the Document rather than the entire document.
+
+The rules that determine how the Viewport moves are the subject of Chapter 20. For now, the important distinction is that the Viewport tells the Renderer what region is visible.
+
+## Fixed Interface Elements
+
+Not every part of the frame comes from the Document.
+
+Our editor also contains fixed interface elements:
+
+```text
++----------------------------------+
+| Document                         |
+|                                  |
+|                                  |
+|                                  |
+|                                  |
++----------------------------------+
+| Status Bar                       |
++----------------------------------+
+| Message Bar                      |
++----------------------------------+
+```
+
+The document occupies the main editing area.
+
+The Status Bar and Message Bar occupy reserved rows at the bottom of the terminal.
+
+The Renderer must therefore combine multiple sources of information into a single frame:
+
+```text
+Document ────────┐
+Cursor ──────────┤
+Viewport ────────┤
+Current File ────┤
+Dirty Flag ──────┤
+Status Message ──┤
+Screen Size ─────┘
+          │
+          ▼
+       Renderer
+          │
+          ▼
+     Screen Buffer
+```
+
+This is one reason the Renderer exists as a distinct component. The Screen Buffer provides the representation of the screen, while the Renderer understands how the different pieces of editor state should be arranged within it.
+
+## Document Coordinates and Screen Coordinates
+
+The Renderer must also distinguish between two different coordinate systems.
+
+The Document uses logical coordinates:
+
+```text
+(row, column)
+```
+
+The terminal uses screen coordinates:
+
+```text
+(screen_row, screen_column)
+```
+
+These values are not necessarily identical.
+
+If the Viewport is positioned at a particular document row, the first visible document row may appear at screen row zero. Likewise, the Status Bar and Message Bar occupy screen rows that do not correspond to document rows.
+
+Conceptually:
+
+```text
+Document coordinates
+        │
+        │ Viewport
+        ▼
+Screen coordinates
+```
+
+For example:
+
+```text
+Document
+        row 20
+          │
+          │ visible through Viewport
+          ▼
+Screen
+        row 0
+```
+
+The Renderer performs this translation when placing document content and the cursor into the Screen Buffer.
+
+## One Frame, One Representation
+
+After the Renderer has processed all of the relevant state, the Screen Buffer contains the complete visual frame.
+
+Conceptually:
+
+```text
++----------------------------------+
+| H e l l o                        |
+| W o r l d                        |
+|                                  |
+|                                  |
+|                                  |
+| filename.txt             2:4     |
+| message                          |
++----------------------------------+
+```
+
+At this point, the frame is no longer concerned with the internal organization of the editor.
+
+The Screen Buffer simply contains screen cells describing what should appear at each terminal position.
+
+This is the boundary between **editor semantics** and **screen representation**:
+
+```text
+Editor semantics
+(Document, Cursor,
+ Viewport, Status)
+        │
+        ▼
+     Renderer
+        │
+        ▼
+Screen representation
+(Screen Buffer)
+```
+
+## Why This Separation Matters
+
+Without this transformation step, the Document, Cursor, and other components would need to understand terminal layout directly.
+
+For example, the Document would need to know:
+
+- How many terminal rows are available.
+- Where the Status Bar begins.
+- Where the Message Bar begins.
+- How many columns are visible.
+- Which document row maps to which screen row.
+
+That would create unnecessary coupling.
+
+Instead:
+
+```text
+Document
+    │
+    │ knows about text
+    ▼
+Renderer
+    │
+    │ knows about presentation
+    ▼
+Screen Buffer
+    │
+    │ knows about screen cells
+    ▼
+Terminal
+```
+
+Each layer therefore has a clear responsibility.
+
+The Document represents **what the text is**.
+
+The Viewport represents **which part is visible**.
+
+The Renderer determines **how that visible state is presented**.
+
+The Screen Buffer represents **the resulting frame**.
+
+The Terminal displays **that frame**.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+This separation gives us a useful mental model for the entire rendering system:
+
+> **Rendering is a transformation from logical editor state into visual screen state.**
+
+The transformation is one-way:
+
+```text
+Editor State
+     ↓
+Visual Frame
+```
+
+The Renderer does not feed information back into the Document or Cursor. User input follows the opposite architectural path through the Input and Command systems, which then change the Editor State.
+
+This produces a clean cycle:
+
+```text
+          ┌─────────────────────┐
+          │                     ▼
+Input → Commands → Editor State → Renderer
+             ▲                     │
+             │                     ▼
+             └──────────── Terminal
+```
+
+The Renderer therefore acts as the final interpretation stage between the editor's internal state and the visual representation seen by the user.
+
+</Aside>
+
+## Summary
+
+Rendering is a one-way transformation from logical editor state into visual screen state. The Renderer combines the Document, Cursor, Viewport, current file, dirty flag, status message, and screen size into a single frame, translating document coordinates into screen coordinates and arranging the fixed interface elements around the document area.
+
+This keeps the Document and Cursor independent of terminal layout and gives each layer a clear responsibility: the Document holds the text, the Viewport selects the visible region, the Renderer decides how that region is presented, and the Screen Buffer stores the resulting frame.
+
+Now that the overall transformation is understood, the next section examines the first concrete region: how the visible document area is drawn into the Screen Buffer.
+
+Continue to **Section 19.3, Rendering the Document Area**.

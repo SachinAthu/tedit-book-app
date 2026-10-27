@@ -1,0 +1,375 @@
+---
+title: 19.1 What the Renderer Is Responsible For
+description: Defines the Renderer as a read-only projection of Editor State that fills the Screen Buffer without reading input or modifying the document.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The Renderer is the component that turns the editor's current state into a visual frame.
+
+By the time rendering begins, the editor has already completed the other stages of the event-processing pipeline:
+
+```text
+Input
+  ↓
+Interpret
+  ↓
+Execute
+  ↓
+Update Editor State
+  ↓
+Render
+```
+
+The Renderer does not decide what the user meant, execute commands, or modify the document. Its responsibility begins with the state that already exists and ends with a completed visual representation of that state.
+
+In our architecture, the Renderer reads the Editor State and constructs the frame that will eventually be displayed in the terminal. This makes it a **read-only consumer of application state**. The architecture explicitly defines the Renderer as a component that generates a complete visual frame without modifying the Document.
+
+## The Renderer as a Projection
+
+A useful way to think about the Renderer is as a projection from application state into screen state:
+
+```text
+             Editor State
+                  │
+                  ▼
+             +----------+
+             | Renderer |
+             +----------+
+                  │
+                  ▼
+            Screen Buffer
+                  │
+                  ▼
+               Terminal
+```
+
+The Editor State contains information such as:
+
+- Document
+- Cursor
+- Viewport
+- Current File
+- Dirty Flag
+- Screen Size
+- Status Message
+- Configuration
+
+The Renderer examines the relevant parts of that state and determines what should appear at each visible screen position.
+
+## What the Renderer Does
+
+For each frame, the Renderer is responsible for constructing the visible interface.
+
+This includes:
+
+1. Rendering the visible document lines, including expanding characters such as TAB into the required number of cells.
+2. Rendering the Status Bar.
+3. Rendering the Message Bar.
+4. Determining the visible screen position of the cursor.
+5. Writing the resulting frame into the Screen Buffer (which is then converted into terminal output by the terminal-facing layer).
+
+Conceptually:
+
+```text
+Editor State
+     │
+     ├───────────────┐
+     │               │
+     ▼               ▼
+ Document          Cursor
+     │               │
+     └───────┬───────┘
+             │
+          Viewport
+             │
+             ▼
+        +----------+
+        | Renderer |
+        +----------+
+             │
+       ┌─────┼─────┐
+       ▼     ▼     ▼
+    Document Status Message
+      Area    Bar    Bar
+       │      │       │
+       └──────┼───────┘
+              ▼
+        Screen Buffer
+```
+
+The resulting Screen Buffer is then converted into terminal output.
+
+The Screen Buffer itself was defined in Chapter 18. It represents the visual frame as a grid of screen cells. Chapter 19 is concerned with the Renderer that fills that grid.
+
+## What the Renderer Does Not Do
+
+A clear responsibility boundary is just as important as defining what the Renderer does.
+
+The Renderer does **not**:
+
+- Read keyboard input.
+- Parse escape sequences.
+- Map keys to commands.
+- Execute editing commands.
+- Insert or delete document text.
+- Move the logical cursor.
+- Save or load files.
+- Decide whether a document is modified.
+- Change the Editor State as a side effect of rendering.
+
+For example, when the user presses the Left Arrow key, the Renderer does not move the cursor.
+
+The flow is:
+
+```text
+Left Arrow
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Cursor / Editor State
+    │
+    ▼
+Renderer
+```
+
+By the time the Renderer receives control, the cursor has already been moved. The Renderer only represents the new position visually.
+
+This separation follows the project's broader architectural rule that each component has a single primary responsibility.
+
+## Rendering Should Not Change the State It Renders
+
+One of the most important properties of our Renderer is that rendering is read-only.
+
+Suppose the Document contains:
+
+```text
+Hello
+World
+```
+
+The Renderer reads that document and places the appropriate characters into the Screen Buffer.
+
+It must not modify the Document while doing so.
+
+Likewise, if the cursor is at row 1, column 3:
+
+```text
+World
+   ^
+```
+
+the Renderer translates that logical position into a screen position. It does not change the cursor's logical position merely because it is rendering it.
+
+This gives us a useful invariant:
+
+> **Rendering observes state; commands change state.**
+
+The distinction is important because rendering happens frequently. If rendering itself could modify application state, repeatedly displaying the editor could produce unexpected changes.
+
+Instead, the relationship should remain:
+
+```text
+             Command
+                │
+                ▼
+        Changes Editor State
+                │
+                ▼
+             Renderer
+                │
+                ▼
+        Represents that state
+```
+
+## The Renderer as a Read-Only Boundary
+
+This makes the Renderer an important architectural boundary.
+
+The rest of the application can change the Editor State:
+
+```text
+Command Engine
+      │
+      ▼
+Editor State
+```
+
+The Renderer then consumes the result:
+
+```text
+Editor State
+      │
+      ▼
+Renderer
+      │
+      ▼
+Screen Buffer
+```
+
+The Renderer does not communicate backward into the editing system.
+
+This keeps the rendering pipeline predictable. Given the same relevant Editor State, the Renderer should produce the same visual result.
+
+That property will become especially useful when testing the rendering system because we can reason about the expected frame without involving keyboard input, command dispatch, or file operations.
+
+## Renderer and the Screen Buffer
+
+The distinction between the Renderer and the Screen Buffer is important.
+
+They are not the same thing.
+
+The **Screen Buffer** is the in-memory representation of a frame.
+
+The **Renderer** is the component that constructs that representation.
+
+```text
+Renderer
+   │
+   │ writes
+   ▼
+Screen Buffer
+   │
+   │ represents
+   ▼
+Complete Frame
+```
+
+Chapter 18 established why the Screen Buffer exists and how it is represented. The Renderer now gives that buffer meaning by deciding which characters and attributes belong in each screen cell.
+
+For example, if the visible document contains:
+
+```text
+Hello
+World
+```
+
+the Renderer might populate the corresponding screen cells as:
+
+```text
+H e l l o
+W o r l d
+```
+
+while the remaining cells are blank and the lower rows contain the Status Bar and Message Bar.
+
+The important point is that the Screen Buffer does not independently know what a document, cursor, or status message means.
+
+The Renderer does.
+
+## Logical Characters and Visual Cells
+
+The Renderer converts logical characters into visual terminal cells:
+
+```text
+Logical character
+      │
+      ▼
+Renderer
+      │
+      ▼
+Visual terminal cells
+```
+
+For most characters the relationship is one-to-one: the logical character `A` becomes a single screen cell containing `A`.
+
+TAB is the important exception. The Document stores TAB as the single Unicode code point **U+0009** — one logical character, exactly like `A` or `7` (Chapters 6 and 14). When rendered, however, it advances the visual column to the next tab stop, which can require several terminal cells:
+
+```text
+Document:            A<TAB>B
+                       │
+                       ▼
+Renderer (tab width 4)
+                       │
+                       ▼
+Screen Buffer cells:  A [ ][ ][ ] B
+```
+
+The Renderer calculates how many visual cells the TAB requires. The Document remains unchanged; the U+0009 code point is never replaced with spaces.
+
+This gives us the chapter's central invariant:
+
+> **The Renderer is responsible for converting logical characters into visual terminal cells. TAB is one logical character but may occupy multiple visual columns.**
+
+The exact rules for expanding TAB — tab stops, the configurable tab width, and what the Screen Buffer receives — are examined in Section 19.3.
+
+## A Complete Responsibility Boundary
+
+We can summarize the Renderer boundary as follows:
+
+```text
++-------------------+
+|    Editor State   |
++-------------------+
+          │
+          │ read
+          ▼
++-------------------+
+|     Renderer      |
+|                   |
+| Draw document     |
+| Draw status bar   |
+| Draw message bar  |
+| Position cursor   |
++-------------------+
+          │
+          │ write
+          ▼
++-------------------+
+|   Screen Buffer   |
++-------------------+
+          │
+          ▼
+      Terminal
+```
+
+The Renderer is therefore neither an input component nor an editing component. It is the **presentation component of the editor**.
+
+Its job is straightforward:
+
+> **Take the current Editor State and construct the visual frame that represents it.**
+
+Everything that determines _what the editor should do_ belongs elsewhere. The Renderer determines only _what the current state should look like_.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+This separation may appear excessive for a small editor. A simpler program could combine input handling, editing, and terminal output in the same function.
+
+That approach can work for a small prototype, but it quickly makes responsibilities difficult to distinguish. Our architecture deliberately keeps rendering separate because the Renderer will eventually have to deal with document content, viewport positioning, fixed UI elements, cursor placement, and terminal output.
+
+By keeping it read-only, we establish a clean contract:
+
+```text
+Input and Commands
+        ↓
+   change the state
+
+      Renderer
+        ↓
+ represents the state
+```
+
+That contract is what keeps the rest of the rendering system predictable and easy to reason about.
+
+</Aside>
+
+## Summary
+
+The Renderer is the presentation component of the editor: a read-only projection that turns the current Editor State into a complete visual frame without modifying it. It consumes the Document, Cursor, Viewport, and other state and writes the resulting cells into the Screen Buffer, while input handling, command execution, and state changes all belong elsewhere.
+
+This read-only boundary keeps the rendering pipeline predictable: given the same Editor State, the Renderer produces the same visual result.
+
+Now that the Renderer's responsibility boundary is established, the next section examines the transformation itself: how the Editor State is turned into a visual frame.
+
+Continue to **Section 19.2, From Editor State to a Visual Frame**.

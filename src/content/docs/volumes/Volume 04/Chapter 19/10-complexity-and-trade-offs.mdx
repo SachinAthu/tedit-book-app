@@ -1,0 +1,119 @@
+---
+title: 19.10 Complexity and Trade-offs
+description: Analyzes full-frame rendering costs, showing time and space are O(rows × columns) and explaining the trade-off against selective updates.
+---
+
+The Renderer constructs a complete visual frame from the current Editor State. Because our rendering model uses full redraw, the Renderer processes the visible screen rather than only the regions that changed.
+
+## Time Complexity
+
+For a terminal with `rows` rows and `columns` columns, constructing a complete frame is:
+
+```text
+O(rows × columns)
+```
+
+The Renderer may need to examine and populate the cells across the visible frame, including document content and fixed interface regions.
+
+The cost therefore depends primarily on the terminal dimensions, not on the total size of the Document.
+
+A large document does not make a single frame inherently expensive if only a small portion of it is visible.
+
+Expanding TAB characters adds no asymptotic cost: each visible line is examined once, and its expansion is bounded by the visible width. The per-frame cost therefore remains `O(rows × columns)`.
+
+## Output Cost
+
+After the frame has been constructed, the completed Screen Buffer must be converted into terminal output.
+
+The output cost is proportional to the amount of output generated for the frame.
+
+Conceptually:
+
+```text
+Editor State
+     ↓
+Renderer
+     │
+     │ O(rows × columns)
+     ▼
+Screen Buffer
+     │
+     │ proportional to output generated
+     ▼
+Terminal Output
+```
+
+The Renderer therefore has two related costs:
+
+1. Constructing the visible frame.
+2. Communicating that frame to the terminal.
+
+The exact terminal-output cost depends on how the frame is serialized, but the important property is that our baseline design favors predictable complete-frame work rather than maintaining complicated incremental-update state.
+
+## Space Complexity
+
+The Renderer does not require memory proportional to the size of the Document.
+
+The main rendering storage is the Screen Buffer, whose memory requirement is:
+
+```text
+O(rows × columns)
+```
+
+This memory is bounded by the terminal dimensions.
+
+The Screen Buffer is also reusable across rendering cycles, so the normal rendering path does not need to allocate a new frame-sized buffer every time. The project explicitly accepts this modest, bounded memory cost in exchange for a simpler rendering pipeline.
+
+## Why Accept Full-Frame Rendering?
+
+A more selective renderer could attempt to update only cells or regions that changed between frames.
+
+That could reduce work when most of the screen remains unchanged:
+
+```text
+Full redraw:
+
+Entire frame
+████████████████
+
+Selective update:
+
+Changed region
+        ██
+```
+
+However, selective rendering requires additional mechanisms for determining what changed and ensuring that the terminal remains synchronized with the application's visual state.
+
+Our design deliberately avoids that complexity. The rendering strategy uses full redraw because it keeps the Renderer predictable and maintains a simple relationship between Editor State and visual output.
+
+## The Trade-off
+
+The fundamental trade-off is therefore:
+
+```text
+Full redraw
+    │
+    ├── More predictable work
+    ├── Simpler implementation
+    ├── No complex dirty-region bookkeeping
+    └── O(rows × columns) per frame
+
+Selective rendering
+    │
+    ├── Potentially less work
+    ├── More state to track
+    ├── More synchronization logic
+    └── Greater implementation complexity
+```
+
+For a terminal editor, the screen is relatively small and the rendering pipeline benefits substantially from simplicity. The project therefore accepts the cost of reconstructing the visible frame in exchange for a predictable and easy-to-reason-about Renderer. ADR-018 explicitly records that incremental or dirty-region rendering remains a possible future optimization if profiling later demonstrates a need for it.
+
+The important distinction from Chapter 18 is that the Screen Buffer's **storage cost** is bounded by terminal dimensions, while this section considers the **work required to construct and output each frame**.
+
+## Summary
+
+Constructing a complete frame costs `O(rows × columns)` in time, and the Screen Buffer's storage is bounded by the same `O(rows × columns)`; both are limited by the terminal dimensions rather than by the size of the Document, and the buffer is reused across frames.
+
+Full redraw deliberately trades the potential savings of selective updates for a predictable, simple Renderer, leaving incremental or dirty-region rendering as a possible future optimization.
+
+Continue to the **Chapter Summary**, which consolidates the Renderer design, followed by exercises and a preview of the next chapter.

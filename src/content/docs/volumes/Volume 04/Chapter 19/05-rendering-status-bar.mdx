@@ -1,0 +1,417 @@
+---
+title: 19.5 Rendering the Status Bar
+description: Describes the fixed Status Bar row, deriving filename, modified state, and cursor position from Editor State within the terminal width.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The Status Bar is a fixed part of the editor interface that appears below the document area.
+
+While the document area changes as the user navigates through the Document, the Status Bar remains anchored to the bottom of the terminal:
+
+```text
++----------------------------------+
+| Document Area                    |
+|                                  |
+|                                  |
+|                                  |
++----------------------------------+
+| Status Bar                       |
++----------------------------------+
+| Message Bar                      |
++----------------------------------+
+```
+
+Its purpose is to provide concise information about the current editing session without requiring the user to leave the editing area.
+
+The SRS requires the editor to display document information in the Status Bar, including the current document name and cursor position. It also requires the modified state to be represented in the editor interface.
+
+## The Status Bar as a Fixed Region
+
+The Status Bar does not belong to the Document.
+
+This distinction is important.
+
+The Document contains editable text:
+
+```text
+Document
+    │
+    └── user content
+```
+
+The Status Bar contains information _about_ that content:
+
+```text
+Status Bar
+    │
+    ├── document name
+    ├── modified state
+    └── cursor position
+```
+
+The Renderer combines these sources of information when constructing the frame.
+
+```text
+Document ────────┐
+Current File ────┤
+Dirty Flag ──────┤
+Cursor ──────────┤
+                  ▼
+               Renderer
+                  │
+                  ▼
+              Status Bar
+```
+
+The Status Bar therefore presents editor state without becoming part of the Document itself.
+
+## Positioning the Status Bar
+
+The Status Bar occupies one fixed row near the bottom of the Screen Buffer.
+
+If the terminal has `screen_rows` rows and the Message Bar occupies the final row, the Status Bar occupies the row immediately above it.
+
+Conceptually:
+
+```text
+Screen rows
+
+0    Document
+1    Document
+2    Document
+...
+N-2  Status Bar
+N-1  Message Bar
+```
+
+The document area therefore ends before the Status Bar begins.
+
+This gives every region a well-defined boundary:
+
+```text
++------------------------------+
+|                              |
+|      Document Area           |
+|                              |
++------------------------------+
+|        Status Bar            |
++------------------------------+
+|        Message Bar           |
++------------------------------+
+```
+
+The Renderer must respect this boundary when writing into the Screen Buffer. Document content must never overwrite the Status Bar.
+
+## What Information Belongs in the Status Bar?
+
+The Status Bar should provide information that is useful during normal editing without occupying excessive screen space.
+
+For our editor, the relevant information includes:
+
+- Current filename
+- Modified state
+- Cursor position
+
+For example:
+
+```text
+notes.txt                     12:8
+```
+
+A modified document might indicate its state:
+
+```text
+notes.txt *                  12:8
+```
+
+The exact visual formatting is a presentation decision. The underlying information comes from the Editor State.
+
+The Renderer should therefore not invent these values. It reads the current state and formats it for display.
+
+## The Current Filename
+
+The current file is part of the editor's state.
+
+If the user opened:
+
+```text
+notes.txt
+```
+
+the Status Bar can display:
+
+```text
+notes.txt
+```
+
+If the editor is working with a new document that has not yet been associated with a file, there may be no filename.
+
+In that case, the Renderer can display an appropriate placeholder such as:
+
+```text
+[No Name]
+```
+
+The important distinction is that the placeholder is a presentation choice. The underlying state still represents the document as unnamed.
+
+## The Modified State
+
+The editor maintains a Dirty Flag to indicate whether the Document contains changes that have not yet been saved.
+
+The Status Bar can represent this state visually:
+
+```text
+notes.txt
+```
+
+for an unmodified document, and:
+
+```text
+notes.txt *
+```
+
+for a modified document.
+
+The Renderer does not determine whether the document is dirty.
+
+That decision belongs to the components responsible for modifying and saving the Document.
+
+The flow is:
+
+```text
+Editing Operation
+       │
+       ▼
+Dirty Flag changes
+       │
+       ▼
+Renderer reads Dirty Flag
+       │
+       ▼
+Status Bar displays state
+```
+
+This follows the same read-only principle established earlier in the chapter.
+
+## Displaying the Cursor Position
+
+The Status Bar can also show the user's current logical position within the Document.
+
+For example:
+
+```text
+12:8
+```
+
+might represent:
+
+```text
+row    = 12
+column = 8
+```
+
+The exact convention used by the user interface can be chosen later, but the important point is that the displayed position is derived from the Cursor's logical coordinates.
+
+The Renderer does not calculate a new cursor position for the purpose of the Status Bar. It reads the current Cursor state.
+
+This is another example of multiple visual elements being derived from the same underlying state:
+
+```text
+                 Cursor
+                   │
+             ┌─────┴─────┐
+             ▼           ▼
+       Status Bar    Terminal Cursor
+       position      screen position
+```
+
+The two representations may look different, but they originate from the same logical cursor state.
+
+## Formatting Within a Fixed Width
+
+The Status Bar has only the width of the terminal available to it.
+
+A short status might fit easily:
+
+```text
+notes.txt *                 12:8
+```
+
+But the filename or other information could be longer than the available width.
+
+The Renderer therefore needs to ensure that Status Bar content fits within the Screen Buffer's columns.
+
+Conceptually:
+
+```text
+Available width
+────────────────────────────────
+<----------------------------->
+
+Status content
+────────────────────────────────
+filename + state + position
+```
+
+If the content is too long, it must be truncated or otherwise formatted so that it does not write beyond the Status Bar's screen boundary.
+
+The Renderer should treat the Status Bar as a fixed-width visual region rather than allowing its contents to determine the screen size.
+
+## Filling the Entire Status Bar
+
+The Status Bar occupies an entire screen row, not merely the cells containing useful text.
+
+For example:
+
+```text
++----------------------------------+
+| notes.txt *                12:8  |
++----------------------------------+
+```
+
+The unused cells remain part of the Status Bar's visual region.
+
+This is particularly important because the Screen Buffer is reused between frames. Every cell in the Status Bar row must have a defined value for the current frame so that stale content from a previous frame cannot remain visible.
+
+The Renderer therefore constructs the complete Status Bar row rather than writing only the characters that changed.
+
+## Status Bar and the Screen Buffer
+
+The Status Bar demonstrates why the Screen Buffer represents the entire terminal frame.
+
+The Renderer can write the document area and the fixed interface into the same buffer:
+
+```text
++----------------------------------+
+| Document cells                   |
+| Document cells                   |
+| Document cells                   |
+| Document cells                   |
++----------------------------------+
+| Status Bar cells                 |
++----------------------------------+
+| Message Bar cells                |
++----------------------------------+
+```
+
+The Screen Buffer does not need to understand that some cells belong to a document and others belong to the Status Bar.
+
+It simply stores the completed screen representation.
+
+The Renderer is responsible for assigning meaning to those regions.
+
+## Status Bar Rendering Order
+
+The Status Bar is rendered after the document area.
+
+A simplified frame construction sequence is:
+
+```text
+1. Prepare Screen Buffer
+2. Render Document Area
+3. Render Status Bar
+4. Render Message Bar
+5. Render Cursor
+```
+
+Rendering the Status Bar after the document area establishes a clear boundary between the two regions.
+
+It also makes the layout easier to reason about:
+
+```text
+Document Area
+      ↓
+Status Bar
+      ↓
+Message Bar
+      ↓
+Cursor
+```
+
+The exact internal function structure is an implementation detail, but the visual regions should remain clearly separated.
+
+## The Status Bar Does Not Modify Editor State
+
+The Renderer must not change the Dirty Flag simply because it displays it.
+
+Likewise, rendering a filename must not alter the current file, and rendering the cursor position must not move the Cursor.
+
+The relationship remains:
+
+```text
+Editor State
+     │
+     │ read
+     ▼
+Renderer
+     │
+     │ write
+     ▼
+Status Bar cells
+```
+
+This makes the Status Bar a pure presentation of existing state.
+
+## Status Bar as an Interface Boundary
+
+The Status Bar also illustrates an important architectural distinction.
+
+Some editor state exists primarily for application behavior:
+
+```text
+Document
+Cursor
+Viewport
+Dirty Flag
+```
+
+The Status Bar provides a human-readable projection of that state:
+
+```text
+Document + Cursor + Dirty Flag
+              │
+              ▼
+          Status Bar
+```
+
+The user does not need to understand the internal representation of these objects. The Status Bar provides a compact visual summary.
+
+This is one of the Renderer’s broader responsibilities: transforming internal state into information that is useful to the user.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A Status Bar may seem like a simple piece of text at the bottom of the screen, but architecturally it demonstrates an important principle:
+
+> **User-interface information should be derived from application state rather than maintained as a separate source of truth.**
+
+For example, we should not maintain one copy of the cursor position in the Cursor component and another copy specifically for the Status Bar.
+
+There should be one logical Cursor position.
+
+The Renderer reads that position and presents it in whatever visual forms are required:
+
+```text
+                 Cursor
+                   │
+          ┌────────┴────────┐
+          ▼                 ▼
+    Status Bar         Screen Cursor
+    "12:8"             terminal position
+```
+
+The same principle applies to the filename and modified state.
+
+By deriving the Status Bar from Editor State, we avoid synchronization problems and keep the interface consistent with the actual state of the editor.
+
+</Aside>
+
+## Summary
+
+The Status Bar is a fixed, reserved row below the document area that presents the current filename, modified state, and cursor position. It is derived entirely from Editor State: the Renderer reads the current file, Dirty Flag, and Cursor and formats them within the Status Bar's fixed width without inventing values or modifying the underlying state.
+
+This makes the Status Bar a pure presentation of existing state rather than a separate source of truth.
+
+Now that the Status Bar is established, the next section applies the same rendering principles to the Message Bar, which presents transient feedback.
+
+Continue to **Section 19.6, Rendering the Message Bar**.

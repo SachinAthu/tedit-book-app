@@ -1,0 +1,110 @@
+---
+title: 19.8 Rendering Order
+description: Outlines the fixed frame construction sequence from buffer preparation through document, Status Bar, Message Bar, cursor, and terminal output.
+---
+
+The Renderer constructs the frame in a predictable order. Each stage contributes to a different part of the final visual representation.
+
+The overall sequence is:
+
+```text
+Prepare frame
+    ↓
+Document Area
+    ↓
+Status Bar
+    ↓
+Message Bar
+    ↓
+Cursor
+    ↓
+Terminal output
+```
+
+## Preparing the Frame
+
+The Renderer first prepares the Screen Buffer for the new frame.
+
+Because our editor uses complete-frame rendering, the buffer represents the entire screen rather than only the parts that changed.
+
+## Rendering the Document Area
+
+The Renderer then fills the document region with the visible portion of the Document.
+
+```text
+Prepare frame
+    ↓
+Document Area
+```
+
+At this point, the main editing content has been placed into the Screen Buffer.
+
+## Rendering the Fixed Interface
+
+Next, the Renderer fills the fixed interface regions:
+
+```text
+Document Area
+    ↓
+Status Bar
+    ↓
+Message Bar
+```
+
+These regions occupy their reserved screen rows and are therefore rendered separately from the document content.
+
+## Rendering the Cursor
+
+Once the visible content and fixed interface have been constructed, the Renderer determines the Cursor's final screen position.
+
+```text
+Message Bar
+    ↓
+Cursor
+```
+
+The cursor position is derived from the logical Cursor and current Viewport.
+
+## Producing Terminal Output
+
+Finally, the completed frame is passed to the terminal-facing output stage:
+
+```text
+Cursor
+    ↓
+Terminal output
+```
+
+The Renderer has now finished constructing the visual representation. The terminal-facing layer is responsible for turning that representation into the actual terminal output.
+
+The complete process is therefore:
+
+```text
+Editor State
+     ↓
+Prepare frame
+     ↓
+Document Area
+     ↓
+Status Bar
+     ↓
+Message Bar
+     ↓
+Cursor
+     ↓
+Screen Buffer
+     ↓
+Terminal output
+```
+
+The important property is that **every frame follows the same overall construction order**, making the rendering pipeline deterministic and easy to reason about.
+
+## Summary
+
+The Renderer constructs every frame in the same predictable sequence: prepare the Screen Buffer, draw the document area, draw the Status Bar, draw the Message Bar, determine the Cursor position, and produce terminal output.
+
+This fixed order keeps the rendering pipeline deterministic and makes the frame layout easy to reason about.
+
+Now that the rendering order is established, the next section examines alternative ways the Renderer could be structured internally.
+
+Continue to **Section 19.9, Design Alternatives**.

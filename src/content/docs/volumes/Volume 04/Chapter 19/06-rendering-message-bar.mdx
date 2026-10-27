@@ -1,0 +1,462 @@
+---
+title: 19.6 Rendering the Message Bar
+description: Explains how transient messages are rendered in a fixed-width Message Bar, cleared when empty, and kept separate from Document state.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The Message Bar is the second fixed interface region at the bottom of the editor.
+
+While the Status Bar presents persistent information about the current editing state, the Message Bar is used for short-lived information such as status messages, errors, or other feedback that should be visible to the user.
+
+The overall layout is:
+
+```text
++----------------------------------+
+|                                  |
+|        Document Area             |
+|                                  |
+|                                  |
++----------------------------------+
+|          Status Bar              |
++----------------------------------+
+|          Message Bar             |
++----------------------------------+
+```
+
+The Message Bar is therefore part of the visual frame, but it is not part of the Document or the editing area.
+
+## The Message Bar as a Fixed Region
+
+Like the Status Bar, the Message Bar occupies a reserved screen row.
+
+It remains at the bottom of the terminal regardless of which portion of the Document is visible:
+
+```text
+Screen
+
++----------------------------------+
+| Document Area                    |
+|                                  |
+|                                  |
+|                                  |
++----------------------------------+
+| Status Bar                       |
++----------------------------------+
+| Message Bar                      |
++----------------------------------+
+```
+
+This means that scrolling the Document does not move the Message Bar.
+
+The Renderer treats the Message Bar as a fixed screen region and writes its contents directly into the corresponding row of the Screen Buffer.
+
+## The Source of the Message
+
+The message displayed by the Message Bar comes from the editor's current state.
+
+For example, an operation might produce a message such as:
+
+```text
+File saved
+```
+
+or:
+
+```text
+Unable to open file
+```
+
+The component that performs the operation is responsible for determining that a message should exist.
+
+The Renderer has a different responsibility:
+
+```text
+Operation
+    │
+    ▼
+Editor State
+    │
+    │ status message
+    ▼
+Renderer
+    │
+    ▼
+Message Bar
+```
+
+The Renderer does not decide whether an operation succeeded or failed.
+
+It simply presents the current message.
+
+This preserves the same architectural boundary established for the Status Bar: application logic produces state, while the Renderer presents that state.
+
+## A Message Is Not Document Content
+
+A message displayed at the bottom of the terminal must never become part of the Document.
+
+For example, if the editor displays:
+
+```text
+File saved
+```
+
+the Document remains unchanged.
+
+Conceptually:
+
+```text
+Document
+    │
+    └── user content
+
+Status Message
+    │
+    └── temporary interface information
+```
+
+The Renderer combines both when constructing the frame:
+
+```text
+Document ────────────┐
+Status Message ──────┤
+                     ▼
+                  Renderer
+                     │
+                     ▼
+                Screen Buffer
+```
+
+This distinction is important because messages can appear and disappear without affecting the document's contents or dirty state.
+
+## Rendering an Empty Message
+
+Most frames will not necessarily have a message to display.
+
+In that case, the Message Bar should simply contain blank cells:
+
+```text
++----------------------------------+
+| Document                         |
+|                                  |
+|                                  |
++----------------------------------+
+| Status Bar                       |
++----------------------------------+
+|                                  |
++----------------------------------+
+```
+
+An empty message is therefore still a valid rendering state.
+
+The Renderer should explicitly represent the empty Message Bar rather than assuming that the previous frame's contents can remain there.
+
+Otherwise, a message from an earlier frame could remain visible after it has been cleared from the editor state.
+
+## Clearing Stale Messages
+
+Consider two consecutive frames.
+
+The first contains:
+
+```text
++----------------------------------+
+| Status Bar                       |
++----------------------------------+
+| File saved                       |
++----------------------------------+
+```
+
+The next frame has no message:
+
+```text
++----------------------------------+
+| Status Bar                       |
++----------------------------------+
+|                                  |
++----------------------------------+
+```
+
+If the Renderer only wrote characters when a message existed, the old text could remain visible.
+
+Because our rendering model constructs a complete frame, the Message Bar is populated according to the current state on every render.
+
+```text
+Previous State
+Message = "File saved"
+       │
+       ▼
+    Frame 1
+
+Current State
+Message = empty
+       │
+       ▼
+    Frame 2
+```
+
+The second frame therefore contains a blank Message Bar.
+
+This is another practical consequence of the complete-frame rendering model established in the previous chapters.
+
+## Message Width
+
+The Message Bar has the same fixed width as the terminal.
+
+A short message fits naturally:
+
+```text
+File saved
+```
+
+A longer message may approach or exceed the available width:
+
+```text
+Unable to save the document because the file could not be written...
+```
+
+The Renderer must ensure that the message fits within the Message Bar's screen region.
+
+Conceptually:
+
+```text
++----------------------------------+
+| Unable to save the document ...  |
++----------------------------------+
+```
+
+The message must not wrap into the Status Bar or extend beyond the Screen Buffer.
+
+If the message is longer than the available width, the Renderer can truncate it to the visible width.
+
+The important rule is:
+
+> **The Message Bar is a fixed-width presentation region.**
+
+The message content adapts to that region; the region does not expand to accommodate the message.
+
+## Message Bar and the Screen Buffer
+
+The Message Bar is represented using the same Screen Buffer as the rest of the frame.
+
+For example:
+
+```text
++----------------------------------+
+| Document cells                   |
+| Document cells                   |
+| Document cells                   |
++----------------------------------+
+| Status Bar cells                 |
++----------------------------------+
+| Message Bar cells                |
++----------------------------------+
+```
+
+The Screen Buffer does not need a separate representation for messages.
+
+It simply contains the characters and attributes that should appear at the corresponding screen positions.
+
+The Renderer is responsible for deciding which cells belong to the Message Bar and what their contents should be.
+
+## Rendering Order
+
+The Message Bar is rendered after the Status Bar because it occupies the row immediately below it.
+
+A simplified rendering sequence is:
+
+```text
+1. Prepare Screen Buffer
+2. Render Document Area
+3. Render Status Bar
+4. Render Message Bar
+5. Render Cursor
+```
+
+The order makes the frame layout explicit:
+
+```text
+Document Area
+      ↓
+Status Bar
+      ↓
+Message Bar
+      ↓
+Cursor
+```
+
+The cursor itself is not part of the Message Bar. It is positioned according to the logical Cursor and the visible document region.
+
+## Messages and the Dirty Flag
+
+A Message Bar update should not itself affect the Document's modified state.
+
+For example:
+
+```text
+Message = "File saved"
+```
+
+does not mean that the Document was modified.
+
+Likewise:
+
+```text
+Message = "Unable to save file"
+```
+
+does not automatically determine the Dirty Flag.
+
+The Message Bar simply reports the message stored in the editor state.
+
+The relevant relationships remain separate:
+
+```text
+Document ───────→ Dirty Flag
+     │
+     │
+     └──────────────→ Renderer
+
+Status Message ───→ Renderer
+```
+
+This prevents presentation from becoming coupled to document modification semantics.
+
+## Message Lifetime
+
+Messages may be transient.
+
+A message can be created by one operation and then replaced or cleared by a later operation.
+
+For example:
+
+```text
+Command
+   │
+   ▼
+Status Message = "File saved"
+   │
+   ▼
+Render
+```
+
+A subsequent action may change the message:
+
+```text
+Another Command
+   │
+   ▼
+Status Message = ""
+   │
+   ▼
+Render
+```
+
+The Renderer does not need to manage this lifetime itself.
+
+Its responsibility is only to display whatever message currently exists.
+
+This keeps message management separate from message presentation.
+
+## The Message Bar as a Presentation Boundary
+
+The Message Bar demonstrates the same general pattern used throughout the Renderer:
+
+```text
+Application State
+       │
+       │ read
+       ▼
+    Renderer
+       │
+       │ visual representation
+       ▼
+Screen Buffer
+```
+
+The underlying message remains part of the editor's state.
+
+The Message Bar is simply its visual representation.
+
+This means that the Message Bar does not need its own independent state such as:
+
+```text
+message_bar_text
+```
+
+if the editor already has a canonical status-message value.
+
+Maintaining two independent values would introduce a synchronization problem:
+
+```text
+Editor Message ──┐
+                 ├── must stay synchronized
+Message Bar ─────┘
+```
+
+Instead, the Renderer derives the visible Message Bar directly from the current message state.
+
+## A Complete Example
+
+Suppose the current Editor State contains:
+
+```text
+Current File:    notes.txt
+Dirty Flag:      true
+Cursor:          row 12, column 8
+Status Message:  File saved
+```
+
+The Renderer can construct a frame containing:
+
+```text
++----------------------------------+
+| Document content                 |
+|                                  |
+|                                  |
+|                                  |
++----------------------------------+
+| notes.txt *                12:8  |
++----------------------------------+
+| File saved                       |
++----------------------------------+
+```
+
+The Status Bar and Message Bar are both derived from the same Editor State as the document area.
+
+No part of the Renderer needs to modify the state to produce this frame.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The Message Bar reinforces an important principle of the rendering architecture:
+
+> **Transient information can be rendered without becoming part of the persistent document model.**
+
+A message is useful to the user, but it does not belong in the Document.
+
+The Renderer provides the boundary between these two worlds:
+
+```text
+Document State ──────┐
+                     │
+Status State ────────┤
+                     ▼
+                  Renderer
+                     │
+                     ▼
+                Visual Frame
+```
+
+This allows the editor to provide feedback without complicating the Document representation.
+
+</Aside>
+
+## Summary
+
+The Message Bar is the second fixed region at the bottom of the frame, used for short-lived status and error messages. The message comes from the editor's state, is rendered within a fixed-width row, and is cleared whenever no message exists; it never becomes part of the Document and never affects the Dirty Flag.
+
+This keeps transient feedback separate from persistent document content.
+
+Now that the two fixed interface regions are established, the next section examines the final visual element: how the Renderer translates the logical Cursor into its terminal position.
+
+Continue to **Section 19.7, Rendering the Cursor**.
