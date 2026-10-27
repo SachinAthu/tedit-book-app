@@ -33,6 +33,16 @@ export default defineConfig({
           label: "GitHub",
           href: "https://github.com/SachinAthu/tedit-book-app",
         },
+        {
+          icon: "linkedin",
+          label: "LinkedIn",
+          href: "https://www.linkedin.com/in/sachinathu/",
+        },
+        {
+          icon: "rocket",
+          label: "Portfolio",
+          href: "https://www.sachinathu.dev/",
+        },
       ],
       editLink: {
         baseUrl: "https://github.com/SachinAthu/tedit-book-app/edit/main/",

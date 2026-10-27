@@ -21,6 +21,8 @@ By the end of this chapter, you will be able to:
 - Recognize how these decisions support simplicity, maintainability, and learning.
 - Appreciate how early design decisions influence the rest of a software project.
 
+---
+
 ## 11.1 How Engineers Make Design Decisions
 
 When developing software, there is rarely a single "correct" solution to a problem. Different designs can achieve the same goal, but each comes with its own advantages and disadvantages. As a result, software engineering is often about choosing the solution that best fits the project's requirements rather than searching for a perfect design.
@@ -38,6 +40,8 @@ Throughout this chapter, each design decision will follow the same process:
 5. Justify why the chosen design best fits this project.
 
 By understanding this decision-making process, you will learn not only how this editor is designed, but also how to evaluate architectural decisions in your own software projects.
+
+---
 
 ## 11.2 Decision 1 — Implement the Editor in C
 
@@ -78,6 +82,8 @@ However, these trade-offs support the educational objectives of this book. By wo
   supported, and well suited for learning systems programming. This decision
   forms the foundation for every implementation chapter that follows.
 </Aside>
+
+---
 
 ## 11.3 Decision 2 — Use a Full-Screen Redraw Renderer
 
@@ -135,6 +141,8 @@ For this project, the renderer will generate and display a complete frame after 
 
 </Aside>
 
+---
+
 ## 11.4 Decision 3 — Use Raw Terminal Mode
 
 A text editor must respond immediately to every key the user presses. Whether the user types a character, presses an arrow key, or uses a keyboard shortcut such as **Ctrl+S**, the editor must receive that input as soon as it occurs.
@@ -178,6 +186,8 @@ If the program terminates without restoring the terminal state, the user's shell
 For this project, the editor will enable **raw terminal mode** during initialization and restore the original terminal settings before exiting. This provides the level of control required for an interactive text editor while ensuring the terminal is returned to its normal operating state when the program finishes.
 
 </Aside>
+
+---
 
 ## 11.5 Decision 4 — Separate Input Parsing from Commands
 
@@ -244,6 +254,8 @@ For this project, raw terminal input is first translated into abstract key event
 
 </Aside>
 
+---
+
 ## 11.6 Decision 5 — Use a Layered Architecture
 
 As software grows, its components become increasingly dependent on one another. Without a clear structure, responsibilities begin to overlap, modules become tightly coupled, and even small changes can affect many parts of the system.
@@ -308,6 +320,8 @@ For this project, we organize the editor into **Application**, **Core**, and **P
 
 </Aside>
 
+---
+
 ## 11.7 Decision 6 — Centralize the Editor State
 
 A text editor consists of many components that need access to the same information. The Renderer needs the document and cursor position, the Command Engine modifies the document, the File Manager needs the current filename, and the Viewport determines which part of the document is visible.
@@ -363,6 +377,8 @@ For this project, all runtime information is stored in a single **Editor State**
 
 </Aside>
 
+---
+
 ## 11.8 Decision 7 — Give Every Component One Responsibility
 
 As a software project grows, it is tempting to let a component perform multiple related tasks. While this may seem convenient at first, it often leads to code that is difficult to understand, modify, and test.
@@ -408,6 +424,8 @@ The main disadvantage is that the project contains more modules and interfaces t
 For this project, every architectural component has **one clearly defined responsibility**. Components cooperate by performing their individual roles rather than taking on multiple unrelated tasks. This keeps the system modular, predictable, and easier to maintain as new features are introduced.
 
 </Aside>
+
+---
 
 ## 11.9 Decision 8 — Enforce One-Way Dependencies
 
@@ -462,6 +480,8 @@ The primary disadvantage is that some interactions require passing data through 
 For this project, dependencies always flow in one direction according to the defined architecture. Each module depends only on the interfaces it requires, and circular dependencies are prohibited. This keeps the editor modular, predictable, and easier to extend as new features are added.
 
 </Aside>
+
+---
 
 ## 11.10 Decision 9 — Organize the Project by Modules
 
@@ -540,6 +560,8 @@ For this project, each architectural component owns its own directory containing
 
 </Aside>
 
+---
+
 ## 11.11 Decision 10 — Create a Dedicated Common Module
 
 As the editor grows, some definitions will be needed by multiple modules. Examples include shared data types, constants, enumerations, and utility declarations. Without a common location for these shared definitions, code duplication and unnecessary dependencies quickly become problems.
@@ -588,6 +610,8 @@ To prevent this, the Common module must contain **only** definitions that are ge
 For this project, we create a dedicated **Common** module to hold shared definitions used throughout the editor. It serves as a central location for common infrastructure while deliberately excluding module-specific functionality. This keeps dependencies clean, avoids duplication, and preserves the modular architecture of the project.
 
 </Aside>
+
+---
 
 ## 11.12 Decision 11 — Use CMake
 
@@ -645,6 +669,8 @@ For this project, we use **CMake** as the build system. It provides a scalable, 
 
 </Aside>
 
+---
+
 ## 11.13 Decisions We Intentionally Deferred
 
 Not every useful feature belongs in the first version of a text editor. Although modern editors provide hundreds of capabilities, implementing them all from the beginning would add significant complexity and distract from the primary goal of understanding the core architecture.
@@ -693,6 +719,8 @@ For this project, we deliberately limit the baseline editor to its core responsi
 
 </Aside>
 
+---
+
 ## 11.14 Design Principles to Remember
 
 Throughout this chapter, we examined the major design decisions that shape our editor. Although each decision addresses a different problem, they are guided by a common set of engineering principles.
@@ -713,7 +741,9 @@ These principles will continue to influence every implementation decision in the
 
 By following these principles, we create an editor that is not only functional but also well-structured, maintainable, and easy to extend. More importantly, these are the same principles used when designing software systems of any size, making them valuable far beyond the scope of this project.
 
-## Chapter Summary
+---
+
+## 11.15 Conclusion
 
 Every software project begins with decisions. The language, the architecture, the build system, and the project structure all shape what the software becomes — often more than the code itself. In this chapter, we examined eleven decisions that define our editor's foundation and deliberately deferred several others to keep the project focused on its educational goals.
 

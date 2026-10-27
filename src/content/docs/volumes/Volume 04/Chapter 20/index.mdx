@@ -1,0 +1,1114 @@
+---
+title: Chapter 20 — Scrolling
+description: Explains how the Viewport tracks the visible document region, covering vertical and horizontal scrolling, cursor visibility, offset boundaries, and trade-offs.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## Introduction
+
+A terminal window can display only a small portion of a document at a time. As the cursor moves beyond the visible area, the editor must change which part of the document is shown.
+
+This is the responsibility of the **Viewport**.
+
+The Viewport tracks the visible region of the document using offsets. Scrolling adjusts those offsets so that the cursor remains visible while the Renderer displays the resulting region.
+
+In this chapter, we will examine how vertical and horizontal scrolling work and how the Viewport interacts with the Cursor and Renderer.
+
+## Learning Objectives
+
+By the end of the chapter, the reader should understand:
+
+- why a document needs a viewport
+- the difference between document coordinates and screen coordinates
+- how vertical scrolling works
+- how horizontal scrolling works
+- how viewport offsets represent the visible region
+- how cursor movement interacts with the viewport
+- how the editor keeps the cursor visible
+- where scrolling logic belongs architecturally
+- the complexity and trade-offs of the chosen model
+
+---
+
+## 20.1 Document Coordinates and Screen Coordinates
+
+Scrolling becomes easier to understand when we distinguish between the coordinate systems involved.
+
+**Document coordinates** describe a position within the document:
+
+```text
+row    = 250
+column = 37
+```
+
+These coordinates do not change when the document is scrolled. They count logical positions: one column per Unicode code point (Chapter 14).
+
+**Screen coordinates** describe where that same position appears within the terminal:
+
+```text
+screen_row    = 8
+screen_column = 15
+```
+
+Horizontally, a third coordinate sits between the two: the **visual/display column**. A logical document column counts code points, while a visual column counts terminal cells. The Renderer performs the conversion, for example by expanding a TAB across several cells (Chapter 19). A logical column is therefore not always a visual column.
+
+The **Viewport** connects these coordinate systems through its offsets:
+
+```text
+document_row  = viewport_row + screen_row
+visual_column = viewport_column + screen_column
+```
+
+Vertically, document rows map directly to screen rows. Horizontally, the viewport offset is applied in visual space, and only the result is a screen column:
+
+```text
+document_column (logical)
+      │
+      │ Renderer: tab expansion
+      ▼
+visual_column (display)
+      │
+      │ subtract viewport_column
+      ▼
+screen_column
+```
+
+For example, if `viewport_row` is `242`, document row `250` appears at screen row `8`.
+
+```text
+Document
+    │
+    │ row 250
+    ▼
+Viewport
+    │
+    │ viewport_row = 242
+    ▼
+Screen
+    │
+    │ row 8
+    ▼
+Terminal
+```
+
+The **Cursor** therefore continues to represent a logical position in the Document, while the Viewport determines where that position appears on the screen — with the Renderer bridging the two horizontally.
+
+---
+
+## 20.2 The Viewport
+
+The terminal cannot display the entire document at once. The **Viewport** represents the portion of the document that is currently visible.
+
+Conceptually:
+
+```text
+Document
+
+Line 1
+Line 2
+Line 3
+...
+Line 1000
+        │
+        ▼
+   ┌───────────────┐
+   │ Visible Area  │
+   │               │
+   │ Line 240      │
+   │ Line 241      │
+   │ Line 242      │
+   │ ...           │
+   │ Line 260      │
+   └───────────────┘
+```
+
+The Viewport does not contain another copy of the document. Instead, it stores **offsets** that identify where the visible region begins.
+
+For our editor, the important values are:
+
+```text
+viewport_row
+viewport_column
+```
+
+`viewport_row` identifies the first visible document row, while `viewport_column` identifies the first visible **visual/display column** of the rendered line.
+
+The two offsets therefore live in different coordinate spaces. `viewport_row` counts document rows; `viewport_column` counts visual columns — the display coordinates the Renderer produces when it expands the logical line into terminal cells, including TAB expansion (Chapter 19). `viewport_column` is not a UTF-8 byte offset and not a logical Document character index. The two kinds of column coincide only when a line contains no variable-width characters, so that one logical character always occupies exactly one cell.
+
+For example:
+
+```text
+viewport_row    = 240
+viewport_column = 10
+```
+
+means the terminal begins displaying the document at row 240 and visual column 10.
+
+As the user moves through the document, these offsets change when necessary. The Renderer then uses the updated Viewport to determine which portion of the document belongs in the current frame.
+
+The Viewport therefore acts as the boundary between the **logical document** and the **visible terminal region**: vertical in document rows, horizontal in visual columns.
+
+## 20.3 Vertical Scrolling
+
+Vertical scrolling controls which rows of the document are visible in the terminal.
+
+Suppose the terminal can display 20 rows:
+
+```text
+Visible rows:
+
+100 ──────────────
+101
+102
+...
+119 ──────────────
+```
+
+If the cursor moves to row 120, the current viewport can no longer display it. The editor must increase `viewport_row` so that the cursor becomes visible.
+
+### Scroll Down
+
+Before scrolling:
+
+```text
+viewport_row = 100
+
+100
+101
+...
+119   ← bottom of viewport
+120   ← cursor
+```
+
+The cursor is outside the visible region, so the viewport moves down:
+
+```text
+viewport_row = 101
+
+101
+102
+...
+120   ← cursor
+```
+
+The document itself has not moved. Only the viewport's starting position has changed.
+
+### Scroll Up
+
+The same principle applies in the opposite direction.
+
+If the cursor moves above the first visible row:
+
+```text
+viewport_row = 101
+
+101   ← top of viewport
+102
+...
+120
+```
+
+and the cursor moves to row 100, the editor adjusts the viewport:
+
+```text
+viewport_row = 100
+
+100   ← cursor
+101
+102
+...
+119
+```
+
+This reveals an important distinction:
+
+> **Scrolling is not cursor movement.**
+
+The Cursor represents a logical position within the Document. The Viewport changes only when that position falls outside the visible region.
+
+```text
+Cursor moves
+     │
+     ▼
+Is cursor visible?
+   │       │
+  Yes      No
+   │       │
+   ▼       ▼
+Nothing   Adjust
+changes   Viewport
+```
+
+This separation allows cursor navigation and viewport management to remain independent responsibilities.
+
+---
+
+## 20.4 Horizontal Scrolling
+
+Vertical scrolling determines which **rows** of the document are visible. Horizontal scrolling performs the same job horizontally, but in a different coordinate space: it operates on **visual/display columns** — the columns the Renderer produces when it expands the logical line into terminal cells (Chapter 19) — rather than on the Document's logical columns.
+
+A line may be longer than the terminal's available width. For example, suppose the terminal can display only 20 columns:
+
+```text
+The quick brown fox
+```
+
+The complete document line might actually be:
+
+```text
+The quick brown fox jumps over the lazy dog
+```
+
+Only part of the line can be displayed at once.
+
+The Viewport therefore uses `viewport_column` to determine which portion of a long line is currently visible.
+
+### Scroll Right
+
+Suppose the cursor moves beyond the right edge of the visible area:
+
+```text
+viewport_column = 0
+
+The quick brown fox
+                   ↑
+                 cursor
+```
+
+If the cursor moves further right, it can no longer be displayed within the terminal. The editor increases `viewport_column`:
+
+```text
+viewport_column = 5
+
+uick brown fox jumps
+                 ↑
+               cursor
+```
+
+The document has not changed. The viewport has simply shifted horizontally to expose a later portion of the line.
+
+### Scroll Left
+
+The same process occurs when the cursor moves back toward the beginning of the line.
+
+Suppose the viewport is currently:
+
+```text
+viewport_column = 5
+
+uick brown fox jumps
+       ↑
+     cursor
+```
+
+If the cursor moves to a column before the current `viewport_column`, the editor decreases the offset:
+
+```text
+viewport_column = 0
+
+The quick brown fox
+    ↑
+  cursor
+```
+
+The viewport therefore maintains the same basic invariant as vertical scrolling:
+
+> **The cursor must remain within the visible horizontal region.**
+
+### Why Visual Columns Matter
+
+The examples so far contain no TAB characters, so every logical column coincides with its visual column. That is not always true.
+
+Suppose `tab_width = 4` and the document line is:
+
+```text
+A<TAB>123456789
+```
+
+The Document contains eleven logical characters: `A`, the TAB, and the nine digits (Chapter 14). The Renderer expands the TAB, so the same line occupies more visual columns:
+
+```text
+visual:     A···123456789
+visual col: 012345678901234567...
+```
+
+The TAB is one logical character at logical column `1`, but it spans visual columns `1` through `3`; the `1` begins at visual column `4`. Therefore:
+
+```text
+viewport_column = 4
+```
+
+means "the viewport begins at visual column 4" — at the digit `1`, which is only the third logical character. It does **not** mean "the viewport begins at the fourth logical character."
+
+Horizontal scrolling must operate in the visual coordinate space, because that is the space in which the terminal displays the line and in which the Renderer measures it:
+
+```text
+logical cursor column
+      │
+      │ Renderer (tab expansion)
+      ▼
+visual cursor column
+      │
+      ▼
+horizontal scrolling decision
+```
+
+tab expansion itself belongs to the Renderer (Chapter 19). The scrolling logic consumes the visual columns the Renderer produces; it never computes tab widths itself.
+
+The two directions can be represented independently:
+
+```text
+             Viewport
+                 │
+        ┌────────┴────────┐
+        │                 │
+        ▼                 ▼
+  viewport_row        viewport_column
+        │                 │
+        ▼                 ▼
+   Vertical          Horizontal
+   scrolling         scrolling
+```
+
+This gives the editor a two-dimensional viewport over the document. The `viewport_row` determines which document rows are visible, while `viewport_column` determines which visual columns of those rows are visible.
+
+Horizontal scrolling is especially important because the editor does not use soft wrapping. A long line remains a single document line; the viewport simply exposes different portions of it as the cursor moves horizontally.
+
+---
+
+## 20.5 Keeping the Cursor Visible
+
+The primary responsibility of scrolling is to ensure that the logical **Cursor** remains within the visible region of the terminal.
+
+After a cursor movement or editing operation, the editor checks whether the cursor is still visible. If it is outside the viewport, the appropriate offset is adjusted.
+
+For vertical scrolling, the editor compares the cursor's document row with the viewport boundaries.
+
+If:
+
+```text
+cursor_row < viewport_row
+```
+
+the cursor is above the visible region, so the viewport must scroll upward.
+
+If:
+
+```text
+cursor_row >= viewport_row + visible_rows
+```
+
+the cursor is below the visible region, so the viewport must scroll downward.
+
+Conceptually:
+
+```text
+              Cursor position
+                     │
+                     ▼
+              Is cursor visible?
+                /           \
+              Yes            No
+               │              │
+               ▼              ▼
+          Keep viewport    Adjust offset
+                              │
+                              ▼
+                       Cursor visible
+```
+
+The same principle applies horizontally, with one additional step. The cursor's `column` is a logical Document coordinate, while `viewport_column` is a visual/display coordinate. The two are comparable only after the Renderer's logical-to-visual mapping (Chapter 19) has produced the cursor's **visual column**:
+
+```text
+logical cursor column
+      │
+      │ Renderer (tab expansion)
+      ▼
+cursor visual column
+      │
+      ▼
+scrolling decision
+```
+
+If:
+
+```text
+cursor_visual_column < viewport_column
+```
+
+the cursor is to the left of the visible region, so `viewport_column` must decrease.
+
+If:
+
+```text
+cursor_visual_column >= viewport_column + visible_columns
+```
+
+the cursor is to the right of the visible region, so `viewport_column` must increase.
+
+In other words, the scrolling logic keeps the cursor's visual column inside the interval:
+
+```text
+[viewport_column, viewport_column + visible_columns)
+```
+
+On a line without TAB characters, every logical column equals its visual column, and `cursor_visual_column` is simply `cursor.column`. The distinction matters when variable-width characters such as TAB are present, because then the same logical position occupies a different visual position. The Renderer owns that mapping; scrolling only consumes its result.
+
+The important point is that the viewport does not need to move every time the cursor moves. If the cursor remains within the visible region, the offsets remain unchanged.
+
+For example:
+
+```text
+Cursor moves
+     │
+     ▼
+Check viewport boundaries
+     │
+     ├── Cursor visible ──► Keep current offsets
+     │
+     └── Cursor outside ──► Adjust offsets
+                                  │
+                                  ▼
+                         Render updated frame
+```
+
+This gives us a simple invariant for the editor:
+
+> **After viewport adjustment, the Cursor must be within the visible editing region.**
+
+The Renderer can then rely on this state when constructing the frame. It does not need to decide whether scrolling is necessary; it simply displays the portion of the document identified by the current Viewport.
+
+---
+
+## 20.6 Scrolling and Cursor Movement
+
+Scrolling is closely related to cursor movement, but the two responsibilities remain separate.
+
+The **Cursor** determines the logical position within the Document:
+
+```text
+Cursor
+    │
+    ▼
+row = 250
+column = 37
+```
+
+The **Viewport** determines whether that position can currently be seen:
+
+```text
+Viewport
+    │
+    ├── viewport_row
+    └── viewport_column
+```
+
+When a cursor movement changes its logical position, the editor can then check whether the new position is still visible.
+
+```text
+Cursor Movement
+       │
+       ▼
+Update Cursor
+       │
+       ▼
+Check Visibility
+       │
+       ▼
+Adjust Viewport if necessary
+       │
+       ▼
+Render
+```
+
+For example, moving the cursor down normally changes only the cursor's row:
+
+```text
+cursor_row += 1
+```
+
+If that movement takes the cursor beyond the bottom of the visible region, the viewport must then be adjusted:
+
+```c
+if (cursor_row >= viewport_row + visible_rows)
+    viewport_row = cursor_row - visible_rows + 1;
+```
+
+Likewise, if the cursor moves above the first visible row, the viewport scrolls up so that the cursor becomes the top visible row:
+
+```c
+if (cursor_row < viewport_row)
+    viewport_row = cursor_row;
+```
+
+The same principle applies to horizontal movement, with the logical-to-visual step established in Section 20.5: the editor first obtains the cursor's visual column from the Renderer's mapping, then compares it against `viewport_column` and the visible width.
+
+This separation is important architecturally. The Cursor is responsible for determining whether a requested movement is valid and updating its logical position. The Viewport is responsible for ensuring that position remains visible. Neither component needs to know how the terminal is actually rendered.
+
+Editing operations can also require viewport adjustment. Inserting or deleting text may change the cursor's position or the dimensions of the document around it. After such operations, the editor should re-evaluate cursor visibility before the next frame is rendered.
+
+The general rule is therefore:
+
+> **Whenever an operation can change the logical cursor position, the editor should ensure that the resulting position remains visible.**
+
+This keeps scrolling independent of the particular command that caused the cursor to move. Whether the movement came from an arrow key, text insertion, deletion, or line splitting, the same viewport visibility rule applies.
+
+---
+
+## 20.7 Scrolling After Editing
+
+Scrolling is not triggered only by explicit cursor movement commands. Editing operations can also change the cursor's position or the structure of the Document.
+
+For example, pressing **Enter** splits a line:
+
+```text
+Before:
+
+Line 1
+Line 2| remaining text
+Line 3
+```
+
+After the operation:
+
+```text
+Line 1
+Line 2
+| remaining text
+Line 3
+```
+
+The cursor has moved to a new document position. If that position falls outside the visible region, the Viewport must be adjusted.
+
+The same can happen when:
+
+- inserting characters
+- deleting characters
+- splitting a line
+- merging adjacent lines
+
+The important principle is that scrolling should respond to the **resulting editor state**, rather than being tied to particular keyboard commands.
+
+A useful sequence is:
+
+```text
+Editing Operation
+       │
+       ▼
+Update Document
+       │
+       ▼
+Update Cursor
+       │
+       ▼
+Ensure Cursor Is Visible
+       │
+       ▼
+Render
+```
+
+This keeps the responsibility for scrolling in one place. Individual editing commands do not need to contain separate logic for handling the viewport.
+
+> **Any operation that changes the logical cursor position should be followed by a visibility check.**
+
+This also prevents subtle inconsistencies where cursor movement commands scroll correctly but editing operations leave the cursor outside the visible region.
+
+---
+
+## 20.8 Viewport Boundaries
+
+The Viewport must remain within the valid boundaries of the Document and the terminal. Its offsets cannot move to arbitrary positions.
+
+At a minimum, both offsets must remain non-negative:
+
+```text
+viewport_row >= 0
+viewport_column >= 0
+```
+
+At the beginning of the document, the vertical offset is therefore:
+
+```text
+viewport_row = 0
+```
+
+Likewise, when the cursor is at the beginning of a long line:
+
+```text
+viewport_column = 0
+```
+
+As the cursor moves through the document, the offsets may increase, but they should never expose a region that lies completely beyond the available document content.
+
+For example, if the document contains 100 lines and the terminal can display 20 lines, the viewport cannot meaningfully begin at an arbitrary position such as row 150. Its maximum useful position is determined by the document length and the number of visible rows.
+
+Conceptually:
+
+```text
+Document
+│
+├── Beginning
+│     viewport_row = 0
+│
+├── Visible regions
+│     viewport_row increases
+│
+└── End
+      viewport_row stops at the
+      final useful position
+```
+
+The same principle applies horizontally. The `viewport_column` should be constrained by the **visual extent** of the rendered content — the width the line occupies after tab expansion (Chapter 19) — and the available terminal width.
+
+It is useful to distinguish four different boundaries:
+
+| Boundary          | Determines                                        |
+| ----------------- | ------------------------------------------------- |
+| Document boundary | Where the document begins and ends                |
+| Cursor boundary   | Where the Cursor may be positioned                |
+| Viewport boundary | Which document region is currently visible        |
+| Terminal boundary | How much of that region can actually be displayed |
+
+These boundaries interact, but they represent different concepts.
+
+The Cursor cannot move outside the Document. The Viewport cannot move outside the useful range of the Document. The terminal determines the size of the visible region.
+
+Keeping these constraints separate makes the scrolling logic easier to reason about and helps prevent off-by-one errors when the document or terminal is very small.
+
+---
+
+## 20.9 Interaction with the Renderer
+
+The Viewport determines **what portion of the Document is visible**; the Renderer determines **how that portion is displayed**.
+
+After cursor movement or editing, the editor first updates its state and adjusts the Viewport if necessary:
+
+```text
+Cursor / Document changes
+          │
+          ▼
+   Adjust Viewport
+          │
+          ▼
+    Editor State
+          │
+          ▼
+       Renderer
+          │
+          ▼
+     Screen Buffer
+          │
+          ▼
+       Terminal
+```
+
+The Renderer reads the current `viewport_row` and `viewport_column` to determine which document content belongs in the visible frame. It does not decide whether scrolling should occur and does not modify the Viewport.
+
+The coordinate relationship is also one-directional. The Renderer owns the logical-to-visual mapping — including TAB expansion and the configured tab width (Chapter 19) — and the horizontal viewport offset is applied in that visual space. Scrolling therefore operates on the rendered coordinate space without ever computing tab widths or performing the logical-to-visual conversion itself; it consumes the mapping the Renderer already provides.
+
+This separation preserves the responsibility established in the rendering architecture (Chapter 19, ADR-017): the Renderer is a read-only consumer of the Editor State.
+
+The distinction can be summarized as:
+
+> **Scrolling changes the state that defines the visible region. Rendering displays that region.**
+
+As a result, the Renderer does not need to know why the Viewport changed. It simply renders the current state consistently on every frame.
+
+---
+
+## 20.10 Design Alternatives
+
+There are several ways an editor could represent and manage scrolling. The appropriate choice depends on the complexity of the editor and the features it needs to support.
+
+### No Viewport
+
+The simplest approach is to always display the document beginning at its first row and column.
+
+```text
+Document
+    │
+    ▼
+Terminal
+```
+
+This works only for very small documents. Once the cursor moves beyond the terminal's visible area, there is no mechanism for displaying the hidden content.
+
+For an editor intended to navigate arbitrary documents, this approach is insufficient.
+
+### Vertical Offset Only
+
+A slightly more capable design maintains only a vertical offset:
+
+```text
+Viewport
+└── viewport_row
+```
+
+This supports vertical scrolling but cannot handle lines that are wider than the terminal.
+
+A long line would therefore remain inaccessible once the cursor moves beyond the right edge of the screen.
+
+### Line wrapping / soft wrapping
+
+The distinction is:
+
+- **Horizontal scrolling:** keep the document line intact and move the viewport horizontally to reveal different columns.
+- **Soft wrapping:** keep the document line intact but display it across multiple terminal rows.
+
+For example, with horizontal scrolling:
+
+```text
+Document line:
+The quick brown fox jumps over the lazy dog
+
+Terminal:
+The quick brown fox
+```
+
+Moving right changes the visible portion:
+
+```text
+brown fox jumps ove
+```
+
+With soft wrapping:
+
+```text
+The quick brown fox
+jumps over the lazy
+dog
+```
+
+The underlying Document still contains **one line**. The wrapping exists only for presentation.
+
+#### Why this matters architecturally
+
+Soft wrapping changes the relationship between document coordinates and screen coordinates. A single document row can occupy multiple screen rows, so the Viewport can no longer treat:
+
+```text
+document row → screen row
+```
+
+as a simple one-to-one mapping.
+
+That introduces additional concerns such as:
+
+- calculating wrapped screen lines
+- determining the cursor's visual row
+- handling long lines efficiently
+- keeping vertical scrolling consistent
+- mapping screen positions back to document positions
+
+Our editor deliberately uses **horizontal scrolling instead** because it preserves the simple row/column coordinate model established by the Cursor and keeps the Viewport straightforward.
+
+One important nuance: **soft wrapping should be discussed as an alternative to horizontal scrolling, not as another viewport-offset representation.** It changes how long lines are presented rather than simply changing the viewport's horizontal position.
+
+This also aligns with the project requirements, which explicitly exclude soft word wrapping from the baseline editor.
+
+### Vertical and Horizontal Offsets
+
+Our editor uses two offsets:
+
+```text
+Viewport
+├── viewport_row
+└── viewport_column
+```
+
+`viewport_row` controls vertical scrolling, while `viewport_column` controls horizontal scrolling.
+
+This design is simple and maps directly to the terminal's two-dimensional display area. It also fits naturally with the coordinate model established by the Cursor and the Renderer: document rows map one-to-one to screen rows, and visual columns map directly to screen columns through `viewport_column`.
+
+The main advantages are:
+
+- Simple state representation
+- Constant-time viewport adjustments
+- Easy-to-understand coordinate calculations
+- Independent vertical and horizontal scrolling
+- No additional copy of the Document
+
+### More Sophisticated Viewport Models
+
+Larger editors may require more advanced viewport behavior, such as smooth scrolling, scroll margins, multiple views, or independently scrolling windows.
+
+These approaches become useful when an editor supports features such as split windows or multiple documents. They also introduce additional state and coordination that our single-document editor does not currently require.
+
+For the scope of this project, two simple offsets provide the necessary behavior without introducing unnecessary complexity.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A simple viewport is sufficient when the editor has a single rectangular editing area. More sophisticated viewport models become justified when the interface itself becomes more complex.
+
+</Aside>
+
+---
+
+## 20.11 Complexity and Trade-offs
+
+The scrolling model is intentionally simple. The Viewport contains only the offsets required to identify the visible region, and adjusting those offsets requires only a small number of coordinate comparisons.
+
+### Time Complexity
+
+Keeping the cursor visible requires checking the cursor against the viewport boundaries:
+
+```text
+cursor_row
+cursor_visual_column
+viewport_row
+viewport_column
+```
+
+Each check takes constant time, so viewport adjustment is:
+
+```text
+O(1)
+```
+
+The cost does not depend on the size of the document. Whether the document contains 100 lines or 100,000 lines, determining whether the cursor is outside the current viewport requires the same basic comparisons.
+
+These comparisons operate in the coordinate spaces established in this chapter: rows are logical document rows, and horizontal positions are visual columns. Obtaining the cursor's visual column requires the Renderer's tab expansion, whose cost is part of rendering (Chapter 19), not part of the viewport adjustment itself.
+
+### Space Complexity
+
+The Viewport stores only a constant amount of state:
+
+```text
+viewport_row
+viewport_column
+```
+
+Therefore, the additional space required by the scrolling mechanism is:
+
+```text
+O(1)
+```
+
+The Viewport does not duplicate document contents or create another representation of the visible text.
+
+### Trade-offs
+
+The simplicity of this model comes with deliberate limitations.
+
+Horizontal scrolling keeps each document line intact, which preserves the straightforward row-and-column coordinate model. However, very long lines can require the user to scroll horizontally rather than seeing the entire line at once.
+
+Soft wrapping could make long lines easier to read, but it would introduce a more complicated relationship between document coordinates and screen coordinates.
+
+For the baseline editor, the simpler offset-based model is preferable:
+
+```text
+Simple state
+      ↓
+Simple calculations
+      ↓
+O(1) viewport adjustment
+      ↓
+Predictable behavior
+```
+
+This is consistent with the project's broader goal of prioritizing simplicity and educational value over advanced interface behavior.
+
+---
+
+## 20.12 Common Scrolling Bugs
+
+Scrolling logic is simple in principle, but small boundary errors can produce noticeable problems. The most common issues are related to keeping the Cursor and Viewport coordinates consistent.
+
+### Cursor Disappears at the Bottom
+
+A common off-by-one error is treating this position as visible:
+
+```text
+cursor_row == viewport_row + visible_rows
+```
+
+The last visible row is actually:
+
+```text
+viewport_row + visible_rows - 1
+```
+
+Therefore, the cursor has already moved outside the viewport when:
+
+```text
+cursor_row >= viewport_row + visible_rows
+```
+
+### Negative Offsets
+
+Moving upward can accidentally reduce an offset below zero:
+
+```text
+viewport_row = -1
+```
+
+Both viewport offsets must remain non-negative:
+
+```text
+viewport_row >= 0
+viewport_column >= 0
+```
+
+### Horizontal Scrolling Never Reverses
+
+An editor may correctly increase `viewport_column` when the cursor moves right but fail to decrease it when the cursor moves back toward the beginning of the line.
+
+The result is that the cursor can move left logically while the visible text remains horizontally displaced.
+
+### Horizontal Scrolling Ignores Tab Expansion
+
+A subtler bug is comparing the cursor's logical column directly against `viewport_column` on lines that contain TAB characters.
+
+Because `viewport_column` counts visual columns while `cursor.column` counts logical code points (Chapters 14 and 19), the two are not comparable before the Renderer's expansion. Consider the line `A<TAB>123456789` from Section 20.4: after the TAB, the cursor is at logical column `2` but visual column `4`. A check written as:
+
+```text
+cursor_column >= viewport_column + visible_columns
+```
+
+therefore decides at the wrong position and either scrolls unnecessarily or leaves the cursor off screen. The check must use the cursor's visual column obtained from the Renderer's logical-to-visual mapping.
+
+### Scrolling Based on Screen Position
+
+Scrolling decisions should be based on the Cursor's **document coordinates**, not on the position where the Renderer previously displayed it.
+
+The Cursor represents the logical position; the Viewport determines how that position maps to the screen.
+
+### Renderer Owns Scrolling
+
+Another architectural mistake is allowing the Renderer to modify the Viewport when it discovers that the Cursor is outside the screen.
+
+The Renderer should remain a read-only consumer of Editor State. Viewport adjustment belongs to the state-management side of the editor.
+
+### Editing Leaves the Cursor Outside the Viewport
+
+Scrolling should not be associated only with arrow-key commands. Operations such as insertion, deletion, line splitting, and line merging can also change the Cursor's position.
+
+After such operations, cursor visibility should be checked before the next frame is rendered.
+
+The general rule is:
+
+> **Update the Cursor, ensure it is visible, then render.**
+
+This keeps scrolling predictable and prevents different commands from implementing their own inconsistent viewport logic.
+
+---
+
+## 20.13 Conclusion
+
+Scrolling answers a single question left open by the Renderer: **how does the visible region move through the document as the cursor moves?**
+
+The chapter began by separating the coordinate systems involved. **Document coordinates** describe a logical position within the text — a row and column that do not change when the document scrolls. **Screen coordinates** describe where that position appears within the terminal. **Visual/display columns** sit between the two horizontally: the Renderer maps logical columns to visual columns, expanding TAB characters across several cells (Chapter 19). The **Viewport** connects these spaces through its offsets: `document_row = viewport_row + screen_row` and `visual_column = viewport_column + screen_column`.
+
+The Viewport does not copy the document. It stores just two values — `viewport_row` and `viewport_column` — that identify where the visible region begins. Vertical scrolling changes `viewport_row` to control which document rows are visible; horizontal scrolling changes `viewport_column` to control which visual columns of a long line are visible. The editor uses horizontal scrolling rather than soft wrapping, so a long line remains a single document line and the viewport simply exposes different portions of it.
+
+The central responsibility of scrolling is captured by one invariant:
+
+> **After viewport adjustment, the Cursor must be within the visible editing region.**
+
+The Cursor identifies a logical position in the Document; the Viewport determines whether that position is currently visible. Scrolling is therefore not cursor movement. The Viewport changes only when the cursor's position falls outside the visible region, and it changes in response to the resulting editor state rather than to a particular key or command. Cursor movement, text insertion, deletion, line splitting, and line merging all trigger the same visibility check.
+
+The offsets must also remain within valid boundaries. They cannot be negative, and they must not expose a region beyond the available document content. Four boundaries interact — document, cursor, viewport, and terminal — and keeping them separate prevents off-by-one errors when the document or terminal is very small.
+
+Architecturally, the Viewport determines _what_ is visible and the Renderer determines _how_ it is displayed. Scrolling changes the state that defines the visible region; rendering reads that state. The Renderer remains a read-only consumer and never modifies the Viewport.
+
+The chosen model is deliberately simple. Two offsets provide constant-time viewport adjustment, so keeping the cursor visible costs `O(1)` time and the Viewport stores `O(1)` space. Alternatives such as no viewport, a vertical offset only, or soft wrapping were considered and rejected because they either fail to support arbitrary documents or complicate the document-to-screen mapping.
+
+The core model is:
+
+```text
+Document
+   │
+   ├── Cursor
+   │      │
+   │      ▼
+   │  logical position
+   │      │
+   │      │ Renderer: logical → visual
+   │      ▼
+   │  visual position
+   │
+   └── Viewport
+          │
+          ├── viewport_row     (document rows)
+          └── viewport_column  (visual columns)
+                 │
+                 ▼
+          visible region
+                 │
+                 ▼
+             Renderer
+```
+
+The most important takeaway:
+
+> **The Cursor identifies a position in the Document. The Viewport determines which part of that Document is visible. Scrolling changes the Viewport so that the Cursor remains visible — vertically in document rows, horizontally in visual columns, with the Renderer bridging the two.**
+
+The central design choice — representing the Viewport as two offsets (`viewport_row` and `viewport_column`) and using horizontal scrolling instead of soft wrapping — is recorded as **ADR-019: Viewport and Scrolling Model**. The Viewport's offsets are part of the Editor State whose single-writer ownership was established in **ADR-007: State Ownership**, and the scrolling model renders each frame within the full-redraw strategy of **ADR-002: Rendering Strategy**.
+
+### Exercises
+
+#### Review Questions
+
+1. What is the difference between document coordinates and screen coordinates?
+2. Why does the editor need both `viewport_row` and `viewport_column`?
+3. How do `viewport_row` and `viewport_column` together identify the visible region of the document?
+4. Why is scrolling not the same as cursor movement?
+5. What boundaries constrain the Viewport's offsets, and why must they stay non-negative?
+6. Why should the Renderer not modify the Viewport?
+7. Why must horizontal scrolling use the cursor's visual column rather than its logical column?
+8. What is the time and space complexity of keeping the cursor visible?
+
+#### Thought Experiments
+
+1. If the editor adopted soft wrapping instead of horizontal scrolling, how would the mapping between document coordinates and screen coordinates change?
+
+#### Design Exercise
+
+1. Write pseudocode for keeping the cursor vertically visible, using `cursor_row`, `viewport_row`, and `visible_rows`.
+
+#### Optional Challenge
+
+1. Design a viewport algorithm that keeps one blank row visible below the cursor when possible.
+
+### Preview of the Next Chapter
+
+Chapter 20 completes the Rendering Engine by explaining how the **Viewport** keeps the logical Cursor within the visible terminal region. The next volume moves from displaying the document to persisting it.
+
+Chapter 21 will examine how the editor moves document data between memory and the file system:
+
+- Loading a document from disk
+- Saving the in-memory Document
+- Handling file I/O errors
+- Permissions and failure cases
+- Considerations when working with large files
+
+The central transition is:
+
+```text
+Chapter 20
+Document
+   │
+   ▼
+Viewport
+   │
+   ▼
+Renderer
+   │
+   ▼
+Terminal
+
+Chapter 21
+Document
+   │
+   ▼
+File Manager
+   │
+   ▼
+File System
+```
+
+The key architectural distinction will remain:
+
+> **The Document is the editable in-memory representation; the file on disk is persistent storage.**
+
+Chapter 21 will therefore introduce file operations without revisiting the Document model or Renderer. The focus shifts from **what the user sees** to **how the editor loads and persists the data being edited**.
