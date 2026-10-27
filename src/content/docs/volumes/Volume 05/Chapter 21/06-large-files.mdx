@@ -1,0 +1,249 @@
+---
+title: 21.6 Large Files
+description: Explains how keeping the entire Document in memory ties file size to memory and I/O cost, and why the Viewport does not help.
+---
+
+Our editor uses an in-memory Document. This makes interactive editing straightforward because the editor can access and modify the current document without repeatedly reading from disk.
+
+However, this design creates a direct relationship between **file size and memory usage**.
+
+```text
+File Size
+    │
+    ▼
+Document Size
+    │
+    ▼
+Memory Required
+```
+
+A small file may require very little memory, while a large file can require a substantial amount.
+
+## The Entire Document Is Loaded
+
+When the editor opens a file, the baseline design loads its contents into the Document.
+
+For example:
+
+```text
+File on Disk
+     │
+     │ Load
+     ▼
++----------------+
+| Entire Document|
+|    in memory   |
++----------------+
+```
+
+The editor does not keep only the currently visible portion of the file. This is an important distinction from the **Viewport**. The Viewport determines what portion of the Document is displayed.
+
+The terminal may display only a small portion of the document, but the complete Document remains in memory.
+
+The Viewport therefore reduces **rendering work**, not **document memory usage**.
+
+## Memory Is the Limiting Resource
+
+Because the complete Document is held in memory, the editor cannot treat file size as unlimited.
+
+Conceptually:
+
+```text
+Small File
+    │
+    ▼
+Small Document
+    │
+    ▼
+Low Memory Usage
+
+
+Large File
+    │
+    ▼
+Large Document
+    │
+    ▼
+Higher Memory Usage
+```
+
+There is also some overhead associated with the Document's internal representation. Our vector-of-lines model stores the document as independently managed lines, so the total memory required is not simply the number of characters in the file.
+
+The important engineering principle is:
+
+> **The editor's memory requirement grows with the size of the document, not merely with the size of the visible screen.**
+
+## Large Files and Loading
+
+Loading a large file requires transferring its contents from disk and constructing the corresponding Document.
+
+The work therefore grows with the amount of data being loaded:
+
+```text
+File
+ │
+ │ Read
+ ▼
+Memory
+ │
+ │ Construct
+ ▼
+Document
+```
+
+A larger file requires:
+
+- more data to be read
+- more memory for the Document
+- more work to construct the Document
+
+The terminal dimensions do not change this fundamental cost.
+
+A terminal that is 80 columns by 24 rows still requires the editor to load the entire file if that is the selected architecture.
+
+## Large Files and Saving
+
+The same relationship exists when saving.
+
+The current Document must be serialized and written to the file:
+
+```text
+Document
+    │
+    │ Serialize
+    ▼
+File Data
+    │
+    │ Write
+    ▼
+Disk
+```
+
+A larger Document means more data must be written.
+
+This means that saving a large document can take significantly longer than saving a small one, even though the user may only have modified a small portion of the document.
+
+Our baseline design therefore favors simplicity over minimizing the amount of data written during each save.
+
+## Long Files Versus Long Lines
+
+It is useful to distinguish two different situations.
+
+A document can be large because it contains many lines:
+
+```text
+Line 1
+Line 2
+Line 3
+...
+Line 100000
+```
+
+Or it can contain relatively few lines where individual lines are extremely long:
+
+```text
+Line 1
+------------------------------------------------------------
+------------------------------------------------------------
+------------------------------------------------------------
+```
+
+These situations place different demands on the editor.
+
+The first primarily increases the number of Document lines.
+
+The second increases the amount of character data contained within individual lines and can make operations on those lines more expensive.
+
+The distinction becomes particularly relevant because our Document representation stores text as a collection of lines.
+
+## Why We Accept This Limitation
+
+A more sophisticated editor could use techniques that avoid loading or rewriting the entire document in the same way.
+
+For example, an editor could use:
+
+- memory mapping
+- lazy loading
+- partial document loading
+- specialized large-file data structures
+- more sophisticated persistence strategies
+
+However, these techniques introduce additional complexity.
+
+Our editor deliberately prioritizes:
+
+```text
+Simplicity
+    ↓
+Understandable data model
+    ↓
+Straightforward editing
+    ↓
+Predictable behavior
+```
+
+The SRS (Chapter 7) explicitly assumes that sufficient memory is available to load the entire document and defines the editor as an educational, single-document system rather than a large-file editing engine.
+
+This is therefore a conscious architectural limitation rather than an accidental omission.
+
+## Large Files and the Viewport
+
+It is worth emphasizing one final distinction.
+
+The Viewport allows the editor to work with a document that is much larger than the terminal:
+
+```text
++--------------------------------+
+|           Document             |
+|                                |
+|  thousands of lines            |
+|                                |
+|  ...                           |
+|                                |
+|  ...                           |
++---------------+----------------+
+                │
+                │ Viewport
+                ▼
+        +---------------+
+        | Terminal      |
+        |               |
+        | visible area  |
+        +---------------+
+```
+
+Scrolling means the renderer does not need to display every document line simultaneously.
+
+But the Document still exists in memory in its entirety.
+
+Therefore:
+
+> **Viewport size limits what must be displayed; it does not limit what must be stored.**
+
+This distinction connects the file system model back to the rendering architecture without duplicating the scrolling discussion from Chapter 20.
+
+## The Baseline Trade-off
+
+Our file I/O architecture makes a deliberate trade:
+
+```text
+Entire Document in Memory
+          │
+          ├──► Simple editing
+          ├──► Simple data access
+          ├──► Straightforward rendering
+          │
+          └──► Memory usage grows with document size
+```
+
+For the educational editor defined by this book, this is an appropriate trade-off.
+
+The goal is not to make the editor capable of handling every possible file size. The goal is to establish a clear and understandable persistence model that can later be evaluated and replaced if the editor's requirements become more demanding.
+
+More advanced data structures and large-document strategies are examined later in the book when we study the performance characteristics of different text-buffer representations.
+
+## Summary
+
+Because the entire Document is held in memory, file size directly determines memory usage and read/write cost. This is a conscious, educational trade-off—the Viewport limits what is displayed, never what is stored.
+
+In the next section, we will see how **loading and saving fit into the runtime model**, tracing file operations through the command, state, and rendering pipeline.

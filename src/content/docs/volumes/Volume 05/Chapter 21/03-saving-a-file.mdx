@@ -1,0 +1,301 @@
+---
+title: 21.3 Saving a File
+description: Shows how saving serializes the Document, writes all bytes, clears the Dirty Flag only after success, and reports failures.
+---
+
+Loading transfers data from the file system into the editor. Saving performs the reverse operation: it takes the current in-memory **Document** and makes its contents persistent on disk.
+
+The basic flow is:
+
+```text
+Document
+    │
+    ▼
+Serialize Contents
+    │
+    ▼
+Open or Create File
+    │
+    ▼
+Write Bytes
+    │
+    ▼
+Close File
+    │
+    ▼
+Mark Document as Saved
+```
+
+The distinction between editing and saving remains important:
+
+```text
+Edit
+  │
+  ▼
+Document in Memory
+  │
+  │ Save
+  ▼
+File on Disk
+```
+
+The user may perform many editing operations without changing the file on disk. Saving is the explicit operation that transfers the current state of the Document to persistent storage.
+
+## Preparing the Document for Writing
+
+Our Document is represented as a collection of lines, while a file is ultimately a sequence of bytes.
+
+For example, the Document might contain:
+
+```text
+Line 1 → "Hello"
+Line 2 → "World"
+Line 3 → "Editor"
+```
+
+The corresponding file contents are:
+
+```text
+Hello
+World
+Editor
+```
+
+The File Manager therefore has to serialize the Document into the byte sequence that should appear in the file.
+
+Conceptually:
+
+```text
++-------------+
+|  Document   |
+|-------------|
+| Hello       |
+| World       |
+| Editor      |
++------+------+
+       |
+       | Serialize
+       ▼
++-------------+
+| File Bytes  |
+|-------------|
+| Hello\n     |
+| World\n     |
+| Editor\n    |
++-------------+
+```
+
+The exact representation of line endings becomes particularly important when different text encodings and operating-system conventions are considered. Those issues are treated separately in Chapter 22.
+
+For this chapter, the important concept is simply that the File Manager converts the editor's in-memory representation into data suitable for writing to a file.
+
+## Opening the Destination File
+
+Before writing, the File Manager must obtain a file descriptor for the destination.
+
+If the file already exists, it can be opened for writing. If the current document represents a new file, the File Manager may need to create it.
+
+Conceptually:
+
+```text
+Save
+ │
+ ▼
+Does file exist?
+ │
+ ├── Yes ──► Open for writing
+ │
+ └── No  ──► Create and open
+```
+
+The SRS (Chapter 7) requires the editor to create a new file when saving a document that does not already exist.
+
+Opening the destination can fail just as opening a source file can fail. For example, the user may not have permission to write to the destination.
+
+The File Manager must therefore treat opening the destination as an operation that can succeed or fail.
+
+## Writing the Contents
+
+Once the destination has been opened successfully, the File Manager writes the serialized Document contents.
+
+The conceptual flow is:
+
+```text
+Document
+    │
+    ▼
+Memory Buffer
+    │
+    │ write()
+    ▼
+File
+```
+
+As with reading, a write operation should not be treated as an unconditional guarantee that every requested byte has been transferred in a single system call.
+
+The File Manager must account for the number of bytes actually written and continue until the complete document has been persisted or an error occurs.
+
+Conceptually:
+
+```text
+while (data remains)
+    write some bytes
+    advance past bytes written
+```
+
+This ensures that a large document or a partial write does not silently result in an incomplete file.
+
+## Closing the File
+
+After the complete Document has been written successfully, the File Manager closes the file descriptor.
+
+The complete sequence is therefore:
+
+```text
+Open
+  │
+  ▼
+Write
+  │
+  ▼
+Write remaining data
+  │
+  ▼
+Close
+```
+
+Closing the descriptor releases the operating-system resource associated with the file operation.
+
+The editor does not need to keep the file open between saves. Once the save operation is complete, the editor continues working with the in-memory Document.
+
+## Updating the Dirty Flag
+
+Saving also changes the state of the editing session.
+
+Before saving:
+
+```text
+Document
+   │
+   ├── Modified
+   │
+   └── Dirty Flag = true
+```
+
+After a successful save:
+
+```text
+Document
+   │
+   ├── Matches file on disk
+   │
+   └── Dirty Flag = false
+```
+
+The Dirty Flag must only be cleared after the save has succeeded.
+
+This distinction is critical:
+
+```text
+Attempted save
+      ≠
+Successful save
+```
+
+If opening the destination fails, writing fails, or another error prevents the complete document from being saved, the editor must not report the document as clean.
+
+Otherwise, the editor could incorrectly tell the user that there are no unsaved changes even though the file on disk does not contain the current Document.
+
+The architecture therefore places the responsibility for updating this state with the component coordinating the command and file operation. The File Manager reports the result, and the editor updates the Dirty Flag only when persistence has succeeded.
+
+## Successful Save
+
+A successful save produces a clear state transition:
+
+```text
+Before Save
+
+Document
+   │
+   ├── Current File: example.txt
+   └── Dirty: true
+
+
+        Save
+
+
+After Save
+
+Document
+   │
+   ├── Current File: example.txt
+   └── Dirty: false
+
+File: example.txt
+   │
+   └── Contains current Document
+```
+
+The file on disk and the in-memory Document now represent the same document contents.
+
+## Failed Save
+
+A failed save must leave the editor's state consistent with reality.
+
+For example:
+
+```text
+Document
+   │
+   ├── Modified
+   └── Dirty: true
+          │
+          │ Save
+          ▼
+      Write fails
+          │
+          ▼
+      Dirty remains true
+```
+
+The editor can then report the failure through the existing **Message Bar** rather than terminating the application unexpectedly.
+
+The Message Bar itself is not part of the File Manager's responsibility. It is simply the existing user-interface mechanism through which the result of the operation can be communicated.
+
+## Saving Is an Explicit Persistence Operation
+
+The complete relationship between editing and saving can now be expressed as:
+
+```text
+             File System
+                  ▲
+                  │
+                Save
+                  │
+                  │
+            +-----------+
+            | Document  |
+            +-----------+
+                  ▲
+                  │
+                Edit
+                  │
+                  ▼
+             User Input
+```
+
+The Document remains the authoritative representation while the user is editing.
+
+The file becomes the persistent representation only when the user explicitly saves.
+
+This separation gives the editor a simple and predictable model:
+
+> **Editing changes memory. Saving changes persistent storage.**
+
+It also establishes an important foundation for Chapter 23. The basic save operation described here assumes that writing the destination file is sufficient. More advanced techniques—such as temporary files, atomic replacement, and crash recovery—address what happens when saving itself must be made safer. Those mechanisms are deliberately kept separate from the baseline File Manager behavior introduced in this chapter.
+
+## Summary
+
+Saving is the explicit operation that serializes the Document, writes its contents to disk, and clears the Dirty Flag only after persistence succeeds. This keeps editing in memory and persistence to disk cleanly separated.
+
+In the next section, we will examine **file I/O errors** and why failure must be treated as a normal part of file operations rather than an unexpected exception.

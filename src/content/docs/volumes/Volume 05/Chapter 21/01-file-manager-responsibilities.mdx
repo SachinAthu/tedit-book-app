@@ -1,0 +1,174 @@
+---
+title: 21.1 The File Manager's Responsibility
+description: Defines the File Manager as the single boundary between the in-memory Document and the file system, owning load and save transfers.
+---
+
+The editor needs a component responsible for communicating with the file system. In our architecture, that responsibility belongs to the **File Manager**.
+
+The File Manager provides a boundary between the editor's in-memory state and the operating system's file system:
+
+```text
++----------------------+
+|    Editor State      |
+|                      |
+|      Document        |
++----------+-----------+
+           |
+           |
+           v
++----------------------+
+|    File Manager      |
++----------+-----------+
+           |
+           v
++----------------------+
+|    File System       |
+|                      |
+|   Files / Directories|
++----------------------+
+```
+
+The File Manager does not own the Document itself. The Document remains part of the Editor State and represents the text currently being edited. Instead, the File Manager is responsible for transferring that data between memory and persistent storage.
+
+This gives the File Manager two primary operations:
+
+```text
+Load:
+
+File System
+     |
+     v
+File Manager
+     |
+     v
+Document
+
+
+Save:
+
+Document
+     |
+     v
+File Manager
+     |
+     v
+File System
+```
+
+## Loading
+
+When the user opens an existing file, the File Manager:
+
+1. Opens the file.
+2. Reads its contents.
+3. Interprets the file contents as the input needed to construct the Document.
+4. Places the resulting Document into the Editor State.
+5. Reports any failure to the rest of the editor.
+
+The File Manager therefore handles the operating-system details involved in obtaining the file's contents, while the Document remains responsible for representing the editable text.
+
+## Saving
+
+When the user saves the document, the direction is reversed.
+
+The File Manager:
+
+1. Obtains the current Document from the Editor State.
+2. Converts its contents into the byte sequence that must be written to the file.
+3. Opens or creates the destination file as required.
+4. Writes the document contents.
+5. Closes the file.
+6. Reports whether the operation succeeded.
+
+Only after a successful save should the editor consider the document persisted and clear its modified state.
+
+This distinction is important:
+
+```text
+Editing the Document
+        ≠
+Saving the Document
+```
+
+Editing changes the in-memory representation. Saving makes those changes persistent.
+
+## What the File Manager Does Not Do
+
+The File Manager should have a narrow responsibility.
+
+It should not:
+
+- interpret keyboard input
+- map keys to commands
+- move the Cursor
+- modify the Viewport
+- render the screen
+- generate ANSI escape sequences
+- manage terminal raw mode
+- decide how text is displayed
+
+Those responsibilities belong to other components.
+
+For example, a save operation begins with a command, but the Command Engine does not directly call low-level file-system APIs throughout the application. Instead, it delegates the persistence operation to the File Manager:
+
+```text
+Keyboard
+    |
+    v
+Input Parser
+    |
+    v
+Input Engine
+    |
+    v
+Command Engine
+    |
+    v
+File Manager
+    |
+    v
+File System
+```
+
+This keeps the architectural boundary clear.
+
+The Command Engine decides **that a save should happen**.
+
+The File Manager knows **how to perform the file operation**.
+
+## Why This Boundary Matters
+
+Without a dedicated File Manager, file-system operations could spread throughout the editor:
+
+```text
+Command Engine ──────► open()
+Document ────────────► write()
+Renderer ────────────► file APIs
+Input ───────────────► file APIs
+```
+
+This would make the architecture increasingly difficult to understand and maintain. Components would become coupled to POSIX file-system APIs even when file persistence is not part of their responsibility.
+
+With the File Manager, the dependency remains localized:
+
+```text
+Command Engine
+       |
+       v
+ File Manager
+       |
+       v
+ POSIX File APIs
+```
+
+This follows the architectural principle established earlier in the book: **each component should have one primary responsibility**. The File Manager owns the boundary between the editor and persistent files, while the rest of the system can work with the Document without knowing how that Document is stored on disk.
+
+The result is a simple but important separation:
+
+> **The Document represents what the user is editing. The File Manager handles how that content is transferred to and from persistent storage.**
+
+## Summary
+
+The File Manager is the single boundary between the editor's in-memory Document and the file system. It owns the transfer of data in both directions—loading and saving—without taking on input, rendering, or terminal responsibilities.
+
+In the next section, we will examine the first of those two operations in detail: **loading a file** from disk into the Document.

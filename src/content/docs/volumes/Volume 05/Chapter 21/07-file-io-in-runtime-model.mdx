@@ -1,0 +1,398 @@
+---
+title: 21.7 File I/O in the Runtime Model
+description: Traces load and save through the input, command, state, and rendering pipeline, showing how the Dirty Flag connects persistence to state.
+---
+
+File I/O is not an independent activity that runs alongside the rest of the editor. It is performed as part of the existing command and state-update pipeline.
+
+The Runtime Model established earlier in the book defines the general flow:
+
+```text
+Event
+  ↓
+Parse Input
+  ↓
+Execute Command
+  ↓
+Update Editor State
+  ↓
+Render Frame
+```
+
+File operations fit into this model when a command requires persistent storage.
+
+The important architectural point is that the **Command Engine decides when a file operation is needed**, while the **File Manager performs the operation**.
+
+## Loading a File
+
+Opening a file is slightly different from ordinary editing because it replaces the current Document with data obtained from persistent storage.
+
+The flow is:
+
+```text
+Open Command
+     │
+     ▼
+File Manager
+     │
+     ▼
+Read File
+     │
+     ▼
+Build Document
+     │
+     ▼
+Update Editor State
+     │
+     ▼
+Render Frame
+```
+
+The File Manager does not render the newly loaded document itself. It updates the relevant state, and the Renderer subsequently observes that state and produces the next frame.
+
+This preserves the normal architecture:
+
+```text
+State changes first
+       ↓
+Rendering follows
+```
+
+## Saving a File
+
+Saving follows a different path because the current Document already exists in the Editor State.
+
+```text
+Save Command
+     │
+     ▼
+File Manager
+     │
+     ├── Read Document
+     │
+     ├── Serialize
+     │
+     ├── Write File
+     │
+      └── Report Result
+              │
+              ▼
+       Update Dirty Flag
+              │
+              ▼
+         Render Frame
+```
+
+The Renderer does not participate in the actual persistence operation.
+
+It only displays the resulting state—for example, a successful save may cause the status information to show that the document is no longer modified, while a failed save may produce an error message.
+
+## File I/O Does Not Bypass the Command Engine
+
+It might be tempting to allow the Input Engine or Input Parser to perform file operations directly:
+
+```text
+Input
+  │
+  └────► File Manager
+```
+
+That would weaken the architecture.
+
+The Input Parser should know about input formats.
+
+The Input Engine should know how input events map to commands.
+
+The Command Engine should know what those commands do.
+
+The File Manager should know how files are accessed.
+
+The complete separation is:
+
+```text
+Keyboard
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command Engine
+    │
+    ▼
+File Manager
+    │
+    ▼
+File System
+```
+
+Each stage answers a different question:
+
+| Component      | Question                                              |
+| -------------- | ----------------------------------------------------- |
+| Input Handler  | What bytes arrived?                                   |
+| Input Parser   | What input event do these bytes represent?            |
+| Input Engine   | Which command does this event trigger?                |
+| Command Engine | What should this command do?                          |
+| File Manager   | How should the requested file operation be performed? |
+
+This separation prevents file-system knowledge from leaking into the input pipeline.
+
+## File I/O and Editor State
+
+The Editor State remains the central point through which the rest of the editor observes the result of file operations.
+
+For loading:
+
+```text
+File
+ │
+ ▼
+File Manager
+ │
+ ▼
+Document
+ │
+ ▼
+Editor State
+ │
+ ▼
+Renderer
+```
+
+For saving:
+
+```text
+Editor State
+ │
+ ▼
+Document
+ │
+ ▼
+File Manager
+ │
+ ▼
+File
+```
+
+The direction of data transfer changes, but the architectural boundary remains the same.
+
+This is another example of the **single source of truth** principle. The Document in the Editor State remains the authoritative representation of what the user is currently editing; the file system provides persistent storage rather than becoming a second live editing state.
+
+## File I/O and the Dirty Flag
+
+The Dirty Flag connects persistence with editor state.
+
+After loading:
+
+```text
+File
+ │
+ ▼
+Document
+ │
+ ▼
+Dirty = false
+```
+
+After editing:
+
+```text
+Document modified
+       │
+       ▼
+Dirty = true
+```
+
+After a successful save:
+
+```text
+Document
+       │
+       ▼
+File updated successfully
+       │
+       ▼
+Dirty = false
+```
+
+After a failed save:
+
+```text
+Document
+       │
+       ▼
+Save fails
+       │
+       ▼
+Dirty = true
+```
+
+The flag therefore represents an important relationship:
+
+> **Does the in-memory Document contain changes that are not known to be persisted successfully?**
+
+It is not simply a record of whether the user has pressed a key.
+
+## File I/O and Rendering
+
+File I/O itself does not produce visual output.
+
+Instead, it changes editor state or produces information that should be reflected in editor state.
+
+For example, after a successful save:
+
+```text
+Save
+ │
+ ▼
+File Manager
+ │
+ ▼
+Dirty = false
+ │
+ ▼
+Renderer
+```
+
+After a failed save:
+
+```text
+Save
+ │
+ ▼
+File Manager
+ │
+ ▼
+Error Message
+ │
+ ▼
+Renderer
+```
+
+The Renderer remains a read-only consumer of the resulting state.
+
+This keeps file persistence and presentation independent: the File Manager does not need to know how the status or error information will ultimately appear on the terminal.
+
+## A Complete Example
+
+Consider the user opening an existing file:
+
+```text
+User presses Open
+        │
+        ▼
+Input Parser
+        │
+        ▼
+Input Engine
+        │
+        ▼
+Command Engine
+        │
+        ▼
+File Manager
+        │
+        ▼
+Read file
+        │
+        ▼
+Construct Document
+        │
+        ▼
+Update Editor State
+        │
+        ▼
+Renderer
+        │
+        ▼
+Terminal
+```
+
+Now consider the user modifying the document and saving:
+
+```text
+User presses Save
+        │
+        ▼
+Input Parser
+        │
+        ▼
+Input Engine
+        │
+        ▼
+Command Engine
+        │
+        ▼
+File Manager
+        │
+        ▼
+Write Document
+        │
+        ▼
+Update persistence state
+        │
+        ▼
+Renderer
+        │
+        ▼
+Terminal
+```
+
+The two operations move data in opposite directions, but both follow the same architectural principle:
+
+```text
+Input
+  ↓
+Command
+  ↓
+File Operation
+  ↓
+State
+  ↓
+Rendering
+```
+
+This integration is what allows File I/O to remain a focused subsystem rather than becoming a special execution path through the editor.
+
+## The Architectural Boundary
+
+The resulting relationship between the editor and the file system can be summarized as:
+
+```text
++-----------------------------+
+|       Editor Application    |
+|                             |
+|  Input → Command → State    |
+|                    │        |
++--------------------┼--------+
+                     │
+                     ▼
+              +-------------+
+              | File Manager|
+              +------+------+
+                     │
+                     ▼
+              +-------------+
+              | File System |
+              +-------------+
+```
+
+The File Manager is therefore the editor's persistence boundary.
+
+Everything above it works primarily with the editor's logical state.
+
+Everything below it deals with operating-system file operations.
+
+This separation gives us a clean foundation for the next stage of the discussion: determining what file operations cost in time and memory, and what trade-offs result from our simple persistence model.
+
+## Summary
+
+File I/O flows through the existing command, state, and rendering pipeline. The Command Engine decides when an operation is needed, the File Manager performs it, and the Renderer simply observes the resulting state, keeping persistence a focused subsystem.
+
+In the next section, we will analyze the **complexity and trade-offs** of this persistence model, including its `O(n)` time and space costs.

@@ -1,0 +1,123 @@
+---
+title: 21.9 Conclusion
+description: Consolidates the File I/O model, then offers review questions, thought experiments, common mistakes, and a preview of text encoding.
+---
+
+File I/O answers a single question left open by the rendering chapters: **how does the text being edited cross the boundary between memory and persistent storage?**
+
+The answer is the **File Manager** — the one component responsible for transferring data between the editor's in-memory Document and the file system. The entire chapter reduces to a single mental model:
+
+```text
+              File System
+               ▲     │
+             Save   Load
+               │     ▼
+            +-----------+
+            |  Document |
+            +-----------+
+                  │
+               Editing
+                  │
+                  ▼
+             Dirty Flag
+```
+
+The Document remains the authoritative representation of the text being edited. The File Manager moves bytes in only two directions. **Loading** is a one-way transfer — open the file, read its bytes, build the Document, update the Editor State, and close the descriptor — after which the file on disk stays unchanged. **Saving** reverses that direction: the File Manager serializes the Document into a byte sequence, opens or creates the destination, writes the complete contents, and only then does the editor clear the Dirty Flag. The central separation is that editing changes memory while saving changes persistent storage.
+
+Because file operations reach outside the editor's control, failure is part of normal operation. The File Manager must inspect every system call's result, use `errno` to produce meaningful messages, and never represent a failed load as a valid Document or a failed save as a clean one. The operating system remains the authority over file access, so a successful load does not guarantee a successful save.
+
+The in-memory model also carries a direct cost: loading, saving, and document storage each grow with the size of the file. All three are `O(n)` in the number of bytes — a deliberate, educational trade-off whose simplicity is appropriate for this editor.
+
+The most important takeaway:
+
+> **The Document represents what the user is editing. The File Manager handles how that content is transferred to and from persistent storage — and reports success only when the transfer actually succeeded.**
+
+The central design choice — the full in-memory Document with a full-save persistence model behind a dedicated File Manager — is recorded as **ADR-020: File Persistence Model**. The File Manager's narrow, single-purpose boundary follows **ADR-009: Component Responsibilities**, and the Dirty Flag is updated under the ownership rules of **ADR-007: State Ownership**.
+
+## Exercises
+
+### Review Questions
+
+1. What is the File Manager's responsibility, and what must it never do?
+2. In which direction does data move during loading, and in which direction during saving?
+3. Why must the editor inspect the return value of `read()` and `write()` rather than assume a single call transfers everything?
+4. When is the Dirty Flag cleared, and why must it never be cleared earlier?
+5. What is the difference between an empty file and a failed read?
+6. Why does a successful load not guarantee a successful save?
+7. What is `errno`, and how does the File Manager use it?
+8. What are the time and space complexities of loading and saving a document?
+9. Why does the editor's memory usage grow with document size rather than terminal size?
+
+### Thought Experiments
+
+1. What would happen if the editor cleared the Dirty Flag before the write completed?
+2. How would the editor's behavior change if it kept every opened file's descriptor open for the entire editing session?
+3. If the editor adopted incremental persistence (writing only changed regions), what additional state and complexity would it need?
+
+## Common Mistakes
+
+### Forgetting to close file descriptors
+
+File descriptors are a limited operating-system resource. Leaving them open after a load or save gradually exhausts the process's descriptor table. Every successful open must be matched by a close once the transfer is complete.
+
+### Assuming `read()` always reads everything requested
+
+A single `read()` may return fewer bytes than requested, `0` to signal end-of-file, or `-1` to signal an error. The File Manager must continue reading until the end of the file or an error occurs, never treating one call as the whole file.
+
+### Assuming `write()` always writes everything requested
+
+A single `write()` may transfer only part of the buffer. The File Manager must advance past the bytes written and continue until the complete document has been persisted, so a partial write never silently produces an incomplete file.
+
+### Clearing the Dirty Flag before a successful save
+
+The Dirty Flag records unsaved changes. Clearing it before the write succeeds reports the document as clean even though the file on disk does not yet contain the current contents, allowing work to be lost without warning.
+
+### Ignoring `errno`
+
+`errno` identifies why an operation failed. Discarding it turns "permission denied" or "no such file" into an unhelpful generic failure — or into a program that keeps running with invalid data.
+
+### Treating a missing file as an unexpected crash
+
+A missing file is a recoverable, expected operational error. The editor should report it through the Message Bar and continue the session, not restore the terminal and terminate.
+
+### Mixing file-system logic into the Document or Renderer
+
+The Document represents text and the Renderer displays state. Folding POSIX file calls into either couples the core model and the presentation to the file system, breaking the single-responsibility boundary the File Manager exists to protect.
+
+### Losing the final line ending during serialization
+
+The Document is a collection of lines while a file is a byte sequence. If the trailing newline is dropped when the lines are joined, a saved file will differ from the original on disk even though no text was changed.
+
+## Preview of the Next Chapter
+
+Chapter 21 completes the first stage of the File System volume by establishing how the editor moves document data between memory and the file system. Throughout this chapter, a file was treated as a sequence of bytes — but we have not yet asked what those bytes actually mean.
+
+Chapter 22 will examine **Text Encoding**:
+
+- the difference between a byte and a character
+- how ASCII encodes characters and where its limits lie
+- how UTF-8 extends ASCII to represent every written language
+- how Unicode code points map onto byte sequences
+- line-ending conventions — LF versus CRLF — and why they matter when loading and saving
+
+The central transition is:
+
+```text
+Chapter 21
+File System
+   │
+   ▼
+Document (bytes)
+
+Chapter 22
+Document (bytes)
+   │
+   ▼
+Meaning (characters)
+```
+
+The key distinction will remain:
+
+> **A file is a sequence of bytes; a document is a sequence of characters. Encoding is what connects the two.**
+
+Chapter 22 will therefore explain how bytes become characters and how line-ending differences affect the load and save operations introduced here, without revisiting the File Manager architecture itself.

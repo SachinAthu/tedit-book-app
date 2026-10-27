@@ -1,0 +1,237 @@
+---
+title: 21.5 File Permissions and the Operating System
+description: Explains how operating-system ownership and read/write permissions govern file access and why the editor should report denials.
+---
+
+File I/O does not happen in isolation. The editor asks the operating system to access a resource, and the operating system decides whether that operation is permitted.
+
+This means that a file can exist and still be inaccessible to the editor.
+
+```text
+Editor
+   │
+   │ request access
+   ▼
+Operating System
+   │
+   ├── Allowed ──► File operation proceeds
+   │
+   └── Denied ───► Error
+```
+
+Understanding this boundary is important because many file I/O failures are not caused by a problem in the editor itself. They are consequences of the permissions and ownership rules enforced by the operating system.
+
+## Reading and Writing Are Different Permissions
+
+A file may allow the current user to read its contents without allowing that user to modify it.
+
+For example:
+
+```text
+File
+ │
+ ├── Read  ──► Allowed
+ │
+ └── Write ──► Denied
+```
+
+The editor could therefore successfully open and load a file but fail when the user later attempts to save it.
+
+This reinforces an important distinction:
+
+```text
+Successful load
+      ≠
+Successful save
+```
+
+Each operation requires its own access check.
+
+## File Ownership
+
+On a POSIX system, files have an owner and an associated group. Permissions determine which users may perform particular operations.
+
+Conceptually:
+
+```text
++----------------------+
+| File                 |
+|----------------------|
+| Owner                |
+| Group                |
+| Permissions          |
++----------------------+
+          │
+          ▼
+     Access Check
+          │
+     ┌────┴────┐
+     ▼         ▼
+  Allowed    Denied
+```
+
+The editor does not normally need to implement these rules itself. The operating system performs the access checks when the File Manager requests an operation.
+
+The editor's responsibility is to respond correctly when the operating system rejects the request.
+
+## File Permissions During Loading
+
+When loading a file, the editor primarily needs read access.
+
+A typical failure looks like:
+
+```text
+User
+ │
+ │ Open file
+ ▼
+File Manager
+ │
+ │ open()
+ ▼
+Operating System
+ │
+ └── Read permission denied
+          │
+          ▼
+        Error
+```
+
+The File Manager should preserve the existing editor state and report the problem to the user.
+
+For a file that cannot be loaded, the editor should not construct a Document from nonexistent or incomplete data.
+
+## File Permissions During Saving
+
+Saving requires write access to the destination.
+
+For an existing file, the operating system may reject the operation if the user cannot modify it.
+
+For a new file, creating the file also depends on the permissions of the containing directory.
+
+This produces an important distinction:
+
+```text
+Existing file
+     │
+     └── Access depends on the file and its permissions
+
+
+New file
+     │
+     └── Creation depends on the destination directory
+```
+
+A user may therefore have permission to read files in a directory without having permission to create new files there.
+
+The File Manager should not attempt to work around these restrictions. It should report the operating system's failure.
+
+## Error Information Matters
+
+When the operating system rejects an operation, `errno` can provide information about why it failed.
+
+For example:
+
+```text
+Permission denied
+File not found
+Is a directory
+No space left on device
+```
+
+The File Manager can use this information to construct a useful error message.
+
+The goal is not to expose operating-system internals unnecessarily. The goal is to give the user enough information to understand what prevented the requested operation.
+
+```text
+Save failed
+     │
+     ▼
+Operating System
+     │
+     ▼
+Error information
+     │
+     ▼
+Human-readable message
+     │
+     ▼
+Message Bar
+```
+
+## The Editor Does Not Own File Permissions
+
+It is important to keep the responsibility boundaries clear.
+
+The File Manager requests file operations.
+
+The operating system enforces permissions.
+
+The Renderer communicates the resulting state to the user.
+
+```text
++-------------+
+| File Manager|
++------+------+
+       │
+       │ request
+       ▼
++-------------+
+| Operating   |
+| System      |
++------+------+
+       │
+       │ result
+       ▼
++-------------+
+| Editor State|
++------+------+
+       │
+       ▼
+   Renderer
+```
+
+The editor should not duplicate the operating system's permission model or attempt to predict every possible access failure before performing the operation.
+
+In many cases, the most reliable approach is simply to perform the requested operation and handle the result.
+
+## Permissions Are Part of the File Manager's Environment
+
+This leads to a broader systems-programming principle:
+
+> **An application does not control every resource it interacts with. The operating system remains the authority over protected resources.**
+
+The File Manager therefore operates within constraints imposed by the environment:
+
+- file ownership
+- file permissions
+- directory permissions
+- file existence
+- operating-system policies
+
+The editor's job is not to eliminate these constraints. It is to handle them correctly.
+
+For our editor, that means maintaining a simple contract:
+
+```text
+Request operation
+       │
+       ▼
+Operating system decides
+       │
+   ┌───┴────┐
+   ▼        ▼
+Success   Failure
+   │        │
+   ▼        ▼
+Continue  Preserve state
+          Report error
+```
+
+This keeps the File Manager predictable while allowing the operating system to remain responsible for access control.
+
+## Summary
+
+The operating system remains the authority over file access. Reading and writing are separate permissions, and a successful load does not imply a successful save; the editor's job is to handle denials correctly rather than attempt to work around them.
+
+In the next section, we will examine **large files** and how the in-memory Document model ties file size directly to memory usage.

@@ -1,0 +1,242 @@
+---
+title: 21.2 Loading a File
+description: Traces loading from open through read, document construction, state update, and close, noting partial reads and empty files.
+---
+
+When the editor opens an existing file, it must transfer the file's contents from persistent storage into the in-memory **Document**.
+
+The process can be viewed as a pipeline:
+
+```text
+File Path
+    │
+    ▼
+Open File
+    │
+    ▼
+Read Bytes
+    │
+    ▼
+Interpret File Contents
+    │
+    ▼
+Build Document
+    │
+    ▼
+Update Editor State
+    │
+    ▼
+Render
+```
+
+The important point is that the editor does not continue editing the file directly on disk. Once loading is complete, the Document becomes the working representation of the file.
+
+## Opening the File
+
+The first step is to identify the file and request access to it from the operating system.
+
+On POSIX systems, files are accessed through **file descriptors**. The editor can open a file using the `open()` system call:
+
+```c
+int file_descriptor = open(path, O_RDONLY);
+```
+
+If the operation succeeds, the operating system returns a non-negative file descriptor. The editor uses this descriptor for subsequent read operations.
+
+If the operation fails, `open()` returns `-1`. The File Manager must then report the failure rather than attempting to read from an invalid descriptor.
+
+```text
+open()
+  │
+  ├── Success ──► File Descriptor
+  │
+  └── Failure ──► Error
+```
+
+The File Manager should also ensure that a successfully opened file is eventually closed. File descriptors are operating-system resources, and leaving them open unnecessarily can exhaust the process's available descriptors.
+
+## Reading the Contents
+
+Once the file has been opened, the File Manager reads its contents.
+
+A file is fundamentally a sequence of bytes:
+
+```text
++----+----+----+----+----+-----+
+| H  | e  | l  | l  | o  | \n  |
++----+----+----+----+----+-----+
+```
+
+The `read()` system call transfers bytes from the file into memory.
+
+Conceptually:
+
+```text
+File on Disk
+     │
+     │ read()
+     ▼
+Memory
+```
+
+The editor reads the file contents and uses those bytes to construct the Document.
+
+An important property of `read()` is that a single call is not guaranteed to return every byte requested. The return value tells the caller how many bytes were actually read:
+
+```c
+ssize_t bytes_read = read(file_descriptor, buffer, buffer_size);
+```
+
+The File Manager therefore needs to continue reading until the end of the file is reached or an error occurs.
+
+Conceptually:
+
+```text
+while (more data exists)
+    read some bytes
+    process those bytes
+```
+
+This distinction is important because file I/O is a transfer operation, not a promise that an entire file will arrive in one system call.
+
+## Constructing the Document
+
+The bytes read from the file must eventually become the editor's internal Document representation.
+
+Our editor represents a document as a collection of lines. Therefore, loading requires the file contents to be separated into their logical lines.
+
+For example:
+
+```text
+File contents:
+
+Hello
+World
+Editor
+```
+
+becomes:
+
+```text
+Document
+
++-------+
+| Hello |
++-------+
+| World |
++-------+
+| Editor|
++-------+
+```
+
+The File Manager is responsible for obtaining the file data, while the Document representation determines how that data is stored for editing.
+
+This distinction prevents the file format from becoming the Document itself.
+
+The file is a sequence of bytes.
+
+The Document is the editor's structured, editable representation of those bytes.
+
+## Empty Files
+
+An empty file is still a valid document.
+
+```text
+File
+
+(empty)
+```
+
+After loading, the editor must create an appropriate empty Document rather than treating the absence of file contents as a file-system error.
+
+This distinction matters:
+
+```text
+Empty file
+    ≠
+Failed read
+```
+
+An empty file is valid input. A failed read is an error condition.
+
+## Updating Editor State
+
+After the file has been successfully read and the Document has been constructed, the Editor State can be updated with the loaded document.
+
+The current file identity is also associated with the editing session so that subsequent save operations know where the document should be written.
+
+The resulting state can be viewed as:
+
+```text
+Editor State
+│
+├── Document
+│   ├── Line 1
+│   ├── Line 2
+│   └── Line 3
+│
+├── Current File
+│   └── path/to/file
+│
+└── Dirty Flag
+    └── false
+```
+
+A document loaded successfully from disk has no unsaved modifications at that point, so the Dirty Flag should indicate that the current in-memory contents match the file on disk.
+
+## Closing the File
+
+After the contents have been successfully read, the File Manager should close the file descriptor.
+
+The descriptor was needed to perform the file operation, but the editor does not need to keep the file open simply because the document is being edited.
+
+This reinforces an important property of our design:
+
+```text
+Open File
+    ↓
+Read Contents
+    ↓
+Close File
+    ↓
+Edit Document in Memory
+```
+
+The editor works on the Document after loading. It does not maintain a continuously open file as the primary representation of the document.
+
+## Loading Is a One-Way Transfer
+
+The complete loading operation can therefore be summarized as:
+
+```text
+                File System
+                     │
+                     │ bytes
+                     ▼
+              +-------------+
+              | File Manager|
+              +------+------+
+                     │
+                     │ document data
+                     ▼
+              +-------------+
+              |  Document   |
+              +-------------+
+                     │
+                     ▼
+                Editor State
+```
+
+The file system provides persistent bytes.
+
+The File Manager transfers those bytes into the editor.
+
+The Document provides the editable in-memory representation.
+
+Once this process is complete, normal editing operations work entirely against the in-memory Document. The original file remains unchanged until the user explicitly performs a save operation.
+
+## Summary
+
+Loading is a one-way transfer that moves bytes from the file system into the in-memory Document: open the file, read its contents, build the Document, update the Editor State, and close the descriptor. The file on disk remains unchanged throughout.
+
+In the next section, we will reverse that direction and examine **saving a file**, which serializes the Document and writes its contents back to disk.

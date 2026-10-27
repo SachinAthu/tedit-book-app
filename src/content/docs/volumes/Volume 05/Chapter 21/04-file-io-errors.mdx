@@ -1,0 +1,332 @@
+---
+title: 21.4 File I/O Errors
+description: Explains why file I/O failures are normal, how to check system calls and errno, and how to distinguish recoverable from fatal errors.
+---
+
+File operations are interactions with resources outside the editor's direct control. A file may not exist, the user may not have permission to access it, or an operation may fail while data is being transferred.
+
+Therefore, the File Manager must treat failure as a normal possibility rather than assuming that every operation succeeds.
+
+The basic model is:
+
+```text
+File Operation
+      │
+      ├── Success ──► Continue
+      │
+      └── Failure ──► Report Error
+                           │
+                           ▼
+                      Continue Safely
+```
+
+This is especially important in an interactive editor. A failed save should normally produce an understandable message, not terminate the entire editing session.
+
+## Errors Are Part of Normal Operation
+
+Consider opening a file that does not exist:
+
+```text
+User
+ │
+ │ Open "notes.txt"
+ ▼
+File Manager
+ │
+ │ open()
+ ▼
+File System
+ │
+ └── File does not exist
+          │
+          ▼
+        Error
+```
+
+The error is not necessarily a programming failure. The user may simply have supplied an incorrect path.
+
+Similarly, a save can fail because the destination is read-only or the user does not have permission to write to it.
+
+The editor therefore needs to distinguish between:
+
+```text
+Expected operational failure
+        │
+        ▼
+Report and continue
+
+
+Fatal application failure
+        │
+        ▼
+Restore terminal
+        │
+        ▼
+Terminate safely
+```
+
+This distinction follows the runtime model established earlier in the book: recoverable errors should not terminate the Event Loop, while fatal conditions require safe shutdown.
+
+## Detecting System Call Failures
+
+POSIX system calls generally communicate failure through their return values.
+
+For example, `open()` returns `-1` on failure:
+
+```c
+int file_descriptor = open(path, O_RDONLY);
+
+if (file_descriptor == -1)
+{
+    /* Handle error */
+}
+```
+
+Likewise, `read()` and `write()` return values that must be inspected.
+
+The important rule is simple:
+
+> **Never assume that a system call succeeded. Always inspect its result.**
+
+Ignoring these return values can cause the editor to continue operating with invalid or incomplete data.
+
+## Understanding `errno`
+
+When many POSIX operations fail, the system provides additional information through `errno`.
+
+For example:
+
+```text
+open()
+  │
+  └── failure
+        │
+        ▼
+      errno
+        │
+        ▼
+  Error information
+```
+
+The value of `errno` identifies the reason for the failure.
+
+The editor does not need to expose the numeric value directly to the user. Instead, it can convert the error into a human-readable message using facilities such as `strerror()` or `perror()`.
+
+For example, an error might ultimately be communicated as:
+
+```text
+Unable to save file: Permission denied
+```
+
+This is much more useful to the user than:
+
+```text
+save failed: errno = 13
+```
+
+## Read Errors
+
+A read operation can fail after a file has already been opened successfully.
+
+This means that:
+
+```text
+Successful open
+      ≠
+Successful read
+```
+
+The File Manager must therefore check the result of every read operation.
+
+If an error occurs while loading, the editor should not treat the partially read contents as a successfully loaded Document.
+
+Conceptually:
+
+```text
+Open
+ │
+ ├── Failed ──► Report error
+ │
+ ▼
+Read
+ │
+ ├── Failed ──► Report error
+ │
+ ▼
+Build Document
+```
+
+This prevents incomplete file contents from silently becoming the editor's current document.
+
+## Write Errors
+
+The same principle applies during saving.
+
+A successful `open()` does not guarantee that the subsequent writes will succeed:
+
+```text
+Open destination
+      │
+      ▼
+Write
+      │
+      ├── Success
+      │
+      └── Failure
+```
+
+If writing fails, the editor must retain the modified state.
+
+The Dirty Flag therefore remains set:
+
+```text
+Save attempted
+      │
+      ▼
+Write fails
+      │
+      ▼
+Dirty = true
+```
+
+The user must not be given the impression that the current Document has been safely persisted when it has not.
+
+## Partial Reads and Writes
+
+Another important source of errors is assuming that one `read()` or `write()` operation transfers all requested data.
+
+For example:
+
+```c
+ssize_t bytes_written = write(
+    file_descriptor,
+    buffer,
+    bytes_remaining
+);
+```
+
+The return value may be smaller than `bytes_remaining`.
+
+That does not necessarily mean the operation failed. It means that only part of the requested data was transferred.
+
+The File Manager must distinguish:
+
+```text
+bytes_written == bytes_remaining
+        │
+        └── Complete
+
+
+bytes_written < bytes_remaining
+        │
+        └── Continue writing
+
+
+bytes_written < 0
+        │
+        └── Error
+```
+
+The same principle applies when reading.
+
+This is an important systems-programming lesson:
+
+> **A successful I/O call means that some amount of data was transferred—not necessarily that the entire requested operation is complete.**
+
+## Communicating Errors to the User
+
+The File Manager should report the result of an operation to the higher-level rather than directly controlling the user interface.
+
+For example:
+
+```text
+Command Engine
+      │
+      ▼
+File Manager
+      │
+      ├── Success
+      │
+      └── Error information
+               │
+               ▼
+          Editor State
+               │
+               ▼
+          Message Bar
+```
+
+The File Manager therefore remains independent of the Renderer and Message Bar.
+
+This preserves the architectural boundary established in Chapter 8: the File Manager performs file operations, while the Renderer displays the resulting state.
+
+## Recoverable Versus Fatal Errors
+
+Not every failure requires the same response.
+
+A failed file operation is generally recoverable:
+
+```text
+Save
+ │
+ ▼
+Write fails
+ │
+ ▼
+Display message
+ │
+ ▼
+Return to Event Loop
+```
+
+The editor remains open, and the user can correct the problem and try again.
+
+A failure that prevents the editor from operating safely is different. For example, if initialization cannot establish the required terminal state, the editor may need to terminate after performing the necessary cleanup.
+
+The general principle is:
+
+```text
+Recoverable
+    → report
+    → preserve state
+    → continue
+
+
+Fatal
+    → restore resources
+    → terminate safely
+```
+
+This approach allows the editor to remain useful even when individual file operations fail.
+
+## The Most Important Invariant
+
+The File Manager must never allow an unsuccessful operation to be represented as a successful one.
+
+For loading:
+
+```text
+Failed load
+     ≠
+Valid loaded Document
+```
+
+For saving:
+
+```text
+Failed save
+     ≠
+Clean Document
+```
+
+Maintaining this distinction protects the consistency between the editor's in-memory state and the persistent file.
+
+The File Manager therefore has a simple but critical contract:
+
+> **Report success only when the requested file operation actually succeeded; otherwise preserve the editor's existing state and report the failure.**
+
+## Summary
+
+File operations can fail for reasons outside the editor's control, so the File Manager must always inspect system-call results, use `errno` to produce meaningful messages, and never let a failed operation appear successful.
+
+In the next section, we will examine **file permissions and the operating system**, the access-control rules that determine whether a requested file operation is allowed at all.

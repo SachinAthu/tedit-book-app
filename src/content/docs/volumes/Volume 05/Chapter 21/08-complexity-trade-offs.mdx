@@ -1,0 +1,182 @@
+---
+title: 21.8 Complexity and Trade-offs
+description: Analyzes loading, saving, and document storage as O(n) costs, contrasting them with the terminal-bounded Screen Buffer.
+---
+
+File I/O introduces costs that depend primarily on the amount of data being transferred rather than the dimensions of the terminal.
+
+For our editor, the relevant quantity is the size of the Document.
+
+## Time Complexity
+
+Let `n` represent the number of bytes in the file.
+
+### Loading
+
+Loading requires the editor to read the file and construct the in-memory Document.
+
+```text
+File
+ │
+ │ O(n)
+ ▼
+Document
+```
+
+The time complexity is therefore approximately:
+
+```text
+Loading: O(n)
+```
+
+The editor must process the file's contents, so the amount of work grows with the amount of data being loaded.
+
+### Saving
+
+Saving requires the editor to serialize the Document and write its contents to disk.
+
+```text
+Document
+ │
+ │ O(n)
+ ▼
+File
+```
+
+Therefore:
+
+```text
+Saving: O(n)
+```
+
+Even if only a single character was modified, the baseline save strategy may rewrite the entire Document.
+
+This is a deliberate consequence of the simple persistence model chosen for the editor.
+
+## Space Complexity
+
+The editor stores the complete Document in memory.
+
+Therefore, the memory required for the document grows with its size:
+
+```text
+Document storage: O(n)
+```
+
+There is also additional memory associated with the Document's internal structures, such as the collection of lines and their individual allocations.
+
+The important distinction is that this memory requirement depends on **document size**, not terminal size.
+
+The Screen Buffer discussed in Chapter 18 has bounded memory based on terminal dimensions:
+
+```text
+Screen Buffer
+    O(rows × columns)
+```
+
+The Document is different:
+
+```text
+Document
+    O(document size)
+```
+
+These are two separate memory domains.
+
+## I/O Cost Versus Processing Cost
+
+The total time required for a file operation is not determined solely by the amount of CPU work performed by the editor.
+
+The operation also depends on the underlying storage system:
+
+```text
+Application
+    │
+    ▼
+File Manager
+    │
+    ▼
+Operating System
+    │
+    ▼
+Storage
+```
+
+Reading or writing a large amount of data requires transferring that data through this entire path.
+
+Consequently, a large file may take longer to load or save even when the editor's algorithms remain simple.
+
+The editor cannot eliminate the fundamental cost of transferring `n` bytes.
+
+## Full Save Versus Incremental Persistence
+
+Our editor uses a straightforward full-save model:
+
+```text
+Document
+    │
+    ▼
+Write entire document
+    │
+    ▼
+File
+```
+
+An alternative would be to record only the portions of the document that changed and update the file incrementally.
+
+That could reduce the amount of data written for some workloads, but it would introduce additional complexity:
+
+- tracking modified regions
+- maintaining consistency between memory and disk
+- handling partial updates
+- recovering from interrupted writes
+- managing file layout
+
+For the baseline editor, that complexity is not justified.
+
+The full-save approach is easier to understand and provides a clear persistence boundary:
+
+> **The Document is the working state; saving writes the current working state to the file.**
+
+## Complexity Summary
+
+The primary costs can be summarized as:
+
+| Operation        |                Time | Additional considerations          |
+| ---------------- | ------------------: | ---------------------------------- |
+| Load             |              `O(n)` | Reads and constructs the Document  |
+| Save             |              `O(n)` | Serializes and writes the Document |
+| Document storage |              `O(n)` | Grows with document size           |
+| Screen Buffer    | `O(rows × columns)` | Independent of document size       |
+
+Here, `n` represents the amount of document data being processed.
+
+## Design Trade-off
+
+The File Manager's design makes a clear trade-off:
+
+```text
+Simple Persistence Model
+        │
+        ├──► Easy to understand
+        ├──► Easy to implement
+        ├──► Predictable behavior
+        ├──► Straightforward error handling
+        │
+        └──► Entire document may be read/written
+             and stored in memory
+```
+
+For a small educational editor, this is a reasonable choice.
+
+The important engineering lesson is not that `O(n)` file operations are inherently good or bad. It is that the complexity is appropriate for the requirements we have chosen.
+
+If the editor later needs to handle extremely large documents efficiently, the persistence model and Document representation can be reconsidered. More sophisticated approaches become worthwhile when their benefits justify their additional complexity.
+
+For the current architecture, however, the simple model gives us something more valuable: **a clear relationship between the Document in memory and the file on disk.**
+
+## Summary
+
+Loading, saving, and document storage are all `O(n)` in the size of the document—a deliberate full-save, in-memory trade-off whose simplicity and predictability are appropriate for this educational editor.
+
+In the next section, the **chapter summary** consolidates the File I/O model and previews the next chapter.
