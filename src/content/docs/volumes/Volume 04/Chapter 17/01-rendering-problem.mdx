@@ -1,0 +1,63 @@
+---
+title: 17.1 The Rendering Problem
+description: Explains why editor state is not the same as a visual frame and how the renderer translates logical state into terminal output.
+---
+
+The editor maintains a logical representation of the current editing session. The Document contains the text, the Cursor identifies the current editing position, the Viewport determines which portion of the document is visible, and other state records information such as the current file and status messages. This state is sufficient for the editor to determine what is happening, but it is not itself a representation of what the user sees.
+
+The terminal requires a different form of information. It needs characters, positioning operations, and other terminal control sequences that describe how the current frame should appear. The renderer is responsible for translating the editor's logical state into that visual representation.
+
+Conceptually, the relationship is:
+
+```text
++-------------------+
+|   Editor State    |
+|                   |
+| Document          |
+| Cursor            |
+| Viewport          |
+| Status            |
+| Message           |
++-------------------+
+          |
+          | render
+          v
++-------------------+
+|  Visual Frame     |
+|                   |
+| Document Area     |
+| Status Bar        |
+| Message Bar       |
+| Cursor            |
++-------------------+
+          |
+          | terminal output
+          v
++-------------------+
+| Terminal Emulator |
++-------------------+
+```
+
+This creates an important architectural boundary. **The editor state describes what is true; the rendered frame describes what should be visible.**
+
+The distinction matters because these two representations serve different purposes. The Document stores editable text, while the rendered document area contains only the portion that currently fits within the terminal's visible region. Similarly, the logical cursor is a position within the document, whereas the rendered cursor must ultimately correspond to a position on the terminal screen.
+
+The renderer therefore does not become another owner of the editor's data. It reads the existing state and derives the visual result from it. This follows the architecture established earlier: the Renderer is responsible for generating a complete visual frame and does not perform editing operations or modify the Document.
+
+This separation also makes rendering predictable. If the editor state is correct, the renderer should be able to determine what the screen should look like from that state. There is no need for the renderer to remember why a particular character was inserted, which command caused the cursor to move, or which file operation produced the current document contents. Those decisions belong to other parts of the system.
+
+The fundamental rendering problem can therefore be stated simply:
+
+> **Given the current Editor State, how should the editor construct the visual frame that represents that state on the terminal?**
+
+Answering that question requires more than deciding which characters to print. It requires choosing a rendering model, deciding how frames are constructed, and determining how visual output should be transferred to the terminal. The following sections examine those concepts before we apply them to our editor.
+
+## Summary
+
+The rendering problem is the challenge of translating the editor's logical state — the Document, Cursor, Viewport, and related state — into the visual representation the terminal displays. This creates an architectural boundary: the editor state describes what is true, while the rendered frame describes what should be visible.
+
+The renderer is therefore a read-only consumer of state. It derives a complete visual frame without owning or modifying the editor's data, which keeps rendering predictable and independent of the commands that produced the current state.
+
+Now that the rendering problem is defined, the next section examines what a single visual representation — a frame — actually is.
+
+Continue to **Section 17.2, What Is a Frame?**.

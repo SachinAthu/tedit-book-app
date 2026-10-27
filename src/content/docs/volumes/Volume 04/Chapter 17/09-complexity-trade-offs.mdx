@@ -1,0 +1,138 @@
+---
+title: 17.9 Complexity and Trade-offs
+description: Weighs rendering cost, memory use, simplicity, predictability, and scalability to justify full redraw with a Screen Buffer.
+---
+
+The rendering approach chosen for our editor deliberately favors simplicity over sophisticated optimization. This does not mean that rendering has no performance cost. It means that the expected workload is small enough that a predictable rendering pipeline provides greater value than a more complicated incremental system.
+
+## Rendering Cost
+
+With full redraw rendering, the renderer constructs the visible frame after each event-loop iteration.
+
+If the terminal has `R` visible rows and `C` columns, the amount of screen content that can potentially be processed for one frame is proportional to:
+
+```text
+O(R × C)
+```
+
+The actual cost depends on the implementation. The renderer may not need to perform identical work for every cell, but the visible terminal dimensions provide a useful upper bound for the amount of screen content involved in a frame.
+
+For a normal terminal window, this is a relatively small amount of data. The cost of processing a few thousand character positions per frame is generally far less significant than the complexity of maintaining a sophisticated incremental rendering system.
+
+## Memory Cost
+
+An application-side Screen Buffer requires memory proportional to the visible terminal area.
+
+Conceptually:
+
+```text
+Screen Rows × Screen Columns
+              ↓
+       Screen Buffer Size
+```
+
+This is additional memory beyond the Document and other editor state.
+
+However, the buffer represents only the visible screen. It does not duplicate the entire document. A document may contain many thousands of lines while the Screen Buffer remains bounded by the terminal dimensions.
+
+This distinction keeps the memory requirements predictable.
+
+## Simplicity Versus Optimization
+
+The main trade-off can be summarized as:
+
+| Approach                    | Complexity | Rendering Work       | State Management |
+| --------------------------- | ---------- | -------------------- | ---------------- |
+| Direct terminal output      | Low        | Potentially repeated | Simple           |
+| Retained visual model       | High       | Potentially lower    | Complex          |
+| Screen Buffer + full redraw | Moderate   | Predictable          | Controlled       |
+
+A retained rendering system may reduce unnecessary work by updating only changed portions of the display. However, it must also determine what changed and keep its visual representation synchronized with the application's state.
+
+Our approach accepts some repeated rendering work in exchange for a simpler relationship:
+
+```text
+Current State
+     ↓
+Complete Frame
+     ↓
+Terminal
+```
+
+This makes rendering easier to reason about and keeps the Editor State as the authoritative source of information.
+
+## Predictability
+
+Predictability is an important engineering benefit of the chosen design.
+
+The renderer does not need to know how the previous frame was constructed or which commands produced the current state. It can derive the next frame from the current Editor State.
+
+That gives us a straightforward invariant:
+
+> **The visible frame should be a representation of the current Editor State.**
+
+If the state is correct, rendering should be able to reproduce the correct frame.
+
+This also makes debugging easier. Rendering problems can be investigated by separating two questions:
+
+1. Is the Editor State correct?
+2. Does the Renderer correctly represent that state?
+
+A more tightly coupled incremental rendering system can make this distinction harder because application state and visual state may both contain information that must be kept synchronized.
+
+## Scalability
+
+The chosen approach is appropriate for the scope of this editor, but it is not universally optimal.
+
+As the interface becomes more complex, the amount of work involved in constructing complete frames may increase. Large terminal interfaces, extensive visual effects, or very high-frequency updates could make incremental rendering more attractive.
+
+Likewise, very large documents introduce different performance concerns, although the renderer only processes the portion currently visible through the Viewport.
+
+This is an important architectural principle:
+
+> **A design should be evaluated against its actual requirements rather than optimized for hypothetical workloads.**
+
+The project is intentionally a small, single-document terminal editor. Its requirements prioritize simplicity, responsiveness, maintainability, and educational value rather than supporting extremely large interfaces or continuously changing visual content.
+
+## The Cost of Future Optimization
+
+The chosen design also leaves room for future optimization.
+
+The Screen Buffer creates a boundary between frame construction and terminal output:
+
+```text
+Editor State
+     |
+     v
+Frame Construction
+     |
+     v
+Screen Buffer
+     |
+     v
+Terminal Output
+```
+
+Because these responsibilities are separated, optimization can later be introduced without changing the fundamental ownership of the Document, Cursor, or other editor state.
+
+For example, a future implementation could compare successive screen representations and emit only the necessary terminal updates. Such an optimization would change the rendering strategy without requiring the Document or Command Engine to understand terminal rendering details.
+
+For the baseline implementation, however, that complexity is unnecessary.
+
+## Overall Trade-off
+
+The rendering design makes a deliberate trade:
+
+> **Accept predictable, bounded rendering work in exchange for a simpler and more maintainable architecture.**
+
+The Screen Buffer provides enough structure to keep frame construction separate from terminal output without turning the rendering system into a full retained-mode framework.
+
+This balance is appropriate for the editor's current scope. More advanced rendering optimizations can be introduced later if measurements demonstrate that the existing approach has become a meaningful bottleneck.
+
+## Summary
+
+The chosen rendering design accepts predictable, bounded rendering and memory costs in exchange for a simpler, more maintainable architecture. The renderer derives a complete frame from the current Editor State, which keeps rendering easy to reason about and state ownership clear.
+
+The Screen Buffer provides a boundary between frame construction and terminal output, leaves room for future optimization, and is appropriate for the editor's current scope.
+
+Continue to the **Chapter Summary**, which reviews the rendering concepts established in this chapter, followed by exercises and a preview of the next chapter.

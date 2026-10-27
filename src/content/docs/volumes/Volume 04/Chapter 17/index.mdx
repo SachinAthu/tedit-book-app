@@ -1,0 +1,46 @@
+---
+title: Chapter 17 — Rendering Theory
+description: Explains rendering theory for a terminal editor, covering frames, immediate and retained modes, event loops, double buffering, and design trade-offs.
+---
+
+## Introduction
+
+By this point, the editor has a well-defined internal architecture. Input is translated into commands, commands update the editor state, and the document and cursor maintain the logical state of the editing session. However, none of that state is directly visible to the user.
+
+The terminal only displays the result of the editor's rendering process.
+
+Rendering is therefore the boundary between the editor's internal world and the user's visible world. The renderer reads the current editor state and transforms it into a visual representation containing the document, status bar, message bar, and cursor. It then produces the terminal output necessary to make that representation visible. The renderer does not decide what the document contains or how editing operations work; its responsibility is to represent the state that already exists.
+
+This chapter focuses on the theory behind that process. Before implementing the renderer, we need to understand the different ways interactive software can construct and display visual output. We will examine immediate-mode and retained-mode rendering, the concept of a frame, the relationship between rendering and interactive event loops, and the purpose of double buffering.
+
+These concepts also reveal an important distinction between graphical applications and terminal applications. A terminal editor does not draw pixels directly. Instead, it constructs terminal output that causes the terminal emulator to display the desired result. Understanding this boundary helps explain why our editor can use a relatively simple rendering strategy while still benefiting from an intermediate representation of the screen.
+
+The goal is not to build a sophisticated graphical rendering system. Our editor deliberately favors simplicity, predictability, and educational value. The purpose of this chapter is to establish the reasoning behind that approach so that the Screen Buffer introduced in the next chapter is a natural consequence of the architecture rather than an unexplained implementation detail.
+
+## Learning Objectives
+
+By the end of the chapter, readers should understand:
+
+- what a rendering model is
+- the difference between immediate-mode and retained-mode rendering
+- what a frame represents
+- how game loops relate to interactive rendering
+- what double buffering solves
+- how terminal rendering differs from graphical rendering
+- why the editor uses an application-side frame representation
+- how these decisions lead naturally into the Screen Buffer of Chapter 18
+
+This keeps the chapter conceptual rather than implementation-heavy.
+
+## Sections
+
+- [17.1 The Rendering Problem](/volumes/volume-04/chapter-17/01-rendering-problem/)
+- [17.2 What Is a Frame?](/volumes/volume-04/chapter-17/02-what-is-a-frame/)
+- [17.3 Immediate-Mode Rendering](/volumes/volume-04/chapter-17/03-immediate-mode-rendering/)
+- [17.4 Retained-Mode Rendering](/volumes/volume-04/chapter-17/04-retained-mode-rendering/)
+- [17.5 Rendering and the Game Loop](/volumes/volume-04/chapter-17/05-rendering-and-game-loop/)
+- [17.6 Double Buffering](/volumes/volume-04/chapter-17/06-double-buffering/)
+- [17.7 Rendering Models in a Terminal](/volumes/volume-04/chapter-17/07-rendering-models-in-a-terminal/)
+- [17.8 Design Alternatives](/volumes/volume-04/chapter-17/08-design-alternatives/)
+- [17.9 Complexity and Trade-offs](/volumes/volume-04/chapter-17/09-complexity-trade-offs/)
+- [17.10 Conclusion](/volumes/volume-04/chapter-17/10-conclusion/)

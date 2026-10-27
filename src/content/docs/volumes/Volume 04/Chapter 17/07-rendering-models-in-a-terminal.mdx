@@ -1,0 +1,226 @@
+---
+title: 17.7 Rendering Models in a Terminal
+description: Describes terminal rendering through characters and control sequences, covering character-cell grids, byte streams, and full redraw.
+---
+
+Rendering in a terminal differs fundamentally from rendering in a graphical application. A graphical program can draw directly into a pixel-based surface, while a terminal application communicates with a terminal emulator through a stream of characters and control sequences.
+
+The basic relationship is:
+
+```text
++-------------------+
+|      Editor       |
++-------------------+
+          |
+          | characters
+          | ANSI escape sequences
+          v
++-------------------+
+| Terminal Emulator |
++-------------------+
+          |
+          v
++-------------------+
+|   Visible Screen  |
++-------------------+
+```
+
+The editor therefore does not directly control individual pixels. It describes the desired terminal state through output, and the terminal emulator interprets that output and produces the visible display.
+
+This changes how we should think about a frame.
+
+## A Frame Is a Description of Terminal Output
+
+In a graphical application, a frame might be thought of as an image containing pixels.
+
+For a terminal editor, the frame is conceptually closer to a rectangular arrangement of characters and terminal attributes:
+
+```text
++------------------+
+| Hello            |
+| World            |
+|                  |
+|                  |
++------------------+
+```
+
+The renderer must translate this desired arrangement into terminal operations.
+
+For example, it may need to:
+
+1. position the terminal cursor,
+2. write characters,
+3. clear portions of the screen,
+4. update the status and message areas,
+5. position the terminal cursor at the final editing location.
+
+The renderer is therefore producing a **terminal representation of the frame**, rather than drawing the frame directly.
+
+The terminal emulator then interprets that representation.
+
+## Terminal Rendering as a Transformation
+
+The complete process can be viewed as a series of transformations:
+
+```text
+Editor State
+     |
+     v
+Visual Frame
+     |
+     v
+Terminal Output
+     |
+     v
+Terminal Interpretation
+     |
+     v
+Visible Screen
+```
+
+Each stage has a distinct responsibility.
+
+The Editor State contains the logical information.
+
+The renderer determines what should be visible.
+
+Terminal output expresses that visual result using the terminal's supported control mechanisms.
+
+The terminal emulator interprets those controls and displays the result.
+
+This separation is important because the renderer does not need to know how the terminal emulator ultimately draws the characters. Its responsibility ends at producing the appropriate terminal output.
+
+## Character Cells Rather Than Pixels
+
+A terminal screen is organized primarily as a grid of character cells.
+
+Conceptually:
+
+```text
+     Column
+       ↓
+   0 1 2 3 4 5
+  +-----------+
+0 | H e l l o |
+1 | W o r l d |
+2 |           |
+3 |           |
+  +-----------+
+  ↑
+ Row
+```
+
+Each position represents a location where a character can be displayed.
+
+This is different from a pixel-based display, where an application might manipulate individual pixels or graphical primitives. A terminal editor instead works primarily in terms of rows and columns.
+
+This matches the editor's existing model particularly well. The Cursor already represents a logical document position using a row and column, while the Viewport determines which part of the document is visible. Rendering converts those logical concepts into positions within the terminal's character grid.
+
+## Terminal Output Is Sequential
+
+Another important difference is that terminal output is fundamentally a byte stream.
+
+The renderer does not hand the terminal an abstract object such as:
+
+```text
+Frame {
+    document_area,
+    status_bar,
+    message_bar,
+    cursor
+}
+```
+
+Instead, it eventually produces a sequence of bytes representing characters and terminal control operations.
+
+Conceptually:
+
+```text
+Frame
+  |
+  v
++--------------------------------+
+| Terminal control sequences     |
+| Characters                     |
+| Terminal control sequences     |
+| Characters                     |
++--------------------------------+
+  |
+  v
+Terminal
+```
+
+This creates an important implementation concern.
+
+The renderer must determine the desired visual result before deciding how to express that result as terminal output.
+
+That is one reason an intermediate screen representation is useful: it allows the application to reason about the desired screen independently from the byte stream used to produce it.
+
+## Full Redraw in a Terminal
+
+Our editor uses a full-redraw strategy. Rather than maintaining a complex collection of incremental terminal updates, the renderer constructs the complete visible frame and produces the terminal output required to represent it.
+
+Conceptually:
+
+```text
+Editor State
+     |
+     v
+Complete Visible Frame
+     |
+     v
+Terminal Output
+     |
+     v
+Terminal
+```
+
+This approach is deliberately simple. The editor does not need to determine every individual difference between the previous document state and the new one before deciding what to display.
+
+Instead, it can derive the desired screen from the current state.
+
+This is consistent with the project's established rendering decision: full redraw was selected because it avoids the additional complexity of tracking incremental changes and keeps the renderer a predictable function of editor state.
+
+## From Terminal Output to a Screen Representation
+
+At this point, we have established three important facts:
+
+1. The editor maintains logical state.
+2. The renderer derives a visual frame from that state.
+3. The terminal receives a byte stream rather than an abstract frame.
+
+This raises a practical question:
+
+> **Where should the renderer construct and represent the frame before converting it into terminal output?**
+
+Writing directly to the terminal while simultaneously deciding what the frame should contain is possible, but it tightly couples frame construction with terminal output.
+
+An intermediate representation provides a cleaner separation:
+
+```text
+Editor State
+     |
+     v
+Frame Construction
+     |
+     v
+Screen Representation
+     |
+     v
+Terminal Output
+     |
+     v
+Terminal
+```
+
+The next chapter will make this representation concrete by introducing the **Screen Buffer**. It will examine how an application-side representation of the visible screen can be constructed, compared, and eventually converted into terminal output without becoming a second source of truth for the document.
+
+## Summary
+
+Rendering in a terminal differs fundamentally from graphical rendering. The editor communicates through characters and control sequences rather than pixels, producing a terminal representation of a frame that the terminal emulator interprets. A terminal screen is a grid of character cells, and terminal output is fundamentally a sequential byte stream.
+
+This means the renderer must determine the desired visual result before deciding how to express it as terminal output. That motivates an intermediate screen representation and fits the editor's full-redraw strategy.
+
+Now that terminal rendering is understood, the next section examines the design alternatives for organizing the editor's rendering pipeline.
+
+Continue to **Section 17.8, Design Alternatives**.

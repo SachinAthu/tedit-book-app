@@ -1,0 +1,205 @@
+---
+title: 17.4 Retained-Mode Rendering
+description: Explains retained-mode rendering, its persistent visual state, incremental updates, synchronization costs, and why the editor avoids it.
+---
+
+Retained-mode rendering takes a different approach from immediate-mode rendering. Instead of reconstructing the visual representation whenever a frame is produced, the rendering system maintains a persistent representation of the interface and updates that representation as the application changes.
+
+The basic model is:
+
+```text
+Application State
+       │
+       ▼
+Retained Visual Representation
+       │
+       ▼
+    Renderer
+       │
+       ▼
+   Visual Output
+```
+
+The important difference is that the visual representation exists between rendering operations. The renderer does not have to rediscover every element of the interface from the application state each time. It can maintain knowledge of what is currently represented on screen and update that representation when necessary.
+
+## A Simple Example
+
+Consider the same document:
+
+```text
+Hello
+World
+```
+
+with the cursor after the `H`:
+
+```text
+H|ello
+World
+```
+
+A retained rendering system might maintain a visual representation corresponding to:
+
+```text
++------------------+
+| H|ello           |
+| World            |
++------------------+
+```
+
+If the user inserts `i`, the application state changes:
+
+```text
+Hiello
+World
+```
+
+The rendering system can then update its existing visual representation rather than reconstructing the entire representation from the beginning.
+
+Conceptually:
+
+```text
+Previous Representation
+          │
+          │ change
+          ▼
+Updated Representation
+          │
+          ▼
+       Display
+```
+
+The exact mechanism used to determine and apply those changes depends on the particular rendering system. The important point is that the visual representation itself is **retained** between rendering operations.
+
+## Persistent Visual State
+
+Retained-mode rendering introduces another form of state into the application.
+
+With immediate-mode rendering, the application state is the primary source of information:
+
+```text
+Application State
+       │
+       ▼
+     Render
+       │
+       ▼
+     Output
+```
+
+With retained-mode rendering, there is an additional persistent representation:
+
+```text
+Application State
+       │
+       ▼
+Visual Representation
+       │
+       ▼
+     Output
+```
+
+This can provide useful performance characteristics, but it also introduces a synchronization problem.
+
+The application state and the retained visual representation must remain consistent.
+
+For example, if the cursor moves from one position to another, the rendering system must update the visual representation so that the old cursor position is removed and the new position is displayed. If that update is missed, the application state and the visible screen no longer agree.
+
+This is one of the fundamental costs of retaining visual state: **the system gains the ability to update incrementally, but it must now manage another representation of the interface.**
+
+## Advantages
+
+The primary advantage of retained-mode rendering is the ability to avoid reconstructing unchanged portions of the visual representation.
+
+For a large or complex interface, this can reduce unnecessary rendering work. A small change may require only a small update to the retained representation.
+
+Conceptually:
+
+```text
+Large Interface
+      │
+      │ small change
+      ▼
+Small Visual Update
+```
+
+This can become valuable when rendering itself is expensive or when the interface contains many elements that remain unchanged between updates.
+
+Retained-mode systems can also provide higher-level mechanisms for managing visual objects, their relationships, and their updates. These capabilities are useful in many graphical and user-interface systems.
+
+## Limitations
+
+The main disadvantage is increased complexity.
+
+A retained system must maintain additional state and keep that state synchronized with the application's logical state.
+
+This introduces more questions:
+
+- What visual elements currently exist?
+- Which elements changed?
+- Which elements need to be redrawn?
+- How are removed elements handled?
+- When is the retained representation synchronized with application state?
+- What happens if the two representations become inconsistent?
+
+The resulting architecture can therefore look more like:
+
+```text
+Application State
+       │
+       ▼
+Visual State
+       │
+       ▼
+Renderer
+       │
+       ▼
+Display
+```
+
+rather than the simpler:
+
+```text
+Application State
+       │
+       ▼
+Renderer
+       │
+       ▼
+Display
+```
+
+For a small terminal editor, this additional state may provide little practical benefit compared with the complexity it introduces.
+
+## Immediate Mode vs. Retained Mode
+
+The fundamental difference can be summarized as follows:
+
+| Characteristic             | Immediate Mode         | Retained Mode              |
+| -------------------------- | ---------------------- | -------------------------- |
+| Visual representation      | Derived when rendering | Maintained between renders |
+| Persistent visual state    | Minimal                | Required                   |
+| Synchronization complexity | Lower                  | Higher                     |
+| Incremental updates        | Less central           | Fundamental                |
+| Repeated rendering work    | Potentially higher     | Potentially lower          |
+| Mental model               | Simpler                | More complex               |
+
+Neither model is universally better. The appropriate choice depends on the size, complexity, and performance requirements of the application.
+
+Our editor has deliberately been designed around simplicity. Its architecture already treats the Editor State as the source of truth and the Renderer as a read-only consumer of that state. Introducing a second persistent visual state would add another ownership and synchronization problem without providing a compelling benefit for the editor's intended scope.
+
+This does not mean that our editor will never maintain an in-memory representation of a frame. A **Screen Buffer**, introduced in the next chapter, serves a different and more limited purpose. It represents the frame being constructed for terminal output; it does not become a second authoritative model of the document or editor state.
+
+That distinction allows us to borrow useful ideas from rendering systems without adopting a full retained-mode architecture.
+
+## Summary
+
+Retained-mode rendering maintains a persistent representation of the interface and updates it incrementally as the application changes, rather than reconstructing the visual output from scratch each time. Its primary advantage is avoiding work on unchanged portions of the representation.
+
+The main cost is complexity: a retained system must keep the visual representation synchronized with application state, introducing additional state, ownership, and consistency questions.
+
+Our editor is deliberately designed around simplicity, treating the Editor State as the source of truth and the Renderer as a read-only consumer of that state. This does not preclude an in-memory Screen Buffer in the next chapter — that serves a more limited purpose, representing the frame being constructed for terminal output rather than a second authoritative model.
+
+Now that both rendering models are understood, the next section examines how rendering relates to the editor's interactive event loop.
+
+Continue to **Section 17.5, Rendering and the Game Loop**.

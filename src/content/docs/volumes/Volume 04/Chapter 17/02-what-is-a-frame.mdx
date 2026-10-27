@@ -1,0 +1,89 @@
+---
+title: 17.2 What Is a Frame?
+description: Defines a frame as a complete point-in-time snapshot of the visible interface, bounded by the viewport and terminal dimensions.
+---
+
+A frame is a complete visual representation of the editor at a particular point in time. It describes what the user should see on the terminal after the editor has processed the current input and updated its state.
+
+The important word is **complete**. A frame is not simply the character that changed or the cursor that moved. It represents the entire visible interface as it should appear at that moment.
+
+For our editor, the frame conceptually consists of several regions:
+
+```text
++----------------------------------------+
+|                                        |
+|          Document Area                 |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
++----------------------------------------+
+| Status Bar                             |
++----------------------------------------+
+| Message Bar                            |
++----------------------------------------+
+```
+
+The document area contains the visible portion of the document. The status bar provides persistent contextual information, while the message bar communicates temporary information or errors. The cursor identifies the current editing position on the visible screen.
+
+These elements are derived from the current Editor State. For example, the Document determines which text appears in the document area, the Viewport determines which portion is visible, and the Cursor determines where the editing position should appear.
+
+It is useful to think of a frame as a **snapshot of the user interface**, rather than as another form of application state.
+
+```text
+Editor State
+     │
+     │ derive
+     ▼
++------------------+
+|      Frame       |
+|                  |
+| Document Area    |
+| Status Bar       |
+| Message Bar      |
+| Cursor           |
++------------------+
+```
+
+The frame does not become the new source of truth. If the user moves the cursor, for example, the Cursor state changes first. The next frame is then derived from the updated state. Likewise, inserting a character changes the Document, after which rendering produces a new visual representation.
+
+This distinction prevents the rendering system from becoming responsible for application behavior. The renderer does not decide where the cursor should logically move or how a document should be modified. It simply represents the results of those decisions.
+
+A frame also represents only the **visible** portion of the editor. A document may contain thousands of lines while the terminal may have room for only a few dozen. The frame therefore cannot contain the entire document as a visual representation. It contains the portion that the current viewport makes visible.
+
+The same principle applies to horizontal space. A long line may contain more characters than can fit within the terminal's width. The frame represents only the portion that is currently visible.
+
+Therefore, a frame can be understood as the intersection between the editor's complete logical state and the terminal's limited display area:
+
+```text
+              Complete Editor State
+                       │
+                       │
+                       ▼
+                +-------------+
+                |  Viewport   |
+                +-------------+
+                       │
+                       ▼
+                 Visible State
+                       │
+                       ▼
+                     Frame
+                       │
+                       ▼
+                    Terminal
+```
+
+This concept becomes especially important when we consider how frames are constructed. The editor must decide whether to build the entire frame each time, maintain a persistent visual representation, or update only portions that have changed. Those approaches lead to different rendering models with different complexity and performance characteristics.
+
+Before deciding which approach is appropriate for our editor, we first need to understand the two fundamental rendering models: **immediate-mode rendering** and **retained-mode rendering**.
+
+## Summary
+
+A frame is a complete visual representation of the editor at a particular point in time. It is a snapshot of the visible interface — the document area, status bar, message bar, and cursor — derived from the current Editor State rather than a new source of truth.
+
+A frame contains only the portion of the editor's logical state that the viewport makes visible within the terminal's limited display area. The editor must therefore decide how to construct frames, which leads to different rendering models with different complexity and performance characteristics.
+
+Now that the frame is defined, the next section examines the first of those models: immediate-mode rendering.
+
+Continue to **Section 17.3, Immediate-Mode Rendering**.

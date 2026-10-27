@@ -1,0 +1,173 @@
+---
+title: 17.3 Immediate-Mode Rendering
+description: Describes immediate-mode rendering, its state-to-output simplicity, its repeated-work trade-off, and how it relates to full redraw.
+---
+
+Immediate-mode rendering is a rendering model in which the application describes what should be displayed each time it renders. The renderer does not maintain a persistent representation of the interface that must be incrementally updated. Instead, it derives the visual output from the current application state.
+
+The basic model is:
+
+```text
+Application State
+       │
+       ▼
+    Renderer
+       │
+       ▼
+   Visual Output
+```
+
+When the application needs to render, it examines the current state and produces the corresponding visual representation. If the state changes, the next rendering operation produces a new representation based on that updated state.
+
+For a text editor, this approach maps naturally onto the idea of a frame:
+
+```text
+Editor State
+     │
+     ▼
+Render
+     │
+     ▼
+Complete Frame
+```
+
+Suppose the cursor is moved one position to the right. The editor does not need to tell the renderer that only one cursor position changed. Instead, the renderer can simply examine the current state and determine where the cursor belongs in the next frame.
+
+The same applies when text is inserted, a line is deleted, or the viewport changes. The renderer treats the current state as the source from which the visual representation is derived.
+
+## A Simple Example
+
+Consider a document containing:
+
+```text
+Hello
+World
+```
+
+with the cursor positioned after the `H`:
+
+```text
+H|ello
+World
+```
+
+The renderer can construct a frame from the current state:
+
+```text
++------------------+
+| H|ello           |
+| World            |
++------------------+
+```
+
+If the user inserts the character `i`, the Document changes:
+
+```text
+Hiello
+World
+```
+
+The next rendering operation reads the updated state and produces:
+
+```text
++------------------+
+| Hi|ello          |
+| World            |
++------------------+
+```
+
+The renderer does not need to remember that an `i` was inserted. It only needs the current state required to construct the frame.
+
+## Characteristics of Immediate-Mode Rendering
+
+This model has several important characteristics.
+
+**The visual representation is derived repeatedly.**
+
+The renderer reconstructs the desired output whenever a frame is produced rather than maintaining a long-lived representation of the interface.
+
+**Application state remains authoritative.**
+
+The renderer does not become another owner of document or cursor state. It reads the existing state and derives visual output from it.
+
+**Rendering is conceptually simple.**
+
+There is a direct relationship between state and output:
+
+```text
+State
+  │
+  ▼
+Render
+  │
+  ▼
+Output
+```
+
+This makes the behavior relatively easy to reason about. Given the same relevant state, the renderer should produce the same visual result.
+
+## Advantages
+
+The primary advantage of immediate-mode rendering is **simplicity**.
+
+There is less persistent rendering state to keep synchronized with the application's state. This reduces the number of situations in which the renderer can become inconsistent with the actual document or cursor position.
+
+It also makes the rendering process easier to understand and debug. When the screen looks incorrect, the problem can generally be examined as a transformation:
+
+```text
+Current State
+      ↓
+Rendering Logic
+      ↓
+Incorrect Frame?
+```
+
+Rather than having to determine whether some previous visual state was updated correctly.
+
+For a small editor, this simplicity is particularly valuable. The project is intended to prioritize clarity and maintainability over sophisticated rendering optimization.
+
+## Limitations
+
+The main limitation is that rendering work may be repeated even when much of the visible screen has not changed.
+
+If only one character changes, an immediate-mode renderer may still reconstruct a large portion of the frame. For a sufficiently complex interface, this repeated work can become expensive.
+
+There is therefore a trade-off:
+
+```text
+Immediate Mode
+     │
+     ├── Simpler state management
+     ├── Easier reasoning
+     └── Potentially more repeated work
+```
+
+A retained-mode system takes the opposite approach by maintaining a persistent representation of the visual interface and updating it incrementally.
+
+However, immediate mode should not automatically be interpreted as inefficient. The cost depends on the size and complexity of what is being rendered. For a small terminal editor, reconstructing a frame is considerably less demanding than maintaining a sophisticated retained visual hierarchy.
+
+This distinction is important because rendering performance should be considered in the context of the application rather than optimized in isolation.
+
+## Immediate Mode and Our Editor
+
+Our editor already adopts a **full-redraw rendering strategy**. The renderer generates a complete visual frame from the current editor state rather than attempting to maintain an independently updated representation of the terminal contents. This was established earlier as an architectural decision because it keeps the rendering system simpler and more predictable.
+
+However, full redraw and immediate-mode rendering are related concepts rather than identical concepts.
+
+**Immediate mode describes how the visual representation is derived. Full redraw describes how much of the display is regenerated.**
+
+Keeping these ideas separate will become useful when we introduce the Screen Buffer. The editor can construct a complete frame from the current state while still using an intermediate in-memory representation before sending the final output to the terminal.
+
+That distinction allows us to retain the simplicity of immediate-style rendering without requiring the renderer to write every terminal operation directly while it constructs the frame.
+
+The alternative is **retained-mode rendering**, where the visual representation itself persists between frames. Understanding that model provides the necessary basis for evaluating whether such additional complexity would benefit our editor.
+
+## Summary
+
+Immediate-mode rendering derives the visual output from the current application state each time a frame is produced. The renderer keeps no persistent interface representation, so given the same relevant state, it produces the same visual result.
+
+Its primary advantage is simplicity: there is less rendering state to keep synchronized, and problems can be examined as a direct transformation from state to output. Its main limitation is that rendering work may be repeated even when much of the screen has not changed. For our editor, immediate mode complements the existing full-redraw strategy, though the two ideas remain distinct.
+
+Now that immediate-mode rendering is understood, the next section examines the alternative: retained-mode rendering.
+
+Continue to **Section 17.4, Retained-Mode Rendering**.

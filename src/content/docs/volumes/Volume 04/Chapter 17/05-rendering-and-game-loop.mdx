@@ -1,0 +1,213 @@
+---
+title: 17.5 Rendering and the Game Loop
+description: Explains how event-driven rendering mirrors a game loop, producing one frame per state change rather than rendering continuously.
+---
+
+Interactive applications rarely perform their work only once. They repeatedly wait for user input, update their internal state, and make the resulting state visible. This repeated cycle is commonly associated with a **game loop**, but the underlying idea applies to many interactive programs, including terminal text editors.
+
+A simplified interactive loop looks like this:
+
+```text
+         +------------------+
+    +---->|  Wait for Input  |
+    |    +------------------+
+    |             |
+    |             v
+    |    +------------------+
+    |    |   Update State   |
+    |    +------------------+
+    |             |
+    |             v
+    |    +------------------+
+    |    |   Render Frame   |
+    |    +------------------+
+    |             |
+    +<------------+
+```
+
+The important relationship is between **state changes and rendering**. Input does not directly define what appears on the screen. Instead, input causes a change to application state, and rendering reflects that updated state.
+
+For example, when the user presses the Right Arrow key, the input system interprets the event and the Command Engine performs the appropriate cursor operation. Once the cursor state has changed, rendering produces a frame that reflects the cursor's new position.
+
+Conceptually:
+
+```text
+Keyboard Input
+      |
+      v
+State Change
+      |
+      v
+Render
+      |
+      v
+Updated Display
+```
+
+This is consistent with the runtime model established earlier in the book: an event is processed, the editor state is updated, and a frame is rendered before the application returns to waiting for the next event.
+
+## Why This Resembles a Game Loop
+
+A traditional game loop might repeatedly perform operations such as:
+
+```text
+Read Input
+    ↓
+Update World
+    ↓
+Render
+    ↓
+Repeat
+```
+
+The editor follows the same broad structure:
+
+```text
+Read Input
+    ↓
+Execute Command
+    ↓
+Update Editor State
+    ↓
+Render
+    ↓
+Repeat
+```
+
+The applications are obviously different. A game typically updates continuously because the world may change with time even when the player does nothing. A text editor, by contrast, generally has no continuously changing world. When the user is not interacting with it, there is usually no reason to repeatedly construct new frames.
+
+For this reason, our editor is **event-driven rather than continuously rendering**.
+
+## Event-Driven Rendering
+
+The editor waits for an event rather than rendering indefinitely.
+
+A simplified model is:
+
+```text
+while (running)
+{
+    wait for event
+    process event
+    update state
+    render
+}
+```
+
+If the user does nothing, the editor remains waiting. When an event arrives, the application processes it and produces the corresponding visual result.
+
+This is particularly appropriate for terminal editing because most changes to the visible interface are caused by user actions:
+
+- inserting a character
+- deleting text
+- moving the cursor
+- scrolling
+- saving a file
+- displaying a message
+- resizing the terminal
+
+Rendering after these state changes keeps the visible interface synchronized with the editor's logical state without requiring continuous rendering.
+
+## Rendering Is a Consequence of State Changes
+
+A useful way to think about the relationship is:
+
+> **Commands change the editor state; rendering makes those changes visible.**
+
+The renderer should therefore remain downstream of state modification:
+
+```text
+Command
+   |
+   v
+Editor State
+   |
+   v
+Renderer
+   |
+   v
+Terminal
+```
+
+This ordering is important. Rendering before a state update would produce a frame representing the old state. Rendering during a state update could expose an incomplete state. Rendering after state changes have completed gives the renderer a consistent snapshot from which to construct the frame.
+
+This is also why the renderer does not execute editing operations itself. Its role is to represent the completed state, not to participate in changing it.
+
+## One Event, One Frame
+
+Our runtime model establishes a simple relationship between event processing and rendering: one event is processed during each event-loop iteration, followed by a frame render.
+
+Conceptually:
+
+```text
+Event 1 → State Update → Frame 1
+Event 2 → State Update → Frame 2
+Event 3 → State Update → Frame 3
+```
+
+This does not mean that every event must visibly change the screen. Some commands may produce little or no visible difference. The important property is that the renderer receives a consistent editor state after command execution.
+
+The approach gives the rendering pipeline a predictable structure:
+
+```text
+Input
+  ↓
+Interpretation
+  ↓
+Command
+  ↓
+State Update
+  ↓
+Frame Construction
+  ↓
+Terminal Output
+```
+
+The rendering system can therefore remain independent of how the input was generated. Whether a command came from a keyboard shortcut or another future input mechanism, the renderer only needs to represent the resulting state.
+
+## The Value of Predictability
+
+For an educational editor, this predictable cycle has an important advantage: it provides a clear boundary between **behavior** and **presentation**.
+
+The Command Engine determines what changes.
+
+The Editor State records those changes.
+
+The Renderer determines what should be visible.
+
+The terminal displays the result.
+
+```text
++----------------+
+| Command Engine |
++----------------+
+        |
+        v
++----------------+
+|  Editor State  |
++----------------+
+        |
+        v
++----------------+
+|    Renderer    |
++----------------+
+        |
+        v
++----------------+
+|    Terminal    |
++----------------+
+```
+
+This separation means rendering does not need to understand why a state changed. It only needs to accurately represent the state it receives.
+
+The next question is how to construct that visual result safely and efficiently before sending it to the terminal. This leads to another important rendering concept: **double buffering**.
+
+## Summary
+
+Interactive applications repeatedly wait for input, update state, and render the result. The editor follows this same broad structure, but as an event-driven program rather than a continuously rendering loop: it waits for an event, processes it, updates the Editor State, and then renders a frame.
+
+Rendering is a consequence of state changes. Commands change the editor state and the renderer makes those changes visible, producing one frame per event-loop iteration. This gives the rendering pipeline a predictable structure and a clear boundary between behavior and presentation.
+
+Now that the rendering cycle is understood, the next section examines how to construct the visual result safely and efficiently before sending it to the terminal.
+
+Continue to **Section 17.6, Double Buffering**.

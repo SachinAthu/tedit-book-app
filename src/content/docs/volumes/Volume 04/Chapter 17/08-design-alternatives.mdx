@@ -1,0 +1,104 @@
+---
+title: 17.8 Design Alternatives
+description: Compares direct terminal rendering, a retained visual model, and an application-side frame representation with a Screen Buffer.
+---
+
+There are several ways a terminal editor could organize its rendering pipeline. The appropriate choice depends on how much rendering complexity the application needs and how much architectural state it is willing to maintain.
+
+## Direct Terminal Rendering
+
+The simplest approach is to have the renderer write directly to the terminal while constructing the frame.
+
+```text
+Editor State
+     |
+     v
+Renderer
+     |
+     v
+Terminal
+```
+
+This minimizes intermediate data structures and can work for a very small editor. However, frame construction and terminal output become tightly coupled. The renderer must simultaneously decide what the screen should contain and how to express that result through terminal operations.
+
+That coupling makes the rendering process harder to reason about as the interface becomes more sophisticated.
+
+## Retained Visual Model
+
+A more sophisticated alternative is to maintain a persistent representation of the visual interface.
+
+```text
+Editor State
+     |
+     v
+Visual Model
+     |
+     v
+Renderer
+     |
+     v
+Terminal
+```
+
+This approach can support incremental updates and avoid reconstructing unchanged visual elements. However, it introduces another persistent representation that must remain synchronized with the Editor State.
+
+For this editor, that additional complexity is not justified by the requirements. The project deliberately prioritizes simplicity and maintainability over advanced rendering optimization.
+
+## Application-Side Frame Representation
+
+The third approach is to derive a complete frame from the current Editor State and represent that frame in memory before producing terminal output.
+
+```text
+Editor State
+     |
+     v
+Frame Construction
+     |
+     v
+Screen Buffer
+     |
+     v
+Terminal Output
+     |
+     v
+Terminal
+```
+
+This approach provides a useful separation between **what should be displayed** and **how that result is sent to the terminal** without introducing a complete retained-mode visual architecture.
+
+It also fits naturally with the full-redraw strategy already selected for the editor. The Renderer can construct a complete representation of the visible screen from the current state while keeping the Editor State as the single source of truth.
+
+## Our Choice
+
+The editor will use the **application-side frame representation** approach.
+
+The architecture therefore remains:
+
+```text
+Editor State
+     |
+     v
+Renderer
+     |
+     v
+Screen Buffer
+     |
+     v
+Terminal Output
+```
+
+The Screen Buffer is not a second representation of the Document, nor does it become an owner of editor state. Its purpose is limited to representing the visual frame that the Renderer is preparing for display.
+
+This gives the project a useful middle ground: the simplicity of deriving frames from the current state, combined with a clear boundary between frame construction and terminal output.
+
+The details of that representation belong to the next chapter, where the Screen Buffer will be examined as a concrete rendering data structure.
+
+## Summary
+
+Three main approaches could organize the editor's rendering pipeline: writing directly to the terminal, maintaining a retained visual model, or deriving a complete frame in memory before producing terminal output.
+
+The editor chooses the application-side frame representation. It separates what should be displayed from how that result reaches the terminal, fits the full-redraw strategy, and keeps the Editor State as the single source of truth.
+
+Now that the rendering design is chosen, the next section examines the complexity and trade-offs of this approach.
+
+Continue to **Section 17.9, Complexity and Trade-offs**.
