@@ -1,0 +1,125 @@
+---
+title: 23.12 Conclusion
+description: Consolidates the file-safety design and adds review questions, thought experiments, common mistakes, and a preview of complexity analysis.
+---
+
+File I/O taught us how to move document data between memory and the file system, and Text Encoding taught us what the bytes mean. File Safety answers the question those two leave open: **how do we change a file on disk without destroying the previous valid version?**
+
+The chapter's starting point is that saving is not a single safe action. The simplest approach—open the destination, truncate it, then write the new contents—can destroy the last known-good version before the write completes. A crash, power failure, full disk, I/O error, or permissions problem at that moment leaves the user with a partial file, so **the state left behind when a save fails matters as much as the state left behind when it succeeds**.
+
+The safe save rests on two ideas: construct the new version separately, then replace the old version only when the new one is ready.
+
+```text
+Document (memory)
+     │
+     ▼
+Temporary File ── complete new version
+     │
+     ▼
+rename()  ── atomic replacement
+     │
+     ▼
+Destination ── new version
+```
+
+The editor writes the complete new document to a **Temporary File** beside the destination, leaving the original untouched, and only then asks the operating system to swap it in with `rename()`. Because the replacement is a single filesystem operation within one filesystem, the destination never exposes a partially written or missing intermediate state. Atomic replacement is not durability, however: atomicity describes **how** the change happens, while durability describes **whether** it survives a later crash or power loss. A successful `rename()` does not by itself guarantee stable storage, and the baseline editor does not claim it.
+
+Crashes and failures at every stage produce the same pattern: the original file remains protected until the final replacement, the in-memory Document stays the user's working version, and recovery from leftover Temporary Files is a separate system the baseline does not build.
+
+The chapter also established the behavioral contract for a failed save:
+
+```text
+Save fails
+    │
+    ├── Document remains in memory
+    ├── Dirty Flag stays true
+    ├── Error reported via the Message Bar
+    └── Event Loop continues
+```
+
+A failed save is not the same as a failed edit: the changes are valid, and only their persistence failed. The editor keeps the Document, keeps the Dirty Flag set, reports the error, and lets the user decide whether to retry—it never clears the Dirty Flag, claims a success that did not happen, or retries silently.
+
+The most important takeaway:
+
+> **Never destroy the previous valid version before the new version is known to be safe—and when a save fails, leave the Document, the Dirty Flag, the Message Bar, and the original file all reflecting that nothing was saved.**
+
+The final design is the **full-document, temporary-file-and-atomic-replacement strategy**, building on ADR-020 and ADR-021, recorded as **ADR-022: File Safety Strategy**, and keeping saving `O(n)`. It guarantees that a partial Temporary File never becomes the destination and a failed save never clears the Dirty Flag, and it explicitly leaves metadata preservation and systems such as backups, journaling, autosave, versioning, and automatic recovery for later.
+
+## Exercises
+
+### Review Questions
+
+1. Why is directly truncating the destination file dangerous?
+2. What problem does a temporary file solve?
+3. What does atomic replacement mean?
+4. Why isn't atomicity the same as durability?
+5. When should the Dirty Flag be cleared?
+6. Why must the Temporary File be created in the same directory as the destination file?
+7. What must the editor do when a save fails, and why is a failed save not the same as a failed edit?
+
+### Thought Experiments
+
+1. The editor successfully writes 90% of a document to a temporary file, then the disk reports an error. What should happen to the original file, temporary file, Dirty Flag, and Message Bar?
+2. Why does the editor not silently retry a failed save, and under what conditions might a different editor reasonably do so?
+
+### Design Exercise
+
+1. Design a save sequence that remains safe if the application crashes at every major step.
+
+### Optional Challenge
+
+1. Investigate how your operating system performs atomic file replacement and identify which filesystem guarantees are relevant at each stage of the safe-save sequence.
+
+## Common Mistakes
+
+### Writing directly to the destination and truncating it first
+
+Truncating the destination before the new version has been written destroys the previous valid contents. If the write then fails, the user is left with a partial file—the exact failure mode the safe-save strategy is designed to avoid.
+
+### Ignoring partial writes
+
+A single `write()` may transfer fewer bytes than requested. Treating the Temporary File as complete when a write was partial can promote incomplete data to the destination.
+
+### Ignoring `close()` failures
+
+A `close()` failure can report a write-back error that `write()` did not reveal. The save is not complete until every step, including closing the file, has succeeded.
+
+### Deleting the original before the replacement is ready
+
+Removing the destination first means a failed replacement leaves no file at all. `rename()` replaces the destination as one operation, so a separate delete step is both unnecessary and dangerous.
+
+### Clearing the Dirty Flag before save completion
+
+The Dirty Flag records whether persistence succeeded. Clearing it before the final replacement succeeds tells the user the document is safe when it is not.
+
+### Leaving temporary files after failure
+
+An incomplete Temporary File should be cleaned up when possible. Whether it can be removed safely depends on where the failure occurred, and a complete Temporary File can even be a recovery candidate—so cleanup is a policy decision, not merely housekeeping.
+
+### Placing the temporary file on another filesystem
+
+`rename()` is atomic only within a single filesystem. A Temporary File on another filesystem forces a cross-filesystem copy-and-delete, exposing the destination to a partial or missing intermediate state.
+
+### Treating atomic replacement as equivalent to durable storage
+
+Atomicity guarantees how the destination transitions; durability guarantees whether the result survives a crash or power loss. A successful `rename()` does not mean the data has reached stable storage.
+
+### Assuming every filesystem behaves identically
+
+Durability guarantees and metadata behavior vary by operating system and filesystem. The editor should rely on one documented strategy and state the guarantees it provides rather than assuming platform-specific behavior.
+
+### Implementing recovery before defining what "recovery" means
+
+Finding a Temporary File is easy; validating that it holds a complete version, deciding whether to offer it, and restoring it is a separate system of its own. Ad-hoc error handlers are not a recovery design.
+
+## Preview of the Next Chapter
+
+Chapter 24 begins Volume VI and changes direction slightly.
+
+Up to this point, we've chosen data structures and algorithms largely for **simplicity and correctness**.
+
+Now we ask:
+
+> **How expensive are those decisions?**
+
+Chapter 24 introduces complexity analysis, memory usage, cache locality, and latency. This provides the foundation needed to understand why a vector-of-lines representation is appropriate for our baseline editor—and why professional editors eventually use structures such as gap buffers, piece tables, and ropes.

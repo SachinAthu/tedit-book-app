@@ -1,0 +1,250 @@
+---
+title: 23.1 Why File Safety Matters
+description: Shows why directly overwriting a file can destroy the last valid version and why a safe save must prepare the new version first.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Saving a document sounds simple:
+
+```text
+Document in memory
+        │
+        ▼
+Encode as UTF-8
+        │
+        ▼
+Write to file
+```
+
+But a save operation is more than a sequence of successful system calls. The editor must also consider **what happens if something goes wrong while the file is being replaced**.
+
+Our editor uses a full-document persistence model. When the user saves, the complete in-memory Document is encoded and written back to the file on disk. This keeps the persistence model simple, but it creates an important responsibility: **the existing valid file should not be destroyed before the new version is known to be safe**.
+
+## The Dangerous Part of Saving
+
+Consider a file named:
+
+```text
+notes.txt
+```
+
+Before saving, it contains:
+
+```text
+Meeting notes
+Project deadline: Friday
+Remember to update the documentation
+```
+
+The user makes several changes and presses **Save**.
+
+A naïve implementation might do this:
+
+```text
+notes.txt
+    │
+    ▼
+Open for writing
+    │
+    ▼
+Truncate existing contents
+    │
+    ▼
+Write new document
+    │
+    ▼
+Close file
+```
+
+The problem occurs between truncating the file and completing the write.
+
+Suppose the editor writes part of the document and then encounters an error:
+
+```text
+Original file
+
+Meeting notes
+Project deadline: Friday
+Remember to update the documentation
+
+
+        │
+        │ Save
+        ▼
+
+File is truncated
+
+        │
+        ▼
+
+New contents begin writing
+
+        │
+        X
+     Write fails
+```
+
+The file might now contain only part of the new document:
+
+```text
+Meeting notes
+Project deadline: Monday
+```
+
+The original contents are gone.
+
+This is a serious problem because the user did not ask the editor to replace a valid document with a partially written one. The failure occurred **during the save operation**, but the damage was done to the previous version before the editor knew whether the new version could be written successfully.
+
+## Saving Successfully Is Not Enough
+
+This leads to an important distinction.
+
+An editor should not ask only:
+
+> Did the save operation complete?
+
+It should also ask:
+
+> What state was the file left in if the operation failed?
+
+A robust save operation should protect the last known-good version of the document for as long as possible.
+
+Conceptually, we want:
+
+```text
+Old version
+    │
+    │ remains safe
+    │
+    ▼
+Prepare new version
+    │
+    ▼
+Verify that it was written successfully
+    │
+    ▼
+Replace old version
+```
+
+Rather than:
+
+```text
+Old version
+    │
+    ▼
+Destroy old version
+    │
+    ▼
+Attempt to create new version
+    │
+    X
+  Failure
+```
+
+The difference may look small, but it changes the reliability characteristics of the entire editor.
+
+## Failures Can Happen at Any Time
+
+A save operation can encounter problems for many reasons:
+
+- The disk can become full.
+- The filesystem can report an I/O error.
+- The process can terminate unexpectedly.
+- The operating system can shut down.
+- The machine can lose power.
+- A filesystem operation can fail after only part of the data has been written.
+
+The editor cannot prevent every possible failure. What it **can** do is structure the save operation so that failures are less likely to destroy the user's previous valid file.
+
+This is the central idea of file safety:
+
+> **Do not make the existing valid document depend on the success of an operation that has not completed yet.**
+
+## File Safety Is Part of the Editor's Design
+
+File safety is not simply an implementation detail inside the File Manager. It affects the behavior of the entire editor.
+
+For example, the editor maintains a **Dirty Flag** indicating whether the in-memory Document contains changes that have not been successfully saved.
+
+If saving fails:
+
+```text
+Dirty = true
+```
+
+The editor must continue to regard the document as modified.
+
+Only after the save operation has successfully completed should the state become:
+
+```text
+Dirty = false
+```
+
+Similarly, a recoverable save failure should not necessarily terminate the editor. The error can be reported through the Message Bar while the user continues editing.
+
+This follows the runtime model established earlier:
+
+```text
+Save Command
+     │
+     ▼
+File Manager
+     │
+     ├── Failure ──► Message Bar
+     │                  │
+     │                  ▼
+     │             Continue Editing
+     │
+     └── Success ──► Dirty = false
+```
+
+The File Manager therefore needs to do more than simply write bytes. It must participate in a persistence strategy that protects document integrity.
+
+## The Goal of This Chapter
+
+The goal is not to build a complete crash-recovery system.
+
+Instead, we want a practical improvement over direct overwriting:
+
+```text
+Document
+    │
+    ▼
+Temporary File
+    │
+    ▼
+Write Complete New Version
+    │
+    ▼
+Successful?
+   / \
+ No   Yes
+ │     │
+ │     ▼
+ │   Replace
+ │   Original
+ │
+ ▼
+Keep Original Safe
+```
+
+This approach separates **creating the new version** from **replacing the existing version**.
+
+In the following sections, we will examine the failure scenarios that make direct overwriting dangerous, then introduce temporary files and atomic replacement as the foundation of our editor's safe-save strategy.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+File persistence is a small example of a much broader systems-programming principle:
+
+> **When changing important state, prepare the new state before destroying the old state.**
+
+This principle appears in databases, configuration systems, package managers, operating systems, and many other forms of software. Our text editor gives us a concrete way to understand why that principle matters.
+
+</Aside>
+
+## Summary
+
+Direct overwriting is dangerous because truncating the destination before the new contents are complete can destroy the last valid version if the write fails. A safe save therefore prepares the new version first and replaces the old one only after the new version is known to be good. The editor cannot prevent crashes, power loss, full disks, I/O errors, or permission problems, but it can structure saving so those failures do not unnecessarily damage the existing file. File safety also belongs to the editor's broader design: the Dirty Flag must stay set whenever persistence fails, and recoverable errors should be reported through the Message Bar while editing continues. The goal is a practical improvement over direct overwriting, not a complete crash-recovery system.
+
+In the next section, we will examine the specific ways a save can fail: **What Can Go Wrong During a Save?**

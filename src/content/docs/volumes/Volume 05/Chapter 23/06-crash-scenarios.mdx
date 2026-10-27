@@ -1,0 +1,341 @@
+---
+title: 23.6 Crash Scenarios
+description: Walks through crashes at each save stage and the resulting state of the original file, Temporary File, and in-memory Document.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The safe-save strategy becomes easier to understand when we examine what happens if the editor fails at different points during the save operation.
+
+The important question is not simply:
+
+> Did the editor crash?
+
+Instead, we should ask:
+
+> **What state are the original file, temporary file, and in-memory Document left in when the failure occurs?**
+
+Our save process can be represented as:
+
+```text
+Document
+    │
+    ▼
+Create temporary file
+    │
+    ▼
+Write complete document
+    │
+    ▼
+Close temporary file
+    │
+    ▼
+Atomic replacement
+    │
+    ▼
+Save complete
+```
+
+Each stage has a different failure consequence.
+
+## Crash Before Creating the Temporary File
+
+Suppose the editor crashes before the temporary file is created.
+
+```text
+Editor State
+     │
+     X
+  Crash
+```
+
+The original file has not been touched.
+
+The filesystem remains:
+
+```text
+notes.txt
+    │
+    ▼
+Original version
+```
+
+The user's in-memory modifications are lost because the editor process has terminated, but the previously saved file remains intact.
+
+This is an important distinction:
+
+> **Losing unsaved changes is not the same as corrupting the last saved version.**
+
+Our safe-save strategy primarily protects the latter.
+
+## Crash While Writing the Temporary File
+
+Now suppose the temporary file has been created and the editor is writing the new document:
+
+```text
+notes.txt
+notes.txt.tmp
+     │
+     ▼
+Writing...
+     X
+   Crash
+```
+
+The temporary file may contain only part of the new document:
+
+```text
+notes.txt
+    │
+    ▼
+Original complete version
+
+notes.txt.tmp
+    │
+    ▼
+Incomplete new version
+```
+
+The original file remains untouched.
+
+After restarting, the incomplete temporary file can be removed or handled according to the editor's recovery policy.
+
+The important property is:
+
+```text
+Temporary write fails
+        │
+        ▼
+Original file remains available
+```
+
+The editor has failed to save the new version, but it has not replaced the old version with incomplete data.
+
+## Crash After Writing the Temporary File
+
+Consider a crash after the complete document has been written to the temporary file but before replacement:
+
+```text
+notes.txt
+    │
+    ▼
+Old version
+
+notes.txt.tmp
+    │
+    ▼
+Complete new version
+
+        X
+      Crash
+```
+
+This is an interesting state.
+
+The original file is still valid, and the temporary file may contain a complete copy of the new document.
+
+A future recovery system could potentially recognize this situation and offer to recover the temporary version.
+
+However, our baseline editor does not need to implement automatic recovery.
+
+For the baseline implementation, the important guarantee is:
+
+> **The original file remains intact until the replacement is successfully performed.**
+
+This is why temporary files provide more than just a convenient implementation technique. They create a recoverable intermediate state.
+
+## Crash During Atomic Replacement
+
+The most interesting case occurs during the final replacement:
+
+```text
+Temporary file
+      │
+      ▼
+rename()
+      │
+      X
+    Crash
+```
+
+The important property of the atomic replacement operation is that the replacement itself is not intentionally implemented as a sequence of user-visible operations such as:
+
+```text
+delete old file
+create new file
+```
+
+Instead, the filesystem performs the rename/replacement operation according to its atomicity guarantees.
+
+Therefore, the editor does not deliberately create an intermediate state in which the destination is first deleted and only later recreated.
+
+However, we must be careful not to overstate the guarantee.
+
+Atomicity does **not** automatically mean that the result is guaranteed to survive every possible power failure. That is a durability question, discussed in the previous section.
+
+## Crash After Successful Replacement
+
+Suppose the replacement has completed:
+
+```text
+notes.txt
+    │
+    ▼
+New version
+```
+
+and then the editor crashes.
+
+From the application's perspective, the save operation has already completed.
+
+The important distinction is whether the filesystem state has also reached the required level of durability.
+
+For the baseline save strategy, we can reason about the logical operation as:
+
+```text
+Replacement succeeded
+        │
+        ▼
+Destination now refers to new version
+```
+
+Stronger guarantees about survival across power loss require the synchronization mechanisms discussed earlier.
+
+## Crash After the Save Completes
+
+There is also a simpler case:
+
+```text
+Save complete
+    │
+    ▼
+Dirty = false
+    │
+    ▼
+Editor continues
+    │
+    X
+  Crash
+```
+
+The editor's in-memory state is lost because the process has terminated, but the document was already considered saved.
+
+If the filesystem state is durable according to the guarantees required by the application, the user can reopen the file and continue from the saved version.
+
+This illustrates why **saving and crash recovery are separate features**.
+
+A successful save establishes a persistent version of the document. Crash recovery attempts to recover information that existed beyond that last successfully persisted version.
+
+## Crash Scenario Summary
+
+The main scenarios can be summarized as follows:
+
+| Failure point          | Original file                           | Temporary file                        | In-memory Document      |
+| ---------------------- | --------------------------------------- | ------------------------------------- | ----------------------- |
+| Before temporary file  | Safe                                    | None                                  | Lost with process       |
+| During temporary write | Safe                                    | Possibly incomplete                   | Lost with process       |
+| After temporary write  | Safe                                    | Possibly complete                     | Lost with process       |
+| During replacement     | Subject to atomic replacement semantics | Subject to replacement result         | Lost with process       |
+| After replacement      | New version                             | May no longer exist as temporary file | Lost with process       |
+| After successful save  | New saved version                       | No longer needed                      | Lost if process crashes |
+
+The exact filesystem state after a crash can depend on the operating system, filesystem, and durability guarantees involved. The table therefore describes the **logical save model**, not a promise about every possible physical storage failure.
+
+## Why the Temporary File Matters
+
+The most important pattern is visible when we compare the failure points.
+
+With direct overwrite:
+
+```text
+Original
+   │
+   ▼
+Modify destination
+   │
+   X
+ Crash
+   │
+   ▼
+Original may be damaged
+```
+
+With a temporary file:
+
+```text
+Original
+   │
+   │ remains untouched
+   │
+   ├──────────────────────┐
+   │                      │
+   ▼                      │
+Temporary file            │
+   │                      │
+   X                      │
+ Crash                    │
+                          ▼
+                  Original remains
+```
+
+The temporary file moves the risky construction work away from the user's existing file.
+
+The final replacement is then performed only after the new version has been successfully prepared.
+
+## Recovery Is a Separate Decision
+
+A leftover temporary file can contain useful information after a crash:
+
+```text
+notes.txt
+notes.txt.tmp
+```
+
+But the editor should not automatically assume that the temporary file is the version the user wants to recover.
+
+For example, the user may have intentionally abandoned the changes, or the temporary file may be incomplete.
+
+A proper recovery system therefore needs additional rules for:
+
+- detecting temporary files
+- determining whether they contain a complete document
+- deciding when recovery should be offered
+- allowing the user to choose between versions
+- cleaning up obsolete temporary files
+
+These are separate design problems.
+
+For the baseline editor, we will keep the responsibility smaller:
+
+> **Use temporary files and atomic replacement to make normal saves safer, but defer automatic crash recovery to a future enhancement.**
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Crash safety is easier to reason about when the save operation has clearly defined stages:
+
+```text
+Prepare
+   │
+   ▼
+Complete
+   │
+   ▼
+Commit
+   │
+   ▼
+Persist
+```
+
+Each stage has different failure modes and different guarantees.
+
+This is a recurring systems-programming technique: **break a complex operation into stages, identify what can fail at each stage, and define what state remains valid after every failure.**
+
+The next section will examine how the editor should **recover after a failed save**, including the role of temporary files and why our baseline editor deliberately stops short of implementing a full automatic recovery system.
+
+</Aside>
+
+## Summary
+
+Crashes at different save stages leave the original file, Temporary File, and in-memory Document in different states, but the temporary-file strategy keeps the original intact until replacement succeeds. Before or during the temporary write, the destination remains safe while unsaved in-memory changes may be lost; after a complete temporary write, the temporary artifact may itself be a recovery candidate. During atomic replacement the destination follows the filesystem's replacement semantics, and after a successful replacement it refers to the new version. Losing unsaved changes is not the same as corrupting the last saved version, and this strategy primarily protects the latter. Automatic recovery is a separate decision, so the baseline defers it rather than assuming that any leftover temporary file is the version the user wants.
+
+In the next section, we will examine how the editor should **recover after a failed save** and why our baseline editor deliberately stops short of a full automatic recovery system.

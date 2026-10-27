@@ -21,19 +21,19 @@ Throughout the chapter, we treat the Renderer as a **pure function of the editor
 
 By the end of the chapter, readers should understand:
 
-- what the Renderer is responsible for
-- why rendering must be read-only
-- how the Renderer differs from the Screen Buffer
-- how `EditorState` becomes a complete visual frame
-- how the document area is rendered
-- how characters such as TAB are expanded into visual cells
-- how document coordinates are translated into screen coordinates
-- how the Status Bar is rendered from editor state
-- how the Message Bar is rendered and cleared
-- how the Cursor is translated into a terminal position
-- the order in which the Renderer constructs a frame
-- how the Renderer implementation is organized
-- the time, space, and trade-off costs of full-frame rendering
+- What the Renderer is responsible for
+- Why rendering must be read-only
+- How the Renderer differs from the Screen Buffer
+- How `EditorState` becomes a complete visual frame
+- How the document area is rendered
+- How characters such as TAB are expanded into visual cells
+- How document coordinates are translated into screen coordinates
+- How the Status Bar is rendered from editor state
+- How the Message Bar is rendered and cleared
+- How the Cursor is translated into a terminal position
+- The order in which the Renderer constructs a frame
+- How the Renderer implementation is organized
+- The time, space, and trade-off costs of full-frame rendering
 
 ## Sections
 

@@ -1,0 +1,221 @@
+---
+title: 23.2 What Can Go Wrong During a Save?
+description: Enumerates the ways a save can fail, including crashes, power loss, full disks, I/O errors, permissions, and interrupted writes.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Before designing a safer save strategy, it is useful to examine how a save operation can fail.
+
+The important point is that a save is not a single indivisible action. It consists of multiple steps, and failure can occur at different points during those steps.
+
+Consider the simplified process:
+
+```text
+Document in memory
+        │
+        ▼
+Encode document
+        │
+        ▼
+Open destination
+        │
+        ▼
+Write data
+        │
+        ▼
+Close file
+```
+
+Each stage can potentially encounter a problem.
+
+## Application Crash
+
+The editor itself may terminate unexpectedly while a save is in progress.
+
+For example:
+
+```text
+Open destination
+      │
+      ▼
+Truncate existing file
+      │
+      ▼
+Write part of document
+      │
+      X
+   Application
+     crashes
+```
+
+If the original file was modified before the crash, the editor may no longer have a complete copy of the previous version.
+
+The important issue is not simply that the save failed. The problem is that the failure occurred **after the original file had already been changed**.
+
+## Power Loss
+
+A sudden loss of power creates a similar problem.
+
+The editor may be in the middle of writing the new document when the machine shuts down:
+
+```text
+New document
+     │
+     ▼
+Write begins
+     │
+     ▼
+Some data reaches storage
+     │
+     X
+ Power lost
+```
+
+When the system starts again, the destination file may not contain the complete document that the user expected to save.
+
+The editor cannot prevent a physical power failure, but it can choose a save strategy that reduces the consequences of such failures.
+
+## Disk Full
+
+A save can also fail because there is not enough available storage.
+
+Suppose the new document requires more space than is currently available:
+
+```text
+Write document
+      │
+      ▼
+Storage becomes full
+      │
+      ▼
+Write fails
+```
+
+If the editor was writing directly to the destination file, the existing contents may already have been truncated or partially replaced.
+
+This is one reason the order of operations matters.
+
+A safer strategy attempts to construct the new version separately before replacing the existing file.
+
+## I/O Errors
+
+The operating system or filesystem can report an I/O error while the editor is writing.
+
+The editor therefore cannot assume that:
+
+```text
+write(...)
+```
+
+means:
+
+> The complete document is safely stored.
+
+The result of the operation must be checked, and the save process must respond appropriately to failures.
+
+The most subtle case is a **partial write**: a single `write()` may transfer fewer bytes than requested, so even a "successful" call can leave only part of the document on disk. Chapter 21 examined this in detail; the lesson carries directly into the safe-save strategy, which must therefore assume that such failures are possible.
+
+The same principle applies to other file operations involved in the save process.
+
+## Filesystem or Permission Problems
+
+The filesystem can also prevent the save operation from completing.
+
+Examples include:
+
+- insufficient permissions
+- an unavailable destination
+- filesystem errors
+- restrictions imposed by the operating system
+
+These failures are different from application crashes or power loss, but they lead to the same design question:
+
+> What happens to the previous valid file when the new version cannot be written?
+
+A robust editor should fail without unnecessarily destroying the user's existing data.
+
+## Interrupted Save Operations
+
+The most important concept is that a save operation can stop **between two successful steps**.
+
+For example:
+
+```text
+Step 1 ── Open file             ✓
+Step 2 ── Truncate file         ✓
+Step 3 ── Write data            ✓
+Step 4 ── Write remaining data  ✗
+```
+
+The first three steps may have succeeded, while the fourth failed.
+
+This means that checking only whether the operation eventually succeeded or failed is not enough. We must also consider **what each step does to the existing file**.
+
+## The Fundamental Failure Scenario
+
+We can summarize the dangerous case as follows:
+
+```text
+Existing valid file
+        │
+        ▼
+Modify destination
+        │
+        ▼
+Attempt to write new version
+        │
+        X
+      Failure
+        │
+        ▼
+Existing valid version may be lost
+```
+
+This is the failure mode that our safe-save strategy is designed to avoid.
+
+Instead, we want the process to look more like:
+
+```text
+Existing valid file
+        │
+        │ remains untouched
+        │
+        ├──────────────────────┐
+        │                      │
+        ▼                      │
+Create temporary file          │
+        │                      │
+        ▼                      │
+Write complete new version     │
+        │                      │
+        ├── Failure ───────────┘
+        │
+        ▼
+Successful completion
+        │
+        ▼
+Replace existing file
+```
+
+Now a failure while constructing the new version does not require modifying the existing version.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The safest place to handle a failure is often **before an irreversible operation**.
+
+Once the original file has been destroyed, recovering it may be impossible. Therefore, our design should postpone that destructive step until the new version is ready.
+
+This leads directly to the next question:
+
+> **Can we construct the new file without touching the existing file?**
+
+Yes. The answer is the **temporary file**.
+
+</Aside>
+
+## Summary
+
+A save is a sequence of steps—encoding, opening, writing, and closing—and failure can occur at any point in that sequence. Application crashes, power loss, a full disk, I/O errors, permission problems, and partial writes all raise the same design question: what happens to the previous valid file when the new version cannot be written? Checking only whether the overall operation eventually succeeded is insufficient, because earlier steps may already have modified the destination. The dangerous pattern is modifying an existing valid file and then failing before the new version is complete, which is exactly the failure mode the safe-save strategy must avoid. Separating construction from replacement lets a failure occur before any irreversible change to the original file.
+
+In the next section, we will see how a **temporary file** solves this problem by separating the construction of the new version from the replacement of the existing file.

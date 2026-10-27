@@ -1,0 +1,106 @@
+---
+title: 23.10 What We Are Not Building
+description: Draws the scope boundary between safe saving and full crash recovery, listing the backup, journaling, autosave, and versioning features left out.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+File recovery can become a very large engineering problem.
+
+A professional editor may maintain backups, journals, recovery snapshots, or multiple versions of a document so that work can be recovered after crashes or other failures. Those systems are valuable, but they introduce substantially more state and complexity than our baseline editor requires.
+
+Our editor deliberately stops at the safe-save strategy described in this chapter.
+
+We are **not** implementing:
+
+- Automatic backup history
+- Journaled editing
+- Undo-based crash recovery
+- Multiple recovery generations
+- Background autosave
+- Versioned files
+- Collaborative conflict recovery
+- Transactional filesystem infrastructure
+
+These features are not necessary to establish the core file-safety guarantees we want.
+
+## Safe Saving Is Not a Complete Recovery System
+
+It is important not to confuse two related ideas:
+
+```text
+Safe Saving
+     │
+     └── Protects the destination during a save
+
+Full Recovery System
+     │
+     ├── Detects previous crashes
+     ├── Stores recovery information
+     ├── Maintains multiple versions
+     └── Helps restore lost work
+```
+
+Our Temporary File and atomic replacement strategy primarily addresses the first problem.
+
+It helps prevent a failed save from unnecessarily destroying the previous valid destination. It does not attempt to provide an unlimited history of previous editing states.
+
+For example, if the editor crashes before a save, our baseline design does not maintain a complete journal from which every unsaved edit can automatically be reconstructed.
+
+That would require a different set of architectural decisions.
+
+## Why We Stop Here
+
+The purpose of this book is to build a clear foundation before introducing increasingly sophisticated systems.
+
+Adding recovery history would require us to answer questions such as:
+
+- How many recovery versions should be kept?
+- Where should recovery data be stored?
+- When should it be written?
+- How should stale recovery data be detected?
+- How should recovery versions be validated?
+- What happens when multiple editor instances access the same file?
+- How should conflicting versions be presented to the user?
+
+These are legitimate engineering questions, but they belong to a larger recovery architecture rather than the baseline save mechanism.
+
+Our current design therefore follows a deliberate boundary:
+
+```text
+                 File Safety
+                     │
+        ┌────────────┴────────────┐
+        │                         │
+   We build                  We defer
+        │                         │
+        ▼                         ▼
+Temporary File             Backup History
+Atomic Replacement         Journaling
+Error Handling             Autosave
+Dirty Flag                 Versioning
+```
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+**Scope is part of architecture.**
+
+Not implementing a feature is sometimes an intentional design decision rather than an omission.
+
+Our editor needs a save mechanism that protects the existing file, preserves the in-memory Document after failure, reports errors, and allows the user to continue working. The safe-save strategy satisfies those requirements without turning the File Manager into a complete recovery subsystem.
+
+Future volumes or projects could build recovery mechanisms on top of this foundation if the requirements justify them.
+
+For now, we will keep the boundary clear:
+
+> **Our editor provides safe saving, not a complete crash-recovery system.**
+
+The next section examines the alternatives to this design and why we chose the current approach.
+
+</Aside>
+
+## Summary
+
+Scope is part of architecture, and the baseline editor intentionally stops at safe saving rather than building a complete crash-recovery system. It protects the destination, preserves the in-memory Document after failure, reports errors, and lets the Event Loop continue, which satisfies the core file-safety requirements. Features such as backup history, journaling, undo-based crash recovery, multiple recovery generations, autosave, versioning, collaborative conflict recovery, and transactional filesystem infrastructure are deliberately deferred. Supporting them would require additional policy decisions about retention, storage, validation, concurrent access, and conflict presentation. Future work could build recovery on this foundation, but the current boundary remains explicit: the editor provides safe saving, not full recovery.
+
+In the next section, we will compare the alternatives to this design and why we chose the current approach.

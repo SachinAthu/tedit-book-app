@@ -1,0 +1,343 @@
+---
+title: "23.5 Durability: Atomic Is Not the Same as Durable"
+description: Distinguishes atomicity from durability, explains why rename() does not guarantee stable storage, and sets the baseline's persistence boundary.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Atomic replacement solves an important problem, but it does not answer every question about safe file persistence.
+
+We have established that our editor can prepare a complete new version in a temporary file and then use an atomic replacement operation:
+
+```text
+Temporary File
+      │
+      ▼
+rename()
+      │
+      ▼
+Destination
+```
+
+This protects the replacement operation from being treated as a sequence such as:
+
+```text
+delete old file
+create new file
+```
+
+But another failure scenario remains:
+
+> **What happens if the system loses power immediately after the save operation appears to have succeeded?**
+
+To answer that question, we need to distinguish **atomicity** from **durability**.
+
+## What Is Durability?
+
+Durability is the property that a successfully committed change remains preserved even when the system subsequently experiences a failure such as a crash or power loss.
+
+In simple terms:
+
+> **Atomicity asks whether the change happened as one indivisible transition. Durability asks whether the successful change will survive a failure.**
+
+These are different guarantees.
+
+```text
+Atomicity
+    │
+    ▼
+How does the change happen?
+
+Durability
+    │
+    ▼
+Will the successful change survive a failure?
+```
+
+A file replacement can be atomic without providing every durability guarantee an application might require.
+
+## Why Memory and Storage Are Different
+
+When our program writes data, several layers may exist between the C program and persistent storage:
+
+```text
+Editor
+   │
+   ▼
+Operating System
+   │
+   ▼
+Filesystem
+   │
+   ▼
+Storage Device
+```
+
+Data may be temporarily held or reordered by layers within this system.
+
+Therefore, the fact that the application has successfully requested a filesystem operation does not automatically mean that every related piece of data has already reached stable physical storage.
+
+This distinction matters most when the machine suddenly loses power.
+
+## A Power-Loss Scenario
+
+Consider our safe-save sequence:
+
+```text
+Write temporary file
+        │
+        ▼
+Temporary file complete
+        │
+        ▼
+rename()
+        │
+        ▼
+Save appears successful
+```
+
+Now imagine that power is lost immediately afterward:
+
+```text
+rename()
+   │
+   ▼
+Power loss
+   X
+```
+
+The system may not have completed every underlying storage operation in the way the application expects.
+
+This does not mean that atomic replacement is useless. It means that **atomicity and persistence are separate concerns**.
+
+Atomic replacement helps ensure that the destination does not become intentionally exposed to a partially constructed replacement.
+
+Durability concerns whether the successful state survives a later system failure.
+
+## Filesystem Synchronization
+
+Operating systems provide synchronization mechanisms that allow applications to request that modified file data be committed more strongly to storage.
+
+At the POSIX level, functions such as:
+
+```c
+fsync()
+```
+
+can be used to request synchronization of a file's modified data and associated metadata.
+
+Conceptually:
+
+```text
+Write
+  │
+  ▼
+Filesystem
+  │
+  ▼
+fsync()
+  │
+  ▼
+Request stronger persistence
+```
+
+This is different from `rename()`.
+
+Recall the distinction:
+
+```text
+write()
+    │
+    └── Writes file contents
+
+rename()
+    │
+    └── Performs the final name/replacement operation
+
+fsync()
+    │
+    └── Requests synchronization of file state
+```
+
+Each operation addresses a different part of the persistence process.
+
+## A More Complete Save Sequence
+
+If stronger durability guarantees are required, a persistence sequence can involve synchronization before and after the final replacement.
+
+Conceptually:
+
+```text
+Document
+   │
+   ▼
+Create temporary file
+   │
+   ▼
+Write complete document
+   │
+   ▼
+fsync(temp)
+   │
+   ▼
+Atomic replacement
+   │
+   ▼
+Synchronize relevant filesystem state
+```
+
+The exact sequence and guarantees can depend on the operating system and filesystem.
+
+That is an important point for our book:
+
+> **Filesystem durability is more platform- and filesystem-dependent than the basic safe-save algorithm.**
+
+We should therefore distinguish the simple baseline strategy from stronger durability protocols.
+
+## Why Our Baseline Editor Does Not Become a Database
+
+It would be possible to continue adding guarantees:
+
+```text
+Temporary file
+      │
+      ▼
+Write
+      │
+      ▼
+Synchronize
+      │
+      ▼
+Atomic replacement
+      │
+      ▼
+Synchronize directory state
+      │
+      ▼
+Recovery handling
+```
+
+But every additional guarantee introduces more platform-specific behavior and more concepts for the reader to understand.
+
+Our editor is intentionally designed as a small educational system.
+
+The goal is therefore not to reproduce the complete persistence machinery of a database or professional editor. Instead, we want to understand the fundamental layers:
+
+```text
+Basic saving
+     │
+     ▼
+Safe temporary-file construction
+     │
+     ▼
+Atomic replacement
+     │
+     ▼
+Stronger durability guarantees
+```
+
+Each layer solves a different problem.
+
+## Three Different Questions
+
+It is useful to separate three questions when discussing file safety.
+
+### 1. Was the new version completely prepared?
+
+The temporary file should contain the complete encoded Document.
+
+```text
+Document
+   │
+   ▼
+Temporary file
+   │
+   ▼
+Complete?
+```
+
+### 2. Was the destination replaced safely?
+
+The editor uses an atomic filesystem operation such as `rename()`.
+
+```text
+Old destination
+      │
+      ▼
+Atomic replacement
+      │
+      ▼
+New destination
+```
+
+### 3. Will the successful replacement survive a system failure?
+
+This is the durability question.
+
+```text
+Successful replacement
+        │
+        ▼
+Power loss?
+        │
+        ▼
+Will the state survive?
+```
+
+These questions should not be collapsed into one concept called "safe saving."
+
+## Our Practical Boundary
+
+For the baseline editor, our primary safe-save strategy is:
+
+```text
+1. Create temporary file
+2. Write complete document
+3. Detect write errors
+4. Close temporary file
+5. Atomically replace destination
+6. Report success
+7. Clear Dirty Flag
+```
+
+This provides a significantly safer save strategy than directly truncating and rewriting the destination.
+
+Stronger durability guarantees are a separate concern and may require additional filesystem synchronization and platform-specific considerations.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A useful systems-programming habit is to ask:
+
+> **What exactly does this operation guarantee?**
+
+For example:
+
+```text
+write()
+```
+
+does not mean:
+
+> "The data is permanently stored."
+
+And:
+
+```text
+rename()
+```
+
+does not mean:
+
+> "The data is guaranteed to survive a power failure."
+
+Each API provides a particular guarantee. Reliable software is built by understanding those guarantees and combining them deliberately.
+
+In the next section, we will use these concepts to examine concrete **crash scenarios** and determine what state the original file, temporary file, and Editor State should have after failures at different points in the save process.
+
+</Aside>
+
+## Summary
+
+Atomicity describes how a change happens, while durability describes whether a successful change survives a later crash or power loss. A successful `rename()` therefore does not prove that the data has reached stable storage, because the operating system, filesystem, and storage device may still hold or reorder pending writes. Stronger persistence uses synchronization mechanisms such as `fsync()` and may synchronize both the file and directory state around the replacement, but these guarantees are more platform- and filesystem-dependent. The baseline editor deliberately keeps its strategy at Temporary File plus atomic replacement and does not claim database-grade durability. It separates three questions—whether the new version was fully prepared, whether the destination was replaced safely, and whether the result survives a system failure—rather than collapsing them into one notion of safe saving.
+
+In the next section, we will use these concepts to examine concrete **crash scenarios** and the state left behind after failures at different points in the save process.

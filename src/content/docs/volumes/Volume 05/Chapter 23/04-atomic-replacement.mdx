@@ -1,0 +1,451 @@
+---
+title: 23.4 Atomic Replacement
+description: Explains atomic replacement with rename(), why the Temporary File belongs on the same filesystem, and what atomicity does not promise.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+A temporary file solves one important problem: the editor can construct the new version of the document without modifying the existing file.
+
+But after the temporary file has been written successfully, we still need to perform the final step:
+
+```text
+Temporary File
+      │
+      ▼
+Replace Original File
+```
+
+This replacement operation must also be designed carefully.
+
+## What Does "Atomic" Mean?
+
+In systems programming, an **atomic operation** is an operation that appears to happen as one indivisible action.
+
+From the perspective of the relevant observers, there is no intended intermediate state exposed by the operation itself.
+
+For example, imagine that we want to replace:
+
+```text
+notes.txt
+```
+
+with a newly prepared version.
+
+A non-atomic sequence might look like this:
+
+```text
+Delete old file
+      │
+      ▼
+No file exists
+      │
+      ▼
+Create new file
+```
+
+There is an intermediate state in which `notes.txt` does not exist.
+
+If the second operation fails, the destination may remain missing.
+
+An atomic replacement instead aims for:
+
+```text
+Old version
+     │
+     │ atomic replacement
+     ▼
+New version
+```
+
+The destination transitions directly from the old version to the new version without the replacement operation intentionally exposing the intermediate steps.
+
+### Important Terminology
+
+Atomic does **not** mean:
+
+- impossible to fail
+- guaranteed to survive a power failure
+- automatically backed up
+- automatically copied
+- implemented by the C language
+
+Atomicity is a property provided by the underlying operating system and filesystem operation.
+
+Our C program requests that operation through the operating system.
+
+## Is Atomicity an Operating System Feature?
+
+Yes, in the context relevant to our editor.
+
+The C program uses POSIX filesystem APIs, and the operating system provides the corresponding filesystem operations.
+
+One important operation for our save strategy is:
+
+```c
+rename()
+```
+
+The `rename()` system interface changes the name or location associated with a filesystem object.
+
+On POSIX filesystems, `rename()` provides atomicity for the namespace change when the operation is performed within the same filesystem.
+
+Our editor therefore does not need to implement an atomic replacement algorithm itself.
+
+Instead, it prepares the new file and then asks the operating system to perform the final replacement.
+
+Conceptually:
+
+```text
+Our Editor
+    │
+    │ rename()
+    ▼
+Operating System
+    │
+    ▼
+Filesystem
+    │
+    ▼
+Atomic namespace replacement
+```
+
+This is an important systems-programming pattern:
+
+> **The application defines the operation it needs; the operating system provides the low-level mechanism and its guarantees.**
+
+## How Our Editor Uses `rename()`
+
+Suppose the user is editing:
+
+```text
+notes.txt
+```
+
+The editor first creates a temporary file:
+
+```text
+notes.txt.tmp
+```
+
+The new document is completely written to that temporary file.
+
+At this point:
+
+```text
+notes.txt       → old version
+notes.txt.tmp   → complete new version
+```
+
+The File Manager can then perform:
+
+```c
+if (rename(temp_path, file_path) == -1)
+{
+    /* Replacement failed */
+}
+```
+
+Conceptually, the operation changes the filesystem state from:
+
+```text
+Before:
+
+notes.txt
+    │
+    ▼
+Old document
+
+notes.txt.tmp
+    │
+    ▼
+New document
+```
+
+to:
+
+```text
+After:
+
+notes.txt
+    │
+    ▼
+New document
+```
+
+The temporary filename is no longer the destination name.
+
+The important point is that the editor does **not** copy the temporary file into the destination byte by byte. The complete new contents were already written before `rename()` was called.
+
+`rename()` performs the final filesystem-level replacement.
+
+## Why Not Delete and Then Rename?
+
+It might be tempting to write:
+
+```c
+remove(file_path);
+rename(temp_path, file_path);
+```
+
+This is precisely the sequence we want to avoid.
+
+It creates two separate operations:
+
+```text
+remove()
+   │
+   ▼
+Destination disappears
+   │
+   ▼
+rename()
+   │
+   ▼
+Destination reappears
+```
+
+If the second operation fails, the original destination has already been removed.
+
+Instead, the replacement should be requested directly:
+
+```c
+rename(temp_path, file_path);
+```
+
+When the source and destination are on the same filesystem, the POSIX `rename()` operation can replace the destination as part of the atomic namespace change.
+
+This is why the temporary file should normally be created in the **same directory/filesystem** as the destination file.
+
+## The Complete Safe-Save Sequence
+
+We can now see the complete process more clearly:
+
+```text
+                    Editor State
+                         │
+                         ▼
+                   Encode Document
+                         │
+                         ▼
+                 Create Temporary File
+                         │
+                         ▼
+                 Write Complete Document
+                         │
+                         ▼
+                   Check for Errors
+                         │
+                         ▼
+                    Close File
+                         │
+                         ▼
+                   rename(temp, file)
+                         │
+                    ┌────┴────┐
+                    │         │
+                  Failure   Success
+                    │         │
+                    ▼         ▼
+               Keep Dirty   Save
+               = true       complete
+                              │
+                              ▼
+                         Dirty = false
+```
+
+The save operation therefore has two fundamentally different phases.
+
+### Phase 1 — Prepare
+
+```text
+Create temporary file
+        │
+        ▼
+Encode and write document
+        │
+        ▼
+Check for errors
+        │
+        ▼
+Close temporary file
+```
+
+### Phase 2 — Commit
+
+```text
+rename(temp_path, file_path)
+```
+
+The first phase constructs the new version.
+
+The second phase commits that version as the destination.
+
+This separation is what makes the save strategy safer than direct overwriting.
+
+## What If `rename()` Fails?
+
+Atomicity does not mean that `rename()` can never fail.
+
+The operation can still encounter filesystem errors.
+
+For example:
+
+```text
+Temporary file
+      │
+      ▼
+rename()
+      │
+      X
+    Failure
+```
+
+The editor must therefore check the return value.
+
+If the replacement fails, the editor should not report:
+
+```text
+File saved successfully
+```
+
+Instead, it should:
+
+- keep the Dirty Flag set
+- report an error through the Message Bar
+- preserve the in-memory Document
+- avoid claiming that the save succeeded
+- attempt to clean up the temporary file when appropriate
+
+The exact recovery behavior depends on the state reported by the operating system.
+
+The important rule is:
+
+> **A save is successful only after the final replacement operation has succeeded.**
+
+## Atomicity and Durability Are Different
+
+Atomic replacement solves one problem, but not every problem.
+
+Consider two separate questions.
+
+### Atomicity
+
+> Did the destination transition from the old version to the new version as one filesystem operation?
+
+### Durability
+
+> Has the new data been forced to stable storage so that it can survive a system or power failure?
+
+These are different guarantees.
+
+```text
+Atomicity
+    │
+    ▼
+Safe transition between versions
+
+
+Durability
+    │
+    ▼
+Persistence through a crash or power loss
+```
+
+A successful `rename()` therefore does not mean that the editor has implemented a complete crash-durability protocol.
+
+For our baseline editor, atomic replacement is the important first step. Stronger durability guarantees require additional filesystem synchronization considerations, which we will discuss separately.
+
+## Why the Temporary File Should Be on the Same Filesystem
+
+There is another reason to create the temporary file beside the destination.
+
+The atomic replacement behavior of `rename()` applies when the source and destination are on the same filesystem.
+
+If the temporary file were placed on another filesystem, a simple atomic rename may not be possible.
+
+For example:
+
+```text
+Filesystem A                 Filesystem B
+
+notes.txt                    temp.txt
+    │                           │
+    └──────── rename() ─────────┘
+```
+
+This is not the normal situation our save strategy should create.
+
+Instead, the editor should create the temporary file in the destination file's directory:
+
+```text
+editor/
+    notes.txt
+    notes.txt.tmp
+```
+
+This keeps the temporary file and destination within the same filesystem under normal conditions and allows the final replacement to use the intended atomic `rename()` operation.
+
+## The Key Idea
+
+The entire safe-save strategy can now be summarized as:
+
+```text
+                 Prepare
+                   │
+                   ▼
+            Temporary File
+                   │
+                   ▼
+          Complete New Version
+                   │
+                   ▼
+                rename()
+                   │
+                   ▼
+                 Commit
+```
+
+The editor never needs to modify the original file while constructing the new version.
+
+Instead:
+
+> **Build the new version first, then ask the operating system to atomically replace the destination with it.**
+
+This is the central mechanism behind our safe-save strategy.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The important lesson is not merely how to call `rename()`.
+
+It is understanding **where the responsibility belongs**.
+
+```text
+Editor
+  │
+  ├── Prepare complete new file
+  │
+  └── Request atomic replacement
+             │
+             ▼
+      Operating System
+             │
+             ▼
+         Filesystem
+```
+
+The editor does not recreate filesystem guarantees in application code. It uses the guarantees provided by the operating system and filesystem to build a safer higher-level operation.
+
+The next section examines the remaining question:
+
+> **If the replacement is atomic, does that mean the data is guaranteed to survive a crash or power failure?**
+
+The answer is no, and understanding the difference between **atomicity** and **durability** is essential for designing reliable file persistence.
+
+</Aside>
+
+## Summary
+
+Atomic replacement uses a single filesystem operation, such as `rename()`, to move the destination from the old version to the new one without intentionally exposing an intermediate state. The editor writes the complete new version to a Temporary File and then commits it with the operating system's replacement operation, rather than deleting the destination and recreating it. The Temporary File should normally live in the destination's directory so that both names belong to the same filesystem and the atomic rename applies. Atomicity does not mean the operation cannot fail, so the editor must still check the result, keep the Dirty Flag set, report an error, and avoid claiming success when replacement fails. A save is complete only after the final replacement succeeds, and atomicity still says nothing about durability after a power loss.
+
+In the next section, we will examine the question this section raised: does atomic replacement mean the data survives a crash or power failure? **Atomicity** and **durability** are not the same guarantee.

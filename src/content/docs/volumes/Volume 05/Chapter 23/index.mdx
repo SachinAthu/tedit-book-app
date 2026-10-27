@@ -1,0 +1,50 @@
+---
+title: Chapter 23 — File Safety
+description: Explains how temporary files, atomic replacement, durability, and failed-save recovery protect the last valid file during a save.
+---
+
+## Introduction
+
+In Chapter 21, we introduced the **File Manager** and the basic lifecycle of document persistence: the editor loads a file into the in-memory Document, and later writes the complete Document back to disk when the user saves.
+
+But saving is more than a sequence of successful system calls. A save operation can be interrupted at any moment, by an application crash, a power failure, a full disk, a permissions problem, or an I/O error. The simplest approach—opening the destination and rewriting it—can destroy the previous valid version before the new one is known to be complete.
+
+This leads to the central question of this chapter:
+
+> **What state is the file left in when the save fails?**
+
+A professional design should not simply ask whether the save operation completed. It must also consider what the file contains if the operation fails, and it should protect the last known-good version for as long as possible.
+
+In this chapter, we will build a safer save strategy step by step, so that a failed save does not unnecessarily destroy the user's existing data and the editor fails in a controlled way. The goal is a practical, understandable strategy—not a complete crash-recovery system or a database-grade persistence engine.
+
+## Learning Objectives
+
+Readers should be able to:
+
+- Explain why directly overwriting the destination during a save is dangerous
+- Identify the different ways a save operation can fail
+- Explain how a temporary file separates constructing the new version from replacing the old one
+- Describe what atomic replacement means and why `rename()` provides it
+- Distinguish **atomicity** from **durability**
+- Describe what happens to the original file, Temporary File, and in-memory Document after crashes at different stages of a save
+- Explain the editor's recovery policy and why the baseline editor stops short of full automatic recovery
+- State what the editor must do when a save fails: keep the Document, keep the Dirty Flag set, report the error, and continue the Event Loop
+- Explain why atomic replacement does not by itself preserve every property of the original file
+- Summarize the guarantees of our baseline file-safety strategy
+- Describe the file-safety features our baseline editor intentionally does not build
+- Compare alternative safe-save designs and justify the editor's chosen trade-off
+
+## Sections
+
+- [23.1 Why File Safety Matters](/volumes/volume-05/chapter-23/01-why-file-safety-matters/)
+- [23.2 What Can Go Wrong During a Save?](/volumes/volume-05/chapter-23/02-what-can-go-wrong/)
+- [23.3 Temporary Files](/volumes/volume-05/chapter-23/03-temporary-files/)
+- [23.4 Atomic Replacement](/volumes/volume-05/chapter-23/04-atomic-replacement/)
+- [23.5 Durability: Atomic Is Not the Same as Durable](/volumes/volume-05/chapter-23/05-atomic-not-same-as-durable/)
+- [23.6 Crash Scenarios](/volumes/volume-05/chapter-23/06-crash-scenarios/)
+- [23.7 Recovery After a Failed Save](/volumes/volume-05/chapter-23/07-recovery-after-failed-save/)
+- [23.8 Atomic Replacement and File Metadata](/volumes/volume-05/chapter-23/08-atomic-replacement-file-metadata/)
+- [23.9 Our File Safety Strategy](/volumes/volume-05/chapter-23/09-file-safety-strategy/)
+- [23.10 What We Are Not Building](/volumes/volume-05/chapter-23/10-what-we-not-building/)
+- [23.11 Design Alternatives and Trade-offs](/volumes/volume-05/chapter-23/11-design-alternatives-trade-offs/)
+- [23.12 Conclusion](/volumes/volume-05/chapter-23/12-conclusion/)

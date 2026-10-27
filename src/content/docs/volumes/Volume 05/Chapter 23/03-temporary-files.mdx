@@ -1,0 +1,287 @@
+---
+title: 23.3 Temporary Files
+description: Introduces the Temporary File technique that constructs the complete new document without modifying the existing destination.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The first step toward a safer save operation is to **separate the creation of the new file contents from the replacement of the existing file**.
+
+Instead of writing the new document directly to the destination, the editor can first write it to a temporary file.
+
+Suppose the user is editing:
+
+```text
+notes.txt
+```
+
+Rather than immediately modifying `notes.txt`, the editor creates a temporary file:
+
+```text
+notes.txt
+notes.txt.tmp
+```
+
+The new document is written completely to the temporary file while the original remains unchanged.
+
+## The Basic Strategy
+
+The save process becomes:
+
+```text
+Document in memory
+        │
+        ▼
+Encode as UTF-8
+        │
+        ▼
+Create temporary file
+        │
+        ▼
+Write complete document
+        │
+        ▼
+Close temporary file
+        │
+        ▼
+Replace original file
+```
+
+The important change is the position of the original file in this process.
+
+The editor does **not** modify it while the new version is being constructed.
+
+Conceptually:
+
+```text
+                ┌─────────────────┐
+                │  Original File  │
+                │   notes.txt     │
+                └────────┬────────┘
+                         │
+                    remains safe
+                         │
+                         │
+Document ──► Temporary File
+             notes.txt.tmp
+                  │
+                  ▼
+            Write completely
+                  │
+                  ▼
+             Save succeeds?
+                /       \
+              No         Yes
+              │            │
+              ▼            ▼
+          Keep original   Replace
+          file unchanged  original
+```
+
+This gives the save operation an important safety boundary.
+
+## The Temporary File Is Not a Second Document
+
+It is important to distinguish the temporary file from the editor's Document.
+
+The editor still has only one authoritative in-memory Document:
+
+```text
+Editor State
+     │
+     ▼
+Document
+```
+
+The temporary file is only an intermediate representation used during persistence:
+
+```text
+Editor State
+     │
+     ▼
+Document
+     │
+     ▼
+UTF-8 encoding
+     │
+     ▼
+Temporary File
+```
+
+The temporary file does not become another editable buffer.
+
+The Document remains the single source of truth for the editing session.
+
+## What Happens If Writing Fails?
+
+Suppose the editor begins writing the temporary file:
+
+```text
+notes.txt
+notes.txt.tmp
+```
+
+and the write fails.
+
+The editor should **not** replace the original file.
+
+Instead:
+
+```text
+Write temporary file
+        │
+        X
+      Failure
+        │
+        ├── Keep original
+        ├── Keep Dirty Flag set
+        ├── Remove incomplete temporary file
+        └── Report error
+```
+
+The user's existing file remains available, while the editor continues to hold the modified Document in memory.
+
+## The Temporary File Must Be Complete Before Replacement
+
+The temporary file should not be considered a valid replacement merely because it exists.
+
+The editor must first complete the write process successfully.
+
+Conceptually:
+
+```text
+Temporary file created
+        │
+        ▼
+Write entire document
+        │
+        ▼
+Check for errors
+        │
+        ▼
+Close successfully
+        │
+        ▼
+Temporary file is ready
+```
+
+Only then should the editor move to the replacement step.
+
+This creates two distinct phases:
+
+```text
+Phase 1
+Construct the new version
+        │
+        ▼
+Phase 2
+Replace the old version
+```
+
+Keeping these phases separate is one of the most important ideas in safe file persistence.
+
+## Temporary File Naming
+
+A temporary file needs a name that does not accidentally overwrite another important file.
+
+For example:
+
+```text
+notes.txt
+notes.txt.tmp
+```
+
+The exact naming strategy is an implementation detail that we will address when the File Manager is implemented.
+
+The important design requirement is that the temporary file should be treated as an intermediate artifact, not as the user's destination file.
+
+The implementation must also consider what happens if a temporary file already exists.
+
+## Cleaning Up Temporary Files
+
+A failed save should not normally leave unnecessary temporary files behind.
+
+For example, after a failure:
+
+```text
+notes.txt
+notes.txt.tmp
+```
+
+the editor should attempt to remove the incomplete temporary file.
+
+The desired result is:
+
+```text
+notes.txt
+```
+
+with the original file still intact.
+
+However, cleanup itself can fail. The editor should therefore treat cleanup as a separate filesystem operation rather than assuming it will always succeed.
+
+This leads to an important systems-programming lesson:
+
+> **Error handling itself can encounter errors.**
+
+The primary goal remains protecting the user's original file.
+
+## Temporary Files Do Not Solve Everything
+
+A temporary file greatly improves the save process, but it does not by itself provide atomic replacement.
+
+Consider:
+
+```text
+Original file
+     │
+     ▼
+Temporary file
+     │
+     ▼
+Complete
+     │
+     ▼
+Now what?
+```
+
+We still need to replace the original file with the completed temporary file.
+
+If we perform that replacement using several independent operations, there can still be a period during which the destination is missing or exposed to an incomplete sequence of changes.
+
+Therefore, temporary files solve one part of the problem:
+
+> **How do we construct the new version without damaging the old version?**
+
+The next part of the problem is:
+
+> **How do we replace the old version with the new version safely?**
+
+That is the purpose of **atomic replacement**, which we will examine next.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Temporary files introduce a useful separation between **preparing a change** and **committing a change**.
+
+```text
+Prepare
+   │
+   ▼
+Temporary File
+   │
+   ▼
+Validate completion
+   │
+   ▼
+Commit
+```
+
+This pattern appears far beyond text editors. It is a general technique for making state-changing operations safer when failure is possible.
+
+</Aside>
+
+## Summary
+
+A Temporary File lets the editor write the complete new document while leaving the existing destination untouched, so a failed write can simply be discarded. It is an intermediate persistence artifact, not a second editable Document or a second source of truth. Writing, closing, and checking the Temporary File must all succeed before replacement is considered; only then does the save enter its commit phase. If construction fails, the editor keeps the original file, keeps the Dirty Flag set, removes the incomplete temporary artifact when possible, and reports the error. Temporary files separate preparing a change from committing it, but they do not by themselves make the final replacement atomic.
+
+In the next section, we will examine how the destination is replaced safely: **Atomic Replacement**.
