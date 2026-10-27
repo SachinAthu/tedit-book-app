@@ -1,0 +1,200 @@
+---
+title: '24.2 What Does "Cost" Mean?'
+description: "Defines the time, space, memory-locality, and latency dimensions used to describe the cost of an editor operation."
+---
+
+When we talk about the cost of an editor operation, we are not talking about its monetary cost. We are asking how many computational resources the operation requires.
+
+For our purposes, three aspects are particularly useful:
+
+- **Time** — how much computational work an operation performs.
+- **Space** — how much memory the operation requires.
+- **Memory locality** — how efficiently the operation accesses data in memory.
+
+These dimensions are related, but they describe different properties of an algorithm.
+
+## Time Cost
+
+Time complexity describes how the amount of computational work grows as the input becomes larger.
+
+Consider searching through a collection of characters.
+
+If the character we need is the first element, we may find it immediately:
+
+```text
+A B C D E
+^
+```
+
+But if we need to determine that a character does not exist, we may have to examine every element:
+
+```text
+A B C D E
+---------
+check every element
+```
+
+The important question is therefore not simply:
+
+> "How many seconds does this operation take?"
+
+The actual execution time depends on the processor, compiler, operating system, and implementation.
+
+Instead, complexity analysis asks:
+
+> **How does the amount of work grow as the input grows?**
+
+This allows us to reason about algorithms without tying the analysis to a particular machine.
+
+## Space Cost
+
+An operation may also require additional memory.
+
+For example, suppose an algorithm needs to create a temporary copy of a document:
+
+```text
+Original Document
+       │
+       └──────────► Temporary Copy
+```
+
+The additional memory grows with the size of the document.
+
+Another operation might need only a few integer variables:
+
+```text
+row
+column
+length
+```
+
+Its additional memory does not grow with the document size.
+
+This difference is called **space complexity**.
+
+For an editor, memory usage is particularly important because our baseline architecture keeps the document in memory. The File Manager loads the complete document into the in-memory Document and writes the complete document back during a save.
+
+That means the document itself already consumes memory proportional to its size. When analyzing an operation, we therefore need to distinguish the memory occupied by the existing document from **additional memory introduced by the operation**.
+
+## Time and Space Are Independent
+
+An algorithm can use little additional memory but perform a large amount of work.
+
+Conversely, an algorithm can perform its work quickly by using additional memory.
+
+For example:
+
+```text
+Approach A
+    Low additional memory
+    More computation
+
+Approach B
+    More additional memory
+    Less computation
+```
+
+Neither approach is automatically better.
+
+The correct choice depends on the requirements and trade-offs.
+
+This is one reason complexity analysis is useful: it gives us multiple dimensions with which to compare designs instead of reducing every decision to a single measurement.
+
+## Memory Locality
+
+There is another practical factor that Big-O notation does not fully describe: **how data is laid out and accessed in memory**.
+
+Consider two collections.
+
+The first stores its elements next to one another:
+
+```text
++----+----+----+----+----+
+| A  | B  | C  | D  | E  |
++----+----+----+----+----+
+```
+
+The second stores its elements in different memory locations:
+
+```text
++----+        +----+              +----+
+| A  |        | B  |              | C  |
++----+        +----+              +----+
+```
+
+Both collections may support an operation with the same asymptotic complexity.
+
+However, the processor may be able to access contiguous data more efficiently because nearby memory locations can be loaded together and reused effectively.
+
+This property is called **cache locality**.
+
+It becomes particularly important for a text editor because text is accessed repeatedly and often sequentially.
+
+Later, when we compare arrays, gap buffers, piece tables, and ropes, we will see that their memory layouts can differ substantially even when their operations have similar Big-O classifications.
+
+## Latency
+
+For an interactive editor, there is also a practical concern called **latency**.
+
+Latency is the delay between an action and the corresponding result becoming visible to the user.
+
+For example:
+
+```text
+User presses a key
+        │
+        ▼
+Editor processes input
+        │
+        ▼
+Document changes
+        │
+        ▼
+Frame is rendered
+        │
+        ▼
+User sees the result
+```
+
+If this entire sequence completes quickly, editing feels responsive.
+
+If an operation requires substantial work, the user may notice a delay.
+
+This is why algorithmic complexity matters even for operations that appear simple. A character insertion may be performed once without consequence, but the same operation may be performed thousands of times during a single editing session.
+
+## Cost Is Multi-Dimensional
+
+We can therefore think about the cost of an editor operation as several related questions:
+
+```text
+                 Operation
+                     │
+          ┌──────────┼──────────┐
+          ▼          ▼          ▼
+        Time       Space     Locality
+          │          │          │
+          ▼          ▼          ▼
+       Work done   Memory    How data is
+                   used      accessed
+                     │
+                     ▼
+                  Latency
+```
+
+These measurements help us understand different aspects of the same design.
+
+A data structure might minimize the number of elements moved during insertion but require more memory. Another might use less memory but perform less predictably. A third might have similar asymptotic complexity but better memory locality.
+
+There is therefore no universal definition of the "fastest" data structure.
+
+The right question is:
+
+> **What are the costs of this design for the operations our editor performs most often?**
+
+That question will guide the analysis throughout this volume.
+
+## Summary
+
+Cost is multi-dimensional: an editor operation consumes time, memory, and a particular pattern of memory access, and those dimensions together shape the latency the user experiences. Time complexity asks how the amount of computational work grows with the input rather than how many seconds a particular machine takes. Space complexity distinguishes the memory already occupied by the document from any additional memory an operation requires, and the two can trade off against each other. Memory locality captures how efficiently the processor can access the data, because contiguous and predictable access patterns can outperform scattered ones even at the same asymptotic complexity. Latency is the delay between the user's action and the visible result, which is why even a simple character insertion can matter when it is repeated thousands of times. There is no universal "fastest" data structure; the right question is what a design costs for the operations the editor performs most often.
+
+In the next section, we need one more concept before discussing Big-O: **what exactly do we mean by the size of the input?** In an editor, there is more than one meaningful measure of size.

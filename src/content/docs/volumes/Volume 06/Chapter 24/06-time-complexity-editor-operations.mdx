@@ -1,0 +1,458 @@
+---
+title: '24.6 Time Complexity of Editor Operations'
+description: "Analyzes the time cost of editing, rendering, loading, and saving, showing which data each operation touches."
+---
+
+We now have the basic tools needed to analyze the cost of an operation:
+
+- identify what the operation does
+- identify the relevant input size
+- determine what data it must touch
+- consider its best and worst cases
+- describe how the amount of work grows
+
+Let's apply that method to the operations performed by a text editor.
+
+The goal is not to assign a final Big-O classification to every operation yet. The exact cost depends on the data structure used to represent the document. Instead, we want to learn **how to find where the work comes from**.
+
+## Accessing Existing Text
+
+Suppose the editor needs to access a character at a known position.
+
+Conceptually:
+
+```text
+Document
+   │
+   ▼
+Line
+   │
+   ▼
+Known character position
+```
+
+If the representation allows the position to be accessed directly, the amount of work may not depend on the total size of the document.
+
+This is the kind of operation we describe as potentially constant time:
+
+```text
+O(1)
+```
+
+However, we should not assume that every representation provides constant-time access.
+
+The complexity depends on how the underlying data is organized.
+
+This is a recurring theme throughout this volume:
+
+> **An operation's complexity is a property of the operation together with the data structure that implements it.**
+
+## Searching Through Text
+
+Now consider an operation that needs to examine characters until it finds a match.
+
+For example:
+
+```text
+Find "world"
+
+Hello
+This is a world
+```
+
+The editor may need to examine many characters before finding the requested text.
+
+If the search potentially examines every relevant character, the amount of work grows with the amount of text being searched.
+
+If `C` represents the number of characters examined, the basic scan can be described as:
+
+```text
+O(C)
+```
+
+The important reasoning is:
+
+```text
+How much text may be examined?
+        ↓
+Potentially all C characters
+        ↓
+Work grows with C
+        ↓
+O(C)
+```
+
+More sophisticated search algorithms can behave differently, but the basic example demonstrates how complexity is derived from the work performed.
+
+Search itself belongs to a later chapter in this book. Here, we are using it only as an example of how to reason about complexity.
+
+## Inserting a Character
+
+Character insertion is more interesting.
+
+Suppose the editor stores a line as a contiguous sequence:
+
+```text
+A B C D E F
+```
+
+and the cursor is here:
+
+```text
+A B C D E F
+      ^
+```
+
+To insert `X`, the characters after the insertion point may need to move:
+
+```text
+A B C X D E F
+```
+
+The inserted character itself is only one element.
+
+The potentially expensive operation is moving the existing elements.
+
+If `L` represents the number of affected characters, the work can grow with `L`:
+
+```text
+O(L)
+```
+
+The exact cost depends on the representation.
+
+This is one of the fundamental reasons we will study different text-buffer structures later.
+
+## Inserting at the End
+
+Now consider inserting at the end of a sequence:
+
+```text
+A B C D E
+          ^
+```
+
+If the underlying structure has available capacity, there may be no existing characters that need to move.
+
+The operation can therefore be much cheaper than inserting near the beginning.
+
+Conceptually:
+
+```text
+Insert at end
+    ↓
+No following characters
+    ↓
+Little existing data affected
+```
+
+This illustrates why the position of an operation can matter.
+
+The same logical command can have different costs depending on the current state of the data.
+
+## Deleting a Character
+
+Deletion has a similar issue.
+
+Suppose we have:
+
+```text
+A B C D E F
+      ^
+```
+
+and delete `D`.
+
+The remaining characters may need to be shifted:
+
+```text
+A B C E F
+```
+
+Again, the amount of work can depend on how much data follows the deleted character.
+
+Therefore, deletion from a contiguous sequence can have a cost proportional to the affected portion of the line.
+
+The exact complexity will depend on the representation.
+
+## Splitting a Line
+
+Pressing Enter introduces another operation:
+
+```text
+HelloWorld
+     ^
+```
+
+After splitting:
+
+```text
+Hello
+World
+```
+
+The editor must:
+
+1. determine where the split occurs
+2. divide the existing line
+3. create a new line
+4. place the appropriate characters into the resulting lines
+
+The cost therefore depends on the representation of both the characters and the collection of lines.
+
+This is a good example of why we should avoid assigning a complexity classification without first understanding the data structure.
+
+A vector-of-lines representation makes the concept straightforward, but inserting a new line into the underlying collection may itself require elements to move.
+
+## Merging Lines
+
+Backspace at the beginning of a line can require two lines to become one:
+
+```text
+Hello
+World
+^
+```
+
+After the operation:
+
+```text
+HelloWorld
+```
+
+The editor must combine the contents of the two lines and remove the now-empty line boundary.
+
+Again, several kinds of work may be involved:
+
+```text
+Line contents
+      +
+Line collection
+      ↓
+Updated document
+```
+
+The cost depends on the amount of text involved and the representation used for the collection of lines.
+
+## Inserting a Line
+
+Consider a document with many lines:
+
+```text
+Line 1
+Line 2
+Line 3
+Line 4
+Line 5
+```
+
+If a new line is inserted near the beginning:
+
+```text
+Line 1
+NEW
+Line 2
+Line 3
+Line 4
+Line 5
+```
+
+the underlying collection may need to make room for the new line.
+
+If the collection stores its elements contiguously, existing line entries may need to move.
+
+The amount of work therefore depends on the position of the insertion and the number of affected line entries.
+
+This is similar to character insertion, but at a different level:
+
+```text
+Character insertion
+    → characters may move
+
+Line insertion
+    → line entries may move
+```
+
+## Rendering
+
+Rendering has a different cost model.
+
+The renderer produces a frame for the visible terminal area. Our architecture uses an in-memory Screen Buffer whose size is determined by the terminal dimensions rather than by the complete document.
+
+Suppose the terminal has:
+
+```text
+R rows
+W columns
+```
+
+The number of visible screen positions is approximately:
+
+```text
+R × W
+```
+
+A full-screen rendering strategy therefore performs work related to the visible area.
+
+This is different from processing the entire document.
+
+A document could contain millions of characters while the terminal may display only a few thousand screen positions.
+
+That distinction is important:
+
+```text
+Document size
+      │
+      │ potentially very large
+      ▼
+
+Visible screen
+      │
+      │ bounded by terminal dimensions
+      ▼
+
+Frame
+```
+
+## Loading a Document
+
+Loading a file is different again.
+
+The File Manager uses a full-document persistence model: the complete file is read, decoded, and used to construct the in-memory Document.
+
+Therefore, the amount of work grows with the amount of file data that must be processed.
+
+If `B` represents the number of bytes in the encoded file, loading involves work proportional to that data:
+
+```text
+O(B)
+```
+
+at the high level.
+
+The actual implementation also performs UTF-8 decoding and constructs the in-memory representation, but those details do not change the basic observation:
+
+> **The editor must process the file's contents before the complete document can be constructed.**
+
+## Saving a Document
+
+Saving follows a similar scaling pattern.
+
+The current File Manager encodes the complete in-memory Document as UTF-8 and writes the resulting file. The safe-save strategy then prepares the complete new file before atomically replacing the destination.
+
+Therefore, the amount of data written grows with the size of the document.
+
+At a high level:
+
+```text
+Document
+    │
+    ▼
+UTF-8 encoding
+    │
+    ▼
+Temporary File
+    │
+    ▼
+Atomic replacement
+```
+
+The amount of text processed and written grows with the document size.
+
+This is an important distinction from editing operations: a single character insertion may affect only part of a line, while a full save processes the complete document.
+
+## Complexity Depends on What Is Touched
+
+We can now see a general pattern.
+
+When analyzing an operation, ask:
+
+```text
+What data must this operation touch?
+```
+
+For example:
+
+| Operation           | Potential source of work          |
+| ------------------- | --------------------------------- |
+| Character access    | Requested position                |
+| Character insertion | Characters that must move         |
+| Character deletion  | Characters that must move         |
+| Line insertion      | Affected line entries             |
+| Line splitting      | Affected text and line collection |
+| Line merging        | Combined text and line collection |
+| Rendering           | Visible screen area               |
+| Loading             | Entire file                       |
+| Saving              | Entire document                   |
+
+These are not final complexity classifications. They identify the **source of the cost**.
+
+That distinction matters because changing the underlying representation can change the cost without changing the editor's visible behavior.
+
+## The Same Operation Can Have Different Complexity
+
+Consider character insertion again.
+
+With a simple contiguous array:
+
+```text
+Insert
+   ↓
+Move following characters
+```
+
+With a different structure:
+
+```text
+Insert
+   ↓
+Modify a different representation
+```
+
+The user does not see the internal difference:
+
+```text
+Before:
+Hello
+
+After:
+HelXlo
+```
+
+But the amount of work required to produce the result can be completely different.
+
+This is the central motivation for the remaining chapters of this volume.
+
+We are not studying data structures simply because they are interesting. We are studying them because:
+
+> **The representation of text determines the cost of the operations performed on that text.**
+
+## A Useful Mental Model
+
+When looking at any editor operation, think in this sequence:
+
+```text
+Operation
+    │
+    ▼
+What data does it touch?
+    │
+    ▼
+How much data can it touch?
+    │
+    ▼
+How does that amount grow?
+    │
+    ▼
+What is the resulting complexity?
+```
+
+This method is more valuable than memorizing a table of Big-O values.
+
+Once we understand what the operation actually does, the complexity often becomes apparent.
+
+## Summary
+
+The time cost of an editor operation depends on what data it must touch and how much of that data can be affected, so each operation must be analyzed together with the representation that implements it. Accessing a character at a known position may be O(1), searching through text is O(C) in the basic scan, and inserting or deleting within a contiguous line can cost O(L) because following characters must move. Inserting at the end can be much cheaper than inserting near the beginning, and splitting or merging lines combines work on the affected text with work on the collection of lines. Rendering is bounded by the visible screen area, roughly R × W, rather than by the full document, while loading and saving process the complete encoded file and therefore grow with B or the document size. A table of operations identifies the source of each cost rather than assigning a final classification, because changing the underlying representation can change the cost without changing the visible result. The useful mental model is to ask what data an operation touches, how much it can touch, how that amount grows, and only then what the resulting complexity is.
+
+The next question is that complexity alone does not describe every resource cost. An operation may perform a small amount of work but require substantial additional memory, or it may reuse existing memory efficiently. We therefore need to examine **space complexity** next.

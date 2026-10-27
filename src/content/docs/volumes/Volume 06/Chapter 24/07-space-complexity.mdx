@@ -1,0 +1,435 @@
+---
+title: '24.7 Space Complexity'
+description: "Explains how to measure additional memory separately from document storage, including buffers and save-time temp files."
+---
+
+Time complexity tells us how the amount of computational work grows. Space complexity asks a different question:
+
+> **How much memory does an operation require as its input grows?**
+
+For a text editor, this question matters because the editor keeps the current Document in memory while the user is editing. Our architecture uses the in-memory Document as the authoritative representation of the text, while the file on disk acts as its persistent representation.
+
+Understanding memory cost helps us distinguish between the memory required to **store the document itself** and the additional memory required by an operation.
+
+## The Memory Used by the Document
+
+Suppose a document contains:
+
+```text
+Hello
+World
+```
+
+The editor needs memory to represent that document:
+
+```text
+File on disk
+     │
+     ▼
+File Manager
+     │
+     ▼
+Document in memory
+```
+
+As the document becomes larger, the memory required to hold it also grows.
+
+For our editor, this is intentional. The File Manager uses a full-document model: the complete file is loaded into the in-memory Document before editing, and the complete Document is processed when saving.
+
+Therefore, the baseline editor's memory usage naturally grows with document size.
+
+This is different from asking how much **additional memory an individual operation** requires.
+
+## Input Space vs Additional Space
+
+Consider an operation that examines an existing document without creating another copy.
+
+The document itself already occupies memory:
+
+```text
+Document
++----------------------+
+| existing text        |
++----------------------+
+```
+
+The operation might only need a few temporary variables:
+
+```text
+row
+column
+length
+```
+
+The additional memory is therefore small even though the document itself may be large.
+
+Now consider an operation that creates a complete temporary copy:
+
+```text
+Original Document
+       │
+       ├──────────────► Temporary Copy
+       │
+       ▼
+   Original data
+```
+
+The additional memory now grows with the size of the document.
+
+This distinction is important when discussing space complexity.
+
+We generally want to know:
+
+> **How much additional memory does the algorithm require beyond the data it is already processing?**
+
+## Constant Additional Space
+
+An operation may use a fixed amount of additional memory regardless of input size.
+
+For example:
+
+```text
+row
+column
+index
+```
+
+Whether the document contains ten characters or ten million characters, the number of these variables remains the same.
+
+We can describe the additional space as:
+
+```text
+O(1)
+```
+
+The operation may still take a long time. Constant additional space does **not** imply constant time.
+
+For example, an operation could scan every character in a document while using only a few variables:
+
+```text
+scan character
+     │
+     ▼
+scan next character
+     │
+     ▼
+scan next character
+     │
+    ...
+```
+
+Its time complexity could be `O(C)` while its additional space complexity remains `O(1)`.
+
+Time and space therefore need to be analyzed separately.
+
+## Space That Grows With the Input
+
+An operation may also require memory proportional to its input.
+
+Suppose an operation creates an additional collection containing one entry for every character:
+
+```text
+Original
+A B C D E
+
+Copy
+A B C D E
+```
+
+If the document becomes larger, the additional collection becomes larger as well.
+
+If `C` represents the amount of relevant text, the additional memory could be described as:
+
+```text
+O(C)
+```
+
+This does not necessarily mean that the algorithm is poorly designed. Additional memory can sometimes make an operation simpler or faster.
+
+The important point is to understand the trade-off.
+
+## Temporary Memory During File Operations
+
+Our file-safety strategy provides a useful example.
+
+During a safe save, the editor prepares the new contents in a Temporary File before atomically replacing the destination file. The temporary file exists separately from the destination file while the new version is being prepared.
+
+Conceptually:
+
+```text
+                 Document
+                    │
+                    ▼
+              Temporary File
+                    │
+                    ▼
+             Atomic Replacement
+                    │
+                    ▼
+              Destination File
+```
+
+This requires additional storage outside the in-memory Document.
+
+That storage grows with the amount of data being saved.
+
+This is an example of a deliberate space trade-off:
+
+> We use additional storage during a save to protect the existing file from being partially overwritten.
+
+The decision was made for file safety, not algorithmic convenience. Chapter 23 already established that reasoning; here we are only examining its memory/storage consequence.
+
+## The Screen Buffer
+
+The Screen Buffer provides another useful contrast.
+
+The Screen Buffer represents the visible terminal as a grid of screen cells. Its size is determined by the terminal dimensions rather than by the total size of the document.
+
+For a terminal with `R` rows and `W` columns:
+
+```text
++-----------------------+
+|                       |
+|     Screen Buffer     |
+|                       |
++-----------------------+
+```
+
+The number of cells is approximately:
+
+```text
+R × W
+```
+
+Therefore, the memory required by the Screen Buffer grows with the visible terminal area.
+
+It does **not** grow simply because the document contains more lines outside the viewport.
+
+This gives us an important example:
+
+```text
+Document
+    │
+    └── Memory grows with document size
+
+Screen Buffer
+    │
+    └── Memory grows with screen dimensions
+```
+
+The two structures represent different things and therefore have different space characteristics.
+
+## Space Complexity of Rendering
+
+Our renderer uses an application-side Screen Buffer as an intermediate frame representation. The buffer is reused across rendering cycles rather than recreated as a new large allocation for every frame.
+
+This gives us two separate considerations:
+
+```text
+Screen Buffer size
+        ↓
+O(R × W)
+
+Repeated frame generation
+        ↓
+Reuse existing allocation
+```
+
+The first describes how much memory the representation occupies.
+
+The second describes an implementation choice that avoids unnecessary allocation during normal rendering.
+
+This distinction is useful because memory complexity is not only about the size of data structures. Allocation behavior can also affect practical performance.
+
+## Space and Data Structures
+
+The choice of text-buffer representation has a major effect on memory usage.
+
+A simple contiguous representation might store:
+
+```text
+A B C D E F G H
+```
+
+A gap buffer stores additional unused capacity so that future insertions can occur near the gap without immediately reallocating the entire sequence.
+
+A piece table stores references describing pieces of existing and newly inserted text.
+
+A rope organizes text into a tree of smaller pieces.
+
+All of these structures can represent the same visible document:
+
+```text
+Hello World
+```
+
+but their memory requirements and allocation behavior can differ significantly.
+
+We will study those structures individually in later chapters rather than comparing their complete memory models here.
+
+## Memory Is Not Free
+
+Using additional memory can provide benefits:
+
+```text
+More memory
+    ↓
+Less data movement
+    ↓
+Potentially faster operations
+```
+
+But it can also introduce costs:
+
+```text
+More memory
+    ↓
+More allocations
+    ↓
+More management complexity
+    ↓
+Higher memory usage
+```
+
+This creates another engineering trade-off.
+
+For example, a data structure might deliberately maintain unused capacity to reduce the number of expensive reallocations.
+
+The unused memory is not necessarily waste. It can be a resource intentionally exchanged for better editing performance.
+
+## Time-Space Trade-offs
+
+Many algorithms can be understood as choosing a point on a time-space trade-off.
+
+Conceptually:
+
+```text
+                 More memory
+                     ▲
+                     │
+                     │   faster operations
+                     │
+                     │
+                     │
+                     └──────────────────►
+                           more computation
+```
+
+This diagram is intentionally conceptual rather than a universal rule. More memory does not automatically make an algorithm faster.
+
+The important lesson is:
+
+> **Reducing one resource cost can increase another.**
+
+A good engineering decision depends on which resource matters for the application's workload.
+
+For our editor, this means considering:
+
+- document size
+- editing frequency
+- memory availability
+- interactive latency
+- implementation complexity
+- reliability
+
+rather than optimizing a single metric in isolation.
+
+## Space Complexity and Our Project
+
+The baseline architecture intentionally favors a straightforward in-memory model.
+
+The SRS assumes that sufficient memory is available to load the entire document into memory.
+
+This simplifies the editor considerably:
+
+```text
+File
+  │
+  ▼
+Entire Document
+  │
+  ▼
+Edit in memory
+  │
+  ▼
+Save complete Document
+```
+
+The trade-off is that memory usage grows with document size.
+
+This is acceptable for the baseline editor because simplicity and educational value are explicit project priorities. More sophisticated strategies for handling very large documents are outside the baseline design and can be considered when the requirements change.
+
+## A Practical Method for Space Analysis
+
+When analyzing an operation, ask:
+
+```text
+1. What data already exists?
+
+2. What additional data must be created?
+
+3. Does that additional data grow with the input?
+
+4. Are temporary allocations required?
+
+5. Can existing memory be reused?
+```
+
+Then describe the growth.
+
+For example:
+
+```text
+Operation:
+Render a frame
+
+Existing:
+Editor Screen Buffer
+
+Additional:
+Temporary fixed-size state
+
+Growth:
+Screen Buffer depends on R × W
+
+Additional space:
+O(1) beyond the existing buffer
+```
+
+The exact answer depends on what we choose to count as part of the algorithm's working space, so the important habit is to state the assumptions clearly.
+
+## Time and Space Must Be Considered Together
+
+We can now see why complexity analysis has more than one dimension.
+
+Consider two possible designs:
+
+```text
+Design A
+    Low memory usage
+    More data movement
+
+Design B
+    More memory usage
+    Less data movement
+```
+
+If we considered only time, Design B might appear better.
+
+If we considered only memory, Design A might appear better.
+
+A real engineering decision needs both perspectives.
+
+This becomes especially important in the next chapters, where we compare text representations that deliberately make different trade-offs.
+
+The key principle is:
+
+> **Do not ask only how fast an operation is. Ask how much memory it consumes and what it must allocate, move, or retain to achieve that performance.**
+
+## Summary
+
+Space complexity asks how much additional memory an operation requires beyond the data it is already processing, which is distinct from the memory needed simply to store the document. The baseline editor keeps the complete document in memory, so its overall memory usage grows with document size, but an individual operation may need only a few variables such as row, column, and length. Constant additional space is O(1) and does not imply constant time: an operation can scan every character in O(C) time while using only a fixed number of variables. Other operations, such as creating a temporary copy, require additional memory proportional to the input, and the safe-save strategy deliberately uses additional storage in a Temporary File to protect the destination. The Screen Buffer contrasts with the document because its memory is bounded by the terminal dimensions, approximately R × W, and it is reused across frames rather than reallocated each time. Memory is not free, so time and space must be weighed together: reducing one resource cost can increase another, and the right choice depends on the editor's workload and priorities.
+
+So far, we have treated memory as an abstract resource. In real machines, however, the location and access pattern of that memory also matter. Two algorithms with similar time and space complexity can behave differently because one accesses memory in a more cache-friendly way.
+
+That leads to the next topic: **cache locality**.

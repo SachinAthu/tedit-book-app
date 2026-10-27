@@ -1,0 +1,309 @@
+---
+title: '24.5 Best Case, Average Case, and Worst Case'
+description: "Distinguishes best, average, and worst cases and explains why worst-case behavior matters for interactive editing."
+---
+
+Big-O describes how the cost of an operation grows, but it does not always tell us how much work a particular execution will perform.
+
+The same operation can sometimes be very cheap and sometimes much more expensive, depending on the state of the data.
+
+To understand this variation, we can examine three cases:
+
+- **Best case**
+- **Average case**
+- **Worst case**
+
+These cases describe different possible circumstances under which an operation executes.
+
+## Best Case
+
+The **best case** describes the most favorable situation for an operation.
+
+Consider searching through a sequence:
+
+```text
+A B C D E F
+^
+```
+
+If we are looking for `A`, we find it immediately.
+
+Only a small amount of work is required.
+
+The best case therefore represents the situation where the operation can finish as early or as cheaply as possible.
+
+In an editor, similar situations occur naturally.
+
+For example, inserting a character into a data structure may be inexpensive when the insertion point is already positioned where the structure can make the change without moving much existing data.
+
+The important point is that the best case describes **one favorable arrangement of the input or state**.
+
+It does not necessarily describe how the operation normally behaves.
+
+## Worst Case
+
+The **worst case** describes the most expensive situation.
+
+Using the same search example:
+
+```text
+A B C D E F
+          ^
+```
+
+If we are looking for `F`, we may have to examine every preceding element before finding it.
+
+An unsuccessful search can require the same amount of work:
+
+```text
+A B C D E F
+------------
+check every element
+```
+
+The worst case therefore represents the maximum amount of work that the operation may need to perform for an input of a particular size.
+
+Worst-case analysis is especially useful when designing an interactive application because it helps us understand the upper bound of the work an operation may require.
+
+## An Editor Example
+
+Consider inserting a character into a contiguous sequence.
+
+Suppose the line contains:
+
+```text
+A B C D E F G H
+```
+
+and the cursor is near the end:
+
+```text
+A B C D E F G H
+              ^
+```
+
+Only a small number of characters may need to move.
+
+Now place the cursor near the beginning:
+
+```text
+A B C D E F G H
+  ^
+```
+
+Many more characters may need to move to make room for the new character.
+
+The operation is the same:
+
+> Insert one character.
+
+But the amount of work is different.
+
+Conceptually:
+
+```text
+Near end
+    ↓
+Few characters affected
+
+Near beginning
+    ↓
+Many characters affected
+```
+
+If `L` is the length of the affected line, the worst case may require work proportional to `L`.
+
+We could therefore describe the worst-case growth as:
+
+```text
+O(L)
+```
+
+The important observation is that **the character being inserted is only one character**. The expensive part is the existing data that may need to be rearranged.
+
+## Best Case Does Not Mean Best Design
+
+It can be tempting to look at the best case and conclude that an operation is efficient.
+
+That can be misleading.
+
+Suppose an insertion operation is very cheap when the cursor is at the end of a line:
+
+```text
+A B C D E
+          ^
+```
+
+but expensive when the cursor is near the beginning:
+
+```text
+A B C D E
+^
+```
+
+If users frequently insert text in the middle of documents, the favorable case does not tell us enough about the editor's actual behavior.
+
+This is why complexity analysis should consider more than the easiest possible execution.
+
+## Average Case
+
+The **average case** attempts to describe the expected cost across a representative distribution of inputs or operations.
+
+For example, if an insertion position is equally likely to occur anywhere within a line, we might analyze the expected number of characters that need to move.
+
+Conceptually:
+
+```text
+Beginning ─────────────────────── End
+   ↑              ↑                 ↑
+ many shifts    average          few shifts
+```
+
+The average case can provide a useful picture of typical behavior.
+
+However, there is an important complication:
+
+> **Average behavior depends on what we consider a representative input.**
+
+For an editor, there is no single universal distribution of user actions.
+
+A programmer might frequently insert characters near the cursor while writing code. Another user might make many edits near the beginning of a document. A batch transformation might modify completely different locations.
+
+Therefore, average-case analysis requires assumptions about the workload.
+
+## Why Worst Case Is Often Easier to Trust
+
+Worst-case analysis does not require us to predict exactly how users will behave.
+
+Instead, it asks:
+
+> "What is the most work this operation may need to perform for an input of this size?"
+
+That makes it particularly useful when evaluating whether a design can tolerate large inputs.
+
+For example:
+
+```text
+Document grows
+      │
+      ▼
+How expensive can insertion become?
+      │
+      ▼
+Can the editor still respond acceptably?
+```
+
+If the answer reveals a potentially serious cost, we know that the data structure deserves further examination.
+
+## Best, Average, and Worst Cases Can Coexist
+
+These are not competing complexity classifications.
+
+An operation can have all three:
+
+```text
+             Same operation
+                    │
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+     Best         Average      Worst
+        │           │           │
+     cheapest     typical     most expensive
+```
+
+For example, an insertion operation might have:
+
+```text
+Best case:
+O(1)
+
+Average case:
+O(L)
+
+Worst case:
+O(L)
+```
+
+depending on the representation and where the insertion occurs.
+
+The exact classifications will depend on the data structure being analyzed. We will examine those details later rather than assuming that every text representation behaves the same way.
+
+## Worst Case and Interactive Responsiveness
+
+The distinction becomes particularly important for our editor because editing is interactive.
+
+The runtime model processes an event, executes a command, updates the Editor State, and then renders a frame.
+
+If a command occasionally performs a large amount of work, that work occurs inside the processing of that event.
+
+Conceptually:
+
+```text
+Key Press
+   │
+   ▼
+Command
+   │
+   ▼
+Large operation
+   │
+   ▼
+Render
+   │
+   ▼
+User sees result
+```
+
+The user experiences the entire operation as a delay between pressing the key and seeing the updated screen.
+
+Therefore, worst-case operation costs are not merely theoretical. They can become visible as interaction latency.
+
+## Complexity Depends on the Data Structure
+
+It is important not to analyze an operation in isolation from its representation.
+
+Consider the same operation:
+
+> Insert a character.
+
+With one representation, inserting in the middle may require shifting many characters.
+
+With another representation, the same operation may require moving a gap or modifying a small number of references.
+
+With yet another representation, the operation may involve creating a new piece describing the inserted text.
+
+The user sees the same result:
+
+```text
+Before:
+Hello
+
+After inserting X:
+HelXlo
+```
+
+But the internal work can be very different.
+
+This is exactly why the next chapters examine multiple text-buffer structures rather than assuming that one complexity profile applies to all editors.
+
+## A Practical Analysis Method
+
+When analyzing an operation, ask three questions:
+
+1. **What is the cheapest situation?**
+2. **What usually happens under the assumed workload?**
+3. **What is the most expensive situation?**
+
+Then ask:
+
+> **Which case matters most for the design decision?**
+
+For an interactive editor, worst-case behavior can be particularly important when an operation is performed frequently or when its cost can become large enough to affect responsiveness.
+
+The goal is not to optimize every worst case at any cost. It is to understand the range of possible behavior so that we can make an informed engineering trade-off.
+
+## Summary
+
+The same operation can be cheap, typical, or expensive depending on the state of the data, so best, average, and worst cases describe different possible executions rather than competing classifications. Best case is the most favorable arrangement, worst case is the maximum work required for an input of a given size, and average case estimates the expected cost across an assumed distribution of inputs. In a contiguous line, inserting near the end may move few characters while inserting near the beginning may move many, so the worst case grows with the affected line length L. Average-case analysis depends on assumptions about user behavior and workloads, whereas worst-case analysis asks what the most work could be without predicting how users will actually edit. Worst-case behavior matters especially in an interactive editor because an expensive command runs inside one event-loop iteration and surfaces directly as latency between a key press and the updated screen. The right engineering question is which case matters most for the design decision, not whether every worst case can be eliminated.
+
+In the next section, we will apply these ideas directly to common editor operations and identify what determines their time complexity.

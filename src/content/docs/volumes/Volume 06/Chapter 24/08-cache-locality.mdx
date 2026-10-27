@@ -1,0 +1,389 @@
+---
+title: '24.8 Cache Locality'
+description: "Explains temporal and spatial locality and how memory layout affects performance beyond Big-O complexity."
+---
+
+So far, we have considered how much work an operation performs and how much memory it requires. There is another factor that can strongly influence practical performance:
+
+> **How does the program access the memory it needs?**
+
+Two operations can have similar time and space complexity but still behave differently on a real computer because one accesses memory in a more predictable pattern.
+
+This is where **cache locality** becomes important.
+
+## Why the CPU Does Not Treat All Memory Accesses Equally
+
+The processor does not normally retrieve every piece of data directly from main memory each time a program needs it.
+
+Modern computers use small, fast memory areas called **CPU caches** between the processor and main memory.
+
+A simplified view looks like this:
+
+```text
+CPU
+ │
+ ▼
+CPU Cache
+ │
+ ▼
+Main Memory (RAM)
+```
+
+The cache is much smaller than RAM but can be accessed much more quickly.
+
+When the processor accesses memory, the data it needs may already be available in the cache. If it is, the processor can continue without waiting for a slower access to main memory.
+
+If it is not, the required data must be fetched from a lower level of the memory hierarchy.
+
+The details of modern cache hierarchies are complex, but the important idea for this book is simple:
+
+> **Programs tend to perform better when they access memory in patterns that make effective use of the cache.**
+
+## What Is Locality?
+
+Cache locality describes how a program tends to access memory over time.
+
+Two forms are particularly important:
+
+- **Temporal locality**
+- **Spatial locality**
+
+These describe different kinds of predictable access.
+
+## Temporal Locality
+
+**Temporal locality** means that data accessed recently is likely to be accessed again soon.
+
+Consider:
+
+```text
+value = document[index]
+
+use value
+use value again
+use value again
+```
+
+The same data is being reused repeatedly.
+
+If that data remains available in the cache, subsequent accesses can be faster than retrieving it again from main memory.
+
+The general principle is:
+
+```text
+Access data
+     ↓
+Use it again soon
+     ↓
+Good temporal locality
+```
+
+This pattern appears frequently in programs that repeatedly work with the same small set of data.
+
+## Spatial Locality
+
+**Spatial locality** means that when a program accesses one memory location, it is likely to access nearby memory locations soon afterward.
+
+Consider a contiguous sequence:
+
+```text
++----+----+----+----+----+
+| A  | B  | C  | D  | E  |
++----+----+----+----+----+
+```
+
+If the program accesses `A` and then processes `B`, `C`, `D`, and `E`, it is following a sequential access pattern.
+
+The elements are stored next to one another, so accessing one element makes nearby elements useful candidates for the cache as well.
+
+Conceptually:
+
+```text
+A → B → C → D → E
+```
+
+This is strong spatial locality.
+
+## Contiguous Memory
+
+Arrays are a common example of contiguous memory.
+
+Conceptually:
+
+```text
+Memory
+
++----+----+----+----+----+
+| A  | B  | C  | D  | E  |
++----+----+----+----+----+
+```
+
+If a program processes the elements sequentially:
+
+```text
+for each element:
+    process element
+```
+
+the memory accesses follow the layout of the data:
+
+```text
+A → B → C → D → E
+```
+
+This access pattern is predictable and cache-friendly.
+
+This does **not** mean that every array operation is automatically fast. The operation's algorithmic complexity still matters.
+
+It means that the physical arrangement of the data can help the processor use the memory hierarchy efficiently.
+
+## Scattered Memory
+
+Now consider data whose elements are stored in different locations:
+
+```text
++----+          +----+
+| A  |          | B  |
++----+          +----+
+       +----+
+       | C  |
+       +----+
+                    +----+
+                    | D  |
+                    +----+
+```
+
+Processing:
+
+```text
+A → B → C → D
+```
+
+may require accesses to widely separated memory locations.
+
+The algorithm could still have the same asymptotic complexity as the contiguous version.
+
+For example, both might perform a linear traversal:
+
+```text
+O(n)
+```
+
+But their practical behavior can differ because their memory-access patterns are different.
+
+This is one reason Big-O alone does not completely describe real-world performance.
+
+## Cache Locality in a Text Editor
+
+Cache locality is particularly relevant to text editors because editors repeatedly process sequences of text.
+
+Consider a line represented as a contiguous sequence:
+
+```text
+H e l l o   W o r l d
+```
+
+Rendering or scanning the line often involves processing characters in order:
+
+```text
+H → e → l → l → o →   → W → o → r → l → d
+```
+
+This is a naturally sequential access pattern.
+
+The data structure's layout therefore works together with the algorithm's access pattern.
+
+The same principle becomes important when we examine alternative text-buffer representations.
+
+## Why This Matters for Text Buffers
+
+Different text-buffer structures organize text differently.
+
+A simple contiguous representation might look like:
+
+```text
+A B C D E F G H
+```
+
+A more sophisticated structure might divide the text into separate pieces:
+
+```text
+Piece 1 ──► memory region A
+
+Piece 2 ──► memory region B
+
+Piece 3 ──► memory region C
+```
+
+A tree-based structure may introduce another level of indirection:
+
+```text
+             Root
+            /    \
+           /      \
+       Node        Node
+        │            │
+      Text          Text
+```
+
+These structures can offer different algorithmic advantages.
+
+However, they also produce different memory-access patterns.
+
+This means that when we later compare text buffers, we should consider not only:
+
+> "What is the Big-O complexity?"
+
+but also:
+
+> "How is the data laid out, and how will common operations access it?"
+
+## Locality Does Not Replace Complexity Analysis
+
+Cache locality is a practical performance factor, not a replacement for algorithmic complexity.
+
+Consider two algorithms:
+
+```text
+Algorithm A
+O(n)
+
+Algorithm B
+O(n²)
+```
+
+If both operate on sufficiently large inputs, the difference in growth can dominate many low-level performance factors.
+
+Cache locality does not magically turn an `O(n²)` algorithm into an `O(n)` algorithm.
+
+Likewise, two `O(n)` algorithms may have different practical performance because one has better memory access patterns.
+
+A useful mental model is:
+
+```text
+Algorithmic complexity
+        │
+        ▼
+How the amount of work grows
+        │
+        +
+        │
+Memory locality
+        │
+        ▼
+How efficiently that work accesses memory
+```
+
+Both perspectives are useful.
+
+## Locality and the Editor's Screen Buffer
+
+Our Screen Buffer is represented as a contiguous one-dimensional allocation while logically behaving as a two-dimensional grid:
+
+```text
+screen[row][column]
+```
+
+conceptually becomes:
+
+```text
+index = row × columns + column
+```
+
+This representation keeps the screen cells in contiguous memory.
+
+When the renderer processes the screen sequentially, it can traverse that contiguous allocation predictably.
+
+The choice was primarily made because it provides a simple and predictable representation of the terminal grid. Good memory locality is an additional practical benefit of that representation, rather than the primary architectural reason for choosing it.
+
+## Locality and the Document
+
+The same principle applies to the Document, although its exact memory behavior depends on its internal representation.
+
+Our baseline Document uses a vector of lines.
+
+This creates multiple levels of storage:
+
+```text
+Document
+   │
+   ▼
+Collection of lines
+   │
+   ├── Line 1 → character storage
+   ├── Line 2 → character storage
+   ├── Line 3 → character storage
+   └── ...
+```
+
+The collection of line objects and the character storage within each line are separate concerns.
+
+When the renderer processes one line at a time, it can often access that line's characters sequentially.
+
+However, the complete document is not necessarily one continuous block of characters.
+
+This distinction will become important when comparing the memory behavior of different text-buffer structures.
+
+## Why Cache Locality Matters Later
+
+The purpose of introducing cache locality here is not to optimize our baseline editor immediately.
+
+Instead, it gives us another dimension for evaluating data structures.
+
+When we later compare:
+
+- arrays
+- gap buffers
+- piece tables
+- ropes
+
+we will encounter different combinations of:
+
+```text
+Time complexity
+Space complexity
+Memory layout
+Access patterns
+```
+
+For example, a structure may reduce the amount of data that must be moved during insertion but introduce additional indirection when reading the text.
+
+That is not automatically good or bad.
+
+It is an engineering trade-off that must be evaluated against the operations the editor performs most frequently.
+
+## A Practical Rule
+
+When analyzing a data structure, ask:
+
+> **Does the algorithm access nearby data together, or does it repeatedly jump between unrelated memory locations?**
+
+Sequential access often provides good spatial locality:
+
+```text
+A → B → C → D → E
+```
+
+Repeated reuse of the same data provides temporal locality:
+
+```text
+A → A → A → A
+```
+
+Irregular access may provide less predictable locality:
+
+```text
+A → X → C → Z → B
+```
+
+These patterns do not determine performance by themselves, but they help explain why two theoretically similar algorithms can behave differently in practice.
+
+The important lesson is:
+
+> **Complexity tells us how the amount of work grows; locality helps us understand how efficiently that work interacts with the machine's memory system.**
+
+## Summary
+
+Cache locality describes how a program accesses memory over time, and it can make two algorithms with similar time and space complexity behave differently on a real machine. Temporal locality means recently accessed data is likely to be accessed again soon, while spatial locality means accessing one location makes nearby locations likely to be used next. Contiguous layouts such as arrays support predictable sequential traversal, whereas scattered or pointer-linked data may require jumps between unrelated memory regions even for the same O(n) operation. Text editors benefit because rendering and scanning often process characters in order, and the Screen Buffer is stored as a contiguous one-dimensional allocation while behaving as a two-dimensional grid. A vector of lines gives the Document multiple levels of storage, so each line's characters can be accessed sequentially even though the whole document is not one continuous block. Locality complements rather than replaces complexity analysis: it explains how efficiently the work interacts with the memory system, but it does not turn an O(n²) algorithm into an O(n) one.
+
+For an interactive editor, however, the user ultimately experiences this work as a delay between an action and its visible result. That brings us to another practical performance measure: **latency**.

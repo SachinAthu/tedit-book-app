@@ -1,0 +1,92 @@
+---
+title: '24.11 Conclusion'
+description: "Consolidates the chapter, with review questions, thought experiments, common mistakes, and a preview of arrays and strings."
+---
+
+This chapter gave us the vocabulary and method to answer the central question of Volume VI:
+
+> **How much work does an editor operation require, and how does that work grow as the document grows?**
+
+Cost is multi-dimensional. We examined **time** (how computational work grows), **space** (how much additional memory an operation requires), **memory locality** (how efficiently data is accessed), and **latency** (the delay the user actually experiences). We saw that every analysis must begin by identifying the operation's relevant input size—affected line length, number of characters or lines, file bytes, or visible screen dimensions—and that no single `n` applies to every operation.
+
+We then developed the tools for describing growth: **Big-O notation** for asymptotic behavior, **best, average, and worst cases** for the range of possible costs, and **amortized complexity** for judging the cost of a sequence of operations rather than a single one.
+
+The most important takeaway:
+
+> **Complexity is a property of an operation together with the data structure that implements it. The representation of text determines which operations are cheap and which become expensive as the document grows.**
+
+That conclusion is what makes the rest of this volume necessary: to compare different text-buffer structures, we must first be able to analyze their costs.
+
+## Exercises
+
+### Review Questions
+
+1. Why is correctness alone not enough when evaluating an editor operation?
+2. What three dimensions of cost did this chapter introduce, and how are they related?
+3. Why must we define the input size before describing an operation's complexity? Give an example of two different operations with different relevant input sizes.
+4. What does `O(n)` describe, and what does Big-O deliberately ignore?
+5. What is the difference between best case, average case, and worst case? Why does worst case matter for an interactive editor?
+6. For a contiguous representation, what determines the cost of inserting a character?
+7. What is the difference between the memory used to store the document and the additional space an operation requires?
+8. What is cache locality? Give an example of temporal locality and of spatial locality.
+9. Why are complexity and latency not the same thing?
+10. What is amortized complexity, and how is it different from average-case analysis?
+11. Why should amortized complexity be considered alongside worst-case behavior for an interactive editor?
+
+### Thought Experiments
+
+1. A document contains a single line of one million characters stored in a contiguous array. The cursor is near the beginning, and the user inserts a character. Roughly how much work is performed, and what does that imply for latency?
+2. An operation uses `O(1)` additional memory, while a second operation copies the entire document. Under what conditions might the second be a reasonable engineering choice despite using more memory?
+3. A dynamic array occasionally resizes and copies all its elements. Even though the amortized cost of an insertion is low, why might a user still occasionally experience a delay?
+
+### Design Exercise
+
+1. For the baseline editor's vector-of-lines Document, apply the analysis method from Section 24.4 to each of the following: inserting a character in a line, inserting a new line, and saving the document. For each, state the operation, the relevant input size, the work performed, and how that work grows.
+
+### Optional Challenge
+
+1. Choose two of the structures this volume will study (arrays and strings, gap buffers, piece tables, ropes). From the criteria introduced in this chapter—time, space, locality, latency, and amortized behavior—write down the questions you would need to answer to compare them fairly.
+
+## Common Mistakes
+
+### Using complexity as a label of "fast" or "slow"
+
+Big-O describes growth, not a verdict. An operation with higher complexity can still be the right choice, and a lower-complexity operation is not automatically better once constant factors, memory, and simplicity are considered.
+
+### Treating correctness as sufficient
+
+An operation can produce the correct document while requiring enormous work. Efficiency is a separate question from correctness.
+
+### Using a single "n" for every operation
+
+There is no one universal document size. Character insertion relates to line length, saving relates to encoded file size, and rendering relates to the visible screen area. The input size must be identified per operation.
+
+### Confusing average-case with amortized analysis
+
+Average-case analysis depends on assumptions about the distribution of inputs. Amortized analysis distributes the cost of occasional expensive operations across a sequence without such probability assumptions.
+
+### Ignoring worst case in an interactive application
+
+The user experiences the worst case directly: an expensive operation inside one event-loop iteration becomes visible latency between a key press and the updated screen.
+
+### Confusing best case with best design
+
+A cheap best case is not enough. If the expensive case is the common one, the operation is expensive in practice.
+
+### Believing complexity alone describes real-world performance
+
+Two `O(n)` algorithms can behave very differently because of constant factors, memory access patterns, and allocation behavior. Big-O and locality are complementary, not interchangeable.
+
+### Assuming an operation's complexity is fixed
+
+The same logical operation can have very different costs under different representations. Complexity must be analyzed together with the data structure that implements the operation.
+
+## Preview of the Next Chapter
+
+In the next chapter, we begin applying the complexity concepts from Chapter 24 to the simplest text representation: **arrays and strings**.
+
+We will examine how characters are stored in contiguous memory and what happens when the editor needs to **access, insert, delete, or move text**. We will also see why inserting or deleting characters in the middle of an array can require existing elements to shift.
+
+Finally, we will examine **dynamic arrays and resizing**, connecting directly to the amortized complexity discussed in Chapter 24.
+
+By the end of the chapter, we will understand both the strengths and limitations of a simple contiguous text representation—and why an editor may eventually need a more specialized structure.

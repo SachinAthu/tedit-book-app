@@ -1,0 +1,230 @@
+---
+title: '24.1 Why Complexity Matters'
+description: "Explains why correctness alone is not enough and how complexity describes the growth of an editor operation's cost."
+---
+
+When an editor performs an operation, it does more than simply produce the correct result. It also performs some amount of work to produce that result.
+
+Consider inserting a character into a document. The editor may need to modify only one character, or it may need to move many characters to make room for the new one. Both operations can produce the same correct document, but their costs can be very different.
+
+This distinction becomes increasingly important as the document grows.
+
+Imagine two documents:
+
+```text
+Small document
+
+Hello
+World
+```
+
+and:
+
+```text
+Large document
+
+Thousands or millions of lines
+```
+
+An operation that feels instantaneous on the small document may become noticeably slower on the large one if the amount of work grows significantly with the size of the document.
+
+This is the central reason we study complexity.
+
+## Correctness Is Not Enough
+
+When evaluating an algorithm or data structure, we need to ask two separate questions:
+
+1. **Does it produce the correct result?**
+2. **How much work does it require to produce that result?**
+
+The first question is about correctness.
+
+The second is about efficiency.
+
+For example, suppose an editor stores the characters of a line in a contiguous array. Inserting a character near the beginning of the line may require the characters after the insertion point to move:
+
+```text
+Before:
+
+A B C D E
+    ^
+  cursor
+
+
+Insert X:
+
+A B X C D E
+```
+
+The operation is correct, but several existing characters had to be moved.
+
+If the line contains only five characters, this is insignificant. If the line contains hundreds of thousands of characters, the same basic operation can require substantially more work.
+
+The algorithm has not changed. The **amount of input it operates on has changed**.
+
+Complexity analysis gives us a way to reason about this growth.
+
+## Complexity Helps Us Compare Designs
+
+The editor can represent text in many different ways.
+
+For example, the project currently uses a vector-of-lines representation because it provides a simple model that matches the editor's row-and-column structure.
+
+Later, we will study other representations, including:
+
+- arrays and strings
+- gap buffers
+- piece tables
+- ropes
+
+These structures can support the same basic editing operations while having very different performance characteristics.
+
+The important question is therefore not simply:
+
+> "Which data structure works?"
+
+Several data structures may work correctly.
+
+The more useful question is:
+
+> **"Which operations does each data structure make inexpensive, and which operations become expensive as the document grows?"**
+
+That question is at the heart of this volume.
+
+## Complexity Is About Growth
+
+Complexity analysis is primarily concerned with how the cost of an operation changes as its input becomes larger.
+
+Suppose an operation takes approximately the same amount of work regardless of document size:
+
+```text
+Small document  →  small amount of work
+Large document  →  small amount of work
+```
+
+That operation scales differently from one whose work grows with the document:
+
+```text
+Small document  →  small amount of work
+Large document  →  much more work
+```
+
+This distinction matters because an editor is an interactive application. Operations are performed repeatedly while the user is typing, deleting, and navigating.
+
+A small inefficiency performed once may not matter.
+
+A costly operation performed thousands of times during an editing session can become a serious performance problem.
+
+## The Editor Makes This Especially Important
+
+A text editor repeatedly performs operations such as:
+
+- inserting characters
+- deleting characters
+- inserting lines
+- deleting lines
+- moving the cursor
+- rendering the visible document
+- loading files
+- saving files
+
+Each operation interacts with some part of the editor's data.
+
+The amount of data that must be examined, moved, allocated, or rewritten determines much of its cost.
+
+For example:
+
+```text
+Insert character
+       │
+       ▼
+How much existing text must move?
+       │
+       ▼
+Determines the work required
+```
+
+The answer depends heavily on how the text is represented.
+
+This is why the choice of a data structure is not merely an implementation detail. It directly influences the behavior of the editor.
+
+## Complexity and User Experience
+
+Performance is not only a technical concern. In an interactive application, it affects the user's experience.
+
+Consider a user pressing a key:
+
+```text
+Key press
+    │
+    ▼
+Input
+    │
+    ▼
+Command
+    │
+    ▼
+Document update
+    │
+    ▼
+Render
+    │
+    ▼
+User sees the result
+```
+
+The user expects this sequence to feel immediate.
+
+If updating the document requires increasingly large amounts of work, the delay between the key press and the visible result can eventually become noticeable.
+
+The runtime model of our editor is deliberately designed around short, sequential event-loop iterations so that normal editing remains responsive. Complexity analysis complements that design by helping us understand whether the operations performed during those iterations will continue to scale acceptably.
+
+## Complexity Does Not Mean "Fast" or "Slow"
+
+It is important not to interpret complexity as a simple label of "fast" or "slow."
+
+An operation with higher complexity may still be perfectly appropriate for a particular use case.
+
+Likewise, an operation with lower complexity is not automatically the best engineering choice.
+
+Real-world performance can also depend on:
+
+- the amount of data
+- memory usage
+- memory access patterns
+- allocation behavior
+- constant factors
+- implementation complexity
+
+For our editor, simplicity is an explicit architectural goal. The requirements prioritize clarity and educational value rather than advanced optimization.
+
+Therefore, we are not trying to eliminate every potentially expensive operation.
+
+Instead, we want to understand **where the costs come from**, how those costs grow, and when a different design becomes worthwhile.
+
+## The Goal of This Chapter
+
+This chapter gives us a vocabulary and a method for discussing those costs.
+
+We will learn how to reason about:
+
+- how much work an operation performs
+- how memory usage grows
+- how memory layout affects practical performance
+- how algorithmic cost affects interactive latency
+- why occasional expensive operations can still be efficient overall
+- how to compare alternative data structures
+
+The goal is not to memorize complexity classifications.
+
+The goal is to develop the ability to look at an editor operation and ask:
+
+> **What work must this operation actually perform, and how does that work grow as the document grows?**
+
+Once we can answer that question, we can meaningfully compare the different text-buffer structures introduced in the chapters that follow.
+
+## Summary
+
+Complexity analysis asks two separate questions about an editor operation: whether it produces the correct result, and how much work it requires to do so. The same correct operation can cost very little or a great deal depending on how the text is represented, because inserting a character may require shifting the characters that follow it. Complexity is primarily about growth: it describes how an operation's cost changes as its input becomes larger, rather than measuring seconds on one particular machine. This matters in an interactive editor because typing, deleting, and navigating perform the same operations repeatedly, so a cost that is invisible once can become a noticeable delay over a session. The goal is not to label operations as fast or slow or to eliminate every expensive operation, but to understand where costs come from and when a different design becomes worthwhile.
+
+In the next section, we will clarify what we mean by the **cost** of an operation by examining its time, space, and memory-access dimensions.

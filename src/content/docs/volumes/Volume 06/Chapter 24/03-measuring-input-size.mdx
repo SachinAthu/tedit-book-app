@@ -1,0 +1,289 @@
+---
+title: '24.3 Measuring Input Size'
+description: "Shows how to choose the right input-size measure for each editor operation, from line length to file bytes and screen size."
+---
+
+Before we can describe the complexity of an operation, we need to define what we mean by the **size of its input**.
+
+This sounds simple, but an editor can work with several different measures of size.
+
+A document can be large because it contains many lines, because individual lines are very long, or because the encoded file contains many bytes. A rendering operation has yet another measure: the size of the visible terminal area.
+
+Therefore, when we say that an operation takes `O(n)` time, we must first be clear about what `n` represents.
+
+## There Is No Single "Document Size"
+
+Consider a document such as:
+
+```text
+Hello
+World
+Programming
+```
+
+We could measure its size in several ways:
+
+```text
+Number of lines
+        ↓
+        3
+
+Number of characters
+        ↓
+        21
+
+Number of UTF-8 bytes
+        ↓
+        depends on the text
+
+Length of the longest line
+        ↓
+        11
+```
+
+Each measurement answers a different question.
+
+For example, inserting a new line may depend primarily on the number of lines, while inserting a character into an existing line may depend on the length of that particular line.
+
+The correct measure therefore depends on the operation being analyzed.
+
+## Total Document Size
+
+One useful measure is the total amount of text in the document.
+
+Conceptually:
+
+```text
+Document
+   │
+   ├── Line 1
+   ├── Line 2
+   ├── Line 3
+   ├── ...
+   └── Line N
+```
+
+If the document contains `C` logical characters, we can use `C` as the input size for operations that potentially examine the entire document.
+
+For example, an operation that scans every character in the document has a cost that grows with the total amount of text:
+
+```text
+Small document
+    ↓
+Less text to scan
+
+Large document
+    ↓
+More text to scan
+```
+
+We might describe such an operation as `O(C)` when `C` represents the total number of characters.
+
+However, this does not mean that every editor operation should use total document size as its `C`.
+
+## Line Length
+
+Our editor stores the Document as a collection of lines.
+
+That means some operations are naturally related to the length of the current line rather than the entire document.
+
+Suppose the cursor is near the beginning of a line:
+
+```text
+A B C D E F G H I J
+  ^
+cursor
+```
+
+If inserting a character requires shifting the characters after the cursor, the amount of work depends on how many characters remain in that line.
+
+A very long line could therefore make the operation expensive even when the document contains relatively few lines.
+
+This gives us another useful input measure:
+
+> **The length of the affected line.**
+
+We might call that value `L`.
+
+Then an operation could have a cost such as:
+
+```text
+O(L)
+```
+
+where `L` is the length of the relevant line.
+
+## Number of Lines
+
+Other operations are more naturally related to the number of lines.
+
+For example, inserting a line into a collection of lines may require existing line entries to move depending on the representation.
+
+If the document contains:
+
+```text
+Line 1
+Line 2
+Line 3
+...
+Line N
+```
+
+then `N` can represent the number of logical lines.
+
+An operation affecting the collection of lines may therefore have a cost that grows with `N`.
+
+This is different from the total number of characters.
+
+A document might contain:
+
+```text
+1,000,000 short lines
+```
+
+or:
+
+```text
+1 very long line
+```
+
+Both documents can contain a similar number of characters while having dramatically different numbers of lines.
+
+## File Size in Bytes
+
+File operations introduce another important measure: **encoded file size**.
+
+Our editor stores text internally as Unicode code points but uses UTF-8 at the file boundary.
+
+Therefore, the number of characters in memory and the number of bytes on disk are not necessarily the same.
+
+For example:
+
+```text
+Document characters
+        │
+        ▼
+   UTF-8 encoding
+        │
+        ▼
+File bytes
+```
+
+An operation that reads or writes the complete file is naturally described in terms of the number of bytes transferred.
+
+We might therefore use `B` to represent the file's byte size.
+
+This distinction becomes important when analyzing file loading and saving.
+
+## Visible Screen Size
+
+Rendering introduces yet another measure.
+
+The renderer does not necessarily process the entire document on every frame. It works with the visible terminal area.
+
+Suppose the terminal has:
+
+```text
+80 columns
+24 rows
+```
+
+The visible area contains approximately:
+
+```text
+80 × 24
+```
+
+screen positions.
+
+The Screen Buffer is likewise bounded by the terminal dimensions rather than by the document's total size.
+
+For rendering operations, the relevant input size may therefore be the number of visible rows and columns rather than the total document size.
+
+This is an important example of why complexity analysis must begin by identifying what the operation actually touches.
+
+## Different Operations, Different Measures
+
+We can summarize the main measures like this:
+
+| Measure                    | Symbol | Example                                |
+| -------------------------- | -----: | -------------------------------------- |
+| Number of document lines   |    `N` | Line-oriented operations               |
+| Length of an affected line |    `L` | Character insertion within a line      |
+| Total document characters  |    `C` | Full-document processing               |
+| File size in bytes         |    `B` | File loading and saving                |
+| Visible rows               |    `R` | Rendering                              |
+| Visible columns            |    `W` | Rendering and horizontal viewport work |
+
+These names are not universal mathematical rules. They are simply useful variables for describing the editor's operations clearly.
+
+The important principle is:
+
+> **Define the input size before describing the complexity.**
+
+## Why This Matters
+
+Consider the statement:
+
+> "Inserting a character takes `O(n)` time."
+
+By itself, that statement is incomplete.
+
+What is `n`?
+
+It could mean:
+
+- the number of lines in the document
+- the number of characters in the document
+- the length of the current line
+- the number of characters after the cursor
+
+These produce very different interpretations.
+
+A more precise statement might be:
+
+> "In a contiguous character array, inserting a character may require shifting the characters after the insertion point, so the cost is proportional to the number of affected characters."
+
+Now the source of the cost is clear.
+
+That precision becomes increasingly important as we compare different text-buffer structures.
+
+## Input Size Is Context-Dependent
+
+There is no requirement that an entire editor use one universal `n`.
+
+Instead, each analysis should identify the data relevant to the operation.
+
+For example:
+
+```text
+Character insertion
+        ↓
+Affected line length
+
+Full document save
+        ↓
+Encoded file size
+
+Screen rendering
+        ↓
+Visible screen dimensions
+```
+
+This is one of the most important habits in complexity analysis.
+
+Do not begin with:
+
+> "What is the Big-O?"
+
+Begin with:
+
+> **"What data does this operation actually have to work with?"**
+
+Once that is clear, the complexity is much easier to derive.
+
+## Summary
+
+There is no single "document size," so complexity analysis must begin by identifying the input that a particular operation actually touches. Candidate measures include the number of lines N, the length of the affected line L, the total number of characters C, the encoded file size in bytes B, and the visible rows and columns R and W used by rendering. Inserting a character into an existing line depends primarily on that line's length, while inserting a line or saving a document depends on different collections of data entirely. File operations are naturally measured in encoded bytes because the in-memory character count and the on-disk byte count are not necessarily the same. Rendering is bounded by the terminal dimensions rather than the document's total size, since the Screen Buffer only represents the visible area. The important habit is to define the input size before describing the complexity, because a statement such as "inserting a character takes O(n)" is incomplete until n is specified.
+
+In the next section, we can introduce **Big-O notation** and learn how to express this growth formally without tying our analysis to a particular machine or execution time.

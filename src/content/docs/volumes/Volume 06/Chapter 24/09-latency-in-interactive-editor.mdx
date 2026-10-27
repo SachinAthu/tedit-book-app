@@ -1,0 +1,221 @@
+---
+title: '24.9 Latency in an Interactive Editor'
+description: "Connects algorithmic cost to user-visible latency and identifies the operations most likely to threaten responsiveness."
+---
+
+Complexity describes how the amount of work grows. **Latency** describes how long the user has to wait before that work becomes visible.
+
+For an interactive editor, this distinction matters because editing happens one action at a time.
+
+Consider a simple interaction:
+
+```text
+User action
+    │
+    ▼
+Editor operation
+    │
+    ▼
+Updated document
+    │
+    ▼
+Updated display
+```
+
+The user experiences the time between the action and the visible result as a delay.
+
+## Small Operations Feel Immediate
+
+Suppose inserting a character requires only a small, bounded amount of work:
+
+```text
+Key press
+   │
+   ▼
+Small update
+   │
+   ▼
+Display update
+```
+
+The operation completes quickly enough that the user perceives it as immediate.
+
+This is the normal expectation when typing.
+
+The important point is that the editor performs these operations repeatedly. A cost that is negligible for one operation can become significant if it grows with the amount of data affected.
+
+## When Operation Cost Becomes Visible
+
+Consider an operation whose work grows with the length of a line.
+
+For a short line:
+
+```text
+100 characters
+      ↓
+small amount of work
+      ↓
+little visible delay
+```
+
+For a very long line:
+
+```text
+1,000,000 characters
+      ↓
+much more work
+      ↓
+potentially noticeable delay
+```
+
+The user still performed the same action:
+
+> Insert one character.
+
+What changed was the amount of existing data that the implementation had to process.
+
+This is where complexity becomes a user-experience concern.
+
+## Latency and Repeated Operations
+
+An editor does not perform one edit and stop.
+
+A user may type:
+
+```text
+H
+e
+l
+l
+o
+...
+```
+
+Each keystroke can trigger document modification and rendering.
+
+If the cost of each operation remains small, the interaction feels responsive.
+
+If the cost grows substantially with the document, the delay can become noticeable during ordinary editing.
+
+This is why the complexity of frequently executed operations matters more than the complexity of operations that are rarely performed.
+
+## Latency Is Not the Same as Complexity
+
+Complexity and latency are related, but they are not interchangeable.
+
+Complexity describes how work **scales**.
+
+Latency describes the **observed delay** for a particular execution.
+
+For example:
+
+```text
+Algorithm
+    ↓
+O(n)
+```
+
+does not tell us that the operation takes a specific number of milliseconds.
+
+Actual latency also depends on:
+
+- the amount of data
+- processor speed
+- memory behavior
+- implementation details
+- operating system activity
+
+Therefore, complexity helps us predict how latency may change as the workload grows, while measurement tells us what users actually experience on a particular system.
+
+## A Useful Design Question
+
+When evaluating an editor operation, ask:
+
+> **Can the amount of work performed by this operation grow large enough to become visible to the user?**
+
+If the answer is yes, we need to understand why.
+
+For example:
+
+```text
+Insert character
+       │
+       ▼
+Characters must move
+       │
+       ▼
+Number of affected characters grows
+       │
+       ▼
+Operation takes more work
+       │
+       ▼
+Latency may increase
+```
+
+The purpose of complexity analysis is not to predict an exact delay. It is to identify situations where the amount of work can grow enough to threaten responsiveness.
+
+## Why This Matters for Data Structures
+
+This relationship becomes particularly important when choosing a text-buffer representation.
+
+Different representations can make the same editing operation affect very different amounts of data.
+
+For example:
+
+```text
+Representation A
+Insert
+   ↓
+Move many characters
+
+Representation B
+Insert
+   ↓
+Modify a smaller structure
+```
+
+Both can produce the same document.
+
+The difference is the amount of work required to get there.
+
+That difference can eventually become a difference in user-visible latency.
+
+This is one of the main reasons this volume examines arrays, gap buffers, piece tables, and ropes separately.
+
+## The Practical Goal
+
+We should not attempt to eliminate every operation whose cost grows with input size.
+
+Some operations naturally need to process large amounts of data. Loading and saving a complete document are examples in our baseline architecture.
+
+Instead, we should pay particular attention to operations that are:
+
+- performed frequently
+- directly triggered by user input
+- capable of touching large amounts of data
+
+These operations have the greatest potential to affect interactive responsiveness.
+
+The key relationship is:
+
+```text
+Data structure
+      │
+      ▼
+Amount of work
+      │
+      ▼
+Operation cost
+      │
+      ▼
+Potential user-visible latency
+```
+
+Yet this relationship describes a single operation. Because an editor repeats the same operations many times during a session, we also need to know how an operation's cost behaves across a sequence of repeated actions.
+
+## Summary
+
+Latency is the delay between a user's action and the visible result, which is related to complexity but not the same thing. Complexity describes how work scales, while latency describes the observed delay for a particular execution on a particular machine, depending on data size, processor speed, memory behavior, implementation details, and system activity. Small operations feel immediate, but an operation whose work grows with the length of a line can become visible when the line contains a million characters, even though the user performed the same single keystroke. Because an editor repeats operations while the user types, the complexity of frequently executed, directly triggered operations matters more than the complexity of rarely performed ones. The practical goal is not to eliminate every operation that grows with input size, since loading and saving naturally process the whole document, but to watch operations that are frequent, input-driven, and capable of touching large amounts of data. For those operations, the data structure determines the amount of work, which determines the operation cost, which can become user-visible latency.
+
+In the next section, we will study **amortized complexity**, where an individual operation can sometimes be expensive while the cost of a sequence of operations remains efficient overall.

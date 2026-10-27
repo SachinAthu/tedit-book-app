@@ -1,0 +1,43 @@
+---
+title: "Chapter 24 — Complexity Analysis"
+description: "Introduces complexity analysis for the editor, covering time, space, locality, latency, Big-O, worst case, and amortized cost."
+---
+
+## Introduction
+
+In previous volumes, we built a working editor: the Document holds text, the Cursor navigates it, the Renderer draws it, and the File Manager persists it. Along the way we made many design decisions about how those components represent data.
+
+This chapter steps back and asks the central question of this volume:
+
+> **How much work does each editor operation require, and how does that work grow as the document grows?**
+
+We develop a vocabulary and a method for answering that question—time, space, memory locality, and latency—so that in the chapters that follow we can meaningfully compare the data structures that can represent editable text.
+
+## Learning Objectives
+
+Readers should be able to:
+
+- Explain why correctness alone is not enough when evaluating an editor operation
+- Distinguish **time**, **space**, and **memory locality** as dimensions of cost
+- Identify the relevant input size for a given editor operation
+- Express the growth of an operation's cost using **Big-O notation**
+- Describe best case, average case, and worst case, and why worst case matters for an interactive editor
+- Identify what determines the time complexity of common editor operations
+- Analyze the additional memory an operation requires beyond the data it processes
+- Explain how cache locality affects practical performance beyond Big-O
+- Relate complexity to the **latency** a user experiences
+- Explain **amortized complexity** and how occasional expensive operations can still be efficient overall
+
+## Sections
+
+- [24.1 Why Complexity Matters](/volumes/volume-06/chapter-24/01-why-complexity-matters/)
+- [24.2 What Does "Cost" Mean?](/volumes/volume-06/chapter-24/02-what-does-cost-mean/)
+- [24.3 Measuring Input Size](/volumes/volume-06/chapter-24/03-measuring-input-size/)
+- [24.4 Big-O Notation](/volumes/volume-06/chapter-24/04-big-o-notation/)
+- [24.5 Best Case, Average Case, and Worst Case](/volumes/volume-06/chapter-24/05-best-average-worst-case/)
+- [24.6 Time Complexity of Editor Operations](/volumes/volume-06/chapter-24/06-time-complexity-editor-operations/)
+- [24.7 Space Complexity](/volumes/volume-06/chapter-24/07-space-complexity/)
+- [24.8 Cache Locality](/volumes/volume-06/chapter-24/08-cache-locality/)
+- [24.9 Latency in an Interactive Editor](/volumes/volume-06/chapter-24/09-latency-in-interactive-editor/)
+- [24.10 Amortized Complexity](/volumes/volume-06/chapter-24/10-amortized-complexity/)
+- [24.11 Conclusion](/volumes/volume-06/chapter-24/11-conclusion/)

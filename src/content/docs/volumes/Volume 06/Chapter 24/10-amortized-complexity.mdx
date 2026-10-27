@@ -1,0 +1,338 @@
+---
+title: '24.10 Amortized Complexity'
+description: "Introduces amortized complexity and explains how occasional expensive resizes can still be efficient across a sequence."
+---
+
+Some operations are occasionally expensive even though performing many of those operations together can still be efficient.
+
+This is the idea behind **amortized complexity**.
+
+Instead of asking:
+
+> "How expensive is this single operation?"
+
+amortized analysis asks:
+
+> **"How expensive are these operations on average across an entire sequence of operations?"**
+
+This distinction becomes especially important when working with dynamically sized arrays, which we will study in the next chapter.
+
+## The Problem With Looking at One Operation
+
+Consider a dynamic array.
+
+Most of the time, adding an element may be straightforward:
+
+```text
+[A][B][C][D]
+             ↑
+          new item
+```
+
+If the array still has unused capacity, the new element can be placed directly into the available space.
+
+But eventually the array becomes full:
+
+```text
+[A][B][C][D]
+            full
+```
+
+There is no room for another element.
+
+The implementation may need to:
+
+1. allocate a larger block of memory
+2. copy the existing elements
+3. release the old storage
+4. insert the new element
+
+That particular insertion can therefore be significantly more expensive than the previous ones.
+
+## An Apparently Expensive Sequence
+
+Suppose the array starts with capacity for four elements:
+
+```text
+Capacity: 4
+
+[A][B][C][D]
+```
+
+Adding another element requires resizing:
+
+```text
+Old storage
+
+[A][B][C][D]
+
+       ↓
+
+New larger storage
+
+[A][B][C][D][ ][ ][ ][ ]
+```
+
+The existing elements must be copied.
+
+It is tempting to look at that operation and conclude:
+
+> "Insertion into a dynamic array is expensive."
+
+But that does not describe the behavior of the sequence as a whole.
+
+The expensive resize does not happen after every insertion.
+
+Most insertions happen without resizing.
+
+## Occasional Expensive Operations
+
+A typical sequence might look like:
+
+```text
+Insert → cheap
+Insert → cheap
+Insert → cheap
+Insert → resize
+Insert → cheap
+Insert → cheap
+Insert → cheap
+Insert → resize
+```
+
+The important observation is:
+
+> **The expensive operation pays for the capacity that will be used by many future operations.**
+
+The cost of resizing is therefore spread across those subsequent insertions.
+
+This is what amortized analysis captures.
+
+## Amortized Cost
+
+Suppose we perform many insertions into a dynamically growing array.
+
+Some individual operations may require a large amount of work:
+
+```text
+Normal insertion
+    → small cost
+
+Resize insertion
+    → large cost
+```
+
+But if resizing is performed according to a suitable growth strategy, the total work across a long sequence of insertions can remain efficient.
+
+We can therefore describe the **amortized cost** of an insertion as much smaller than the cost of the occasional resize itself.
+
+This does not mean that the expensive operation becomes physically faster.
+
+It means that its cost is distributed across the sequence being analyzed.
+
+## Amortized Does Not Mean Average Case
+
+Amortized analysis and average-case analysis are related ideas, but they are not the same.
+
+Average-case analysis usually depends on assumptions about the probability or distribution of inputs.
+
+For example:
+
+> "Assume the insertion position is equally likely to occur anywhere in the line."
+
+Amortized analysis does not require that kind of probability assumption.
+
+Instead, it analyzes a **sequence of operations** and distributes the cost of occasional expensive operations across that sequence.
+
+Conceptually:
+
+```text
+Average-case analysis
+    ↓
+Depends on expected inputs
+
+Amortized analysis
+    ↓
+Depends on a sequence of operations
+```
+
+This distinction is important when analyzing data structures.
+
+## Why Amortized Complexity Matters to Our Editor
+
+Our editor uses collections of data that may need to grow as the document changes.
+
+For example, the collection of lines may need additional capacity when new lines are inserted.
+
+Likewise, the character storage associated with a line may need to grow when text is inserted.
+
+A resizing operation may therefore occasionally require:
+
+```text
+Allocate larger storage
+        ↓
+Copy existing elements
+        ↓
+Release old storage
+```
+
+Most individual insertions may not require all of this work.
+
+Understanding amortized complexity lets us reason about the overall cost of repeated modifications rather than judging the data structure solely by its most expensive individual operation.
+
+## A Simple Example
+
+Imagine an array whose capacity grows when it becomes full.
+
+Suppose the capacities are:
+
+```text
+4
+8
+16
+32
+64
+...
+```
+
+The exact growth policy is an implementation decision that we will examine later.
+
+The important observation is that the array does not resize after every insertion.
+
+Instead:
+
+```text
+4 insertions fill the initial capacity
+    ↓
+next insertion triggers a resize
+
+3 more insertions fit in the new capacity
+    ↓
+next insertion triggers a resize
+
+7 more insertions fit in the new capacity
+    ↓
+next insertion triggers a resize
+
+15 more insertions fit in the new capacity
+    ↓
+next insertion triggers a resize
+```
+
+As the capacity grows, each resize provides room for more future insertions.
+
+The expensive copying work is therefore spread over an increasing number of operations.
+
+## Why This Is Useful
+
+Without amortized analysis, we might see a resize operation and focus only on its immediate cost:
+
+```text
+Resize
+  ↓
+copy many elements
+  ↓
+expensive
+```
+
+With amortized analysis, we consider the larger sequence:
+
+```text
+Many cheap insertions
+        +
+Occasional expensive resize
+        ↓
+Overall cost across the sequence
+```
+
+This gives us a more useful understanding of the data structure's behavior.
+
+## Amortized Analysis Does Not Hide Expensive Operations
+
+It is important not to misunderstand the concept.
+
+If a resize requires copying many elements, that copying still happens.
+
+Amortized complexity does not make the operation cheaper.
+
+The distinction is:
+
+```text
+Actual operation
+    ↓
+May be expensive
+
+Sequence analysis
+    ↓
+Shows how that cost is distributed
+```
+
+This matters for an interactive editor because a single expensive operation can still produce visible latency even when the **amortized** performance is good.
+
+Therefore, amortized complexity should be considered alongside worst-case behavior.
+
+## Amortized Cost and User Experience
+
+Suppose a sequence of insertions has good amortized performance.
+
+That tells us that the total cost across many insertions is efficient.
+
+But occasionally:
+
+```text
+User presses a key
+        ↓
+Resize occurs
+        ↓
+Many elements copied
+        ↓
+Longer operation
+```
+
+The user may still experience a temporary increase in latency.
+
+This is why we should keep both ideas in mind:
+
+```text
+Amortized complexity
+    ↓
+Overall efficiency of a sequence
+
+Worst-case cost
+    ↓
+Cost of an individual operation
+```
+
+For data structures used by interactive applications, both perspectives are useful.
+
+## Looking Ahead to Dynamic Arrays
+
+Amortized complexity will become especially important in the next chapter.
+
+We will examine how arrays store elements, what happens when elements are inserted or deleted, and why dynamically growing storage requires resizing.
+
+The key idea to carry forward is:
+
+> **An occasional expensive operation can still produce efficient overall behavior when its cost is spread across a sufficiently large sequence of operations.**
+
+This gives us another tool for evaluating data structures.
+
+We can now consider not only:
+
+- the cost of one operation
+- the worst case
+- the amount of memory used
+- memory locality
+- user-visible latency
+
+but also:
+
+> **How does the cost behave across a long sequence of operations?**
+
+That broader view will be useful when we begin examining the concrete data structures that can represent editable text.
+
+## Summary
+
+Amortized analysis asks how expensive a sequence of operations is overall, rather than judging a data structure by its single most expensive operation. A dynamic array usually inserts in constant time, but when its capacity is exhausted it must allocate larger storage, copy the existing elements, release the old storage, and then insert the new element. That resize is genuinely expensive, but it does not happen after every insertion; each resize provides capacity for many future operations, so its cost is spread across the sequence. Amortized analysis differs from average-case analysis because it does not assume a probability distribution over inputs; it analyzes the sequence of operations itself. The distinction matters for an interactive editor because a single resize can still produce a temporary increase in latency even when the amortized cost is low, so amortized behavior must be considered alongside worst-case behavior. The key idea is that an occasional expensive operation can still yield efficient overall behavior when its cost is distributed across a sufficiently large sequence.
+
+The chapter summary that follows consolidates these ideas and previews the next chapter, which begins with the simplest building blocks: arrays and strings.
