@@ -1,0 +1,357 @@
+---
+title: 15.4 Key Mapping and Dispatch
+description: Compares conditional, switch-based, and table-driven key mapping, then explains how mapped commands are dispatched to the Command Engine.
+---
+
+Once the Input Engine has established that an input event corresponds to an editor command, it needs a mechanism for performing that mapping consistently.
+
+The basic operation is:
+
+```text
+Input Event
+    │
+    ▼
+Key Mapping
+    │
+    ▼
+Command
+    │
+    ▼
+Dispatch
+```
+
+**Key mapping** determines which command an event represents. **Dispatch** passes that command to the component responsible for executing it.
+
+These are related but distinct responsibilities. Mapping answers:
+
+> "Which command does this input represent?"
+
+Dispatch answers:
+
+> "Where should that command go next?"
+
+## A Simple Conditional Approach
+
+The most straightforward implementation is a sequence of conditional checks:
+
+```c
+if event == KEY_ARROW_LEFT
+    command = MOVE_CURSOR_LEFT
+
+else if event == KEY_ARROW_RIGHT
+    command = MOVE_CURSOR_RIGHT
+
+else if event == KEY_BACKSPACE
+    command = DELETE_PREVIOUS_CHARACTER
+```
+
+For a very small editor, this approach is easy to understand and can be sufficient.
+
+However, as the number of supported keys grows, a long chain of conditions becomes increasingly difficult to read and maintain. Every new key binding adds another branch, and related mappings can become scattered throughout the function.
+
+## A `switch`-Based Approach
+
+C provides a natural alternative through a `switch` statement:
+
+```c
+switch (event.type)
+{
+    case KEY_ARROW_LEFT:
+        command = MOVE_CURSOR_LEFT;
+        break;
+
+    case KEY_ARROW_RIGHT:
+        command = MOVE_CURSOR_RIGHT;
+        break;
+
+    case KEY_BACKSPACE:
+        command = DELETE_PREVIOUS_CHARACTER;
+        break;
+}
+```
+
+For the editor described in this book, this is a practical approach because the input vocabulary is relatively small and well defined.
+
+The mapping remains explicit:
+
+```text
+Key Event
+    │
+    ├── LEFT      → MOVE_CURSOR_LEFT
+    ├── RIGHT     → MOVE_CURSOR_RIGHT
+    ├── UP        → MOVE_CURSOR_UP
+    ├── DOWN      → MOVE_CURSOR_DOWN
+    ├── BACKSPACE → DELETE_PREVIOUS_CHARACTER
+    └── ENTER     → SPLIT_LINE
+```
+
+This makes the supported input behavior easy to inspect.
+
+## Handling Character Events
+
+Character input introduces a small variation because the event contains a value.
+
+For example:
+
+```text
+KEY_CHARACTER('a')
+KEY_CHARACTER('b')
+KEY_CHARACTER('7')
+```
+
+These events should not require a separate mapping for every possible character.
+
+Instead, the event can be transformed generically:
+
+```text
+KEY_CHARACTER(c)
+       │
+       ▼
+INSERT_CHARACTER(c)
+```
+
+The character value is carried into the resulting command.
+
+This keeps the mapping compact while supporting the complete range of printable characters recognized by the Input Parser.
+
+## Dispatching the Command
+
+After mapping an event, the Input Engine needs to pass the resulting command to the Command Engine.
+
+Conceptually:
+
+```text
+event
+  │
+  ▼
+map_event()
+  │
+  ▼
+command
+  │
+  ▼
+dispatch_command()
+  │
+  ▼
+Command Engine
+```
+
+The Input Engine should stop at this boundary.
+
+For example:
+
+```text
+KEY_ARROW_LEFT
+       │
+       ▼
+MOVE_CURSOR_LEFT
+       │
+       ▼
+Command Engine
+```
+
+The Input Engine does not determine how the cursor moves. It simply ensures that the appropriate command reaches the component responsible for executing it.
+
+This preserves the architectural separation established earlier: the Command Engine executes commands and coordinates state changes, while the Input layer deals with user input.
+
+## Command Identifiers Versus Command Functions
+
+There are two closely related ways to represent the result of key mapping.
+
+The first is to produce a **command identifier**:
+
+```text
+MOVE_CURSOR_LEFT
+SAVE_DOCUMENT
+DELETE_CHARACTER
+QUIT_EDITOR
+```
+
+The Command Engine then receives the identifier and determines how to execute it.
+
+The second is to associate the input directly with a function or handler:
+
+```text
+KEY_ARROW_LEFT → cursor_move_left()
+KEY_CTRL_S     → file_save()
+```
+
+The second approach can appear convenient, but it couples the input mapping more closely to command implementation.
+
+Using command identifiers provides a clearer boundary:
+
+```text
+Input Engine
+     │
+     │ command identifier
+     ▼
+Command Engine
+     │
+     │ execution
+     ▼
+Editor State
+```
+
+The Input Engine therefore knows **what command was requested**, but not **how that command is implemented**.
+
+For the architecture of this book, that distinction is preferable because the Command Engine is the designated component for command execution.
+
+## Command Dispatch as a Boundary
+
+The dispatch boundary can be represented as:
+
+```text
++------------------+
+|   Input Engine   |
+|                  |
+| Event → Command  |
++------------------+
+         │
+         │ command
+         ▼
++------------------+
+|  Command Engine  |
+|                  |
+| Command → Action |
++------------------+
+         │
+         ▼
+   Editor State
+```
+
+This creates two independent stages.
+
+**Stage 1 — Mapping**
+
+```text
+KEY_CTRL_S
+    ↓
+SAVE_DOCUMENT
+```
+
+**Stage 2 — Execution**
+
+```text
+SAVE_DOCUMENT
+    ↓
+save current document
+    ↓
+update editor state
+```
+
+Only the first stage belongs to this chapter.
+
+## What About a Command Table?
+
+A more data-driven approach is to store mappings in a table:
+
+```text
++------------------+----------------------+
+| Input Event      | Command              |
++------------------+----------------------+
+| KEY_ARROW_LEFT   | MOVE_CURSOR_LEFT     |
+| KEY_ARROW_RIGHT  | MOVE_CURSOR_RIGHT    |
+| KEY_BACKSPACE    | DELETE_PREVIOUS_CHARACTER |
+| KEY_ENTER        | SPLIT_LINE               |
+| KEY_CTRL_S       | SAVE_DOCUMENT            |
+| KEY_CTRL_Q       | QUIT_EDITOR              |
++------------------+----------------------+
+```
+
+The Input Engine can then search the table for the corresponding command.
+
+This approach becomes particularly attractive when key bindings need to become configurable. A user-configurable key-binding system could eventually load mappings from configuration rather than requiring changes to the source code.
+
+However, configurable key bindings are outside the baseline implementation and are covered later as a professional feature. The project therefore does not need to introduce a generalized mapping framework at this stage.
+
+## Choosing the Appropriate Approach
+
+The three approaches can be summarized as follows:
+
+| Approach          | Advantages                 | Limitations                                      |
+| ----------------- | -------------------------- | ------------------------------------------------ |
+| Conditional chain | Very simple                | Becomes difficult to maintain as mappings grow   |
+| `switch`          | Clear and natural in C     | Mappings remain embedded in code                 |
+| Command table     | Data-driven and extensible | More machinery than the baseline editor requires |
+
+For the initial editor, a straightforward `switch`-based mapping is a reasonable choice.
+
+The goal is not to build the most configurable input system possible. The goal is to establish a clear architecture that can later evolve without forcing the rest of the editor to depend on the details of input handling.
+
+## Mapping and Configurability
+
+There is an important distinction between **having a mapping** and **making mappings configurable**.
+
+Every editor needs some mapping:
+
+```text
+KEY_CTRL_S → SAVE_DOCUMENT
+```
+
+But a configurable editor might allow the user to change it:
+
+```text
+Ctrl+S → SAVE_DOCUMENT
+Ctrl+W → SAVE_DOCUMENT
+```
+
+The first is part of the core Input Engine. The second introduces configuration and user-defined key bindings.
+
+We deliberately keep these concerns separate.
+
+The baseline implementation can use fixed mappings while preserving an architecture in which the mapping mechanism can be replaced or extended later.
+
+## The Complete Dispatch Path
+
+The resulting input path is now:
+
+```text
+Keyboard
+    │
+    ▼
+Input Handler
+    │
+    │ raw bytes
+    ▼
+Input Parser
+    │
+    │ input event
+    ▼
+Input Engine
+    │
+    │ key mapping
+    ▼
+Command
+    │
+    │ dispatch
+    ▼
+Command Engine
+    │
+    │ execution
+    ▼
+Editor State
+```
+
+Each boundary removes details that the next component does not need to understand.
+
+The Input Handler knows how to obtain input.
+
+The Input Parser knows how to interpret terminal input.
+
+The Input Engine knows how to map input events to commands.
+
+The Command Engine knows how to execute those commands.
+
+The Editor State stores the resulting application state.
+
+This division keeps the input path understandable while leaving room for future extensions such as configurable key bindings without changing the fundamental architecture.
+
+## Summary
+
+Key mapping determines which command an input event represents, and dispatch passes that command to the Command Engine. For the baseline editor, a `switch`-based mapping is a practical choice, while a data-driven command table is reserved for future configurability.
+
+The dispatch boundary keeps the Input Engine focused on recognizing input rather than executing operations.
+
+Now that mapping and dispatch are clear, the next section looks at how keyboard shortcuts fit into this design.
+
+Continue to **Section 15.5, Keyboard Shortcuts**.

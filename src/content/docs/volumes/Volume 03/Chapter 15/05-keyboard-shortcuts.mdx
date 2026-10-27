@@ -1,0 +1,294 @@
+---
+title: 15.5 Keyboard Shortcuts
+description: Explains keyboard shortcuts as input bindings rather than behavior, covering save and quit shortcuts, the baseline shortcut set, and unknown keys.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Not every key press represents ordinary text input or cursor navigation. A text editor also needs a way to trigger application-level operations such as saving the document or exiting the editor. These operations are commonly accessed through **keyboard shortcuts**.
+
+A keyboard shortcut is simply an input event that has been mapped to a command:
+
+```text
+KEY_CTRL_S
+     │
+     ▼
+SAVE_DOCUMENT
+```
+
+The important point is that the shortcut itself is still part of the input layer. The Input Engine recognizes the event and maps it to a command, but it does not perform the operation.
+
+## Navigation and Command Shortcuts
+
+The editor receives many different kinds of input.
+
+Some inputs directly represent navigation or editing actions:
+
+```text
+KEY_ARROW_LEFT
+KEY_ARROW_RIGHT
+KEY_ARROW_UP
+KEY_ARROW_DOWN
+KEY_BACKSPACE
+KEY_DELETE
+KEY_ENTER
+```
+
+Others represent application-level commands:
+
+```text
+KEY_CTRL_S
+KEY_CTRL_Q
+```
+
+Both follow the same mapping process:
+
+```text
+Input Event
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command
+```
+
+The Input Engine does not need separate mechanisms for these categories. The difference is in the command that the event represents.
+
+## Save Shortcut
+
+The baseline editor uses a keyboard shortcut to request a save operation:
+
+```text
+KEY_CTRL_S
+     │
+     ▼
+SAVE_DOCUMENT
+```
+
+The Input Engine only performs the mapping.
+
+The actual save operation belongs to the Command Engine:
+
+```text
+KEY_CTRL_S
+     │
+     ▼
+SAVE_DOCUMENT
+     │
+     ▼
+Command Engine
+     │
+     ▼
+Save current document
+```
+
+This separation means the input subsystem does not need to know how the document is represented, how the file is written, or how the Dirty Flag is updated.
+
+Those details belong to the command execution path and the components involved in performing the operation.
+
+## Exit Shortcut
+
+Similarly, the editor needs a keyboard shortcut for leaving the application:
+
+```text
+KEY_CTRL_Q
+     │
+     ▼
+QUIT_EDITOR
+```
+
+Again, the Input Engine does not terminate the program directly.
+
+It produces the appropriate command:
+
+```text
+KEY_CTRL_Q
+     ↓
+QUIT_EDITOR
+     ↓
+Command Engine
+     ↓
+Editor requests shutdown
+```
+
+The runtime lifecycle then determines how shutdown proceeds, including restoring the terminal before the application exits. The runtime model defines exit and cleanup as a separate phase of the application lifecycle.
+
+## Why Keep Shortcuts Out of Command Implementation?
+
+Consider a save operation.
+
+A poorly separated design might contain logic such as:
+
+```c
+if key == CTRL_S
+{
+    save_document();
+}
+```
+
+This makes the input mechanism directly responsible for file operations.
+
+The architecture used in this project instead separates the two:
+
+```c
+if event == KEY_CTRL_S
+{
+    command = SAVE_DOCUMENT;
+}
+```
+
+The resulting command is then dispatched to the Command Engine.
+
+This gives the save operation an identity independent of its keyboard shortcut.
+
+That distinction becomes important if the editor later supports configurable key bindings. The user could change which key triggers `SAVE_DOCUMENT` without changing the implementation of the save command itself.
+
+## Shortcuts Are Bindings, Not Behavior
+
+A useful way to think about keyboard shortcuts is:
+
+```text
+Keyboard Shortcut
+       │
+       │ binding
+       ▼
+Editor Command
+```
+
+The shortcut is a **binding** between an input event and a command.
+
+The command is the actual unit of editor behavior.
+
+For example:
+
+```text
+Ctrl+S ─────────► SAVE_DOCUMENT
+```
+
+Changing the binding:
+
+```text
+Ctrl+W ─────────► SAVE_DOCUMENT
+```
+
+would change how the command is triggered, but it would not change what `SAVE_DOCUMENT` means.
+
+This separation is especially useful in larger editors, where users often expect key bindings to be customizable.
+
+## Baseline Shortcut Set
+
+For the editor developed in this book, the initial shortcut set remains intentionally small:
+
+| Shortcut | Input Event  | Command         |
+| -------- | ------------ | --------------- |
+| Ctrl+S   | `KEY_CTRL_S` | `SAVE_DOCUMENT` |
+| Ctrl+Q   | `KEY_CTRL_Q` | `QUIT_EDITOR`   |
+
+Other keyboard operations use their corresponding key events:
+
+| Key         | Input Event       | Command                     |
+| ----------- | ----------------- | --------------------------- |
+| Left Arrow  | `KEY_ARROW_LEFT`  | `MOVE_CURSOR_LEFT`          |
+| Right Arrow | `KEY_ARROW_RIGHT` | `MOVE_CURSOR_RIGHT`         |
+| Up Arrow    | `KEY_ARROW_UP`    | `MOVE_CURSOR_UP`            |
+| Down Arrow  | `KEY_ARROW_DOWN`  | `MOVE_CURSOR_DOWN`          |
+| Backspace   | `KEY_BACKSPACE`   | `DELETE_PREVIOUS_CHARACTER` |
+| Delete      | `KEY_DELETE`      | `DELETE_CHARACTER`          |
+| Enter       | `KEY_ENTER`       | `SPLIT_LINE`                |
+
+The important architectural point is not the particular choice of shortcuts. It is that the mapping is explicit and remains separate from command execution.
+
+## What the Input Engine Knows
+
+When processing a keyboard shortcut, the Input Engine knows:
+
+- which input event was received;
+- whether that event has a defined binding;
+- which command the event maps to;
+- where that command should be dispatched.
+
+It does not need to know:
+
+- how saving works;
+- how files are written;
+- how cursor movement is implemented;
+- how lines are split;
+- how the screen is rendered;
+- how terminal shutdown is performed.
+
+This keeps the Input Engine small and focused.
+
+## What Happens When a Shortcut Is Not Defined?
+
+Not every possible key combination needs to have a command.
+
+For example, the user may press a control combination that the editor does not currently recognize.
+
+The Input Engine should simply determine that no command is associated with the event:
+
+```text
+Unknown Input Event
+       │
+       ▼
+No Mapping
+       │
+       ▼
+No Command
+       │
+       ▼
+Return to Event Loop
+```
+
+An unsupported shortcut should not accidentally trigger an unrelated command.
+
+This gives the input system a predictable rule:
+
+> **Only recognized input events produce commands.**
+
+Handling feedback for unsupported input, if the editor chooses to provide it, is a separate concern from the mapping itself.
+
+## Future Configurability
+
+The baseline editor uses fixed keyboard shortcuts because configurability is not required for the core implementation.
+
+Later, a more advanced editor could represent bindings as data:
+
+```text
+Ctrl+S  → SAVE_DOCUMENT
+Ctrl+Q  → QUIT_EDITOR
+```
+
+and allow users to change them through configuration.
+
+That capability belongs to the configuration and professional-feature work later in the book. It does not need to complicate the initial Input Engine.
+
+The important architectural decision is to establish the separation now:
+
+```text
+Input Event
+     │
+     ▼
+Key Binding
+     │
+     ▼
+Command
+```
+
+Once that boundary exists, the mechanism used to store or modify the bindings can evolve independently.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A keyboard shortcut is not the operation itself. It is one way of invoking an operation. Treating shortcuts as bindings rather than behavior keeps the editor's commands independent from the keyboard layout and makes future customization possible without redesigning the command system.
+
+</Aside>
+
+## Summary
+
+A keyboard shortcut is an input event that has been mapped to a command, such as `KEY_CTRL_S` to `SAVE_DOCUMENT`. Shortcuts are bindings, not behavior: they determine how an operation is triggered, while the command itself remains independent.
+
+The baseline editor keeps its shortcut set small, and any unrecognized input simply produces no command.
+
+Now that the mapped shortcuts are established, the next section examines how the editor should treat input that has no defined command.
+
+Continue to **Section 15.6, Unrecognized Input**.

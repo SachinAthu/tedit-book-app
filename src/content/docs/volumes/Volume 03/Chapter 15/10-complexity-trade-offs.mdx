@@ -1,0 +1,262 @@
+---
+title: 15.10 Complexity and Trade-offs
+description: Analyzes the Input Engine's constant-time mapping, memory use, and the trade-off between fixed bindings and future configurability.
+---
+
+The Input Engine performs a relatively small amount of work for each input event. Unlike document editing or rendering, input mapping is not expected to become a significant performance bottleneck for the editor.
+
+The important design questions are therefore less about raw performance and more about **simplicity, memory usage, maintainability, and future extensibility**.
+
+## Time Complexity
+
+For a `switch`-based implementation, the mapping operation is effectively constant-time for the fixed set of supported input events.
+
+Conceptually:
+
+```text
+Input Event
+    │
+    ▼
+Key Mapping
+    │
+    ▼
+Command
+```
+
+The number of supported commands is small and bounded by the editor's implementation. The mapping does not depend on the size of the document.
+
+Therefore, key dispatch can be treated as:
+
+```text
+Time: O(1)
+```
+
+The important point is that processing a key does not require searching through the document.
+
+For example, mapping:
+
+```text
+KEY_ARROW_LEFT
+```
+
+to:
+
+```text
+MOVE_CURSOR_LEFT
+```
+
+takes essentially the same amount of work regardless of whether the document contains ten lines or ten thousand lines.
+
+## Command Table Lookup
+
+A command table introduces a different consideration.
+
+If the Input Engine searches a simple array sequentially, the lookup cost depends on the number of mappings:
+
+```text
+Time: O(n)
+```
+
+where `n` is the number of registered key mappings.
+
+For the small fixed set of commands in this editor, this cost is negligible.
+
+The important observation is that `n` represents the number of **key bindings**, not the number of characters or lines in the document.
+
+A more sophisticated implementation could use a hash table or another indexed structure to achieve approximately constant-time lookup, but that would introduce additional complexity that the baseline editor does not need.
+
+## Space Complexity
+
+The Input Engine requires very little memory.
+
+A fixed mapping implemented with a `switch` statement requires essentially no runtime storage for the mapping itself.
+
+A table-based implementation stores the mappings explicitly:
+
+```text
+Input Event → Command
+```
+
+Its memory usage is proportional to the number of mappings:
+
+```text
+Space: O(n)
+```
+
+Again, `n` is expected to remain small for the baseline editor.
+
+The Input Engine should not store copies of the Document, Cursor, Viewport, or other Editor State. Keeping those objects out of the input layer is both an architectural and memory-management benefit.
+
+## Performance Is Not the Primary Concern
+
+It is tempting to optimize input dispatch because it occurs on every event. However, the amount of work involved is extremely small compared with operations such as:
+
+- modifying a long line;
+- rendering the screen;
+- writing a file;
+- processing large amounts of text.
+
+For this reason, the project should prioritize:
+
+1. clear responsibilities;
+2. simple implementation;
+3. predictable behavior;
+4. maintainability;
+
+over sophisticated input-dispatch optimization.
+
+The architecture already emphasizes simplicity and educational value over advanced optimization techniques.
+
+## Simplicity Versus Extensibility
+
+The main trade-off in the Input Engine is not performance. It is the balance between **simple fixed mappings** and **future configurability**.
+
+A fixed `switch` provides:
+
+- straightforward C code;
+- easy debugging;
+- explicit supported keys;
+- minimal runtime machinery.
+
+But it also means that changing a key binding requires modifying the implementation.
+
+A command table provides:
+
+- explicit mapping data;
+- easier addition of new bindings;
+- a natural foundation for configurable key bindings.
+
+But it introduces additional structures and lookup logic.
+
+The trade-off can be summarized as:
+
+| Approach                 | Runtime Cost | Complexity | Extensibility |
+| ------------------------ | -----------: | ---------: | ------------: |
+| `switch`                 |     Very low |        Low |      Moderate |
+| Sequential command table |          Low |   Moderate |          High |
+| Indexed/hash-based table |          Low |     Higher |     Very high |
+
+For the baseline editor, the simplest approach is sufficient.
+
+## Fixed Mappings Versus Configurable Mappings
+
+The current project deliberately uses a fixed set of keyboard mappings.
+
+For example:
+
+```text
+KEY_CTRL_S → SAVE_DOCUMENT
+KEY_CTRL_Q → QUIT_EDITOR
+```
+
+This keeps the implementation easy to understand.
+
+A future configuration system could instead allow:
+
+```text
+User Configuration
+        │
+        ▼
+Key Bindings
+        │
+        ▼
+Commands
+```
+
+That would make the Input Engine more flexible, but it would also introduce configuration parsing, validation, conflict detection, and possibly runtime rebinding.
+
+Those concerns belong to the later configuration work rather than the baseline Input Engine.
+
+## Architectural Cost
+
+Introducing a dedicated Input Engine does have a cost: there is another component and another boundary in the architecture.
+
+For a very small editor, the following might appear simpler:
+
+```text
+Input Parser
+      │
+      ▼
+Command Engine
+```
+
+The chosen architecture instead uses:
+
+```text
+Input Parser
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command Engine
+```
+
+This adds a layer, but the layer has a clear purpose: it separates **input events** from **commands**.
+
+That boundary becomes increasingly valuable as the number of commands and input bindings grows.
+
+The architecture therefore accepts a small amount of structural complexity in exchange for lower coupling and clearer responsibilities. This follows the project's established principle of assigning each component one primary responsibility.
+
+## Cache Locality and Data Access
+
+There is little need to discuss cache locality in depth for the Input Engine.
+
+The mapping operation accesses only a small amount of data, and the working set is tiny compared with the Document and rendering structures.
+
+Even a table-based mapping is likely to remain small enough to fit comfortably in the processor's cache.
+
+Therefore, cache locality should not drive the design here.
+
+The practical optimization is simply to avoid unnecessary allocations or complicated data structures for a problem that does not require them.
+
+## The Real Trade-off
+
+The most important trade-off can be summarized as:
+
+```text
+More Abstraction
+       │
+       ├── More Flexibility
+       ├── More Extensibility
+       └── More Complexity
+
+Less Abstraction
+       │
+       ├── Simpler Code
+       ├── Easier Learning
+       └── Less Flexibility
+```
+
+The project deliberately chooses the middle ground.
+
+The Input Engine is a separate architectural component, but its implementation remains simple. A small set of explicit mappings is enough for the baseline editor.
+
+This gives the reader a clean architecture without introducing infrastructure that the project does not yet need.
+
+## Complexity Summary
+
+The essential complexity characteristics are:
+
+| Property                   | Baseline Design                           |
+| -------------------------- | ----------------------------------------- |
+| Key mapping                | `O(1)` with fixed dispatch                |
+| Command-table lookup       | `O(n)` if sequential                      |
+| Mapping storage            | Minimal                                   |
+| Document dependence        | None                                      |
+| Input dispatch bottleneck  | No                                        |
+| Primary optimization goal  | Simplicity                                |
+| Primary architectural goal | Low coupling                              |
+| Future configurability     | Possible without changing command meaning |
+
+The Input Engine demonstrates an important engineering principle: **not every component needs sophisticated algorithms to be well designed**.
+
+Its value comes primarily from maintaining a clean boundary between terminal input and editor behavior. The implementation can remain small because the architecture, rather than algorithmic complexity, is doing most of the work.
+
+## Summary
+
+The Input Engine is intentionally simple: key dispatch is effectively `O(1)`, memory use is minimal, and performance is not the primary concern. The real trade-off is between simple fixed mappings and future configurability, and the baseline editor chooses the middle ground — a dedicated component with a straightforward implementation.
+
+The Input Engine demonstrates that a well-designed component does not need sophisticated algorithms. Its value comes from maintaining a clean boundary between terminal input and editor behavior.
+
+Continue to the **Chapter Summary**, which consolidates the Input Engine's responsibilities into a single contract, followed by exercises and a preview of the next chapter.

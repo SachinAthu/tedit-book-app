@@ -1,0 +1,136 @@
+---
+title: Chapter 15 — Input Engine
+description: Explains how the Input Engine maps parsed key events to editor commands, dispatches them, and keeps input separate from editor state and behavior.
+---
+
+## Introduction
+
+A terminal text editor receives input as a continuous stream of keyboard events, but the rest of the editor should not need to understand how those events were produced.
+
+Earlier chapters established how terminals deliver keyboard input and how raw bytes can be interpreted as meaningful key events. At that point, the low-level terminal details have served their purpose. The editor can now work with abstractions such as `KEY_ARROW_LEFT`, `KEY_BACKSPACE`, `KEY_ENTER`, and `KEY_CTRL_S` rather than dealing with bytes and escape sequences directly.
+
+The next problem is deciding what those events mean to the editor.
+
+For example, when the Input Parser produces:
+
+```text
+KEY_ARROW_LEFT
+```
+
+the editor needs to interpret that event as a request to move the cursor left. When it receives:
+
+```text
+KEY_CTRL_S
+```
+
+it needs to interpret it as a request to save the current document.
+
+This creates an important boundary:
+
+```text
+Terminal Input
+      │
+      ▼
+Input Handler
+      │
+      ▼
+Input Parser
+      │
+      ▼
+Key Event
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command
+      │
+      ▼
+Command Engine
+```
+
+The **Input Engine** sits between input representation and editor behavior. Its responsibility is to take an already-parsed key event, determine which editor command it represents, and dispatch that command for execution.
+
+This distinction is important. The Input Engine does not move the cursor, modify the document, save a file, or render the screen. Those operations belong to other parts of the architecture. Instead, it answers a narrower question:
+
+> **What should this input request the editor to do?**
+
+For example:
+
+```text
+KEY_ARROW_LEFT  →  MOVE_CURSOR_LEFT
+KEY_BACKSPACE   →  DELETE_PREVIOUS_CHARACTER
+KEY_ENTER       →  SPLIT_LINE
+KEY_CTRL_S      →  SAVE_DOCUMENT
+KEY_CTRL_Q      →  QUIT_EDITOR
+```
+
+The actual implementation of these commands will be the subject of the next chapter.
+
+This separation gives the editor a clean flow from physical input to application behavior:
+
+```text
+Raw Bytes
+    │
+    ▼
+Parsed Key Event
+    │
+    ▼
+Input Mapping
+    │
+    ▼
+Editor Command
+    │
+    ▼
+Command Execution
+    │
+    ▼
+Editor State
+```
+
+The architecture defined earlier already separates input processing, command mapping, command execution, and editor state, with parsed key events flowing from the Input Handler through the Input Parser to the Input Engine, which maps them to commands for the Command Engine to execute. This chapter examines the **Input Engine** in detail — the component that sits between the Input Parser and the Command Engine and makes that boundary explicit — without introducing another source of editor state or duplicating responsibilities that belong to the Command Engine.
+
+The goal of this chapter is therefore not to teach keyboard input again. Instead, it is to understand how a clean editor turns **what the user pressed** into **what the editor should attempt to do**.
+
+## Learning Objectives
+
+By the end of this chapter, you should be able to:
+
+- Explain the responsibility of the Input Engine within the editor architecture.
+- Distinguish a **key event** from an **editor command**.
+- Explain how parsed key events are mapped to editor commands.
+- Understand how keyboard shortcuts are dispatched without coupling input handling to editor operations.
+- Identify appropriate responsibilities for the Input Engine and responsibilities that belong to the Command Engine.
+- Compare simple command-dispatch approaches such as conditional logic, `switch` statements, and command tables.
+- Explain how unrecognized or unsupported input should be handled.
+- Describe the complete flow from a parsed key event to command execution.
+- Define a clear contract between the Input Engine and the Command Engine.
+- Recognize common architectural mistakes that mix input processing with document editing, cursor management, rendering, or file operations.
+
+By the end of the chapter, the input path should be conceptually clear:
+
+```text
+Key Event
+    ↓
+Input Engine
+    ↓
+Command
+    ↓
+Command Engine
+```
+
+The following chapter will build on this boundary by examining what happens when those commands are actually executed.
+
+## Sections
+
+- [15.1 What the Input Engine Is Responsible For](/volumes/volume-03/chapter-15/01-input-engine-responsible/)
+- [15.2 Input Events as an Abstraction](/volumes/volume-03/chapter-15/02-input-events-as-abstraction/)
+- [15.3 From Keys to Commands](/volumes/volume-03/chapter-15/03-keys-to-commands/)
+- [15.4 Key Mapping and Dispatch](/volumes/volume-03/chapter-15/04-key-mapping-dispatch/)
+- [15.5 Keyboard Shortcuts](/volumes/volume-03/chapter-15/05-keyboard-shortcuts/)
+- [15.6 Unrecognized Input](/volumes/volume-03/chapter-15/06-unrecognized-input/)
+- [15.7 Input Engine and Editor State](/volumes/volume-03/chapter-15/07-input-engine-editor-state/)
+- [15.8 Input Processing Lifecycle](/volumes/volume-03/chapter-15/08-input-processing-lifecycle/)
+- [15.9 Design Alternatives](/volumes/volume-03/chapter-15/09-design-alternatives/)
+- [15.10 Complexity and Trade-offs](/volumes/volume-03/chapter-15/10-complexity-trade-offs/)
+- [15.11 Conclusion](/volumes/volume-03/chapter-15/11-conclusion/)

@@ -1,0 +1,256 @@
+---
+title: 15.1 What the Input Engine Is Responsible For
+description: Defines the Input Engine's narrow role of translating parsed key events into commands, dispatching them, and avoiding document or cursor work.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The Input Engine has a deliberately narrow responsibility: **it translates parsed input events into editor commands and dispatches those commands for execution**.
+
+By the time an event reaches the Input Engine, the low-level details of terminal input have already been handled. The Input Handler has obtained the input, and the Input Parser has interpreted the raw byte stream. The Input Engine should therefore work with meaningful editor-level events rather than terminal-specific bytes.
+
+The boundary looks like this:
+
+```text
+Terminal
+    │
+    ▼
+Input Handler
+    │
+    │ raw bytes
+    ▼
+Input Parser
+    │
+    │ key events
+    ▼
+Input Engine
+    │
+    │ commands
+    ▼
+Command Engine
+```
+
+This separation gives each stage a clear purpose.
+
+## Receiving Key Events
+
+The Input Engine receives abstract key events such as:
+
+```text
+KEY_CHARACTER('a')
+KEY_ARROW_LEFT
+KEY_ARROW_RIGHT
+KEY_ARROW_UP
+KEY_ARROW_DOWN
+KEY_BACKSPACE
+KEY_DELETE
+KEY_ENTER
+KEY_CTRL_S
+KEY_CTRL_Q
+```
+
+It does not need to know how these events were represented by the terminal.
+
+For example, an arrow key may have arrived from the terminal as an escape sequence. That information belongs to the Input Parser. Once the parser has produced:
+
+```text
+KEY_ARROW_LEFT
+```
+
+the Input Engine simply treats it as a left-arrow event.
+
+This creates an important architectural boundary:
+
+> **The Input Parser understands terminal input. The Input Engine understands editor input.**
+
+## Mapping Events to Commands
+
+The primary job of the Input Engine is to determine what editor command corresponds to each key event.
+
+For example:
+
+| Key Event         | Editor Command              |
+| ----------------- | --------------------------- |
+| `KEY_ARROW_LEFT`  | `MOVE_CURSOR_LEFT`          |
+| `KEY_ARROW_RIGHT` | `MOVE_CURSOR_RIGHT`         |
+| `KEY_ARROW_UP`    | `MOVE_CURSOR_UP`            |
+| `KEY_ARROW_DOWN`  | `MOVE_CURSOR_DOWN`          |
+| `KEY_BACKSPACE`   | `DELETE_PREVIOUS_CHARACTER` |
+| `KEY_DELETE`      | `DELETE_CHARACTER`          |
+| `KEY_ENTER`       | `SPLIT_LINE`                |
+| `KEY_CTRL_S`      | `SAVE_DOCUMENT`             |
+| `KEY_CTRL_Q`      | `QUIT_EDITOR`               |
+
+The Input Engine does not perform these operations itself. It establishes the relationship between the user's input and the requested operation.
+
+For example:
+
+```text
+KEY_ARROW_LEFT
+       │
+       ▼
+MOVE_CURSOR_LEFT
+```
+
+The Input Engine answers:
+
+> "What command does this event represent?"
+
+The Command Engine will later answer:
+
+> "How should this command change the editor?"
+
+Keeping these questions separate prevents input-handling code from becoming tightly coupled to document editing, cursor management, or file operations.
+
+## Handling Keyboard Shortcuts
+
+Some input events represent direct editing or navigation actions, while others represent commands that control the application.
+
+For example:
+
+```text
+KEY_ARROW_LEFT
+        │
+        ▼
+MOVE_CURSOR_LEFT
+```
+
+is a navigation command, whereas:
+
+```text
+KEY_CTRL_S
+        │
+        ▼
+SAVE_DOCUMENT
+```
+
+is an application command.
+
+The Input Engine provides the same abstraction for both. It does not need special knowledge of how saving works or how cursor movement is implemented. It only needs to recognize the input and associate it with the appropriate command.
+
+This is particularly useful as the editor grows. New shortcuts can be added to the input mapping without embedding the implementation of those features into the input subsystem.
+
+## Dispatching Commands
+
+After identifying the appropriate command, the Input Engine passes it to the Command Engine.
+
+The complete interaction becomes:
+
+```text
+Key Event
+    │
+    ▼
+Input Engine
+    │
+    │ map
+    ▼
+Command
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Editor State
+```
+
+The Input Engine therefore acts as a translator and dispatcher rather than an executor.
+
+This distinction is important because the architecture defines the Command Engine as the component responsible for determining which editing operation should occur and coordinating state changes. The Input Engine should not bypass that boundary.
+
+## What the Input Engine Does Not Do
+
+Defining what a component **does not** do is just as important as defining what it does.
+
+The Input Engine should not:
+
+- read raw terminal bytes;
+- parse ANSI escape sequences;
+- interpret UTF-8 byte sequences;
+- modify the Document;
+- move the Cursor directly;
+- change the Viewport;
+- save or load files;
+- render the screen;
+- modify terminal settings;
+- maintain a second copy of Editor State.
+
+Those responsibilities belong to other components.
+
+The distinction can be summarized as:
+
+```text
++-------------------+----------------------------------+
+| Component         | Responsibility                   |
++-------------------+----------------------------------+
+| Input Handler     | Read raw terminal input          |
+| Input Parser      | Decode raw bytes into key events |
+| Input Engine      | Map events to commands           |
+| Command Engine    | Execute commands                 |
+| Editor State      | Store application state          |
+| Renderer          | Display application state        |
++-------------------+----------------------------------+
+```
+
+The architecture therefore avoids a common design mistake: allowing one component to gradually accumulate unrelated responsibilities simply because it happens to receive keyboard input.
+
+## Why This Boundary Matters
+
+It may initially seem unnecessary to separate input parsing, input mapping, and command execution. For a small editor, putting everything into one function might even appear simpler.
+
+For example:
+
+```text
+read key
+    ↓
+if Ctrl+S
+    ↓
+save file
+```
+
+But this approach connects three different concerns:
+
+```text
+Terminal Input
+      +
+Key Interpretation
+      +
+File Operation
+```
+
+As more features are added, the input-handling code becomes increasingly difficult to understand and maintain.
+
+The layered approach instead keeps the path explicit:
+
+```text
+Raw Input
+    ↓
+Parsed Event
+    ↓
+Mapped Command
+    ↓
+Command Execution
+    ↓
+State Update
+```
+
+Each stage has one clear question to answer.
+
+This follows the broader architectural principle established earlier: **components should have clearly defined responsibilities, low coupling, and well-defined boundaries**.
+
+The Input Engine is therefore intentionally small. Its value does not come from performing complicated work. Its value comes from creating a clean boundary between **input** and **behavior**.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A component can be valuable precisely because it prevents unrelated responsibilities from becoming coupled. Good architecture is often about deciding what a component should _not_ know.
+
+</Aside>
+
+## Summary
+
+The Input Engine has a single, narrow responsibility: it translates parsed input events into editor commands and dispatches those commands to the Command Engine. It does not read raw terminal bytes, parse escape sequences, modify the Document, or perform any editing operation itself.
+
+This boundary keeps input handling separate from editor behavior. The Input Parser understands terminal input; the Input Engine understands editor input; the Command Engine executes the resulting command.
+
+Now that we know what the Input Engine is responsible for, the next section examines the abstraction it works with: input events.
+
+Continue to **Section 15.2, Input Events as an Abstraction**.

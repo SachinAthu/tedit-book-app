@@ -1,0 +1,269 @@
+---
+title: 15.9 Design Alternatives
+description: Compares handling input in the main loop, parser dispatch, a dedicated Input Engine, and a command table, explaining the chosen boundary.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+There are several ways to organize the path between keyboard input and editor behavior. A small editor does not require a sophisticated input architecture, but the choice still matters because the input layer sits at an important boundary between the terminal and the rest of the application.
+
+The main alternatives are:
+
+1. Handle everything in the main loop.
+2. Let the Input Parser dispatch commands directly.
+3. Introduce a separate Input Engine.
+4. Use a data-driven command mapping table.
+
+These approaches can produce similar behavior, but they differ in responsibility, coupling, and extensibility.
+
+## Alternative 1 — Handle Input Directly in the Main Loop
+
+The simplest design is to place input handling and command selection directly inside the main event loop.
+
+Conceptually:
+
+```text
+Event Loop
+    │
+    ▼
+Read Input
+    │
+    ▼
+Interpret Key
+    │
+    ▼
+Execute Operation
+```
+
+For example:
+
+```c
+if key == KEY_ARROW_LEFT
+    move_cursor_left();
+
+if key == KEY_CTRL_S
+    save_document();
+```
+
+This approach has one obvious advantage: there are fewer components.
+
+For a tiny prototype, that can be acceptable.
+
+However, the main loop quickly becomes responsible for several unrelated concerns:
+
+```text
+Main Loop
+ ├── Input
+ ├── Key Mapping
+ ├── Commands
+ ├── State Updates
+ └── Application Control
+```
+
+As the editor grows, the loop becomes a central collection point for behavior that should belong to separate components.
+
+It also makes the runtime model harder to understand because the event loop is no longer simply coordinating the application. It is implementing application behavior itself.
+
+The project architecture therefore does not use this approach.
+
+## Alternative 2 — Let the Input Parser Dispatch Commands
+
+Another possibility is to have the Input Parser perform both input parsing and command mapping:
+
+```text
+Raw Bytes
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Command
+```
+
+This removes the separate Input Engine.
+
+At first glance, this seems reasonable because the parser already receives the input and knows what key was pressed.
+
+However, it gives the Input Parser two different responsibilities.
+
+It would need to understand:
+
+- terminal byte sequences;
+- control characters;
+- escape sequences;
+- editor key events;
+- editor commands.
+
+The parser would therefore no longer be concerned only with translating terminal input into an abstract representation.
+
+The boundary established earlier would become:
+
+```text
+Terminal Protocol
+        │
+        ▼
+Input Parser
+        │
+        ▼
+Editor Behavior
+```
+
+That creates unnecessary coupling between terminal-specific parsing and editor-specific commands.
+
+The dedicated Input Parser exists specifically to prevent this coupling. ADR-004 establishes the separation between raw input parsing and higher-level editor logic.
+
+## Alternative 3 — Use a Dedicated Input Engine
+
+The architecture chosen for this project introduces an explicit Input Engine:
+
+```text
+Input Handler
+      │
+      ▼
+Input Parser
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command Engine
+```
+
+Each stage has a focused responsibility.
+
+| Component      | Responsibility                  |
+| -------------- | ------------------------------- |
+| Input Handler  | Read raw terminal input         |
+| Input Parser   | Convert bytes into input events |
+| Input Engine   | Map events to commands          |
+| Command Engine | Execute commands                |
+
+This adds one component compared with the simpler alternatives, but it creates a clear boundary between terminal input and editor behavior.
+
+The Input Engine can work entirely with abstract events:
+
+```text
+KEY_ARROW_LEFT
+       │
+       ▼
+MOVE_CURSOR_LEFT
+```
+
+It does not need to understand how the terminal represented the key.
+
+Likewise, the Command Engine does not need to know which keyboard event caused the command.
+
+This is the approach selected by the architecture because the project prioritizes clear responsibilities, low coupling, and maintainability.
+
+## Alternative 4 — Use a Command Mapping Table
+
+Instead of embedding mappings in conditional logic or a `switch`, the editor could store them in a table:
+
+```text
++------------------+----------------------+
+| Input Event      | Command              |
++------------------+----------------------+
+| KEY_ARROW_LEFT   | MOVE_CURSOR_LEFT     |
+| KEY_ARROW_RIGHT  | MOVE_CURSOR_RIGHT    |
+| KEY_ARROW_UP     | MOVE_CURSOR_UP       |
+| KEY_ARROW_DOWN   | MOVE_CURSOR_DOWN     |
+| KEY_BACKSPACE    | DELETE_PREVIOUS_CHARACTER |
+| KEY_ENTER        | SPLIT_LINE               |
+| KEY_CTRL_S       | SAVE_DOCUMENT            |
+| KEY_CTRL_Q       | QUIT_EDITOR              |
++------------------+----------------------+
+```
+
+The Input Engine would search the mapping and obtain the corresponding command.
+
+This makes the relationship between input and commands explicit as data rather than control flow.
+
+It also provides a natural foundation for configurable key bindings:
+
+```text
+Configuration
+      │
+      ▼
+Key Mapping Table
+      │
+      ▼
+Command
+```
+
+However, a generalized mapping system introduces additional machinery that is not necessary for the baseline editor.
+
+The project intentionally keeps the initial implementation simple. Configurable settings and user-defined key bindings are considered later extensions rather than requirements of the core editor.
+
+## Comparing the Alternatives
+
+The main differences can be summarized as follows:
+
+| Approach                     | Simplicity     | Separation | Extensibility | Baseline Choice |
+| ---------------------------- | -------------- | ---------- | ------------- | --------------- |
+| Main loop handles everything | High initially | Low        | Low           | No              |
+| Parser dispatches commands   | Moderate       | Low        | Moderate      | No              |
+| Dedicated Input Engine       | High           | High       | High          | **Yes**         |
+| Data-driven mapping table    | Moderate       | High       | Very high     | Later option    |
+
+The important distinction is not that one approach is universally superior.
+
+For a tiny prototype, combining responsibilities may be entirely reasonable. As the application grows, however, those shortcuts make the architecture harder to maintain.
+
+The design selected for this editor deliberately favors explicit boundaries:
+
+```text
+Input Handler
+      │
+      ▼
+Input Parser
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command Engine
+      │
+      ▼
+Editor State
+```
+
+## The Important Trade-off
+
+The dedicated Input Engine is not chosen because the editor requires a complex input-dispatch algorithm.
+
+It is chosen because **the boundary is valuable**.
+
+The actual mapping may remain as simple as a `switch` statement:
+
+```c
+switch (event.type)
+{
+    case KEY_ARROW_LEFT:
+        ...
+        break;
+
+    case KEY_CTRL_S:
+        ...
+        break;
+}
+```
+
+There is no need to introduce a framework, plugin system, or generalized command registry merely to dispatch a handful of commands.
+
+The architecture should therefore remain simple internally while maintaining clean boundaries externally.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Good architecture does not mean adding abstractions everywhere. It means introducing an abstraction when the boundary it creates provides meaningful value. In this editor, the Input Engine earns its place because it separates terminal input concerns from editor command behavior without requiring a complicated implementation.
+
+</Aside>
+
+## Summary
+
+Several designs can organize the path between keyboard input and editor behavior: handling everything in the main loop, letting the Input Parser dispatch commands, using a dedicated Input Engine, or relying on a data-driven mapping table.
+
+The dedicated Input Engine is chosen not because it is the most complex approach, but because it creates a valuable boundary between terminal input and editor behavior while keeping the implementation simple.
+
+Now that the design alternatives are compared, the next section examines the complexity and trade-offs of the chosen approach.
+
+Continue to **Section 15.10, Complexity and Trade-offs**.

@@ -1,0 +1,125 @@
+---
+title: 15.11 Conclusion
+description: Recaps the Input Engine contract and dispatch boundary, then provides review questions, thought experiments, common mistakes, and a preview.
+---
+
+The **Input Engine** answers a single question: _what should this input request the editor to do?_ It translates **what the user pressed** into **what the editor should attempt to do** — and nothing more. It receives already-parsed input events, determines which editor command each event represents, and dispatches that command to the Command Engine, which decides **how that operation changes the editor**.
+
+The foundation of this design is the input-event abstraction. The Input Parser understands the terminal protocol and converts raw bytes into meaningful key events such as `KEY_ARROW_LEFT` and `KEY_CTRL_S`. The Input Engine works entirely with those events and never with the underlying byte sequences. Events describe meaning, not encoding, and the event model forms a contract between the Input Parser and the Input Engine.
+
+Mapping events to commands keeps input separate from editor behavior. `KEY_ARROW_LEFT` maps to `MOVE_CURSOR_LEFT`, `KEY_CTRL_S` maps to `SAVE_DOCUMENT`, and printable characters become `INSERT_CHARACTER(c)` commands that carry their value. A keyboard shortcut is simply a binding between an input event and a command: it determines how an operation is triggered, while the command itself remains independent. For the baseline editor, a `switch`-based mapping is the practical choice, while a data-driven command table is reserved for future configurability.
+
+The Input Engine stops at the dispatch boundary. It does not execute commands, modify the Document, move the Cursor, change the Viewport, save files, or render the screen. Unrecognized input produces no command and simply returns control to the event loop. Because the Input Engine never modifies Editor State directly, Editor State remains the single source of truth, and command execution becomes the controlled boundary through which state changes occur. Every input therefore follows the same path: parse, map, dispatch, execute, render, and return to the event loop.
+
+```text
+Raw Bytes
+    ↓
+Input Parser
+    ↓
+Key Events
+    ↓
+Input Engine
+    ↓
+Commands
+    ↓
+Command Engine
+```
+
+## Input Engine Contract
+
+The Input Engine's responsibilities can now be expressed as a concise contract, parallel to the Cursor contract established in Chapter 14.
+
+| Responsibility         | Input Engine |
+| ---------------------- | ------------ |
+| Read terminal bytes    | No           |
+| Parse escape sequences | No           |
+| Receive key events     | Yes          |
+| Map events to commands | Yes          |
+| Handle shortcuts       | Yes          |
+| Modify Document        | No           |
+| Move Cursor            | No           |
+| Save files             | No           |
+| Render screen          | No           |
+| Dispatch commands      | Yes          |
+
+This contract gives the reader a precise boundary before entering Chapter 16.
+
+The central design choice — introducing a dedicated Input Engine that maps events to commands rather than assigning that work to the Input Parser or the Command Engine — is recorded as **ADR-015: Input Engine**.
+
+## Exercises
+
+### Review Questions
+
+1. What is the difference between an input event and an editor command?
+2. Why should the Input Engine work with input events rather than raw terminal bytes?
+3. Which component decodes raw bytes into key events, and which component maps those events to commands?
+4. Why is mapping a keyboard shortcut to a command different from executing the operation itself?
+5. What should happen when the Input Engine receives an input event that has no defined mapping?
+6. Why should the Input Engine never modify Editor State directly?
+7. What is the advantage of a `switch`-based mapping over a long conditional chain?
+8. When would a data-driven command table become preferable to a `switch` statement?
+
+### Thought Experiments
+
+1. Consider the mapping `KEY_BACKSPACE` → `DELETE_PREVIOUS_CHARACTER`. The Backspace key may arrive from the terminal as a control character such as `\x7f`. Explain which components understand each representation and why the Input Engine should never see the raw byte.
+
+2. Suppose a future version of the editor lets the user rebind shortcuts through a configuration file, changing `Ctrl+S` to `Ctrl+W` for `SAVE_DOCUMENT`. Explain why this change does not require modifying the Command Engine or the meaning of the `SAVE_DOCUMENT` command.
+
+3. Imagine the Input Engine directly modified the Cursor on `KEY_ARROW_LEFT`. List the cursor rules, document structures, and state details the Input Engine would suddenly need to understand, and explain why this violates the architecture established in this chapter.
+
+### Design Exercise
+
+1. Draw the complete path for pressing `Ctrl+S` in a correctly structured editor, labeling each stage: Input Handler, Input Parser, Input Engine, Command Engine, and Editor State. For each stage, state the single question it answers and the information it passes to the next stage.
+
+## Common Mistakes
+
+### Putting editing logic in input handling
+
+```text
+if (key == CTRL_S)
+    save_file();
+```
+
+This couples input processing to file operations.
+
+### Parsing terminal sequences in the Command Engine
+
+The Command Engine should never need to know what bytes represent an arrow key.
+
+### Allowing the renderer to respond to keys
+
+Rendering should remain state-driven.
+
+### Making the Input Engine modify Editor State directly
+
+That bypasses the Command Engine.
+
+### Mixing unknown-key handling with command execution
+
+Unsupported input should have a defined path rather than accidentally triggering something.
+
+## Preview of the Next Chapter
+
+Chapter 15 stops at the dispatch boundary: it determines which command an input represents and hands that command to the Command Engine. Chapter 16 now answers the question this chapter deliberately leaves open:
+
+> **What happens when a command is dispatched?**
+
+It will move from:
+
+```text
+Key Event
+    ↓
+Command
+```
+
+to:
+
+```text
+Command
+    ↓
+Command Execution
+    ↓
+Document / Cursor / File / Editor State
+```
+
+There, we will introduce the Command Engine, the component responsible for executing commands and coordinating the resulting state changes. We will examine the actual operations the Input Engine has been mapping to all along — **Move cursor**, **Insert**, **Delete previous character**, **Delete character**, **Split line**, **Save**, and **Quit** — and see how each command inspects the current Editor State, performs its operation, and leaves the state consistent. By the end of the chapter, the path from a key press to a completed state change will be fully connected.

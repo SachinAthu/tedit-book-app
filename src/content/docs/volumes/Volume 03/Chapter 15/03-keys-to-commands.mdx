@@ -1,0 +1,377 @@
+---
+title: 15.3 From Keys to Commands
+description: Shows how input events map to editor commands, why commands express intent rather than keys, and why mapping is separate from execution.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+An input event tells the editor **what the user pressed**. A command tells the editor **what operation should be requested**.
+
+The Input Engine connects these two concepts.
+
+The transition is:
+
+```text
+Input Event
+    │
+    ▼
+Input Mapping
+    │
+    ▼
+Editor Command
+```
+
+For example:
+
+```text
+KEY_ARROW_LEFT
+        │
+        ▼
+MOVE_CURSOR_LEFT
+```
+
+or:
+
+```text
+KEY_CTRL_S
+        │
+        ▼
+SAVE_DOCUMENT
+```
+
+The mapping itself is simple, but the separation is architecturally important. The Input Engine should recognize the user's input without implementing the operation represented by that input.
+
+## Input Events and Commands Are Different
+
+It is tempting to treat an input event and a command as the same thing. They are related, but they represent different layers of the system.
+
+An **input event** describes an interaction:
+
+```text
+KEY_BACKSPACE
+```
+
+A **command** describes an editor operation:
+
+```text
+DELETE_PREVIOUS_CHARACTER
+```
+
+The distinction becomes clearer when the same command can potentially be triggered by different inputs.
+
+For example:
+
+```text
+KEY_BACKSPACE
+      │
+      ├──────► DELETE_PREVIOUS_CHARACTER
+      │
+KEY_CTRL_H
+      │
+      └──────► DELETE_PREVIOUS_CHARACTER
+```
+
+The exact key bindings are a design decision, but the important principle is that the command does not need to know which key caused it.
+
+This creates a useful separation:
+
+```text
+Input Layer
+"What did the user press?"
+
+        ↓
+
+Command Layer
+"What operation does that represent?"
+```
+
+The command therefore represents editor intent rather than a particular physical key.
+
+## The Core Input Mapping
+
+For the baseline editor, the initial mapping can be represented as:
+
+| Input Event        | Command                     |
+| ------------------ | --------------------------- |
+| `KEY_CHARACTER(c)` | `INSERT_CHARACTER(c)`       |
+| `KEY_ARROW_LEFT`   | `MOVE_CURSOR_LEFT`          |
+| `KEY_ARROW_RIGHT`  | `MOVE_CURSOR_RIGHT`         |
+| `KEY_ARROW_UP`     | `MOVE_CURSOR_UP`            |
+| `KEY_ARROW_DOWN`   | `MOVE_CURSOR_DOWN`          |
+| `KEY_BACKSPACE`    | `DELETE_PREVIOUS_CHARACTER` |
+| `KEY_DELETE`       | `DELETE_CHARACTER`          |
+| `KEY_ENTER`        | `SPLIT_LINE`                |
+| `KEY_TAB`          | `INSERT_CHARACTER(U+0009)`  |
+| `KEY_CTRL_S`       | `SAVE_DOCUMENT`             |
+| `KEY_CTRL_Q`       | `QUIT_EDITOR`               |
+
+This table defines the relationship between the input vocabulary established in the previous section and the editor operations that will be implemented in Chapter 16.
+
+Notice that the table does **not** describe how these commands work.
+
+For example, `KEY_BACKSPACE` is mapped to `DELETE_PREVIOUS_CHARACTER`, but this chapter does not determine how the document is modified when that command executes. That is the responsibility of the Command Engine.
+
+## Character Input Is Also a Command
+
+Printable characters deserve special attention because they carry data in addition to identifying an input event.
+
+Consider:
+
+```text
+KEY_CHARACTER('a')
+```
+
+The character itself becomes part of the command:
+
+```text
+INSERT_CHARACTER('a')
+```
+
+Likewise:
+
+```text
+KEY_CHARACTER('x')
+```
+
+becomes:
+
+```text
+INSERT_CHARACTER('x')
+```
+
+The mapping therefore does not always produce a command with no arguments. Some commands carry information from the input event into the command request.
+
+Conceptually:
+
+```text
+KEY_CHARACTER(c)
+        │
+        │ preserve c
+        ▼
+INSERT_CHARACTER(c)
+```
+
+This allows the same command type to represent insertion of any printable character without creating a separate command for every possible character.
+
+## Commands Express Editor Intent
+
+Commands should be expressed in terms of the editor rather than the keyboard.
+
+Compare:
+
+```text
+ARROW_LEFT_PRESSED
+```
+
+with:
+
+```text
+MOVE_CURSOR_LEFT
+```
+
+The first describes an input event. The second describes an editor operation.
+
+This distinction becomes increasingly valuable as the editor grows. A command such as:
+
+```text
+SAVE_DOCUMENT
+```
+
+does not care whether it was triggered by:
+
+```text
+KEY_CTRL_S
+```
+
+or by another future input mechanism.
+
+The command represents the operation independently of its trigger.
+
+```text
+              ┌── KEY_CTRL_S ──┐
+              │                │
+              ▼                │
+        SAVE_DOCUMENT ◄────────┘
+              ▲
+              │
+      another possible
+        input source
+```
+
+This keeps commands independent from terminal-specific input handling.
+
+## Mapping Does Not Mean Executing
+
+A critical boundary must be maintained between **mapping** and **execution**.
+
+The Input Engine performs:
+
+```text
+KEY_CTRL_S
+    ↓
+SAVE_DOCUMENT
+```
+
+It does not perform:
+
+```text
+open file
+write document
+update dirty flag
+display success message
+```
+
+Those are consequences of executing the `SAVE_DOCUMENT` command.
+
+The complete flow is:
+
+```text
+KEY_CTRL_S
+    │
+    ▼
+Input Engine
+    │
+    │ map
+    ▼
+SAVE_DOCUMENT
+    │
+    ▼
+Command Engine
+    │
+    │ execute
+    ▼
+Editor State
+```
+
+This separation prevents the Input Engine from becoming coupled to the implementation details of individual editor operations.
+
+The system architecture explicitly assigns command execution to the Command Engine, while the Input layer is responsible for handling and interpreting user input.
+
+## Why Not Execute Commands Directly?
+
+For a small editor, it might seem simpler to write:
+
+```c
+if key == CTRL_S
+    save_file()
+```
+
+This works initially, but it combines input handling with command implementation.
+
+As the number of commands increases, the input layer would gradually become responsible for:
+
+- document editing;
+- cursor movement;
+- file operations;
+- application lifecycle;
+- status messages;
+- and other editor behavior.
+
+The resulting code would have many unrelated responsibilities in one place.
+
+The cleaner approach is:
+
+```c
+if key == CTRL_S
+    command = SAVE_DOCUMENT
+```
+
+followed by:
+
+```c
+execute(command)
+```
+
+Now the input layer only determines **which command was requested**, while the Command Engine determines **how that command is performed**.
+
+## A Command as a Stable Interface
+
+The command provides a stable interface between input and editor behavior.
+
+```text
++----------------+
+|   Input Layer  |
++----------------+
+        │
+        │ Command
+        ▼
++----------------+
+| Command Engine |
++----------------+
+        │
+        ▼
++----------------+
+|  Editor State  |
++----------------+
+```
+
+This means changes on one side do not necessarily require changes on the other.
+
+For example, changing a keyboard shortcut from:
+
+```text
+Ctrl+S
+```
+
+to another supported key combination changes the input mapping, but the `SAVE_DOCUMENT` command itself remains unchanged.
+
+Similarly, the implementation of saving can evolve without changing the meaning of `SAVE_DOCUMENT`.
+
+This is one of the main benefits of separating **input bindings** from **commands**.
+
+## The Boundary Between Chapters 15 and 16
+
+At this point, the input path should stop at the command.
+
+Chapter 15 establishes:
+
+```text
+KEY_ARROW_LEFT
+        ↓
+MOVE_CURSOR_LEFT
+```
+
+Chapter 16 will explain:
+
+```text
+MOVE_CURSOR_LEFT
+        ↓
+Cursor movement
+        ↓
+Editor State update
+```
+
+Likewise, Chapter 15 establishes:
+
+```text
+KEY_CTRL_S
+        ↓
+SAVE_DOCUMENT
+```
+
+while Chapter 16 will explain what executing `SAVE_DOCUMENT` actually involves.
+
+This boundary keeps the two chapters focused on different questions:
+
+| Chapter                     | Question                                     |
+| --------------------------- | -------------------------------------------- |
+| Chapter 15 — Input Engine   | **Which command does this input represent?** |
+| Chapter 16 — Command Engine | **How is that command executed?**            |
+
+That distinction will become increasingly important as the editor gains more commands and, eventually, configurable key bindings.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Keyboard shortcuts are input bindings; they are not editor behavior. Keeping those concepts separate makes the editor easier to modify because changing how an operation is triggered does not require changing how the operation itself works.
+
+</Aside>
+
+## Summary
+
+An input event describes what the user pressed; a command describes which editor operation is requested. The Input Engine connects the two through an explicit mapping, but it never executes the operation itself — mapping and execution remain separate concerns.
+
+This separation gives commands a stable identity independent of the keys that trigger them, and it defines the boundary between Chapter 15 and Chapter 16.
+
+Now that events can be mapped to commands, the next section examines the mechanisms used to perform that mapping and dispatch the result.
+
+Continue to **Section 15.4, Key Mapping and Dispatch**.

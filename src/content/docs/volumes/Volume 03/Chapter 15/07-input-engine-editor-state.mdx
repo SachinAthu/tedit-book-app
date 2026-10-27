@@ -1,0 +1,325 @@
+---
+title: 15.7 Input Engine and Editor State
+description: Explains why the Input Engine does not own or modify Editor State, instead producing commands that the Command Engine applies.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The Input Engine sits close to the Editor State in the runtime flow, but it does not own or directly modify that state.
+
+Its responsibility ends when an input event has been translated into a command and that command has been dispatched to the Command Engine.
+
+The separation is:
+
+```text
+Input Event
+    │
+    ▼
+Input Engine
+    │
+    │ produces command
+    ▼
+Command Engine
+    │
+    │ executes command
+    ▼
+Editor State
+```
+
+This distinction prevents input-handling code from becoming another source of state changes.
+
+## The Input Engine Does Not Own Editor State
+
+The Editor State is the application's single source of truth. It contains the state required to represent the current editing session, including the Document, Cursor, Viewport, current file, Dirty Flag, screen information, and other application data.
+
+The Input Engine does not maintain its own copies of these values.
+
+For example, it should not maintain:
+
+```text
+input_cursor_row
+input_cursor_column
+input_document
+input_dirty_flag
+```
+
+as parallel versions of the actual editor state.
+
+Instead, it works with the input it receives and produces commands:
+
+```text
+KEY_ARROW_LEFT
+       │
+       ▼
+MOVE_CURSOR_LEFT
+```
+
+The command is then responsible for causing the appropriate state transition.
+
+## Why Direct State Modification Is a Problem
+
+It may seem convenient for the Input Engine to modify state directly.
+
+For example:
+
+```text
+if event == KEY_ARROW_LEFT
+    cursor.column--
+```
+
+This appears simple, but it creates a dependency between the input subsystem and the internal representation of the Cursor.
+
+The Input Engine would now need to understand:
+
+- cursor boundaries;
+- line lengths;
+- movement rules;
+- preferred column;
+- document structure;
+- viewport interaction.
+
+Those are not input concerns.
+
+The Cursor and Command Engine already have responsibilities related to those operations. Chapter 14 established the rules governing cursor movement, while the architecture assigns command execution to the Command Engine.
+
+The cleaner flow is:
+
+```text
+KEY_ARROW_LEFT
+       │
+       ▼
+MOVE_CURSOR_LEFT
+       │
+       ▼
+Command Engine
+       │
+       ▼
+Cursor / Editor State
+```
+
+The Input Engine therefore remains independent of the details of cursor movement.
+
+## Commands as the State-Change Boundary
+
+A command provides a controlled boundary between input and state modification.
+
+Consider the Backspace key:
+
+```text
+KEY_BACKSPACE
+       │
+       ▼
+DELETE_PREVIOUS_CHARACTER
+       │
+       ▼
+Command Engine
+       │
+       ▼
+Document / Cursor / Editor State
+```
+
+The Input Engine does not need to know whether deletion:
+
+- removes a character from a line;
+- merges two lines;
+- changes the cursor position;
+- marks the document as modified.
+
+Those are consequences of command execution.
+
+This separation becomes particularly important for operations whose behavior depends on the current Editor State.
+
+For example, `KEY_BACKSPACE` can represent the same command whether the cursor is:
+
+```text
+Middle of a line
+```
+
+or:
+
+```text
+Beginning of a line
+```
+
+The Input Engine does not need to determine which situation applies.
+
+It simply produces:
+
+```text
+DELETE_PREVIOUS_CHARACTER
+```
+
+The Command Engine can inspect the current state and execute the appropriate behavior.
+
+## Input Depends on State Only Indirectly
+
+The Input Engine may sometimes need limited contextual information to determine how an event should be interpreted. However, such cases should be treated carefully.
+
+For the baseline editor, most input mappings are independent of the current document:
+
+```text
+KEY_ARROW_LEFT  → MOVE_CURSOR_LEFT
+KEY_CTRL_S      → SAVE_DOCUMENT
+KEY_CTRL_Q      → QUIT_EDITOR
+```
+
+The meaning of these events does not change based on the current cursor position or document contents.
+
+The **execution** of the resulting command, however, can depend heavily on Editor State.
+
+For example:
+
+```text
+MOVE_CURSOR_LEFT
+```
+
+must consider the current cursor position and current line length.
+
+That state-dependent decision belongs to command execution, not input mapping.
+
+## A Useful Separation of Questions
+
+The architecture can therefore be understood through three questions:
+
+| Layer          | Question                                          |
+| -------------- | ------------------------------------------------- |
+| Input Parser   | What input was received?                          |
+| Input Engine   | What command does this input represent?           |
+| Command Engine | How should that command change the current state? |
+
+For example:
+
+```text
+Raw Input
+    │
+    ▼
+KEY_ARROW_LEFT
+    │
+    ▼
+MOVE_CURSOR_LEFT
+    │
+    ▼
+Apply cursor movement rules
+    │
+    ▼
+Updated Editor State
+```
+
+Each stage knows only what it needs to know.
+
+This is a practical application of the project's broader architecture principle that components should have clearly defined responsibilities and avoid unnecessary coupling.
+
+## The Input Engine Is Stateless With Respect to the Document
+
+The Input Engine should not become a second representation of the editing session.
+
+Its primary processing can be viewed as:
+
+```text
+Event → Command
+```
+
+rather than:
+
+```text
+Event + Editor State → State Modification
+```
+
+The distinction is subtle but important.
+
+The Input Engine may exist as a component with functions and temporary processing data, but it should not become the owner of persistent editor state.
+
+The application's state remains centralized.
+
+```text
+                  ┌───────────────┐
+                  │  Editor State │
+                  └───────────────┘
+                         ▲
+                         │
+                         │ modifies
+                         │
+                  ┌───────────────┐
+                  │Command Engine │
+                  └───────────────┘
+                         ▲
+                         │
+                         │ dispatches
+                         │
+                  ┌───────────────┐
+                  │  Input Engine │
+                  └───────────────┘
+```
+
+The direction of responsibility is therefore clear: input produces commands, commands produce state changes, and the Editor State remains the authoritative representation of the application.
+
+## Why This Matters for Future Features
+
+This boundary also makes the architecture easier to extend.
+
+Suppose a future version introduces another way to trigger commands, such as a configurable key-binding system.
+
+The new input mechanism can still produce the same commands:
+
+```text
+Ctrl+S
+   │
+   ▼
+SAVE_DOCUMENT
+```
+
+The Command Engine does not need to know how the command was triggered.
+
+Likewise, if the implementation of a command changes, the Input Engine does not need to understand that internal change as long as the command interface remains stable.
+
+The resulting architecture remains:
+
+```text
+Input Sources
+      │
+      ▼
+Commands
+      │
+      ▼
+Editor State
+```
+
+This is one of the major benefits of separating **input**, **commands**, and **state**.
+
+## Contract Between the Input Engine and Editor State
+
+The relationship can be summarized as follows:
+
+| Responsibility                              | Input Engine |
+| ------------------------------------------- | ------------ |
+| Read Editor State as part of normal mapping | Generally no |
+| Own Editor State                            | No           |
+| Maintain a copy of Document                 | No           |
+| Modify Document                             | No           |
+| Modify Cursor                               | No           |
+| Modify Viewport                             | No           |
+| Change Dirty Flag                           | No           |
+| Produce commands                            | Yes          |
+| Dispatch commands                           | Yes          |
+
+The Input Engine therefore has a deliberately narrow relationship with Editor State:
+
+> **It does not modify the state directly. It produces commands that allow the Command Engine to modify the state in a controlled manner.**
+
+This boundary keeps the Editor State centralized and prevents input handling from bypassing the architecture established for the editor.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+State ownership is easiest to maintain when state changes have a clearly defined entry point. In this architecture, input does not directly change the application. It requests a command, and command execution becomes the controlled boundary through which Editor State changes occur.
+
+</Aside>
+
+## Summary
+
+The Input Engine does not own or directly modify Editor State. It produces commands, and the Command Engine executes them to modify the state in a controlled manner.
+
+Keeping the Input Engine stateless with respect to the document preserves Editor State as the single source of truth and provides a controlled boundary for all state changes.
+
+Now that the relationship between input and state is clear, the next section walks through the complete input processing lifecycle.
+
+Continue to **Section 15.8, Input Processing Lifecycle**.

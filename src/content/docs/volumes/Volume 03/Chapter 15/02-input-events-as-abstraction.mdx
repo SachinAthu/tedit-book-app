@@ -1,0 +1,301 @@
+---
+title: 15.2 Input Events as an Abstraction
+description: Explains input events as the stable vocabulary between terminal parsing and editor behavior, describing meaning rather than raw byte encoding.
+---
+
+The Input Engine should not work directly with the raw byte stream produced by the terminal. By the time input reaches this layer, the terminal-specific details have already been interpreted by the Input Parser.
+
+Instead, the Input Engine works with **input events**: structured representations of something the user has entered.
+
+For example:
+
+```text
+KEY_CHARACTER('a')
+KEY_ARROW_LEFT
+KEY_ARROW_RIGHT
+KEY_ARROW_UP
+KEY_ARROW_DOWN
+KEY_BACKSPACE
+KEY_DELETE
+KEY_ENTER
+KEY_CTRL_S
+KEY_CTRL_Q
+```
+
+These events provide a stable interface between low-level terminal input and higher-level editor behavior.
+
+## From Bytes to Events
+
+Consider the Left Arrow key.
+
+The terminal does not necessarily deliver a single byte representing "Left Arrow." It may deliver a sequence of bytes that the Input Parser recognizes as an arrow-key escape sequence.
+
+The Input Engine should not need to know any of those details.
+
+The complete transformation is:
+
+```text
+Keyboard
+    │
+    ▼
+Terminal
+    │
+    │ raw bytes
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    │ KEY_ARROW_LEFT
+    ▼
+Input Engine
+```
+
+The Input Parser converts terminal-specific input into a meaningful event. The Input Engine then works entirely with that abstraction.
+
+This separation is one of the reasons the architecture introduced a dedicated Input Parser. Terminal protocol details remain below the input abstraction boundary, while editor behavior remains above it.
+
+## Why Use Events?
+
+Without an event abstraction, higher-level editor code would need to understand the details of terminal input.
+
+For example, command-handling code might have to distinguish between:
+
+```text
+'a'
+'\r'
+'\x7f'
+'\x1b'
+ESC [ D
+ESC [ C
+```
+
+This would mix two fundamentally different concerns:
+
+```text
+Terminal Protocol
+        +
+Editor Behavior
+```
+
+With input events, the boundary becomes much cleaner:
+
+```text
+Terminal Protocol
+        │
+        ▼
+Input Parser
+        │
+        ▼
+    Key Event
+        │
+        ▼
+Editor Behavior
+```
+
+The Command Engine can therefore operate on concepts such as `KEY_BACKSPACE` or `KEY_CTRL_S` without knowing how those inputs were encoded by the terminal.
+
+## Events Represent Meaning, Not Encoding
+
+An input event should describe **what was entered**, rather than **how it was encoded**.
+
+For example:
+
+```text
+KEY_ARROW_LEFT
+```
+
+is more useful to the rest of the editor than the sequence of bytes used to represent the Left Arrow key.
+
+Likewise:
+
+```text
+KEY_CTRL_S
+```
+
+communicates the editor-relevant meaning of the input without exposing the underlying control character.
+
+This is an important abstraction principle:
+
+> **Lower layers deal with representation; higher layers deal with meaning.**
+
+The Input Parser understands representation. The Input Engine and Command Engine understand the resulting events.
+
+## Character Events
+
+Printable characters require slightly different treatment from special keys.
+
+A printable character can be represented together with its value:
+
+```text
+KEY_CHARACTER('a')
+KEY_CHARACTER('B')
+KEY_CHARACTER('7')
+KEY_CHARACTER('@')
+```
+
+This allows the same event abstraction to represent both ordinary text input and special keyboard actions.
+
+The distinction is useful because the eventual command may differ:
+
+```text
+KEY_CHARACTER('a')
+        │
+        ▼
+INSERT_CHARACTER
+
+KEY_BACKSPACE
+        │
+        ▼
+DELETE_PREVIOUS_CHARACTER
+```
+
+The Input Engine identifies the event. The Command Engine determines how the corresponding operation is carried out.
+
+## Events Hide Terminal-Specific Details
+
+The abstraction also gives the editor a degree of independence from the terminal protocol.
+
+The terminal might represent a key using:
+
+- a single control byte;
+- an escape sequence;
+- a multi-byte character encoding;
+- another terminal-specific representation.
+
+Those differences belong below the event boundary.
+
+Once the Input Parser has produced an input event, the higher layers do not need to care about the original representation.
+
+```text
+Different Terminal Representations
+              │
+              ▼
+       Input Parser
+              │
+              ▼
+      Common Event Model
+              │
+       ┌──────┴──────┐
+       ▼             ▼
+Input Engine    Command Engine
+```
+
+This is especially valuable for an editor because terminal input contains many forms of data, but editor behavior should remain expressed in editor-level concepts.
+
+## The Event Model as a Contract
+
+The set of supported input events effectively forms a contract between the Input Parser and the Input Engine.
+
+The parser promises:
+
+> "I will translate recognized terminal input into defined input events."
+
+The Input Engine promises:
+
+> "I will interpret those events according to the editor's input mapping."
+
+For example:
+
+| Input Event          | Meaning at Input Layer              |
+| -------------------- | ----------------------------------- |
+| `KEY_CHARACTER('x')` | Printable character `x` was entered |
+| `KEY_ARROW_LEFT`     | Left Arrow was pressed              |
+| `KEY_ARROW_RIGHT`    | Right Arrow was pressed             |
+| `KEY_ARROW_UP`       | Up Arrow was pressed                |
+| `KEY_ARROW_DOWN`     | Down Arrow was pressed              |
+| `KEY_BACKSPACE`      | Backspace was pressed               |
+| `KEY_DELETE`         | Delete was pressed                  |
+| `KEY_ENTER`          | Enter was pressed                   |
+| `KEY_TAB`            | Tab was pressed                     |
+| `KEY_CTRL_S`         | Ctrl+S was entered                  |
+| `KEY_CTRL_Q`         | Ctrl+Q was entered                  |
+
+This table describes the **input vocabulary**, not the commands themselves.
+
+That distinction matters. `KEY_CTRL_S` is an input event. `SAVE_DOCUMENT` is an editor command. The mapping between them is the next stage.
+
+```text
+KEY_CTRL_S
+    │
+    │ Input Mapping
+    ▼
+SAVE_DOCUMENT
+```
+
+The Input Engine is responsible for that transition.
+
+## Keeping the Abstraction Small
+
+The event model should contain only concepts that the higher layers actually need.
+
+It should not expose:
+
+- terminal escape sequences;
+- raw byte buffers;
+- `termios` settings;
+- file descriptors;
+- terminal-specific protocol details.
+
+Those belong to lower layers.
+
+At the same time, the event model should not become a representation of editor state. It should describe an **input occurrence**, not the current document, cursor, viewport, or file.
+
+This keeps the abstraction focused:
+
+```text
+Input Event
+    =
+"What input occurred?"
+```
+
+while editor state answers:
+
+```text
+Editor State
+    =
+"What is the editor currently like?"
+```
+
+And the Command Engine answers:
+
+```text
+Command
+    =
+"What operation should be performed?"
+```
+
+These are three different concepts and should remain separate.
+
+## The Complete Boundary
+
+The distinction can now be expressed as a sequence of increasingly meaningful abstractions:
+
+```text
+Raw Terminal Bytes
+        │
+        │ decode
+        ▼
+Input Event
+        │
+        │ map
+        ▼
+Editor Command
+        │
+        │ execute
+        ▼
+Editor State Change
+```
+
+Each stage removes implementation details that the next stage does not need.
+
+This is the fundamental purpose of the input-event abstraction: **it allows the rest of the editor to reason about user input without understanding the terminal protocol that produced it.**
+
+## Summary
+
+Input events provide the Input Engine with a stable abstraction: structured representations of what the user entered, independent of how the terminal encoded them. Events describe meaning, not encoding, and the event model forms a contract between the Input Parser and the Input Engine.
+
+With this vocabulary established, the next section examines how those events are translated into editor commands.
+
+Continue to **Section 15.3, From Keys to Commands**.

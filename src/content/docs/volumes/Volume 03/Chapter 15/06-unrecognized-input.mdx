@@ -1,0 +1,280 @@
+---
+title: 15.6 Unrecognized Input
+description: Defines how the Input Engine handles unsupported events, producing no command while preserving state and returning to the event loop.
+---
+
+An editor cannot assume that every input event it receives has a corresponding command. The terminal may produce events that the current editor does not support, and future versions of the editor may introduce additional events that the current implementation does not yet understand.
+
+The Input Engine therefore needs a defined behavior for input that has no mapping.
+
+The basic flow is:
+
+```text
+Input Event
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Is there a mapping?
+    │
+   ┌┴──────────────┐
+   │               │
+  Yes              No
+   │               │
+   ▼               ▼
+Command        No Command
+   │               │
+   ▼               ▼
+Dispatch       Ignore / Handle
+```
+
+The important rule is simple:
+
+> **An input event that has no defined command must not accidentally perform an unrelated operation.**
+
+## Recognized and Unrecognized Events
+
+Consider a recognized event:
+
+```text
+KEY_ARROW_LEFT
+       │
+       ▼
+MOVE_CURSOR_LEFT
+       │
+       ▼
+Command Engine
+```
+
+The event has a defined mapping, so the Input Engine produces a command.
+
+Now consider an unsupported event:
+
+```text
+KEY_UNKNOWN
+       │
+       ▼
+No Mapping
+       │
+       ▼
+No Command
+```
+
+There is nothing for the Command Engine to execute.
+
+The Input Engine should therefore stop processing that event and return control to the normal event loop.
+
+```text
+Unknown Event
+     │
+     ▼
+No Command
+     │
+     ▼
+Return
+     │
+     ▼
+Wait for next event
+```
+
+This gives unsupported input a predictable outcome.
+
+## Why Ignoring Unknown Input Is Reasonable
+
+For a small terminal editor, silently ignoring an unsupported key is often the simplest behavior.
+
+The user may press a key that the editor does not currently support:
+
+```text
+KEY_F5
+KEY_HOME
+KEY_PAGE_UP
+```
+
+If these events have no defined commands, the editor does not need to invent behavior for them.
+
+Ignoring the event means:
+
+- the Document is unchanged;
+- the Cursor is unchanged;
+- the Viewport is unchanged;
+- no file operation occurs;
+- no command is executed.
+
+The event simply has no effect.
+
+This is preferable to allowing an unknown input to fall through to an unrelated command.
+
+## Unknown Input Must Not Become Accidental Input
+
+A particularly important case occurs when event handling uses conditional logic or a `switch` statement.
+
+For example, a mapping implementation might explicitly recognize:
+
+```text
+KEY_ARROW_LEFT
+KEY_ARROW_RIGHT
+KEY_ARROW_UP
+KEY_ARROW_DOWN
+KEY_BACKSPACE
+KEY_DELETE
+KEY_ENTER
+KEY_CTRL_S
+KEY_CTRL_Q
+```
+
+Any event outside that set must have a defined default path.
+
+Conceptually:
+
+```c
+switch (event.type)
+{
+    case KEY_ARROW_LEFT:
+        ...
+        break;
+
+    case KEY_ARROW_RIGHT:
+        ...
+        break;
+
+    ...
+
+    default:
+        /* No command */
+        break;
+}
+```
+
+The `default` path is not an error merely because the input is unsupported. It represents a normal possibility in an input-driven system.
+
+## Unsupported Does Not Necessarily Mean Invalid
+
+An important distinction is the difference between **invalid input** and **unsupported input**.
+
+An input event can be perfectly valid at the terminal level while still having no meaning in the current editor.
+
+For example, the terminal may successfully report:
+
+```text
+KEY_F5
+```
+
+The event is valid, but if the editor has no command associated with F5, it is simply unsupported by the current Input Engine.
+
+The distinction can be expressed as:
+
+```text
+Terminal understands the input
+              │
+              ▼
+        Valid Event
+              │
+              ▼
+Editor has a mapping?
+        │           │
+       Yes          No
+        │            │
+        ▼            ▼
+     Command      Unsupported
+```
+
+This keeps terminal capabilities separate from editor capabilities.
+
+## Optional User Feedback
+
+An editor could choose to notify the user when an unsupported input is received.
+
+For example:
+
+```text
+Unknown key
+```
+
+could be displayed through the Message Bar.
+
+However, this should be treated as an optional user-interface decision rather than a requirement of the Input Engine.
+
+The Input Engine's essential responsibility is only to determine whether a command exists.
+
+```text
+Input Engine
+     │
+     ├── Mapping exists → dispatch command
+     │
+     └── No mapping     → no command
+```
+
+If the application later decides to report unsupported input, that behavior can be incorporated without changing the fundamental mapping model.
+
+## Avoiding Error Handling Creep
+
+It is also important not to turn the Input Engine into a general error-handling component.
+
+An unsupported key does not necessarily represent an application failure. It is simply an input event for which the current editor has no defined behavior.
+
+Therefore, the Input Engine should not:
+
+- terminate the application;
+- modify the Document to compensate;
+- generate an unrelated command;
+- perform file operations;
+- modify terminal state;
+- attempt to interpret the event again using unrelated rules.
+
+Its response should remain narrow and predictable.
+
+## Returning to the Event Loop
+
+After an unrecognized event has been handled, the editor should continue normally:
+
+```text
+Wait for Event
+      │
+      ▼
+Parse Input
+      │
+      ▼
+Map Event
+      │
+      ├── Recognized ──► Command ──► Execute
+      │
+      └── Unrecognized ────────────► No Command
+                                      │
+                                      ▼
+                               Return to Loop
+```
+
+The event does not interrupt the application's lifecycle.
+
+This follows the broader runtime model in which the editor processes events sequentially and returns to waiting for the next event after each iteration.
+
+## The Input Engine Contract
+
+The behavior can be summarized as a simple contract:
+
+| Input Condition      | Input Engine Behavior                                |
+| -------------------- | ---------------------------------------------------- |
+| Recognized event     | Map to a command                                     |
+| Recognized character | Create an insertion command containing the character |
+| Recognized shortcut  | Map to its associated command                        |
+| Unsupported event    | Produce no command                                   |
+| Unknown event        | Do not execute an operation                          |
+| After processing     | Return control to the event loop                     |
+
+The central principle is:
+
+> **The Input Engine should only dispatch commands for input events that the editor explicitly understands.**
+
+This keeps input handling deterministic and prevents unsupported input from leaking into the rest of the application as unintended behavior.
+
+## Summary
+
+The Input Engine must have a defined behavior for input events that have no mapping. An unsupported event produces no command and is simply ignored, returning control to the event loop without changing the Document, Cursor, Viewport, or any file.
+
+This keeps input handling deterministic: only recognized input events produce commands, and unrecognized input never leaks into the application as unintended behavior.
+
+Now that unrecognized input is handled, the next section examines how the Input Engine relates to the Editor State.
+
+Continue to **Section 15.7, Input Engine and Editor State**.

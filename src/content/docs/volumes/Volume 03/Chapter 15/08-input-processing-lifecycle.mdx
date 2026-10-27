@@ -1,0 +1,321 @@
+---
+title: 15.8 Input Processing Lifecycle
+description: Traces one input through the complete lifecycle, from waiting and reading through parsing, mapping, dispatch, execution, rendering, and return.
+---
+
+The Input Engine does not operate in isolation. It forms one stage in the complete path from a user's keyboard input to a change in the editor's state.
+
+The earlier chapters established the overall runtime and event-processing architecture. This section brings those pieces together specifically from the perspective of input handling. It does not introduce a new event-loop design; instead, it shows where the Input Engine fits into the existing lifecycle.
+
+The complete path is:
+
+```text
+Keyboard
+    │
+    ▼
+Input Handler
+    │
+    │ Raw Bytes
+    ▼
+Input Parser
+    │
+    │ Input Event
+    ▼
+Input Engine
+    │
+    │ Command
+    ▼
+Command Engine
+    │
+    │ State Changes
+    ▼
+Editor State
+    │
+    ▼
+Renderer
+    │
+    ▼
+Terminal
+```
+
+Each stage transforms the information into a form that the next stage can use.
+
+## Step 1 — Wait for Input
+
+The Event Loop waits for the next input event.
+
+```text
+Event Loop
+    │
+    ▼
+Wait for Input
+```
+
+The editor does not continuously process keyboard input in a busy loop. It waits until an event is available and then begins processing it.
+
+The runtime model defines this as the first step of each event-loop iteration.
+
+## Step 2 — Read the Input
+
+The Input Handler obtains the raw bytes from the terminal.
+
+```text
+Keyboard
+    │
+    ▼
+Terminal
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Raw Bytes
+```
+
+The Input Engine is not involved at this stage.
+
+The details of reading terminal input and operating in raw mode were established in the earlier terminal and input chapters.
+
+## Step 3 — Parse the Input
+
+The Input Parser interprets the raw bytes and produces an abstract input event.
+
+For example:
+
+```text
+Raw Bytes
+    │
+    ▼
+Input Parser
+    │
+    ▼
+KEY_ARROW_LEFT
+```
+
+At this point, terminal-specific representation has been removed from the higher-level processing path.
+
+The Input Engine receives the event, not the original bytes.
+
+## Step 4 — Map the Event
+
+The Input Engine determines whether the event has a corresponding editor command.
+
+For example:
+
+```text
+KEY_ARROW_LEFT
+       │
+       ▼
+MOVE_CURSOR_LEFT
+```
+
+Or:
+
+```text
+KEY_CTRL_S
+       │
+       ▼
+SAVE_DOCUMENT
+```
+
+This is the central responsibility of the Input Engine.
+
+It translates **input meaning** into **editor intent**.
+
+## Step 5 — Dispatch the Command
+
+Once a command has been identified, the Input Engine dispatches it to the Command Engine.
+
+```text
+Input Engine
+      │
+      │ SAVE_DOCUMENT
+      ▼
+Command Engine
+```
+
+The Input Engine stops being responsible for the operation at this point.
+
+It does not save the file, move the cursor, or modify the document.
+
+## Step 6 — Execute the Command
+
+The Command Engine receives the command and determines how it should affect the current Editor State.
+
+For example:
+
+```text
+MOVE_CURSOR_LEFT
+       │
+       ▼
+Command Engine
+       │
+       ▼
+Cursor / Editor State
+```
+
+Or:
+
+```text
+SAVE_DOCUMENT
+       │
+       ▼
+Command Engine
+       │
+       ▼
+File Manager + Editor State
+```
+
+The actual behavior of these commands is the subject of the next chapter.
+
+## Step 7 — Render the Updated State
+
+After the command has completed its state updates, the Renderer reads the resulting Editor State and produces the next frame.
+
+```text
+Command Execution
+       │
+       ▼
+Updated Editor State
+       │
+       ▼
+Renderer
+       │
+       ▼
+Terminal
+```
+
+The Renderer does not need to know which key caused the state change. It simply renders the current state.
+
+This preserves the architecture's state-driven rendering model.
+
+## Step 8 — Return to the Event Loop
+
+After rendering, the current event-loop iteration is complete.
+
+```text
+Render Frame
+     │
+     ▼
+Return to Event Loop
+     │
+     ▼
+Wait for Next Event
+```
+
+The editor then repeats the same process for the next input.
+
+The complete lifecycle is therefore:
+
+```text
+                  ┌──────────────────────┐
+                  │      Event Loop      │
+                  └──────────┬───────────┘
+                             │
+                             ▼
+                       Wait for Event
+                             │
+                             ▼
+                      Input Handler
+                             │
+                             ▼
+                       Input Parser
+                             │
+                             ▼
+                        Key Event
+                             │
+                             ▼
+                       Input Engine
+                             │
+                             ▼
+                         Command
+                             │
+                             ▼
+                      Command Engine
+                             │
+                             ▼
+                       Editor State
+                             │
+                             ▼
+                         Renderer
+                             │
+                             ▼
+                         Terminal
+                             │
+                             └──────────► Wait for Event
+```
+
+## One Event, One Processing Path
+
+The important property of this lifecycle is that every input follows the same general path.
+
+A cursor movement:
+
+```text
+KEY_ARROW_LEFT
+    ↓
+MOVE_CURSOR_LEFT
+    ↓
+Update State
+    ↓
+Render
+```
+
+A save request:
+
+```text
+KEY_CTRL_S
+    ↓
+SAVE_DOCUMENT
+    ↓
+Update State
+    ↓
+Render
+```
+
+An unsupported input:
+
+```text
+Unknown Event
+    ↓
+No Command
+    ↓
+Return to Event Loop
+```
+
+The exact command behavior differs, but the input architecture remains consistent.
+
+## Where the Input Engine Ends
+
+The Input Engine's boundary can now be stated precisely:
+
+```text
+                 Input Engine
+                      │
+       ┌──────────────┴──────────────┐
+       │                             │
+    receives                      produces
+       │                             │
+       ▼                             ▼
+  Input Event                     Command
+```
+
+Everything before this boundary concerns obtaining and interpreting terminal input.
+
+Everything after it concerns executing editor behavior and updating application state.
+
+This gives the Input Engine a simple contract:
+
+> **Receive a parsed input event, map it to a supported command, dispatch that command, and return control to the runtime when processing is complete.**
+
+The Input Engine is therefore not another event loop, another state manager, or another command executor. It is the focused translation and dispatch layer between parsed input and editor commands.
+
+## Summary
+
+The Input Engine is one stage in a complete lifecycle that runs from keyboard input through parsing, mapping, dispatch, command execution, and rendering before returning to the event loop.
+
+Every input follows the same general path, and the Input Engine's responsibility is precise: receive a parsed event, map it to a supported command, dispatch that command, and return control to the runtime when processing is complete.
+
+Now that the lifecycle is clear, the next section examines alternative ways of organizing the input path and why the Input Engine was chosen.
+
+Continue to **Section 15.9, Design Alternatives**.
