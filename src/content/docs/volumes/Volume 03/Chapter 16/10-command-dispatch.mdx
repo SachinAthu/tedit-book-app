@@ -1,0 +1,333 @@
+---
+title: 16.10 Command Dispatch
+description: Explains switch-based command dispatch, how command data reaches core operations, and how unknown commands are handled without changing Editor State.
+---
+
+Once a command has been represented and received by the Command Engine, the editor needs a mechanism for determining which operation should be executed.
+
+This mechanism is **command dispatch**.
+
+The Command Engine receives a command value such as:
+
+```text
+COMMAND_MOVE_CURSOR_LEFT
+```
+
+and dispatches it to the corresponding operation:
+
+```text
+Command
+   │
+   ▼
+Command Type
+   │
+   ├── MOVE_CURSOR_LEFT ─────────► Move cursor left
+   ├── MOVE_CURSOR_RIGHT ────────► Move cursor right
+   ├── MOVE_CURSOR_UP ───────────► Move cursor up
+   ├── MOVE_CURSOR_DOWN ─────────► Move cursor down
+   ├── INSERT_CHARACTER ──► Insert character
+   ├── DELETE_PREVIOUS_CHARACTER ──► Delete previous character
+   ├── DELETE_CHARACTER ──► Delete character
+   ├── SPLIT_LINE ────────► Split line
+   ├── SAVE_DOCUMENT ──────► Save document
+   └── QUIT_EDITOR ────────► Quit editor
+```
+
+The dispatch mechanism therefore connects the **abstract command representation** introduced earlier with the **concrete operations** provided by the editor's core components.
+
+## Simple Dispatch with `switch`
+
+For the current editor, the most straightforward dispatch mechanism is a `switch` statement over the command type.
+
+Conceptually:
+
+```c
+switch (command.type)
+{
+    case COMMAND_MOVE_CURSOR_LEFT:
+        /* move cursor left */
+        break;
+
+    case COMMAND_MOVE_CURSOR_RIGHT:
+        /* move cursor right */
+        break;
+
+    case COMMAND_MOVE_CURSOR_UP:
+        /* move cursor up */
+        break;
+
+    case COMMAND_MOVE_CURSOR_DOWN:
+        /* move cursor down */
+        break;
+
+    case COMMAND_INSERT_CHARACTER:
+        /* insert character */
+        break;
+
+    case COMMAND_DELETE_PREVIOUS_CHARACTER:
+        /* delete previous character */
+        break;
+
+    case COMMAND_DELETE_CHARACTER:
+        /* delete character */
+        break;
+
+    case COMMAND_SPLIT_LINE:
+        /* split line */
+        break;
+
+    case COMMAND_SAVE_DOCUMENT:
+        /* save document */
+        break;
+
+    case COMMAND_QUIT_EDITOR:
+        /* quit editor */
+        break;
+}
+```
+
+The structure is intentionally simple.
+
+The command type provides a finite set of possible operations, and the dispatch mechanism selects the corresponding behavior.
+
+The Command Engine remains the place where these operations are coordinated.
+
+## Dispatch Is Not Implementation
+
+The `switch` statement determines **which operation should run**. It does not need to contain the complete implementation of every operation.
+
+For example:
+
+```c
+case COMMAND_MOVE_CURSOR_LEFT:
+    cursor_move_left(...);
+    break;
+```
+
+The command dispatches the operation to the Cursor component.
+
+Similarly:
+
+```c
+case COMMAND_INSERT_CHARACTER:
+    document_insert_character(...);
+    break;
+```
+
+The actual Document operation remains responsible for applying the appropriate editing rules.
+
+Conceptually:
+
+```text
+Command Dispatch
+       │
+       ├──► Cursor Operation
+       │
+       ├──► Document Operation
+       │
+       └──► File Operation
+```
+
+This distinction prevents the dispatch code from becoming another location where the Document Model or Cursor Engine is implemented.
+
+## Commands With Data
+
+Dispatch also needs to provide command-specific data when the command carries a payload.
+
+For example:
+
+```text
+Command
+├── Type: INSERT_CHARACTER
+└── Character: 'A'
+```
+
+The dispatch operation passes that data to the appropriate core operation:
+
+```text
+INSERT_CHARACTER('A')
+        │
+        ▼
+Command Dispatch
+        │
+        ▼
+Document Insert
+        │
+        └── 'A'
+```
+
+Commands without payloads simply dispatch their operation without additional command data:
+
+```text
+MOVE_CURSOR_LEFT
+       │
+       ▼
+Cursor Move Left
+```
+
+The dispatch mechanism therefore connects both parts of the command representation—the type and any associated data—to the operation that needs them.
+
+## Handling Unknown Commands
+
+The Command Engine should also define what happens when it receives a command type that it does not recognize.
+
+Conceptually:
+
+```text
+Command
+   │
+   ▼
+Command Type
+   │
+   └── Unknown
+         │
+         ▼
+     No Operation
+```
+
+An unknown command should not silently result in an arbitrary operation.
+
+For the current editor, the simplest behavior is to treat it as an unrecognized or invalid command and leave the existing Editor State unchanged.
+
+This is different from an unrecognized keyboard input. The Input Engine is responsible for deciding whether an input event maps to a command in the first place. The Command Engine deals with the commands it receives.
+
+The distinction is:
+
+```text
+Unknown Input
+     │
+     ▼
+Input Engine
+     │
+     └── No Command
+
+Unknown Command
+     │
+     ▼
+Command Engine
+     │
+     └── No Valid Operation
+```
+
+This keeps error handling at the appropriate architectural boundary.
+
+## Keeping Dispatch Predictable
+
+A useful property of command dispatch is that it should be easy to inspect.
+
+Given:
+
+```text
+COMMAND_DELETE_CHARACTER
+```
+
+a developer should be able to identify immediately which operation will be executed.
+
+The dispatch mechanism should therefore avoid unnecessary indirection.
+
+For the current editor, a direct mapping is sufficient:
+
+```text
+Command Type
+     │
+     ▼
+Dispatch
+     │
+     ▼
+Core Operation
+```
+
+This makes the relationship between the command vocabulary and the implementation visible in one place.
+
+## Dispatch and the Command Lifecycle
+
+Command dispatch is one step within the larger execution lifecycle developed earlier:
+
+```text
+Input Event
+     │
+     ▼
+Input Engine
+     │
+     ▼
+Command
+     │
+     ▼
+Command Dispatch
+     │
+     ▼
+Operation
+     │
+     ▼
+State Update
+     │
+     ▼
+Render
+```
+
+Dispatch should therefore not become a separate processing pipeline.
+
+It is simply the mechanism by which the Command Engine determines **which operation corresponds to the received command**.
+
+## Why a Simple Dispatch Mechanism Is Appropriate
+
+The editor currently has a small, fixed command vocabulary.
+
+That makes a direct `switch`-based dispatcher a good fit:
+
+- the command set is easy to see,
+- the mapping is explicit,
+- the control flow is straightforward,
+- there is little runtime overhead, and
+- the implementation is easy to debug.
+
+A more elaborate dispatch system could be introduced later if the command model becomes substantially more dynamic. For the current editor, however, additional abstraction would add complexity without providing a corresponding benefit.
+
+This follows the project's broader preference for simple, explicit designs where they are sufficient.
+
+## Command Dispatch Contract
+
+The dispatch mechanism can be summarized as:
+
+| Responsibility                     | Dispatch |
+| ---------------------------------- | -------- |
+| Inspect command type               | Yes      |
+| Select the corresponding operation | Yes      |
+| Pass command data to the operation | Yes      |
+| Implement Document algorithms      | No       |
+| Implement Cursor rules             | No       |
+| Parse keyboard input               | No       |
+| Render the screen                  | No       |
+| Define command semantics           | No       |
+
+The important distinction is:
+
+```text
+Command
+   │
+   │ describes
+   ▼
+Command Dispatch
+   │
+   │ selects
+   ▼
+Core Operation
+   │
+   │ applies rules
+   ▼
+Editor State
+```
+
+Command dispatch is therefore intentionally small. Its purpose is not to contain the editor's behavior, but to provide the explicit connection between **a command value and the operation that executes it**.
+
+That keeps the Command Engine understandable while preserving the boundaries established between input processing, command execution, core state, and rendering.
+
+## Summary
+
+Command dispatch connects a command value to the operation it requests. For the editor's small, fixed command vocabulary, a direct `switch` over the command type is the appropriate mechanism: it is explicit, easy to inspect, and selects the corresponding operation without containing its implementation.
+
+Dispatch also passes any command data to the core operation and defines a safe behavior for unknown commands. It is one step within the execution lifecycle, not a separate processing pipeline.
+
+Now that the dispatch mechanism is clear, the next section compares alternative designs for organizing command execution.
+
+Continue to **Section 16.11, Design Alternatives**.

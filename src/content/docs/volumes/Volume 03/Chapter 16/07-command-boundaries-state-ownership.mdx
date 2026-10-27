@@ -1,0 +1,426 @@
+---
+title: 16.7 Command Boundaries and State Ownership
+description: Distinguishes state-field ownership from domain responsibility and explains how the Command Engine coordinates owners without duplicating their rules or state.
+---
+
+The Command Engine coordinates changes to the editor, but it does not own every piece of state involved in those changes.
+
+This distinction becomes important as commands begin to affect multiple components. A single command may involve the Document, Cursor, Viewport, Dirty Flag, or other parts of the Editor State. Without clear ownership rules, the Command Engine could gradually become responsible for all of them, turning it into a large and tightly coupled component.
+
+The architecture avoids this by separating **command coordination** from **domain responsibility**.
+
+```text
+Command Engine
+      │
+      │ coordinates
+      ▼
++------------------------------------+
+|            Editor State            |
+|                                    |
+|  Document   Cursor   Viewport      |
+|  File       Dirty    Screen Size   |
+|  Status     Configuration          |
++------------------------------------+
+      │
+      │ owned by individual
+      │ core components
+      ▼
+Core Components
+```
+
+The Command Engine determines **which state needs to change** as part of a command, while the component responsible for that state applies the appropriate rules.
+
+## Execution Is Not Owning the Rules
+
+Consider a cursor movement command:
+
+```text
+MOVE_CURSOR_LEFT
+       │
+       ▼
+Command Engine
+       │
+       ▼
+Cursor
+```
+
+The Command Engine executes the command, but it does not become the owner of the cursor's internal rules.
+
+The Cursor remains responsible for determining how the movement should occur.
+
+Similarly:
+
+```text
+INSERT_CHARACTER('A')
+       │
+       ▼
+Command Engine
+       │
+       ├──► Document
+       └──► Cursor
+```
+
+The Command Engine coordinates the operation, but the Document remains responsible for its text representation and the Cursor remains responsible for cursor behavior.
+
+This preserves the principle established by the architecture:
+
+> **One owner, many readers.**
+
+## The Command Engine as a Coordinator
+
+The Command Engine can therefore be viewed as a coordinator sitting above several components:
+
+```text
+                    Command
+                       │
+                       ▼
+               +---------------+
+               | Command Engine|
+               +---------------+
+                  │    │    │
+                  │    │    │
+                  ▼    ▼    ▼
+             Document Cursor File
+                  │    │    │
+                  └────┼────┘
+                       ▼
+                 Editor State
+```
+
+Its responsibility is to coordinate the sequence of operations required to execute a command.
+
+For example, inserting a character may require:
+
+1. inserting the character into the Document,
+2. updating the Cursor,
+3. marking the Document as modified.
+
+The Command Engine coordinates those effects, but it should not independently implement the internal logic of each component.
+
+## State Ownership
+
+Each important piece of state should have a clear owner.
+
+This ownership model was established in Chapter 8 (System Architecture) and examined again in Chapter 12 (Editor State). It is restated here because it directly determines which components the Command Engine coordinates.
+
+The architecture defines ownership explicitly:
+
+| State          | Owner              |
+| -------------- | ------------------ |
+| Document       | Command Engine     |
+| Cursor         | Cursor             |
+| Viewport       | Command Engine     |
+| Current File   | File Manager       |
+| Dirty Flag     | Command Engine     |
+| Status Message | Renderer           |
+| Screen Size    | Terminal Interface |
+| Configuration  | Command Engine     |
+
+The exact ownership boundaries matter because they determine which component is allowed to make authoritative changes.
+
+For example, the Cursor component should not silently modify the Document. The Renderer should not modify the Cursor simply because it is drawing it. The File Manager should not become responsible for rendering a save message.
+
+Each component has a defined responsibility, and the Command Engine coordinates those components when a command requires several of them to participate.
+
+### Two Senses of "Own"
+
+The table above may appear to contradict the rest of this chapter. It lists the Command Engine as the owner of the Document, Viewport, Dirty Flag, and Configuration, yet the chapter describes the Command Engine as a *coordinator* rather than an *owner*. Both statements are true because they use the word "own" in two different senses.
+
+**State-field ownership** answers the question *who is allowed to write this field?* It is the sense used in ADR-007 and in the table above. The Command Engine is the single writer of the Document, Viewport, Dirty Flag, and Configuration: it is the only component that initiates changes to them, while every other component reads them. Owning a field means being responsible for *when and how it changes*, not for implementing every detail of that change.
+
+**Domain responsibility** answers the question *who defines the rules and representation of a value?* It is the sense used when we say "the Document owns its text representation" or "the Cursor owns its movement rules." The Document Model decides how text is stored and modified; the Cursor Engine decides how movement works. The Command Engine does not own these rules — it invokes them.
+
+The two senses fit together cleanly. The Command Engine owns the state fields it is responsible for changing, while the core components own the domain rules that govern those changes:
+
+```text
+Command Engine                    Core Components
+owns state fields                own domain rules
+(single writer)                  (representation & behavior)
+
+Document, Viewport,              text representation,
+Dirty Flag, Configuration        cursor movement, file I/O
+```
+
+This distinction is what keeps the Command Engine from becoming a general-purpose state container on one hand, and from reimplementing the Document or Cursor on the other.
+
+## Why Ownership Matters
+
+As established in Chapter 8, without explicit ownership, state can become duplicated.
+
+Imagine keeping the cursor position in both the Command Engine and the Cursor component:
+
+```text
+Command Engine
+    cursor_row = 5
+
+Cursor
+    cursor_row = 5
+```
+
+After one operation, the two values could diverge:
+
+```text
+Command Engine
+    cursor_row = 5
+
+Cursor
+    cursor_row = 6
+```
+
+Now the system has two conflicting versions of the same state.
+
+A single owner eliminates this ambiguity:
+
+```text
+Cursor
+    │
+    └── cursor position
+```
+
+Other components read the value when they need it, but the Cursor remains the authoritative owner.
+
+## Coordination Without Duplication
+
+The same principle applies to the Document.
+
+The Command Engine may execute:
+
+```text
+INSERT_CHARACTER('A')
+```
+
+but it should not maintain another copy of the text to track what happened.
+
+Instead:
+
+```text
+Command Engine
+      │
+      │ request operation
+      ▼
+Document
+      │
+      │ authoritative text
+      ▼
+Editor State
+```
+
+The Command Engine needs access to the Document, but it does not need to duplicate the Document's data.
+
+This keeps the architecture consistent with the single-source-of-truth principle established for Editor State.
+
+## Commands Can Cross Ownership Boundaries
+
+A command can legitimately involve multiple owners.
+
+For example:
+
+```text
+INSERT_CHARACTER('A')
+       │
+       ▼
+Command Engine
+       │
+       ├───────────────► Document
+       │                     │
+       │                     └── text changes
+       │
+       ├───────────────► Cursor
+       │                     │
+       │                     └── position changes
+       │
+       └───────────────► Dirty Flag
+                             │
+                             └── modified
+```
+
+This does not mean that the Command Engine owns all three pieces of state.
+
+It means that the command requires a coordinated transition involving several state owners.
+
+This distinction keeps the Command Engine from becoming a general-purpose state container.
+
+## Renderer Ownership Is Different
+
+The Renderer provides an especially useful example of why ownership boundaries matter.
+
+The Renderer reads the Editor State:
+
+```text
+Editor State
+      │
+      ▼
+Renderer
+      │
+      ▼
+Terminal
+```
+
+It may calculate visual positions and generate a frame, but it should not modify the underlying Document or Cursor.
+
+For example, the Renderer may determine where the cursor should appear on screen, but that does not make it the owner of the logical cursor position.
+
+The logical position belongs to the Cursor. The visual representation belongs to the Renderer.
+
+This distinction allows rendering to remain a read-only operation over the current state, consistent with the full-redraw architecture.
+
+## File Operations and Ownership
+
+The same boundary applies when executing `SAVE_DOCUMENT`.
+
+The Command Engine initiates the command:
+
+```text
+SAVE_DOCUMENT
+ │
+ ▼
+Command Engine
+ │
+ ▼
+File Manager
+```
+
+The File Manager handles the interaction with the file system, while the Editor State continues to contain the current in-memory Document.
+
+Conceptually:
+
+```text
+                SAVE_DOCUMENT
+                  │
+                  ▼
+           Command Engine
+                  │
+                  ▼
+             File Manager
+              │        │
+              │        └── File System
+              │
+              └── Editor State
+```
+
+The Command Engine therefore coordinates the operation without becoming responsible for low-level file I/O.
+
+Detailed file ownership and persistence behavior will be addressed later in the File System volume.
+
+## A Useful Architectural Rule
+
+A useful rule for the implementation is:
+
+> **The Command Engine coordinates state changes; the component that owns the domain rules for that state remains responsible for applying them.**
+
+This can be expressed as:
+
+```text
+Command Engine
+      │
+      │ coordinates
+      ▼
+State Owner
+      │
+      │ applies rules
+      ▼
+Updated State
+```
+
+This rule prevents command execution from becoming a collection of unrelated algorithms.
+
+It also makes the architecture easier to reason about. When a bug occurs, we can ask two separate questions:
+
+1. **Was the correct command executed?**
+2. **Did the responsible component apply its state rules correctly?**
+
+Those are different problems and can be investigated independently.
+
+## The Boundary in the Overall Architecture
+
+The complete relationship can now be viewed as:
+
+```text
+Input Event
+     │
+     ▼
+Input Engine
+     │
+     │ creates
+     ▼
+Command
+     │
+     ▼
+Command Engine
+     │
+     │ coordinates
+     ▼
++----------------------+
+|     Core State       |
+|                      |
+| Document             |
+| Cursor               |
+| Viewport             |
+| Dirty Flag           |
++----------------------+
+     │
+     │ read
+     ▼
+Renderer
+```
+
+The Command Engine is therefore neither an input component nor a data-storage component.
+
+It is the **behavioral coordinator** between the two.
+
+This boundary is what allows the architecture to remain modular:
+
+- Input components determine **what the user requested**.
+- The Command Engine determines **which operations must occur**.
+- Core components determine **how their state is changed correctly**.
+- The Renderer determines **how the resulting state is displayed**.
+
+Keeping these responsibilities separate prevents the Command Engine from becoming a central module that knows the internal details of every other component.
+
+## Boundary Contract
+
+The Command Engine's relationship with state ownership can be summarized as follows:
+
+| Responsibility                   | Command Engine |
+| -------------------------------- | -------------- |
+| Receive commands                 | Yes            |
+| Decide which command to execute  | Yes            |
+| Coordinate state changes         | Yes            |
+| Own Document representation      | No             |
+| Define cursor movement rules     | No             |
+| Render state                     | No             |
+| Perform terminal rendering       | No             |
+| Perform low-level file I/O       | No             |
+| Duplicate core state             | No             |
+| Coordinate multiple state owners | Yes            |
+
+The resulting principle is simple:
+
+```text
+                Command
+                   │
+                   ▼
+           Command Engine
+                   │
+             coordinates
+                   │
+        ┌──────────┼──────────┐
+        ▼          ▼          ▼
+    Document     Cursor     File
+     owns         owns      owns
+     text        position   I/O
+```
+
+The Command Engine gives these components a place to cooperate without taking ownership of their responsibilities.
+
+That separation will become increasingly important as more commands are introduced. The goal is not to make the Command Engine responsible for everything the editor can do, but to make it the clear and predictable place where **editor intent is translated into coordinated state transitions**.
+
+## Summary
+
+The Command Engine is both an owner and a coordinator, and the two roles describe different things. As the single writer, it owns the state fields it is responsible for changing — the Document, Viewport, Dirty Flag, and Configuration. As a coordinator, it does not own the domain rules of the components it invokes: the Document owns its text representation, the Cursor owns its movement rules, and the File Manager owns file I/O.
+
+Separating state-field ownership from domain responsibility prevents duplicated state, keeps the Renderer read-only over the Editor State, and makes bugs easier to isolate. The Command Engine is the **behavioral coordinator** between input and core state — neither an input component nor a data-storage component.
+
+Now that the ownership boundaries are clear, the next section examines commands that do not modify the Document.
+
+Continue to **Section 16.8, Commands That Do Not Modify the Document**.

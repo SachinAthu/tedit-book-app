@@ -1,0 +1,331 @@
+---
+title: 16.11 Design Alternatives
+description: Compares executing commands in input code, distributing them across components, command objects, and dispatch tables against a dedicated Command Engine.
+---
+
+The Command Engine introduces an additional architectural boundary between input handling and editor behavior. For a small editor, this boundary is not the only possible design.
+
+A command could be executed directly by the Input Engine, command behavior could be distributed across individual components, or a more sophisticated command-object architecture could be introduced.
+
+The important question is therefore not whether a Command Engine is the only possible design, but **why this architecture is appropriate for the editor being built**.
+
+The project's architecture deliberately separates the Input Engine from the Command Engine: the Input Engine maps abstract key events to commands, while the Command Engine executes those commands and coordinates state changes. This follows the broader principles of single responsibility and low coupling established in the architecture.
+
+## Alternative 1 — Execute Commands Directly in the Input Engine
+
+The simplest design would remove the Command Engine entirely:
+
+```text
+Input Parser
+      │
+      ▼
+Input Engine
+      │
+      ├──► Move Cursor
+      ├──► Insert Character
+      ├──► Delete Character
+      ├──► Save
+      └──► Quit
+```
+
+The Input Engine would both interpret input and execute the resulting editor behavior.
+
+For a very small editor, this can work.
+
+The problem is that the Input Engine would gradually accumulate knowledge about the Document, Cursor, file system, application lifecycle, and other editor behavior.
+
+A component that begins with:
+
+> "Which command does this key represent?"
+
+would eventually become responsible for:
+
+> "How does every editor operation work?"
+
+That combines two different responsibilities.
+
+The project's ADR for the Input Engine explicitly rejects this kind of coupling. The dedicated boundary is accepted even though a small editor could perform the mapping with a simple `switch` statement because separating input from behavior prevents input handling from accumulating unrelated responsibilities as the editor grows.
+
+## Alternative 2 — Let the Input Parser Execute Editor Operations
+
+An even more tightly coupled design would allow the Input Parser itself to execute commands:
+
+```text
+Raw Bytes
+    │
+    ▼
+Input Parser
+    │
+    ├──► Parse arrow sequence
+    ├──► Move cursor
+    ├──► Insert text
+    └──► Save
+```
+
+This is particularly problematic because the Input Parser already has a specialized responsibility: translating terminal-specific byte sequences into abstract input events.
+
+The parser needs to understand things such as:
+
+```text
+ESC [ A
+    │
+    ▼
+KEY_ARROW_UP
+```
+
+It should not also need to understand what moving the cursor means for the Document or Editor State.
+
+The architecture therefore places a clear boundary between terminal protocol knowledge and editor behavior:
+
+```text
+Raw Bytes
+    │
+    ▼
+Input Parser
+    │
+    │ abstract event
+    ▼
+Input Engine
+    │
+    │ command
+    ▼
+Command Engine
+```
+
+This separation is the basis of ADR-004 and ADR-015.
+
+## Alternative 3 — Let Each Core Component Handle Its Own Commands
+
+Another approach would be to distribute command interpretation across the core components.
+
+For example:
+
+```text
+Command
+   │
+   ├──► Cursor handles MOVE commands
+   ├──► Document handles INSERT/DELETE
+   ├──► File Manager handles SAVE_DOCUMENT
+   └──► Terminal handles QUIT_EDITOR
+```
+
+This initially appears modular because each component handles behavior related to itself.
+
+However, some commands cross component boundaries.
+
+For example:
+
+```text
+INSERT_CHARACTER
+       │
+       ├──► Document changes
+       ├──► Cursor changes
+       └──► Dirty Flag changes
+```
+
+There would be no single place coordinating the complete state transition.
+
+The Command Engine provides that coordination point while allowing the individual components to retain responsibility for their own state and domain-specific rules.
+
+This is consistent with the architecture's state-ownership rule: each piece of state has one owner, while the Command Engine coordinates changes rather than duplicating state.
+
+## Alternative 4 — Use a Command Object for Every Operation
+
+A more sophisticated design would represent each command as an object containing its own execution behavior:
+
+```text
+Command Object
+    │
+    ├── execute()
+    ├── undo()
+    └── metadata
+```
+
+For example:
+
+```text
+InsertCharacterCommand
+        │
+        └── execute()
+
+DeleteCharacterCommand
+        │
+        └── execute()
+
+SaveCommand
+        │
+        └── execute()
+```
+
+This is a form of the **Command Pattern**.
+
+It can be useful when commands need additional capabilities such as:
+
+- undo and redo,
+- command history,
+- serialization,
+- replay,
+- macro recording, or
+- dynamic command registration.
+
+However, those requirements are outside the scope of the current editor.
+
+The existing project plan places the deeper Command Pattern and undo/redo discussion in Chapter 31.
+
+Introducing the full pattern here would therefore solve problems that the current editor does not yet have.
+
+## Alternative 5 — Use a Function-Pointer Dispatch Table
+
+Instead of a `switch`, commands could be mapped to function pointers:
+
+```text
+Command Type
+     │
+     ▼
++-----------------------+
+| Dispatch Table        |
++-----------------------+
+| MOVE_LEFT  → fn1      |
+| MOVE_RIGHT → fn2      |
+| INSERT     → fn3      |
+| DELETE     → fn4      |
+| SAVE       → fn5      |
++-----------------------+
+```
+
+This can make dispatch more data-driven and can be useful when commands need to be registered dynamically.
+
+However, it also introduces another layer of indirection.
+
+For the current editor, the command vocabulary is small and fixed. A direct `switch` makes the mapping explicit and easy to inspect.
+
+Therefore:
+
+```text
+Current editor
+     │
+     ▼
+switch(command.type)
+```
+
+is preferable to introducing a dispatch table without a concrete requirement for one.
+
+## Comparing the Alternatives
+
+| Design                                   | Main Advantage           | Main Problem                                       |
+| ---------------------------------------- | ------------------------ | -------------------------------------------------- |
+| Input Engine executes commands           | Very simple              | Couples input handling to editor behavior          |
+| Input Parser executes commands           | Fewest boundaries        | Couples terminal protocol to editor behavior       |
+| Components interpret commands themselves | Distributed behavior     | Difficult to coordinate cross-component operations |
+| Command objects                          | Extensible and powerful  | Adds unnecessary abstraction for current scope     |
+| Function-pointer table                   | Flexible dispatch        | More indirection than currently needed             |
+| Dedicated Command Engine                 | Clear execution boundary | Adds one architectural component                   |
+
+The selected design is therefore a deliberate middle ground:
+
+```text
+Input Parser
+     │
+     ▼
+Input Engine
+     │
+     ▼
+Command
+     │
+     ▼
+Command Engine
+     │
+     ▼
+Editor State
+```
+
+It introduces enough structure to keep responsibilities separate without introducing a full command framework.
+
+## Why the Dedicated Command Engine Is the Right Choice
+
+The architecture's decision is based primarily on **separation of responsibilities**, not performance.
+
+The Input Engine has one primary job:
+
+> Map input events to commands.
+
+The Command Engine has another:
+
+> Execute commands and coordinate the resulting state changes.
+
+The core components then retain their own responsibilities:
+
+> Apply the rules governing their state.
+
+This produces a clean dependency direction:
+
+```text
+Input
+  │
+  ▼
+Command
+  │
+  ▼
+Execution
+  │
+  ▼
+Core State
+```
+
+It also means that changing the keyboard bindings does not require changing command implementations, while changing the implementation of an editor operation does not require changing terminal input parsing.
+
+This is precisely the type of low coupling the project's architecture is designed to achieve. The system architecture identifies the Application Layer as containing the Input Engine and Command Engine, with the Command Engine executing operations against the Core Layer's Editor State.
+
+## The Trade-off
+
+The dedicated Command Engine does introduce another module and another boundary.
+
+For a tiny editor, the following could technically be enough:
+
+```text
+Input
+  │
+  ▼
+switch
+  │
+  ▼
+State
+```
+
+The chosen architecture is slightly more elaborate:
+
+```text
+Input
+  │
+  ▼
+Input Engine
+  │
+  ▼
+Command
+  │
+  ▼
+Command Engine
+  │
+  ▼
+State
+```
+
+That additional structure is intentional.
+
+The architecture accepts the small structural cost because the boundary makes the system easier to reason about and prevents input handling from becoming responsible for the growing set of behaviors that an editor eventually needs.
+
+The project's ADR describes this trade-off directly: the extra Input Engine boundary is accepted because separating input from behavior keeps the architecture from accumulating document, cursor, and file responsibilities in the input layer.
+
+The same principle applies to the Command Engine.
+
+The goal is not to maximize the number of abstractions. It is to introduce **one clear boundary where it provides lasting architectural value**.
+
+## Summary
+
+Several designs can organize the path between input and editor behavior: executing commands inside the Input Engine or Input Parser, distributing command interpretation across core components, or adopting command objects or function-pointer dispatch tables.
+
+The dedicated Command Engine is chosen as a deliberate middle ground. It adds one architectural boundary while keeping responsibilities separate and state coordination centralized, without introducing a full command framework the current editor does not need.
+
+Now that the design alternatives are compared, the next section examines the complexity and trade-offs of the chosen approach.
+
+Continue to **Section 16.12, Complexity and Trade-offs**.

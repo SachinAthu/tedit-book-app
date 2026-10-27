@@ -1,0 +1,312 @@
+---
+title: 16.2 Commands as an Abstraction
+description: Explains commands as intent independent of key bindings, showing how they hide trigger details, carry optional data, and form a stable boundary.
+---
+
+A command represents an **intent to perform an editor operation**.
+
+This distinction is important because the input that triggers an operation and the operation itself are not the same thing. A keyboard event describes what the user pressed; a command describes what the editor should do in response.
+
+For example:
+
+```text
+KEY_ARROW_LEFT
+       │
+       ▼
+MOVE_CURSOR_LEFT
+```
+
+The first value is an **input event**. The second is a **command**.
+
+The Input Engine is responsible for making this translation. The Command Engine then receives the resulting command and executes it.
+
+This creates a clean separation between input and behavior:
+
+```text
+Input Event
+    │
+    │ mapping
+    ▼
+Command
+    │
+    │ execution
+    ▼
+Editor Operation
+```
+
+## Commands Represent Intent
+
+A command should describe an operation in terms of the editor rather than in terms of the device that produced the input.
+
+Consider:
+
+```text
+KEY_ARROW_LEFT
+```
+
+This tells us something about the keyboard event. It does not describe the editor's behavior directly.
+
+After mapping, the editor has:
+
+```text
+MOVE_CURSOR_LEFT
+```
+
+This describes the user's intent: move the cursor one position to the left according to the rules defined by the Cursor Engine.
+
+The distinction becomes even more useful when multiple inputs can produce the same behavior:
+
+```text
+KEY_ARROW_LEFT ──┐
+                 ├──► MOVE_CURSOR_LEFT
+KEY_CTRL_H ──────┘
+```
+
+Both inputs could be mapped to the same command without requiring two different implementations of cursor movement.
+
+The command therefore becomes independent of the particular shortcut that triggered it.
+
+## Commands Are Independent of Key Bindings
+
+A keyboard shortcut is simply a **binding between an input event and a command**.
+
+Conceptually:
+
+```text
+Input Event              Command
+
+KEY_ARROW_LEFT   ──────► MOVE_CURSOR_LEFT
+KEY_ARROW_RIGHT  ──────► MOVE_CURSOR_RIGHT
+KEY_CTRL_S       ──────► SAVE_DOCUMENT
+KEY_CTRL_Q       ──────► QUIT_EDITOR
+```
+
+The command does not need to know that `KEY_CTRL_S` triggered `SAVE_DOCUMENT`.
+
+This separation is one of the reasons the Input Engine exists as a distinct component. Its responsibility is to map input events to commands, while the Command Engine is responsible for executing those commands. The architecture deliberately keeps these responsibilities separate.
+
+This also means that changing a shortcut does not require changing the implementation of the command.
+
+For example, if saving were later bound to another keyboard shortcut:
+
+```text
+KEY_NEW_SHORTCUT ───► SAVE_DOCUMENT
+```
+
+the `SAVE_DOCUMENT` command itself would remain unchanged.
+
+## Commands Hide How an Operation Is Triggered
+
+Once a command has been created, the Command Engine can treat it as an instruction without needing to know where it came from.
+
+```text
+                    ┌── Keyboard
+                    │
+Input Event ────────┤
+                    │
+                    └── Future Input Source
+                           │
+                           ▼
+                        Command
+                           │
+                           ▼
+                    Command Engine
+```
+
+This is useful beyond keyboard shortcuts. Although the current editor is keyboard-driven, the same command could theoretically be triggered by another interface in the future.
+
+For example, a future menu system might produce:
+
+```text
+Menu → Save → SAVE_DOCUMENT
+```
+
+while keyboard input produces:
+
+```text
+Ctrl+S → SAVE_DOCUMENT
+```
+
+Both paths eventually reach the same command:
+
+```text
+                   ┌── Ctrl+S ──────┐
+                   │                │
+                   ▼                │
+                 SAVE_DOCUMENT ◄─────────────┤
+                   ▲                │
+                   │                │
+                   └── Menu Save ───┘
+```
+
+The current architecture does not require such a menu system, but the command abstraction keeps this possibility.
+
+## Commands Describe Operations, Not Algorithms
+
+A command also should not contain a second definition of the algorithm it invokes.
+
+For example, the command:
+
+```text
+DELETE_CHARACTER
+```
+
+identifies the operation that should occur.
+
+It does not redefine all the rules for deleting text. Those rules belong to the appropriate core components established by earlier chapters.
+
+The separation can be viewed as:
+
+```text
+Command
+   │
+   │ identifies operation
+   ▼
+Core Operation
+   │
+   │ applies established rules
+   ▼
+Updated State
+```
+
+This prevents the Command Engine from becoming a second implementation of the Document Model or Cursor Engine.
+
+The same principle applies to cursor movement. `MOVE_CURSOR_UP` represents the requested operation; the Cursor component remains responsible for applying the movement rules, including the preferred-column behavior established in Chapter 14.
+
+## Commands Can Carry Additional Data
+
+Not every command can be represented by a command name alone.
+
+Consider inserting a character:
+
+```text
+INSERT_CHARACTER
+```
+
+The command also needs to know **which character** should be inserted.
+
+Conceptually:
+
+```text
+Command
+├── Type: INSERT_CHARACTER
+└── Data: 'A'
+```
+
+Whereas a movement command may require no additional data:
+
+```text
+Command
+└── Type: MOVE_CURSOR_LEFT
+```
+
+This gives us two basic parts of a command:
+
+```text
+Command
+├── Command Type
+└── Optional Command Data
+```
+
+The command type identifies the operation, while the associated data provides information required to perform that operation.
+
+This distinction becomes useful when we later design the C representation of commands.
+
+## Commands Create a Stable Boundary
+
+The most important benefit of the abstraction is the boundary it creates.
+
+Without commands, input handling and editor behavior can become intertwined:
+
+```text
+Keyboard
+   │
+   ▼
+Input Code
+   │
+   ├── Move cursor
+   ├── Insert text
+   ├── Delete text
+   ├── Save file
+   └── Exit
+```
+
+As the editor grows, this input code would gradually accumulate knowledge about every operation the editor supports.
+
+With commands, the responsibilities remain separated:
+
+```text
+Keyboard
+   │
+   ▼
+Input Parser
+   │
+   ▼
+Input Event
+   │
+   ▼
+Input Engine
+   │
+   ▼
+Command
+   │
+   ▼
+Command Engine
+   │
+   ▼
+Editor Operation
+```
+
+The Input Engine can therefore evolve independently of the Command Engine, while the Command Engine can evolve independently of terminal-specific input handling.
+
+This is the architectural value of commands: **they provide a stable representation of editor intent between input interpretation and state-changing behavior**.
+
+## The Command Abstraction in Our Editor
+
+For the editor developed in this book, the abstraction can be summarized as:
+
+| Concept        | Responsibility                                |
+| -------------- | --------------------------------------------- |
+| Input Event    | Describes what input was received             |
+| Input Engine   | Maps input events to commands                 |
+| Command        | Describes the intended editor operation       |
+| Command Engine | Executes the command                          |
+| Core Component | Applies the operation's domain-specific rules |
+| Editor State   | Holds the resulting application state         |
+| Renderer       | Displays the resulting state                  |
+
+The complete relationship is:
+
+```text
+Input Event
+     │
+     │ map
+     ▼
+  Command
+     │
+     │ execute
+     ▼
+Command Engine
+     │
+     │ coordinate
+     ▼
+Core Components
+     │
+     │ update
+     ▼
+Editor State
+```
+
+The command abstraction therefore gives the editor a clear vocabulary for its behavior. Instead of asking the rest of the architecture to understand individual keyboard inputs, the system can communicate in terms of meaningful editor operations such as `MOVE_CURSOR_LEFT`, `INSERT_CHARACTER`, `DELETE_PREVIOUS_CHARACTER`, `DELETE_CHARACTER`, `SAVE_DOCUMENT`, and `QUIT_EDITOR`.
+
+That separation is small in implementation terms, but important architecturally. It keeps **how the user asks for an operation** separate from **what the editor does when that operation is requested**.
+
+## Summary
+
+A command represents the intent to perform an editor operation. It is independent of the input that triggered it, so multiple shortcuts, or even a future menu system, can reach the same command. Commands describe operations rather than algorithms, so the Command Engine coordinates work while core components such as the Document and Cursor apply their own rules.
+
+This abstraction creates a stable boundary between input interpretation and state-changing behavior, allowing the Input Engine and the Command Engine to evolve independently.
+
+Now that commands are established as an abstraction, the next section examines how the editor should represent them in memory.
+
+Continue to **Section 16.3, Command Representation**.

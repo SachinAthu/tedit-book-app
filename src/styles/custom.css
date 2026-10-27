@@ -2,3 +2,13 @@
   background-color: var(--sl-color-accent);
   color: white;
 }
+
+.sl-markdown-content
+  :is(th:first-child, td:first-child):not(:where(.not-content *)) {
+  padding-inline-start: 0.5rem;
+}
+
+.sl-markdown-content
+  :is(th:last-child, td:last-child):not(:where(.not-content *)) {
+  padding-inline-end: 0.5rem;
+}

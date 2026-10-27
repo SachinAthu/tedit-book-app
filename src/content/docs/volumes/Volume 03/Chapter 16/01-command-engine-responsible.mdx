@@ -1,0 +1,232 @@
+---
+title: 16.1 What the Command Engine Is Responsible For
+description: Defines the Command Engine's role as executor and coordinator of state transitions, and lists input, rendering, and terminal duties it must not take on.
+---
+
+The Command Engine is responsible for **executing editor commands and coordinating the resulting changes to the Editor State**.
+
+By the time a command reaches the Command Engine, the lower-level input processing work has already been completed.
+
+The Command Engine begins at this point:
+
+```text
+Raw Input
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Event
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command
+    │
+    ▼
++------------------+
+| Command Engine   |
++------------------+
+    │
+    ▼
+Editor State
+```
+
+Its job is therefore not to understand terminal protocols or keyboard layouts. Its job is to understand **editor behavior**.
+
+## Executing Commands
+
+The most fundamental responsibility of the Command Engine is to execute the command it receives.
+
+A command such as:
+
+```text
+MOVE_CURSOR_LEFT
+```
+
+should result in the appropriate cursor operation.
+
+Similarly:
+
+```text
+INSERT_CHARACTER
+DELETE_PREVIOUS_CHARACTER
+DELETE_CHARACTER
+SPLIT_LINE
+SAVE_DOCUMENT
+QUIT_EDITOR
+```
+
+each represents an operation that the editor knows how to perform.
+
+The Command Engine provides the point where these commands are dispatched to the appropriate parts of the editor.
+
+```text
+Command
+   │
+   ├── MOVE_CURSOR_LEFT ──► Cursor
+   │
+   ├── INSERT_CHARACTER ──► Document + Cursor
+   │
+   ├── DELETE_PREVIOUS_CHARACTER ──► Document + Cursor
+   │
+   ├── DELETE_CHARACTER ──► Document + Cursor
+   │
+   ├── SAVE_DOCUMENT ──────────────► File Manager
+   │
+   └── QUIT_EDITOR ──────────────► Application State
+```
+
+The Command Engine therefore acts as a coordinator rather than replacing the components responsible for the underlying operations.
+
+## Coordinating State Changes
+
+Some commands affect only one part of the editor state, while others require several components to change together.
+
+For example, moving the cursor primarily affects the Cursor:
+
+```text
+MOVE_CURSOR_LEFT
+       │
+       ▼
+    Cursor
+       │
+       ▼
+Updated Editor State
+```
+
+Inserting a character has broader consequences:
+
+```text
+INSERT_CHARACTER
+       │
+       ├──► Document changes
+       │
+       ├──► Cursor moves
+       │
+       └──► Document becomes modified
+```
+
+The Command Engine coordinates these related changes so that one user action produces one consistent state transition.
+
+This is particularly important because the editor maintains a single source of truth for its application state. The architecture defines the Editor State as the central repository for information such as the Document, Cursor, Viewport, current file, dirty flag, screen size, status message, and configuration.
+
+The Command Engine should therefore be understood as the **coordinator of state transitions**, not as the owner of every piece of state.
+
+## Working Through Core Components
+
+The Command Engine does not need to implement every low-level operation itself.
+
+For example, the rules governing cursor movement were established by the Cursor Engine. The Command Engine should invoke those rules rather than duplicate them.
+
+Likewise, the Document Model defines how text is represented and modified. An insertion command should use the Document's editing operation rather than implement another version of text insertion inside the Command Engine.
+
+Conceptually:
+
+```text
+             Command Engine
+                    │
+          ┌─────────┼─────────┐
+          ▼         ▼         ▼
+      Document    Cursor   File Manager
+          │         │         │
+          └─────────┼─────────┘
+                    ▼
+              Editor State
+```
+
+This separation keeps the Command Engine focused on **what operation needs to be performed and which components need to participate**, while the individual components remain responsible for their own behavior.
+
+The File Manager in this diagram belongs to the Platform layer rather than the Core layer, as established in Chapter 8. The Command Engine coordinates it in the same way as the Document and Cursor, so the diagram does not distinguish the two layers.
+
+## Handling Command-Level Outcomes
+
+Command execution can also produce different outcomes.
+
+A command may:
+
+- successfully change the state,
+- successfully perform an operation without changing the Document,
+- fail because an external operation could not be completed, or
+- request that the application terminate.
+
+For example, `SAVE_DOCUMENT` may succeed or fail depending on the file system. A failed save should be represented as a command-level error and communicated through the editor's state rather than causing the Command Engine to bypass the normal runtime flow.
+
+The runtime model defines recoverable errors such as save failures and missing files as conditions that should update the Message Bar while allowing the Event Loop to continue.
+
+This makes command execution part of the normal state-transition pipeline:
+
+```text
+Command
+   │
+   ▼
+Execute
+   │
+   ├── Success ──► Update State
+   │
+   └── Error ────► Update Status Message
+                         │
+                         ▼
+                    Continue Loop
+```
+
+## What the Command Engine Does Not Do
+
+Defining what the Command Engine **does not** do is just as important as defining what it does.
+
+The Command Engine does **not**:
+
+- read raw bytes from the terminal,
+- parse ANSI or keyboard escape sequences,
+- determine which key corresponds to a command,
+- render the screen,
+- draw the cursor,
+- manage terminal modes,
+- define the Document's internal representation, or
+- redefine the Cursor's movement rules.
+
+These responsibilities belong elsewhere in the architecture.
+
+The Input Parser handles terminal-specific input interpretation, while the Input Engine maps abstract key events to commands. The Renderer reads the resulting Editor State and produces the visual frame. The Command Engine sits between these responsibilities and coordinates the behavior that changes state.
+
+The resulting boundary can be summarized as:
+
+```text
+Input Parser
+    │
+    │ "What key event occurred?"
+    ▼
+Input Engine
+    │
+    │ "What command does it represent?"
+    ▼
+Command Engine
+    │
+    │ "What should happen?"
+    ▼
+Core Components
+    │
+    │ "What is the resulting state?"
+    ▼
+Renderer
+    │
+    │ "How should that state appear?"
+    ▼
+Terminal
+```
+
+This separation is the central responsibility of the Command Engine. It turns an abstract command into a controlled state transition without becoming responsible for input interpretation, terminal interaction, or presentation.
+
+## Summary
+
+The Command Engine is the coordinator of state transitions: it executes commands, dispatches them to the appropriate core components, and ensures that one user action produces one consistent change to the Editor State. It also handles command-level outcomes, so recoverable errors such as failed saves update the Status Message without breaking the Event Loop.
+
+The Command Engine deliberately does not read raw terminal input, parse escape sequences, render the screen, or manage terminal modes. Those responsibilities belong to the Input Parser, the Input Engine, and the Renderer.
+
+Now that the Command Engine's responsibilities are defined, the next section examines the abstraction it works with: commands themselves.
+
+Continue to **Section 16.2, Commands as an Abstraction**.

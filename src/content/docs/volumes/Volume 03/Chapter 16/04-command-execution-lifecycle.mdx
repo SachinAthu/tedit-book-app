@@ -1,0 +1,443 @@
+---
+title: 16.4 The Command Execution Lifecycle
+description: Walks through the command execution lifecycle, from receiving a command and identifying its operation to updating state and leaving rendering to the Renderer.
+---
+
+A command does not exist in isolation. It is one stage in the editor's complete runtime pipeline, beginning with user input and ending with a newly rendered frame.
+
+The overall flow is:
+
+```text
+Keyboard Input
+      │
+      ▼
+Input Handler
+      │
+      ▼
+Input Parser
+      │
+      ▼
+Input Event
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command
+      │
+      ▼
+Command Engine
+      │
+      ▼
+Editor State
+      │
+      ▼
+Renderer
+      │
+      ▼
+Terminal
+```
+
+The Command Engine is therefore responsible for the **execution stage** of this pipeline. It receives a structured command, performs the requested operation, and leaves the Editor State in a consistent condition for the Renderer.
+
+This lifecycle is already established by the editor's runtime model:
+
+```text
+Wait for Event
+      ↓
+Parse Input
+      ↓
+Execute Command
+      ↓
+Update Editor State
+      ↓
+Render Frame
+```
+
+Chapter 16 focuses specifically on the transition from **command to state change**, rather than re-explaining the complete Event Loop.
+
+## 1. Receiving the Command
+
+The lifecycle begins when the Input Engine has mapped an input event to a command.
+
+For example:
+
+```text
+KEY_ARROW_LEFT
+      │
+      ▼
+MOVE_CURSOR_LEFT
+```
+
+The Command Engine receives:
+
+```text
+COMMAND_MOVE_CURSOR_LEFT
+```
+
+At this point, terminal-specific information has already been removed from the operation. It receives the command as a structured representation of editor intent.
+
+## 2. Identifying the Operation
+
+The Command Engine examines the command type and determines which operation should be executed.
+
+Conceptually:
+
+```text
+Command
+   │
+   ▼
+Command Type
+   │
+   ├── MOVE_CURSOR_LEFT
+   ├── MOVE_CURSOR_RIGHT
+   ├── INSERT_CHARACTER
+   ├── DELETE_PREVIOUS_CHARACTER
+   ├── DELETE_CHARACTER
+   ├── SPLIT_LINE
+   ├── SAVE_DOCUMENT
+   └── QUIT_EDITOR
+```
+
+This is the point where command dispatch occurs.
+
+The Command Engine does not need to reinterpret the command. The command already represents the intended operation.
+
+For example:
+
+```text
+COMMAND_MOVE_CURSOR_LEFT
+```
+
+means that the Cursor should perform its left-movement operation.
+
+Similarly:
+
+```text
+COMMAND_INSERT_CHARACTER('A')
+```
+
+means that the editor should perform the appropriate insertion operation using the supplied character.
+
+## 3. Executing the Command
+
+Once the operation has been identified, the Command Engine coordinates its execution.
+
+Different commands involve different parts of the editor.
+
+A cursor movement may involve only the Cursor:
+
+```text
+MOVE_CURSOR_LEFT
+       │
+       ▼
+     Cursor
+```
+
+An insertion may involve several state changes:
+
+```text
+INSERT_CHARACTER('A')
+       │
+       ├──► Document
+       │
+       ├──► Cursor
+       │
+       └──► Dirty Flag
+```
+
+A save operation crosses into the file system:
+
+```text
+SAVE_DOCUMENT
+ │
+ ▼
+File Manager
+ │
+ ▼
+Document → File
+```
+
+The Command Engine therefore acts as the coordinator of these operations rather than implementing each subsystem's internal rules itself.
+
+## 4. Updating Editor State
+
+After a command has executed, the affected parts of the Editor State must reflect the result.
+
+For example, before an insertion:
+
+```text
+Document:
+Hello
+
+Cursor:
+    ^
+```
+
+After inserting `X`:
+
+```text
+Document:
+HelXlo
+
+Cursor:
+     ^
+```
+
+The important architectural point is that the Command Engine does not produce a screen update directly.
+
+It produces a **state change**.
+
+```text
+Command
+   │
+   ▼
+Operation
+   │
+   ▼
+Updated Editor State
+```
+
+The Renderer will use that updated state later in the lifecycle.
+
+## 5. Handling the Command Result
+
+Not every command execution necessarily succeeds.
+
+For example, a save operation may encounter an error:
+
+```text
+SAVE_DOCUMENT
+ │
+ ▼
+File Manager
+ │
+ ├── Success
+ │
+ └── Failure
+```
+
+A successful command can leave the Editor State updated normally.
+
+A recoverable failure can instead update the appropriate state, such as a status or message value:
+
+```text
+SAVE_DOCUMENT
+ │
+ ▼
+File Manager
+ │
+ └── Error
+      │
+      ▼
+Status Message
+```
+
+The Event Loop can then continue processing subsequent commands.
+
+The runtime model explicitly defines recoverable conditions such as save failures as errors that should be communicated through the editor interface while allowing the Event Loop to continue.
+
+## 6. Rendering the Result
+
+Once command execution and state updates are complete, control returns to the normal runtime pipeline.
+
+```text
+Command
+   │
+   ▼
+Execute
+   │
+   ▼
+Update State
+   │
+   ▼
+Render
+```
+
+The Renderer reads the resulting Editor State and generates the next frame.
+
+For example:
+
+```text
+MOVE_CURSOR_LEFT
+       │
+       ▼
+Cursor State Changes
+       │
+       ▼
+Renderer Reads State
+       │
+       ▼
+Cursor Appears at New Position
+```
+
+The Command Engine does not need to issue terminal escape sequences or explicitly tell the Renderer what changed.
+
+This is a consequence of the full-redraw architecture: the Renderer derives the frame from the current state rather than receiving a collection of visual instructions from individual commands. The project's rendering strategy deliberately uses full redraws to keep the renderer a function of editor state.
+
+## The Complete Lifecycle
+
+Putting the stages together:
+
+```text
++-------------------+
+|   Keyboard Input  |
++-------------------+
+          │
+          ▼
++-------------------+
+|  Input Processing |
++-------------------+
+          │
+          ▼
++-------------------+
+|   Input Event     |
++-------------------+
+          │
+          ▼
++-------------------+
+|   Input Engine    |
++-------------------+
+          │
+          │ map
+          ▼
++-------------------+
+|      Command      |
++-------------------+
+          │
+          │ execute
+          ▼
++-------------------+
+|  Command Engine   |
++-------------------+
+          │
+          │ coordinate
+          ▼
++-------------------+
+|   Core Components |
++-------------------+
+          │
+          │ update
+          ▼
++-------------------+
+|   Editor State     |
++-------------------+
+          │
+          │ read
+          ▼
++-------------------+
+|     Renderer      |
++-------------------+
+          │
+          ▼
++-------------------+
+|     Terminal      |
++-------------------+
+```
+
+Each stage has a distinct responsibility.
+
+| Stage           | Responsibility                      |
+| --------------- | ----------------------------------- |
+| Input Handler   | Receive raw terminal input          |
+| Input Parser    | Convert raw bytes into input events |
+| Input Engine    | Map events to commands              |
+| Command         | Represent editor intent             |
+| Command Engine  | Execute and coordinate commands     |
+| Core Components | Apply domain-specific operations    |
+| Editor State    | Hold the resulting state            |
+| Renderer        | Generate the visual frame           |
+| Terminal        | Display the frame                   |
+
+## One Command, One State Transition
+
+A useful way to think about the lifecycle is that each command represents one logical user action.
+
+For example:
+
+```text
+User presses Left
+        │
+        ▼
+MOVE_CURSOR_LEFT
+        │
+        ▼
+Cursor moves
+        │
+        ▼
+State is updated
+        │
+        ▼
+Frame is rendered
+```
+
+Or:
+
+```text
+User presses "A"
+        │
+        ▼
+INSERT_CHARACTER('A')
+        │
+        ▼
+Document changes
+        │
+        ▼
+Cursor changes
+        │
+        ▼
+Dirty Flag changes
+        │
+        ▼
+Frame is rendered
+```
+
+The exact internal work may involve several components, but from the runtime's perspective it remains one command execution.
+
+This gives the editor a predictable processing model:
+
+> **One input event produces one command, and one command produces one completed state transition before rendering begins.**
+
+That model also fits the editor's single-threaded runtime architecture, where events are processed sequentially rather than concurrently.
+
+## Why the Lifecycle Matters
+
+The value of this lifecycle is not merely organizational.
+
+Without a defined sequence, different parts of the editor could begin performing work at unpredictable points:
+
+```text
+Input
+ ├── modifies document
+ ├── moves cursor
+ ├── draws screen
+ └── saves file
+```
+
+This makes it difficult to reason about the state of the application at any particular moment.
+
+The command lifecycle establishes a predictable order:
+
+```text
+Interpret
+    ↓
+Execute
+    ↓
+Update
+    ↓
+Render
+```
+
+At the end of command execution, the Editor State represents the completed result of the user's action. Only then does the Renderer produce a new frame.
+
+That predictable boundary is what allows the different subsystems to remain independent while still cooperating as one application.
+
+## Summary
+
+The command execution lifecycle is one stage of the editor's runtime pipeline: the Command Engine receives a command, identifies the operation, coordinates the affected components, updates the Editor State, and leaves the result for the Renderer. Each command represents one logical user action, and one command produces one completed state transition before rendering begins.
+
+Because the editor uses a full-redraw architecture, the Command Engine produces state changes rather than screen updates. Recoverable errors are communicated through the Status Message so the Event Loop can continue.
+
+Now that the command execution lifecycle is clear, the next section examines how commands are grouped by the kind of editor behavior they represent.
+
+Continue to **Section 16.5, Command Categories**.

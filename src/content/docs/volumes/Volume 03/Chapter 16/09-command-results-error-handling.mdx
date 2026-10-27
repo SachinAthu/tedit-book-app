@@ -1,0 +1,384 @@
+---
+title: 16.9 Command Results and Error Handling
+description: Describes command outcomes such as success, recoverable errors, and application transitions, and how failures become status state instead of ad-hoc output.
+---
+
+Executing a command does not always produce the same kind of outcome.
+
+Some commands complete successfully without any visible error:
+
+```text
+MOVE_CURSOR_LEFT
+       │
+       ▼
+   Success
+```
+
+Others interact with operations that can fail. The clearest example is `SAVE_DOCUMENT`, which depends on the file system:
+
+```text
+SAVE_DOCUMENT
+ │
+ ▼
+File Operation
+ │
+ ├── Success
+ │
+ └── Failure
+```
+
+The Command Engine therefore needs a way to handle the **result of command execution** without breaking the normal runtime flow.
+
+The important distinction is between **command execution** and **command outcome**:
+
+```text
+Command
+   │
+   ▼
+Execute
+   │
+   ▼
+Result
+   │
+   ├── Success
+   │
+   └── Error
+```
+
+The command describes what should happen. The result describes what happened when the operation was attempted.
+
+## Successful Commands
+
+The simplest outcome is successful execution.
+
+For example:
+
+```text
+MOVE_CURSOR_LEFT
+       │
+       ▼
+Cursor operation
+       │
+       ▼
+Success
+```
+
+The resulting state can then proceed normally to rendering:
+
+```text
+Command
+   │
+   ▼
+Execute
+   │
+   ▼
+Update Editor State
+   │
+   ▼
+Render
+```
+
+Not every successful command needs to produce a user-visible message. A cursor movement, for example, normally succeeds silently.
+
+Likewise, a successful character insertion simply results in the updated Document, Cursor, and Dirty Flag.
+
+## Commands That Can Fail
+
+Some commands depend on conditions outside the immediate editor state.
+
+`SAVE_DOCUMENT` is the primary example:
+
+```text
+SAVE_DOCUMENT
+ │
+ ▼
+File Manager
+ │
+ ├── File opened successfully
+ ├── Data written successfully
+ │
+ └── Error
+```
+
+A failure could occur while opening the file, writing its contents, or completing another required file-system operation.
+
+The important point for the Command Engine is that such a failure is a **command result**, not a reason to bypass the normal editor architecture.
+
+The runtime model defines recoverable failures, such as save failures, as conditions that should be communicated through the editor interface while allowing the Event Loop to continue.
+
+## Recoverable Errors
+
+A recoverable command error means that the requested operation could not be completed, but the editor itself can continue running.
+
+For example:
+
+```text
+SAVE_DOCUMENT
+ │
+ ▼
+File Operation
+ │
+ └── Failure
+       │
+       ▼
+Status Message
+       │
+       ▼
+Render
+       │
+       ▼
+Continue Event Loop
+```
+
+The Document remains available in memory, so the user can continue editing or attempt the operation again.
+
+This is an important property of an interactive editor. A failed external operation should not automatically destroy the in-memory editing session.
+
+The runtime architecture explicitly distinguishes recoverable errors from fatal failures. Recoverable errors are communicated to the user and allow the Event Loop to continue processing commands.
+
+## Reporting the Error
+
+A command failure needs to become visible to the user.
+
+The Command Engine can therefore coordinate the creation of an appropriate state update:
+
+```text
+SAVE_DOCUMENT
+ │
+ ▼
+File Manager
+ │
+ └── Error
+       │
+       ▼
+Status Message
+      │
+      ▼
+Renderer
+```
+
+The Renderer then displays the resulting message as part of the next frame.
+
+This preserves the separation between command execution and presentation.
+
+The Command Engine does not need to print the error directly to the terminal:
+
+```text
+// Avoid
+printf("Save failed");
+```
+
+Instead, the failure becomes part of the state that the Renderer can display.
+
+Conceptually:
+
+```text
+Command Result
+      │
+      ▼
+Editor State
+      │
+      └── Status Message
+              │
+              ▼
+           Renderer
+```
+
+This keeps terminal output inside the rendering architecture rather than allowing individual commands to bypass it.
+
+## The Document After a Failed Save
+
+A failed save also illustrates why command results matter.
+
+Suppose the Document has been modified:
+
+```text
+Document
+    │
+    └── Dirty = true
+```
+
+The user executes:
+
+```text
+SAVE_DOCUMENT
+```
+
+If the operation fails:
+
+```text
+SAVE_DOCUMENT
+ │
+ ▼
+File Operation
+ │
+ └── Failure
+```
+
+the Document itself has not been successfully persisted.
+
+The editor should therefore retain the unsaved in-memory state rather than treating the save as successful.
+
+Conceptually:
+
+```text
+Before SAVE_DOCUMENT
+    │
+    ├── Document = modified
+    └── Dirty = true
+          │
+          ▼
+       SAVE_DOCUMENT fails
+          │
+          ▼
+After SAVE_DOCUMENT
+    │
+    ├── Document = unchanged
+    ├── Dirty = true
+    └── Message = error
+```
+
+The exact file-system error handling belongs to the File Manager and later File System chapters. The Command Engine's responsibility is to correctly incorporate the operation's result into the editor's state transition.
+
+## Not Every Result Is an Error
+
+A command result does not have to be limited to a simple success/failure distinction.
+
+Conceptually, command execution can produce outcomes such as:
+
+```text
+Command Result
+     │
+     ├── Success
+     ├── Recoverable Error
+     └── Application Transition
+```
+
+For example:
+
+- `MOVE_CURSOR_LEFT` → successful state change
+- `INSERT_CHARACTER` → successful document modification
+- `SAVE_DOCUMENT` → successful persistence or recoverable failure
+- `QUIT_EDITOR` → request to leave the normal editing loop
+
+The exact representation of these results should remain simple for the current editor. The important architectural point is that **command execution produces an outcome that the runtime can act upon**.
+
+## Command Results and the Event Loop
+
+Command results fit naturally into the existing runtime sequence:
+
+```text
+Wait
+  │
+  ▼
+Parse Input
+  │
+  ▼
+Create Command
+  │
+  ▼
+Execute Command
+  │
+  ▼
+Command Result
+  │
+  ├── Success ──────────┐
+  │                     │
+  └── Recoverable Error ┘
+                        │
+                        ▼
+                  Update State
+                        │
+                        ▼
+                     Render
+                        │
+                        ▼
+                  Continue Loop
+```
+
+A fatal condition is different. If the editor reaches a state from which it cannot safely continue, the runtime may need to terminate rather than continue processing commands.
+
+The important distinction is therefore:
+
+```text
+Recoverable
+    │
+    ▼
+Update State → Render → Continue
+
+Fatal
+    │
+    ▼
+Terminate Safely
+```
+
+The runtime model establishes this distinction at the application level; the Command Engine participates in it when a command produces an error.
+
+## Keeping Error Handling Out of Individual Commands
+
+It is also useful to avoid giving every command its own independent error-reporting mechanism.
+
+Without a consistent approach, command implementations could start doing things such as:
+
+```text
+INSERT_CHARACTER
+    └── print error
+
+SAVE_DOCUMENT
+    └── print error
+
+DELETE_CHARACTER
+    └── print error
+```
+
+This would couple command execution directly to terminal presentation.
+
+Instead, command execution should follow the same general pattern:
+
+```text
+Command
+   │
+   ▼
+Execute
+   │
+   ▼
+Result
+   │
+   ▼
+Editor State
+   │
+   ▼
+Renderer
+```
+
+The command determines whether its operation succeeded and provides the appropriate outcome. The surrounding architecture determines how that outcome is represented and displayed.
+
+## Command Result Contract
+
+The command-result model can be summarized as:
+
+| Situation                          | Command Engine Behavior                    |
+| ---------------------------------- | ------------------------------------------ |
+| Operation succeeds                 | Apply the resulting state changes          |
+| Operation fails recoverably        | Preserve valid state and record the error  |
+| Error needs user feedback          | Update message/status state                |
+| Rendering is required              | Let the Renderer display the updated state |
+| Application cannot safely continue | Participate in controlled termination      |
+
+The central principle is:
+
+> **A command execution should produce a well-defined outcome, and that outcome should flow through the same state-driven architecture as every other editor change.**
+
+This keeps command execution predictable even when operations fail. More importantly, it prevents errors from creating a second, ad-hoc control path through the application.
+
+The Command Engine remains responsible for executing editor intent; the runtime remains responsible for deciding what happens next; and the Renderer remains responsible for presenting the resulting state.
+
+## Summary
+
+Command execution produces a well-defined outcome rather than a single success/failure path. Commands can succeed silently, succeed with a visible result, fail recoverably, or request an application transition.
+
+Recoverable errors, such as a failed save, update the message/status state and let the Event Loop continue, so the in-memory editing session is preserved. By flowing every outcome through the same state-driven architecture, command execution stays predictable and errors never create a second, ad-hoc control path.
+
+Now that command results and error handling are established, the next section examines the dispatch mechanism that connects a command to its operation.
+
+Continue to **Section 16.10, Command Dispatch**.

@@ -1,0 +1,374 @@
+---
+title: 16.12 Complexity and Trade-offs
+description: Weighs the structural, conceptual, and dependency costs of the Command Engine against lower coupling, clearer ownership, testability, and future extensibility.
+---
+
+The Command Engine introduces another architectural boundary into the editor. That boundary provides a clear separation between input interpretation and editor behavior, but it also adds structure that would not be necessary in the smallest possible implementation.
+
+The important question is therefore not whether the Command Engine adds complexity—it does—but whether the **benefits of that complexity justify it**.
+
+For this editor, the answer is yes.
+
+The architecture deliberately favors low coupling, high cohesion, single responsibility, and explicit state ownership.
+
+## Structural Complexity
+
+Without a Command Engine, input handling could execute operations directly:
+
+```text
+Input
+  │
+  ▼
+Operation
+  │
+  ▼
+Editor State
+```
+
+With the Command Engine:
+
+```text
+Input
+  │
+  ▼
+Input Engine
+  │
+  ▼
+Command
+  │
+  ▼
+Command Engine
+  │
+  ▼
+Editor State
+```
+
+The second design has more components and more explicit boundaries.
+
+That means more:
+
+- types,
+- interfaces,
+- function calls,
+- modules, and
+- concepts for the reader to understand.
+
+For a tiny editor, this can initially feel like unnecessary ceremony.
+
+However, the additional structure separates two responsibilities that would otherwise become coupled:
+
+```text
+Input Engine
+"What does this input mean?"
+        │
+        ▼
+Command Engine
+"What should the editor do?"
+```
+
+The architecture explicitly accepts this kind of structural cost when the boundary provides a meaningful separation of responsibilities. ADR-015 makes the same argument for the dedicated Input Engine: the additional component is accepted because it prevents input handling from accumulating document, cursor, and file responsibilities.
+
+## Runtime Complexity
+
+The Command Engine does not introduce a high algorithmic cost.
+
+For the current command set, dispatch is essentially a constant-time selection among a fixed number of command types:
+
+```text
+Command
+   │
+   ▼
+Command Type
+   │
+   ▼
+Dispatch
+   │
+   ▼
+Operation
+```
+
+A `switch` over an enumeration does not change the fundamental complexity of the editor's operations.
+
+For example, moving the cursor remains governed by the Cursor Engine's rules, while inserting or deleting text remains governed by the Document representation.
+
+The Command Engine primarily adds **control-flow structure**, not an expensive new algorithm.
+
+## Memory Complexity
+
+Commands themselves are also small values.
+
+A simple command may contain only:
+
+```text
+Command
+├── Type
+└── Optional Data
+```
+
+For example:
+
+```text
+MOVE_CURSOR_LEFT
+```
+
+requires only its command type, while:
+
+```text
+INSERT_CHARACTER('A')
+```
+
+also carries the character to insert.
+
+There is therefore little memory overhead associated with representing a command.
+
+The larger memory costs of the editor remain associated with the Document and other application state rather than with command dispatch.
+
+## Complexity of Abstraction
+
+The more important cost is conceptual.
+
+A direct implementation could allow a reader to follow:
+
+```text
+Key
+ ↓
+switch
+ ↓
+Move Cursor
+```
+
+The architecture developed in this book instead requires the reader to understand:
+
+```text
+Key
+ ↓
+Input Event
+ ↓
+Input Engine
+ ↓
+Command
+ ↓
+Command Engine
+ ↓
+Core Operation
+```
+
+That is undeniably more to learn.
+
+However, the book's architectural goal is not merely to produce the shortest possible program. The project is intended to explain why software is structured into responsibilities and boundaries, with theory and design decisions understood before implementation.
+
+The additional abstraction is therefore part of the subject being taught, not accidental complexity.
+
+## Coupling and Maintainability
+
+The main benefit of the Command Engine is reduced coupling.
+
+Without it, input handling could gradually become coupled to every operation the editor supports:
+
+```text
+Input
+ ├── Document
+ ├── Cursor
+ ├── File Manager
+ └── Application State
+```
+
+With the Command Engine:
+
+```text
+Input Engine
+      │
+      ▼
+Command Engine
+      │
+      ├── Document
+      ├── Cursor
+      ├── File Manager
+      └── Application State
+```
+
+The Input Engine only needs to understand the relationship between input events and commands.
+
+The Command Engine becomes the application-level boundary where editor behavior is coordinated.
+
+This aligns with the system architecture, which places the Input Engine and Command Engine in the Application Layer and keeps the Core Layer independent of the higher-level components.
+
+## Testability
+
+The separation also creates clearer testing boundaries.
+
+The Input Engine can be tested with mappings such as:
+
+```text
+KEY_ARROW_LEFT → MOVE_CURSOR_LEFT
+KEY_CTRL_S     → SAVE_DOCUMENT
+```
+
+without testing the actual editing operation.
+
+The Command Engine can then be tested using commands directly:
+
+```text
+MOVE_CURSOR_LEFT
+INSERT_CHARACTER('A')
+DELETE_PREVIOUS_CHARACTER
+DELETE_CHARACTER
+SAVE_DOCUMENT
+```
+
+without needing to simulate terminal input.
+
+Conceptually:
+
+```text
+Input Tests
+    │
+    ▼
+Input Event → Command
+
+Command Tests
+    │
+    ▼
+Command → State Change
+```
+
+This separation reduces the amount of unrelated machinery required to test each layer.
+
+## Dependency Complexity
+
+The Command Engine does introduce dependencies on the state and services required to execute commands.
+
+The architecture therefore keeps its dependency direction explicit:
+
+```text
+Application Layer
+(Command Engine)
+        │
+        ▼
+Core Layer
+(Editor State)
+```
+
+The Core Layer does not depend back on the Command Engine.
+
+This one-way dependency direction prevents circular relationships and keeps the architecture modular.
+
+The Command Engine therefore has more dependencies than a trivial input handler, but those dependencies correspond directly to its responsibility: executing commands and updating application state.
+
+## Complexity of State Coordination
+
+Some commands affect multiple pieces of state.
+
+For example:
+
+```text
+INSERT_CHARACTER
+       │
+       ├──► Document
+       ├──► Cursor
+       └──► Dirty Flag
+```
+
+This coordination introduces some complexity because the Command Engine must ensure that the related state changes remain consistent.
+
+However, centralizing this coordination is preferable to allowing different components to independently perform partial state transitions.
+
+The architecture explicitly uses a single Editor State as the application's source of truth and assigns each piece of state a single owner.
+
+This makes the Command Engine's coordination responsibility a controlled form of complexity rather than duplicated state management.
+
+## Future Extensibility
+
+The command abstraction also provides room for future features.
+
+A new command can be introduced by extending the command vocabulary and its dispatch logic:
+
+```text
+New Input
+   │
+   ▼
+New Command
+   │
+   ▼
+Command Engine
+   │
+   ▼
+New Operation
+```
+
+For example, later chapters introduce features such as search and undo/redo. The existing command boundary gives those operations a natural place within the architecture without requiring keyboard parsing to understand their implementation.
+
+However, extensibility should not be confused with a requirement to build a generalized command framework now.
+
+The project deliberately postpones more sophisticated command abstractions, such as the Command Pattern used for undo/redo, until the later professional-features section.
+
+## The Trade-off in One View
+
+The main trade-offs can be summarized as follows:
+
+| Aspect               | Cost                              | Benefit                                             |
+| -------------------- | --------------------------------- | --------------------------------------------------- |
+| More modules         | Higher structural complexity      | Clear responsibilities                              |
+| Command abstraction  | More concepts                     | Input-independent behavior                          |
+| Dispatch layer       | Additional function/control flow  | Centralized command execution                       |
+| State coordination   | Some implementation complexity    | Consistent state transitions                        |
+| Dependency structure | More explicit dependencies        | Lower coupling and clearer ownership                |
+| Testing              | More interfaces to test           | Smaller, more focused test boundaries               |
+| Future changes       | Slightly more structure initially | Easier extension without coupling input to behavior |
+
+The Command Engine is therefore not a performance optimization.
+
+Its primary value is architectural.
+
+```text
+                Cost
+                 │
+        More structure
+        More concepts
+        More boundaries
+                 │
+                 ▼
+        +----------------+
+        | Command Engine |
+        +----------------+
+                 │
+                 ▼
+              Benefits
+                 │
+        ┌────────┼────────┐
+        ▼        ▼        ▼
+    Low      Clear     Easier
+   Coupling  Ownership  Testing
+```
+
+## The Appropriate Level of Complexity
+
+The goal is not to make the Command Engine as sophisticated as possible.
+
+The goal is to introduce **only the complexity that provides a meaningful architectural benefit**.
+
+For the current editor, that means:
+
+- a simple command representation,
+- a direct dispatch mechanism,
+- explicit component boundaries,
+- centralized coordination of state changes, and
+- no generalized command-object framework.
+
+This keeps the implementation proportional to the project's scope while preserving the architectural separation we need.
+
+The broader design philosophy is the same one used throughout the project: choose simple mechanisms where they are sufficient, and accept additional complexity only when it solves a real architectural problem. The project already makes similar trade-offs in areas such as the C implementation language, full-screen redraw strategy, and dedicated input-processing boundaries.
+
+The Command Engine therefore represents a deliberate compromise:
+
+> **It is more complex than executing commands directly from input handling, but substantially simpler than a full command framework.**
+
+For this editor, that is the appropriate level of abstraction.
+
+## Summary
+
+The Command Engine adds structural and conceptual complexity, but its benefits justify the cost: reduced coupling, clear state ownership, controlled coordination, smaller test boundaries, and a natural place for future commands. Dispatch adds essentially no runtime cost, and commands themselves are small values.
+
+The chosen design is a deliberate compromise: more complex than executing commands directly from input handling, but substantially simpler than a full command framework. That is the appropriate level of abstraction for this editor.
+
+Continue to the **Chapter Summary**, which consolidates the Command Engine's responsibilities into a single contract, followed by exercises and a preview of the next chapter.

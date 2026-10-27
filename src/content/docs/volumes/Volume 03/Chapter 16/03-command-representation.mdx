@@ -1,0 +1,356 @@
+---
+title: 16.3 Command Representation
+description: Describes representing commands as a C enum plus optional payload, and explains why the simple, value-based structure fits the editor's scope.
+---
+
+Once commands have been established as an abstraction, the next question is how the editor should represent them in memory.
+
+The representation needs to answer two basic questions:
+
+1. **Which operation should be performed?**
+2. **What information is required to perform it?**
+
+For many commands, the first question is sufficient. A command such as `MOVE_CURSOR_LEFT` contains everything the Command Engine needs to know.
+
+Other commands require additional information. `INSERT_CHARACTER`, for example, identifies the operation but must also carry the character that should be inserted.
+
+This gives the command a simple conceptual structure:
+
+```text
+Command
+├── Type
+└── Data
+```
+
+The data is optional because not every command needs a payload.
+
+## Command Type
+
+The command type identifies the operation the Command Engine should execute.
+
+For the editor's current feature set, the command types can be grouped conceptually as:
+
+```text
+Navigation
+    MOVE_CURSOR_LEFT
+    MOVE_CURSOR_RIGHT
+    MOVE_CURSOR_UP
+    MOVE_CURSOR_DOWN
+
+Editing
+    INSERT_CHARACTER
+    DELETE_PREVIOUS_CHARACTER
+    DELETE_CHARACTER
+    SPLIT_LINE
+
+Document
+    SAVE_DOCUMENT
+
+Application
+    QUIT_EDITOR
+```
+
+In C, an enumeration is a natural representation for this part of the command:
+
+```c
+typedef enum
+{
+    COMMAND_MOVE_CURSOR_LEFT,
+    COMMAND_MOVE_CURSOR_RIGHT,
+    COMMAND_MOVE_CURSOR_UP,
+    COMMAND_MOVE_CURSOR_DOWN,
+    COMMAND_INSERT_CHARACTER,
+    COMMAND_DELETE_PREVIOUS_CHARACTER,
+    COMMAND_DELETE_CHARACTER,
+    COMMAND_SPLIT_LINE,
+    COMMAND_SAVE_DOCUMENT,
+    COMMAND_QUIT_EDITOR
+} CommandType;
+```
+
+The enumeration gives the Command Engine a finite vocabulary of operations that the application currently understands.
+
+The important point is that these values describe **editor behavior**, not keyboard input. The Command Engine should receive `COMMAND_SAVE_DOCUMENT`, for example, rather than needing to know that the command originated from `KEY_CTRL_S`.
+
+## Command Data
+
+Some commands need additional information beyond their type.
+
+The clearest example is character insertion:
+
+```text
+Command
+├── Type: INSERT_CHARACTER
+└── Character: 'A'
+```
+
+The command type tells the Command Engine what operation to perform. The associated data tells it what character to insert.
+
+Conceptually:
+
+```text
+KEY_CHARACTER('A')
+        │
+        ▼
+INSERT_CHARACTER('A')
+        │
+        ▼
+Command Engine
+```
+
+Other commands may require different kinds of data in the future. For example, a command representing an explicit insertion might contain a character, while a future command could carry a string, a position, or another operation-specific value.
+
+This is why it is useful to distinguish the **command type** from its **payload** rather than attempting to encode everything into the command name itself.
+
+## A Simple Command Structure
+
+The conceptual representation can therefore be expressed as a C structure:
+
+```c
+typedef struct
+{
+    CommandType type;
+    char character;
+} Command;
+```
+
+A movement command could then be represented as:
+
+```text
+Command
+├── type      = COMMAND_MOVE_CURSOR_LEFT
+└── character = unused
+```
+
+while an insertion command could be:
+
+```text
+Command
+├── type      = COMMAND_INSERT_CHARACTER
+└── character = 'A'
+```
+
+The structure is deliberately simple. The current editor has only a small number of commands, and most of them require no additional data.
+
+One simplification worth noting is that the `character` field holds a single byte, which is sufficient for ASCII. As established in Chapter 6, however, UTF-8 encodes many characters using multiple bytes, so a single `char` cannot represent every character the editor might eventually receive. For the current editor's scope this is adequate; full multi-byte character support is deferred to Chapter 23 (Text Encoding).
+
+However, the example exposes an important design consideration: **not every command has the same payload requirements**.
+
+## Commands With Different Payloads
+
+As the command set grows, a single field may no longer be sufficient.
+
+For example:
+
+```text
+INSERT_CHARACTER
+    └── character
+
+FUTURE_INSERT_TEXT
+    └── string
+
+FUTURE_GOTO_POSITION
+    ├── row
+    └── column
+```
+
+A representation designed for every possible future command could quickly become unnecessarily complicated.
+
+For the current editor, that complexity is not justified. The architecture intentionally favors simplicity and educational value over advanced abstractions.
+
+The representation should therefore support the commands we actually need rather than attempting to anticipate every command a professional editor might eventually provide.
+
+## Keeping Command Data With the Command
+
+When a command requires additional information, that information should travel with the command from the point where the command is created to the point where it is executed.
+
+For example:
+
+```text
+Input Event
+    │
+    │ KEY_CHARACTER('A')
+    ▼
+Input Engine
+    │
+    │ creates
+    ▼
+Command
+├── Type: INSERT_CHARACTER
+└── Data: 'A'
+    │
+    ▼
+Command Engine
+```
+
+This keeps the Command Engine independent of the original input event.
+
+The Command Engine does not need to ask:
+
+> Which key produced this character?
+
+It only needs to know:
+
+> This is an `INSERT_CHARACTER` command, and the character is `A`.
+
+That preserves the separation established in the previous section between input interpretation and command execution.
+
+## Command Representation and Dispatch
+
+The representation also provides the basis for command dispatch.
+
+Conceptually:
+
+```text
+Command
+    │
+    ▼
+Command Type
+    │
+    ├── MOVE_CURSOR_LEFT
+    ├── MOVE_CURSOR_RIGHT
+    ├── INSERT_CHARACTER
+    ├── DELETE_PREVIOUS_CHARACTER
+    ├── DELETE_CHARACTER
+    ├── SPLIT_LINE
+    ├── SAVE_DOCUMENT
+    └── QUIT_EDITOR
+```
+
+The Command Engine can inspect the command type and select the appropriate operation.
+
+For a command without additional data:
+
+```text
+COMMAND_MOVE_CURSOR_LEFT
+        │
+        ▼
+Execute cursor movement
+```
+
+For a command with data:
+
+```text
+COMMAND_INSERT_CHARACTER
+        │
+        ├── Read character
+        │
+        ▼
+Execute insertion
+```
+
+The representation therefore connects naturally to the dispatch mechanism that will be discussed later in this chapter.
+
+## Commands Are Values, Not Behavior
+
+A useful distinction is that the command itself represents **data describing an operation**. It does not need to contain the implementation of that operation.
+
+For example:
+
+```text
+Command
+    │
+    │ describes
+    ▼
+INSERT_CHARACTER('A')
+```
+
+The actual insertion logic remains outside the command value.
+
+```text
+INSERT_CHARACTER('A')
+        │
+        ▼
+Command Engine
+        │
+        ▼
+Document operation
+        │
+        ▼
+Cursor update
+```
+
+This keeps the representation lightweight and prevents commands from becoming objects that contain unrelated editor logic.
+
+The Command Engine remains the place where command execution is coordinated, while the Document and Cursor retain responsibility for their respective operations.
+
+## Representation Should Match the Current Scope
+
+The editor currently has a deliberately small command vocabulary. The representation should reflect that scope.
+
+A simple command type combined with optional command data is sufficient:
+
+```text
++----------------------+
+|       Command        |
++----------------------+
+| CommandType type     |
+| Command Data         |
++----------------------+
+```
+
+There is no need at this stage for a general-purpose command object hierarchy, dynamic dispatch system, or elaborate command framework.
+
+Those approaches can be useful in larger applications, particularly when commands need capabilities such as history, undo, redo, serialization, or dynamic registration. They would introduce additional machinery that is outside the needs of the current editor.
+
+The important architectural boundary is already achieved by separating:
+
+```text
+Input Event
+      │
+      ▼
+Command
+      │
+      ▼
+Command Execution
+```
+
+The representation only needs to make that boundary clear and reliable.
+
+## Command Representation Contract
+
+The command representation can therefore be summarized with a small contract:
+
+| Property                      | Requirement                                             |
+| ----------------------------- | ------------------------------------------------------- |
+| Identifies an operation       | Every command has a command type                        |
+| Carries required information  | Commands may contain operation-specific data            |
+| Independent of input          | Commands do not contain keyboard-specific meaning       |
+| Independent of implementation | Commands describe operations rather than implement them |
+| Simple                        | Representation should match the editor's current scope  |
+| Extensible                    | Additional command types can be introduced later        |
+
+The resulting model is straightforward:
+
+```text
+Input Event
+    │
+    ▼
+Input Engine
+    │
+    │ creates
+    ▼
++----------------------+
+|       Command        |
+|----------------------|
+| Type                 |
+| Optional Data        |
++----------------------+
+    │
+    ▼
+Command Engine
+```
+
+This gives the Command Engine a well-defined input: a structured value describing an editor operation. It no longer needs to understand terminal input, keyboard shortcuts, or the details of how the operation is implemented.
+
+The next step is to examine how these command values move through the system and how the Command Engine executes them as part of the editor's runtime lifecycle.
+
+## Summary
+
+Commands are represented as a command type combined with optional command data. A C enumeration defines the editor's finite command vocabulary, while a simple structure carries the payload that some commands, such as `INSERT_CHARACTER`, require.
+
+The representation keeps commands as values rather than behavior: they describe an operation but never implement it. It matches the editor's current scope, stays independent of keyboard input, and connects naturally to command dispatch.
+
+Now that the command representation is established, the next section examines how command values move through the system and how the Command Engine executes them.
+
+Continue to **Section 16.4, The Command Execution Lifecycle**.

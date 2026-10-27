@@ -1,0 +1,246 @@
+---
+title: 16.5 Command Categories
+description: Groups commands into navigation, editing, document, and application categories and compares the primary state each category affects.
+---
+
+The editor supports several different kinds of commands. Although all commands follow the same execution lifecycle, they do not affect the Editor State in the same way.
+
+For example, moving the cursor changes navigation state, inserting a character changes the Document, saving synchronizes the Document with the file system, and quitting changes the application's running state.
+
+Grouping commands by their purpose makes these differences easier to understand:
+
+```text
+Commands
+   │
+   ├── Navigation
+   │
+   ├── Editing
+   │
+   ├── Document
+   │
+   └── Application
+```
+
+These categories describe the **kind of operation** a command performs. They do not represent separate execution mechanisms. All commands still pass through the same Command Engine.
+
+## Navigation Commands
+
+Navigation commands change the user's position within the Document without modifying the Document's contents.
+
+Examples include:
+
+```text
+MOVE_CURSOR_LEFT
+MOVE_CURSOR_RIGHT
+MOVE_CURSOR_UP
+MOVE_CURSOR_DOWN
+```
+
+Their primary effect is on the Cursor:
+
+```text
+Navigation Command
+       │
+       ▼
+     Cursor
+       │
+       ▼
+Updated Editor State
+```
+
+A navigation command does not make the Document dirty because the text itself has not changed.
+
+The actual movement rules remain the responsibility of the Cursor component. The Command Engine only coordinates the requested operation.
+
+This distinction is important because Chapter 14 already established the rules for horizontal and vertical movement, including boundaries and preferred column behavior. Chapter 16 does not redefine those rules; it identifies where the corresponding commands fit within the command architecture.
+
+## Editing Commands
+
+Editing commands modify the contents of the Document.
+
+The core editing commands include:
+
+```text
+INSERT_CHARACTER
+DELETE_PREVIOUS_CHARACTER
+DELETE_CHARACTER
+SPLIT_LINE
+```
+
+These commands can affect more than the Document alone.
+
+For example:
+
+```text
+INSERT_CHARACTER
+       │
+       ├──► Document changes
+       ├──► Cursor changes
+       └──► Dirty Flag changes
+```
+
+Similarly, deleting text can require both a Document modification and a corresponding Cursor adjustment.
+
+The important architectural distinction is that the Command Engine **coordinates these consequences**, while the Document and Cursor components apply their own domain-specific rules.
+
+Because editing commands modify the Document, they normally cause the Dirty Flag to become true.
+
+## Document Commands
+
+Document commands operate on the relationship between the in-memory Document and its persistent representation.
+
+The primary document command in the current editor is:
+
+```text
+SAVE_DOCUMENT
+```
+
+Unlike an editing command, `SAVE_DOCUMENT` does not modify the Document's contents.
+
+Instead, it performs a synchronization:
+
+```text
+In-Memory Document
+        │
+        │ SAVE_DOCUMENT
+        ▼
+   File Manager
+        │
+        ▼
+     File on Disk
+```
+
+After a successful save, the document can be marked as unmodified.
+
+A save can also fail because of an external condition such as a file-system error. In that case, the command produces an error outcome rather than changing the Document's contents.
+
+This makes `SAVE_DOCUMENT` different from both navigation and editing commands: it primarily coordinates the in-memory editor state with an external resource.
+
+Detailed file operations are intentionally outside the scope of this chapter and are covered later in the File System volume.
+
+## Application Commands
+
+Application commands control the lifecycle of the editor itself.
+
+The primary example is:
+
+```text
+QUIT_EDITOR
+```
+
+Unlike navigation and editing commands, `QUIT_EDITOR` does not primarily operate on the Document or Cursor.
+
+Instead, it affects whether the application continues running:
+
+```text
+QUIT_EDITOR
+  │
+  ▼
+Running = false
+  │
+  ▼
+Exit & Cleanup
+```
+
+The command therefore participates in application lifecycle management rather than document editing.
+
+The actual terminal cleanup remains the responsibility of the terminal-related components. The Command Engine only initiates the appropriate application state transition.
+
+## Comparing the Categories
+
+The categories can be summarized by the state they primarily affect:
+
+| Category    | Example            | Primary Effect                        | Modifies Document? |
+| ----------- | ------------------ | ------------------------------------- | ------------------ |
+| Navigation  | `MOVE_CURSOR_LEFT` | Cursor                                | No                 |
+| Editing     | `INSERT_CHARACTER` | Document, Cursor                      | Yes                |
+| Document    | `SAVE_DOCUMENT`    | File synchronization / document state | No                 |
+| Application | `QUIT_EDITOR`      | Application lifecycle                 | No                 |
+
+This classification also illustrates why it would be incorrect to assume that every command is simply a document-editing operation.
+
+The Command Engine is concerned with **editor behavior as a whole**, not just text modification.
+
+## Commands Can Affect Multiple Categories of State
+
+Although each command belongs to a primary category, its execution can affect more than one part of the Editor State.
+
+For example:
+
+```text
+INSERT_CHARACTER
+       │
+       ├──► Document
+       ├──► Cursor
+       └──► Dirty Flag
+```
+
+Likewise, saving can affect both external file state and internal document state:
+
+```text
+SAVE_DOCUMENT
+ │
+ ├──► File on Disk
+ │
+ └──► Dirty Flag
+```
+
+Therefore, the categories should not be interpreted as strict ownership boundaries.
+
+They are a way of describing the **primary purpose and expected effects** of commands.
+
+The actual state ownership remains governed by the architecture's existing rule:
+
+> **Each piece of state has one owner, while other components coordinate through the established interfaces.**
+
+## Why Categorization Is Useful
+
+Categorizing commands provides a simple mental model for the Command Engine.
+
+When a new command is introduced, we can ask:
+
+> What kind of editor behavior does this command represent?
+
+For example:
+
+```text
+MOVE_CURSOR_RIGHT  → Navigation
+INSERT_CHARACTER   → Editing
+SAVE_DOCUMENT      → Document
+QUIT_EDITOR        → Application
+```
+
+This makes the command set easier to reason about without creating separate execution systems for each category.
+
+The Command Engine still follows one consistent model:
+
+```text
+Command
+   │
+   ▼
+Identify Operation
+   │
+   ▼
+Coordinate Required Components
+   │
+   ▼
+Update Editor State
+```
+
+The categories simply help us understand **what kind of state transition is taking place**.
+
+As the editor grows, additional commands can be classified in the same way. Search commands, for example, might primarily affect navigation and search state, while future undo and redo commands would coordinate changes to document history. Those features belong to later chapters, but the command abstraction gives them a natural place within the architecture.
+
+The important principle is therefore:
+
+> **Different commands may affect different parts of the editor, but they can still share one consistent execution model.**
+
+## Summary
+
+Commands fall into four categories based on their primary purpose: navigation commands move the Cursor, editing commands modify the Document, document commands synchronize the Document with the file system, and application commands control the editor's lifecycle.
+
+These categories describe the primary effect of each command rather than strict ownership boundaries, since a single command can change several parts of the Editor State. All commands still share one consistent execution model.
+
+Now that the command categories are established, the next section examines how the core editing commands work with the Document and Cursor.
+
+Continue to **Section 16.6, Editing Commands and Core Operations**.

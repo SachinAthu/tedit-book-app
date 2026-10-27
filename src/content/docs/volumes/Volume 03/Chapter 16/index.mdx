@@ -1,0 +1,137 @@
+---
+title: Chapter 16 — Command Engine
+description: Explains how the Command Engine executes editor commands, coordinates state transitions across core components, and handles dispatch and recoverable errors.
+---
+
+## Introduction
+
+In the previous chapter, we separated keyboard input from editor behavior.
+
+The Input Engine receives an abstract input event such as `KEY_ARROW_LEFT` or `KEY_CTRL_S` and determines which editor command that event represents. At that point, however, the editor has only identified **what the user wants to do**. The command still needs to be executed.
+
+This is the responsibility of the **Command Engine**.
+
+The Command Engine forms the boundary between user intent and changes to the editor's state:
+
+```text
+Keyboard Input
+      │
+      ▼
+Input Handler
+      │
+      ▼
+Input Parser
+      │
+      ▼
+Input Event
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command
+      │
+      ▼
+Command Engine
+      │
+      ▼
+Editor State
+      │
+      ▼
+Renderer
+```
+
+Consider the sequence when the user presses the Left Arrow key:
+
+```text
+KEY_ARROW_LEFT
+       │
+       ▼
+MOVE_CURSOR_LEFT
+       │
+       ▼
+Command Engine
+       │
+       ▼
+Cursor State Changes
+```
+
+The Input Engine determines that the key means `MOVE_CURSOR_LEFT`. The Command Engine is then responsible for executing that command and coordinating the resulting state change.
+
+This distinction is important. A keyboard shortcut is an **input binding**; a command is an **editor operation**. The command should not need to know whether it was triggered by the Left Arrow key, a different shortcut, or some future form of user interaction. This separation keeps input handling independent from editor behavior and allows the same command to be triggered by different inputs.
+
+The Command Engine also provides a consistent place to coordinate operations that affect different parts of the editor. Inserting a character, for example, changes the Document and may also require the Cursor and Dirty Flag to be updated. Saving a document does not change the document's contents, but it synchronizes the in-memory state with the file on disk and changes the document's Dirty Flag after a successful save.
+
+The Command Engine therefore does not replace the responsibilities of the Document or Cursor components. The Document remains responsible for the text it stores, and the Cursor remains responsible for cursor behavior. Instead, the Command Engine **coordinates these operations in response to commands**.
+
+This gives the editor a clear processing boundary:
+
+```text
+Input Engine
+"What command does this input represent?"
+              │
+              ▼
+Command Engine
+"What should happen for this command?"
+              │
+              ▼
+Core State
+"What is the resulting state?"
+```
+
+The runtime model established earlier follows the same sequence: input is parsed, a command is executed, the editor state is updated, and the resulting state is rendered. The Command Engine is therefore the part of the architecture responsible for the **execution stage** of that pipeline.
+
+The goal of this chapter is not to re-teach how cursor movement or document editing works. Those rules were established by the Cursor Engine and Document Model chapters. Instead, this chapter focuses on how those operations are **organized and invoked as commands**, how commands are represented, and where command execution belongs within the overall architecture.
+
+By the end of the chapter, the distinction between **input**, **commands**, **state**, and **rendering** should be clear:
+
+```text
+Input
+  │
+  │ interpret
+  ▼
+Command
+  │
+  │ execute
+  ▼
+State Change
+  │
+  │ render
+  ▼
+Screen
+```
+
+This separation gives the editor a small but important architectural boundary—one that will make the implementation easier to understand and leave room for future extensions without coupling keyboard handling to every operation the editor can perform. The architecture explicitly defines the Input Engine as the component that maps key events to commands and the Command Engine as the component that executes those commands.
+
+## Learning Objectives
+
+By the end of this chapter, you should be able to:
+
+- Explain why an editor needs a **Command Engine** after input has been translated into commands.
+- Distinguish between an **input event**, a **command**, and a **state change**.
+- Explain why commands should represent editor intent rather than specific keyboard shortcuts.
+- Identify the responsibilities and boundaries of the Command Engine.
+- Understand how commands are represented and how command-specific data can be carried when necessary.
+- Describe the lifecycle of a command from input event to updated Editor State.
+- Classify commands into navigation, editing, document, and application operations.
+- Explain how the Command Engine coordinates the Document, Cursor, and other core state without taking ownership of their internal responsibilities.
+- Understand how command execution interacts with the Dirty Flag and recoverable errors.
+- Compare simple command dispatch with alternative command architectures.
+- Evaluate the complexity and trade-offs introduced by a dedicated Command Engine.
+- Recognize common architectural mistakes that blur the boundary between input handling, command execution, state management, and rendering.
+
+## Sections
+
+- [16.1 What the Command Engine Is Responsible For](/volumes/volume-03/chapter-16/01-command-engine-responsible/)
+- [16.2 Commands as an Abstraction](/volumes/volume-03/chapter-16/02-command-as-abstraction/)
+- [16.3 Command Representation](/volumes/volume-03/chapter-16/03-command-representation/)
+- [16.4 The Command Execution Lifecycle](/volumes/volume-03/chapter-16/04-command-execution-lifecycle/)
+- [16.5 Command Categories](/volumes/volume-03/chapter-16/05-command-categories/)
+- [16.6 Editing Commands and Core Operations](/volumes/volume-03/chapter-16/06-editing-commands-core-operations/)
+- [16.7 Command Boundaries and State Ownership](/volumes/volume-03/chapter-16/07-command-boundaries-state-ownership/)
+- [16.8 Commands That Do Not Modify the Document](/volumes/volume-03/chapter-16/08-commands-that-do-not-modify-document/)
+- [16.9 Command Results and Error Handling](/volumes/volume-03/chapter-16/09-command-results-error-handling/)
+- [16.10 Command Dispatch](/volumes/volume-03/chapter-16/10-command-dispatch/)
+- [16.11 Design Alternatives](/volumes/volume-03/chapter-16/11-design-alternatives/)
+- [16.12 Complexity and Trade-offs](/volumes/volume-03/chapter-16/12-complexity-trade-offs/)
+- [16.13 Conclusion](/volumes/volume-03/chapter-16/13-conclusion/)

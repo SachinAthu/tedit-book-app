@@ -1,0 +1,132 @@
+---
+title: 16.13 Conclusion
+description: Recaps the Command Engine contract, then provides review questions, thought experiments, design exercises, common mistakes, and a preview of Volume IV.
+---
+
+The **Command Engine** answers a single question: _what should happen when a command is dispatched?_ It receives a command from the Input Engine and turns it into a coordinated state transition, deciding which core components must participate and how their changes come together — without owning any of the state it coordinates.
+
+The foundation of this design is the command abstraction. A command represents editor intent, independent of the key that triggered it. This independence means multiple shortcuts, or a future menu system, can reach the same command without changing its implementation, while changing a command's implementation never touches input handling. A command is a value, not behavior: it describes an operation, optionally carries a payload such as the character for `INSERT_CHARACTER`, and leaves the Document and Cursor responsible for their own rules.
+
+Command execution follows one predictable lifecycle: receive the command, identify the operation, coordinate the affected components, update the Editor State, and let the Renderer produce the frame. Each command is one state transition. Not every command modifies the Document — navigation, save, and quit change different parts of state — and every command produces a well-defined result (success, recoverable error, or application transition) that flows through the same state-driven path rather than a second, ad-hoc control flow.
+
+The Command Engine therefore sits at a precise boundary. It does not read raw input, parse escape sequences, map keys, render the screen, or define the Document's representation or the Cursor's rules. Those responsibilities belong elsewhere; the Command Engine simply connects editor intent to the components that carry it out.
+
+```text
+Input Event
+    ↓
+Input Engine
+    ↓
+Command
+    ↓
+Command Engine
+    ↓
+Document / Cursor / File
+    ↓
+Editor State
+```
+
+Document and Cursor are Core-layer components, while the File Manager is a Platform-layer component (Chapter 8); the Command Engine coordinates both.
+
+## Command Engine Contract
+
+The Command Engine's responsibilities can now be expressed as a concise contract, parallel to the Cursor contract in Chapter 14 and the Input Engine contract in Chapter 15.
+
+| Responsibility                 | Command Engine          |
+| ------------------------------ | ----------------------- |
+| Read raw input                 | No                      |
+| Parse terminal sequences       | No                      |
+| Map keys to commands           | No                      |
+| Receive commands               | Yes                     |
+| Execute commands               | Yes                     |
+| Modify editor state            | Through core components |
+| Render screen                  | No                      |
+| Perform terminal I/O           | No                      |
+| Coordinate file operations     | Yes                     |
+| Define document representation | No                      |
+| Define cursor movement rules   | No                      |
+
+This contract gives the reader a precise boundary before entering Chapter 17, and it is particularly valuable because Chapters 12–16 have now established the entire core interaction chain:
+
+```text
+Chapter 12 — Editor State    →  What exists?
+Chapter 13 — Document Model  →  How is text represented?
+Chapter 14 — Cursor Engine   →  How is navigation represented?
+Chapter 15 — Input Engine    →  What does the user input mean?
+Chapter 16 — Command Engine  →  What should the editor do?
+```
+
+The central design choice — representing commands as simple values (a command type plus optional data) and executing them through a dedicated Command Engine with switch-based dispatch — is recorded as **ADR-016: Command Engine**.
+
+## Exercises
+
+### Review Questions
+
+1. Why should a command not know which key triggered it?
+2. What is the difference between an input event and a command?
+3. Why shouldn't the Command Engine parse ANSI escape sequences?
+4. Does every command modify the Document?
+5. Why shouldn't commands render directly?
+
+### Thought Experiments
+
+1. If both `Ctrl+S` and a future menu action should save the document, what architectural component should both eventually invoke?
+
+### Design Exercise
+
+1. Design a command enum for the editor's current feature set.
+
+### Optional Challenge
+
+1. Design a command representation that can carry data, such as the character associated with an insertion command.
+
+## Common Mistakes
+
+### Putting key parsing in the Command Engine
+
+```text
+Command Engine
+    └── checks ESC sequences
+```
+
+Wrong responsibility.
+
+### Letting commands draw directly
+
+```text
+COMMAND_SAVE_DOCUMENT
+    └── printf(...)
+```
+
+Commands modify state; rendering happens afterward.
+
+### Putting document algorithms directly into command dispatch
+
+The command layer should coordinate operations rather than become the Document implementation.
+
+### Making commands depend on specific keys
+
+Commands should represent behavior, not shortcuts.
+
+### Treating every command as a document modification
+
+Movement, saving, and quitting have different state effects.
+
+## Preview of the Next Chapter
+
+This is where we transition cleanly into Volume IV.
+
+The reader has now learned:
+
+```text
+Input
+  ↓
+Commands
+  ↓
+State
+```
+
+The next question becomes:
+
+> **How does the current state become an image on the terminal?**
+
+Chapter 17 therefore begins the Rendering Engine volume and introduces the theory behind the renderer: immediate-mode rendering, retained-mode rendering, game loops, and double buffering.
