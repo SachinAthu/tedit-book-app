@@ -1,0 +1,257 @@
+---
+title: "26.5 Moving the Gap"
+description: "Shows how characters cross the gap when the cursor moves, why the cost is O(k), and why only local editing becomes cheap."
+---
+
+The gap is most useful when it is positioned at the cursor. When the cursor moves, the gap must move with it.
+
+Consider this buffer:
+
+```text
+abc[____]def
+   ^
+ cursor
+```
+
+The gap is currently between `abc` and `def`.
+
+If the cursor moves one position to the right, the desired layout becomes:
+
+```text
+abcd[____]ef
+    ^
+  cursor
+```
+
+The character `d` must move from the right side of the gap to the left side.
+
+If the cursor moves one position to the left, the opposite happens:
+
+```text
+abcd[____]ef
+    ^
+```
+
+becomes:
+
+```text
+abc[____]def
+   ^
+```
+
+The character `d` moves from the left side of the gap to the right side.
+
+The important idea is:
+
+> Moving the gap does not change the logical document. It changes only where the unused storage is located.
+
+## Moving the Gap Right
+
+Suppose the buffer is:
+
+```text
+abc[____]def
+```
+
+and the cursor needs to move one position to the right.
+
+The character immediately after the gap is `d`:
+
+```text
+abc[____]def
+           ^
+        after gap
+```
+
+To move the gap right, that character is copied into the beginning of the gap:
+
+```text
+abcd[____]ef
+    ^
+```
+
+Conceptually:
+
+```text
+Before:
+
+abc[____]def
+
+Move gap right:
+
+abcd[____]ef
+```
+
+The gap has moved one position to the right.
+
+The logical document remains:
+
+```text
+abcdef
+```
+
+Only its physical arrangement changed.
+
+## Moving the Gap Left
+
+Now consider:
+
+```text
+abcd[____]ef
+```
+
+To move the gap one position left, the character immediately before the gap, `d`, must move into the end of the gap:
+
+```text
+abc[____]def
+```
+
+Again, the logical document remains unchanged:
+
+```text
+abcdef
+```
+
+The physical layout has simply changed.
+
+## Moving the Gap Several Positions
+
+The same process can be repeated when the cursor moves farther.
+
+Suppose we start with:
+
+```text
+abc[____]defgh
+```
+
+and move the gap three positions to the right.
+
+The characters cross the gap one at a time:
+
+```text
+abc[____]defgh
+    ↓
+
+abcd[____]efgh
+    ↓
+
+abcde[____]fgh
+    ↓
+
+abcdef[____]gh
+```
+
+The logical document never changes:
+
+```text
+abcdefgh
+```
+
+Only the location of the gap changes.
+
+## The Cost of Moving the Gap
+
+This reveals an important trade-off.
+
+Moving the gap by one position requires moving one character.
+
+Moving it by `k` positions requires moving approximately `k` characters.
+
+Therefore:
+
+```text
+Move gap by k positions → O(k)
+```
+
+A small cursor movement can be inexpensive:
+
+```text
+abc[____]def
+    ↓
+abcd[____]ef
+```
+
+A large jump can be much more expensive:
+
+```text
+a[____]........................................z
+     └──────────── many characters ────────────┘
+```
+
+The gap buffer therefore does not make every cursor movement constant time.
+
+Instead, it makes **editing near the current gap** efficient.
+
+## Why This Is Acceptable
+
+Consider normal typing:
+
+```text
+abc[________]def
+```
+
+The user types:
+
+```text
+X
+Y
+Z
+```
+
+The gap remains at the same editing position:
+
+```text
+abcXYZ[_____]def
+```
+
+There is no need to move the gap between those insertions.
+
+The expensive operation is primarily incurred when the editing position changes significantly.
+
+This gives the gap buffer its characteristic workload:
+
+```text
+Local editing
+     │
+     ▼
+Gap already positioned
+     │
+     ▼
+Cheap insertions/deletions
+
+
+Large cursor movement
+     │
+     ▼
+Gap must move
+     │
+     ▼
+Characters are copied
+```
+
+## A Useful Mental Model
+
+Think of the gap as a movable workspace:
+
+```text
+Text before      Workspace       Text after
+     │               │                │
+     ▼               ▼                ▼
++---------+     +---------+     +---------+
+| content |     |   gap   |     | content |
++---------+     +---------+     +---------+
+                  ^
+               cursor
+```
+
+When the cursor moves, the workspace moves with it.
+
+When the user edits, the workspace is consumed or expanded.
+
+This is the central mechanism that makes the gap buffer different from an ordinary contiguous array.
+
+## Summary
+
+Moving the gap repositions unused storage without changing the logical document, because characters cross the gap one at a time as the cursor moves. Moving the gap right copies the character after the gap into its beginning, while moving it left copies the character before the gap into its end. Moving the gap by `k` positions therefore costs `O(k)`, making small movements cheap but long jumps expensive. The buffer does not make every cursor movement constant time; it makes editing near the current gap efficient. This is an acceptable trade for interactive editing, where the expensive movement is paid only when the editing position changes significantly, and the gap then remains in place for a whole burst of local edits.
+
+In the next section, we will use this mechanism to examine the operation the gap buffer is designed to optimize: insertion.

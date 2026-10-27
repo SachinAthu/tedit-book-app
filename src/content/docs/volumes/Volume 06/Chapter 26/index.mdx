@@ -1,0 +1,46 @@
+---
+title: "Chapter 26 — Gap Buffer"
+description: "Explains how a gap buffer uses unused space at the cursor to make repeated local edits cheap, covering its layout, invariants, movement, and editing operations."
+---
+
+## Introduction
+
+Chapter 25 showed that inserting or deleting text in the middle of a contiguous array can require moving every element that follows. Interactive editing, however, rarely edits at random positions: users type in local bursts near the cursor.
+
+This chapter studies a data structure designed around that workload—the **gap buffer**—and asks the central question:
+
+> **How can unused space near the editing position reduce the cost of repeated local edits?**
+
+We start with the idea that motivates the gap and the layout that realizes it, then establish the invariants that keep the buffer valid. We examine how the gap moves, how insertion and deletion consume or expand it, and how the buffer grows when space runs out. We then consider multiple lines, the role of editing locality and memory layout, and finally the failure modes that a careful implementation must avoid.
+
+## Learning Objectives
+
+Readers should be able to:
+
+- Explain why the gap buffer reserves unused space at the editing position
+- Describe the three logical regions of a gap buffer: text before, the gap, and text after
+- State the gap-buffer invariant `0 ≤ gap_start ≤ gap_end ≤ capacity`
+- Distinguish the logical document from its physical storage
+- Explain how moving the gap changes the physical layout without changing the document
+- Explain why insertion and deletion at the gap cost `O(1)`
+- Describe why the gap must grow, why growth can cost `O(n)`, and why geometric growth keeps the amortized cost low
+- Compare one gap buffer for the whole document with a gap buffer per line
+- Relate the gap buffer's performance to the locality of editing and cursor movement
+- Describe the gap buffer's cache behavior and memory overhead
+- Identify common gap-buffer failure modes and how to debug them by checking invariants
+
+## Sections
+
+- [26.1 Why a Gap Buffer?](/volumes/volume-06/chapter-26/01-why-gap-buffer/)
+- [26.2 The Basic Idea](/volumes/volume-06/chapter-26/02-basic-idea/)
+- [26.3 Gap Buffer Invariants](/volumes/volume-06/chapter-26/03-gap-buffer-invariants/)
+- [26.4 Logical Text vs. Physical Layout](/volumes/volume-06/chapter-26/04-logical-text-vs-physical-layout/)
+- [26.5 Moving the Gap](/volumes/volume-06/chapter-26/05-moving-the-gap/)
+- [26.6 Insertion](/volumes/volume-06/chapter-26/06-insertion/)
+- [26.7 Deletion](/volumes/volume-06/chapter-26/07-deletion/)
+- [26.8 Growing the Gap](/volumes/volume-06/chapter-26/08-growing-the-gap/)
+- [26.9 Representing Multiple Lines](/volumes/volume-06/chapter-26/09-representing-multiple-lines/)
+- [26.10 Locality of Editing and Cursor Movement](/volumes/volume-06/chapter-26/10-locality-of-editing-cursor-movement/)
+- [26.11 Memory Layout and Cache Behavior](/volumes/volume-06/chapter-26/11-memory-layout-cache-behavior/)
+- [26.12 Gap Buffer Failure Modes](/volumes/volume-06/chapter-26/12-gap-buffer-failure-modes/)
+- [26.13 Conclusion](/volumes/volume-06/chapter-26/13-conclusion/)

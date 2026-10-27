@@ -1,0 +1,239 @@
+---
+title: "26.3 Gap Buffer Invariants"
+description: "Defines gap_start, gap_end, and capacity, and states the invariant that keeps text, gap storage, and boundaries valid."
+---
+
+A gap buffer works because its internal layout follows a small set of rules. These rules are called **invariants**: conditions that must remain true whenever the buffer is in a valid state.
+
+Without clear invariants, operations such as insertion, deletion, and gap movement can easily corrupt the buffer.
+
+Consider:
+
+```text
+H e l l o [ _ _ _ _ ] W o r l d
+          ↑       ↑
+     gap_start  gap_end
+```
+
+The buffer can be described using three important values:
+
+- `gap_start` — the first position occupied by the gap
+- `gap_end` — the position immediately after the gap
+- `capacity` — the total number of elements available in the array
+
+The physical storage is therefore divided into:
+
+```text
+[0 ........ gap_start)
+[gap_start ........ gap_end)
+[gap_end ........ capacity)
+```
+
+These ranges represent:
+
+```text
+[ text before gap ][      gap      ][ text after gap ]
+```
+
+## The Gap Boundaries
+
+Suppose the buffer has a capacity of 14 and the document is `HelloWorld`:
+
+```text
+Index:
+
+ 0 1 2 3 4 5 6 7 8 9 10 11 12 13
++---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+| H | e | l | l | o |   |   |   |   | W | o | r | l | d |
++---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+                  ↑                       ↑
+              gap_start                gap_end
+```
+
+Here:
+
+```text
+gap_start = 5
+gap_end   = 9
+capacity  = 14
+```
+
+The gap occupies indexes:
+
+```text
+5, 6, 7, 8
+```
+
+So its size is:
+
+```text
+gap_size = gap_end - gap_start
+```
+
+In this example:
+
+```text
+gap_size = 9 - 5
+         = 4
+```
+
+The number of characters before the gap is:
+
+```text
+gap_start = 5
+```
+
+The number of characters after the gap is:
+
+```text
+capacity - gap_end = 14 - 9
+                  = 5
+```
+
+Therefore, the logical document length is:
+
+```text
+logical_length = gap_start + (capacity - gap_end)
+               = 5 + 5
+               = 10
+```
+
+The four unused positions are not part of the logical document.
+
+## The Fundamental Invariant
+
+The most important rule is:
+
+> Every position before `gap_start` contains document data, every position from `gap_start` up to `gap_end` is unused, and every position from `gap_end` to `capacity` contains document data.
+
+Visually:
+
+```text
+0                    gap_start       gap_end                 capacity
+│                         │              │                       │
+▼                         ▼              ▼                       ▼
++-------------------------+--------------+-----------------------+
+|       valid text        |     gap      |       valid text      |
++-------------------------+--------------+-----------------------+
+```
+
+The gap may change size and location, but these three regions must always remain valid.
+
+## The Gap Can Be Empty
+
+A valid gap buffer does not necessarily have to contain unused space.
+
+The gap can have a size of zero:
+
+```text
+gap_start == gap_end
+```
+
+For example:
+
+```text
+abc|def
+```
+
+could physically be represented as:
+
+```text
+abc[ ]def
+```
+
+where the gap has no capacity.
+
+This is a valid state, but another insertion at that position would require the gap to be enlarged before the character can be inserted.
+
+## The Gap Can Be at Either End
+
+The gap is not required to remain in the middle of the array.
+
+It can be at the beginning:
+
+```text
+[____]Hello World
+```
+
+or at the end:
+
+```text
+Hello World[____]
+```
+
+or somewhere in between:
+
+```text
+Hello[____]World
+```
+
+All three are valid gap-buffer layouts.
+
+The important property is not where the gap is located, but that the invariants remain true.
+
+## The Gap Represents the Editing Position
+
+For the basic gap-buffer model, the logical cursor position corresponds to the boundary between the text before the gap and the text after the gap:
+
+```text
+text before       gap       text after
+     │              │             │
+     ▼              ▼             ▼
++---------+     +-------+     +---------+
+| abc     |     |       |     | def     |
++---------+     +-------+     +---------+
+          ^
+        cursor
+```
+
+This relationship is what makes insertion efficient.
+
+When the cursor moves, the gap can be moved to follow it.
+
+When text is inserted, the gap is consumed.
+
+When text is deleted, the gap can grow.
+
+The gap therefore acts as both **unused storage** and a representation of the current editing location.
+
+## What Must Never Happen
+
+A valid implementation must never allow the boundaries to describe an impossible layout.
+
+For example:
+
+```text
+gap_start > gap_end
+```
+
+would imply that the gap has a negative size.
+
+Likewise:
+
+```text
+gap_start > capacity
+```
+
+or:
+
+```text
+gap_end > capacity
+```
+
+would place the gap outside the allocated storage.
+
+Conceptually, the basic relationships are:
+
+```text
+0 ≤ gap_start ≤ gap_end ≤ capacity
+```
+
+These simple conditions provide a useful mental model for reasoning about every gap-buffer operation.
+
+Later sections will modify `gap_start` and `gap_end` during insertion, deletion, movement, and resizing. The key requirement is that **every operation must leave the buffer in a state that still satisfies these invariants**.
+
+## Summary
+
+A gap buffer is described by `gap_start`, `gap_end`, and `capacity`, which divide the array into text before the gap, unused gap storage, and text after the gap. The fundamental invariant `0 ≤ gap_start ≤ gap_end ≤ capacity` guarantees that text occupies the regions before and after the gap while the gap itself stays within the allocation. The gap may be empty, placed at either end, or located anywhere in between, and its size is simply `gap_end - gap_start`. The editing position always corresponds to the boundary between the text before the gap and the text after it, so the gap represents both unused storage and the current cursor location. Every insertion, deletion, movement, and resize must leave these boundaries in a state that still satisfies the invariant.
+
+In the next section, we will examine the distinction between the logical document and its physical storage, and why that distinction matters for reading and rendering the buffer.

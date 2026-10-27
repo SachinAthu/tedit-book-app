@@ -1,0 +1,220 @@
+---
+title: "26.11 Memory Layout and Cache Behavior"
+description: "Examines the gap buffer's contiguous memory layout, its cache behavior, the memory traffic of gap movement, and the cost of unused capacity."
+---
+
+A gap buffer remains an array-based data structure, so its elements are stored in a contiguous region of memory. This gives it an important performance characteristic: **good spatial locality** for many operations.
+
+Chapter 24 introduced cache locality as a general property of contiguous data structures, and Chapter 25 applied it to arrays. Here, we can apply that idea directly to the gap buffer.
+
+## Contiguous Storage
+
+Consider a gap buffer containing:
+
+```text
+abc[____]defgh
+```
+
+The underlying storage is one contiguous allocation:
+
+```text
++---+---+---+---+---+---+---+---+---+---+---+---+
+| a | b | c |   |   |   |   | d | e | f | g | h |
++---+---+---+---+---+---+---+---+---+---+---+---+
+```
+
+The characters before and after the gap remain within the same allocation.
+
+This is different from a representation in which pieces of text are distributed across many independent memory allocations.
+
+## Sequential Access
+
+When the editor reads characters sequentially, the contiguous layout is generally favorable to the processor's cache system.
+
+For example:
+
+```text
+a → b → c → d → e → f → g
+```
+
+The characters are stored close together in memory, allowing nearby data to be brought into the cache together.
+
+The gap does not change the fact that the underlying storage is contiguous.
+
+However, logical iteration must skip the unused region:
+
+```text
+abc[____]defgh
+```
+
+The logical sequence is:
+
+```text
+abcdefgh
+```
+
+The gap itself is never treated as document content.
+
+## Moving the Gap
+
+Gap movement introduces a different memory-access pattern.
+
+Suppose:
+
+```text
+abc[____]defgh
+```
+
+and the gap moves to the right.
+
+Characters must be copied across the gap:
+
+```text
+abcd[____]efgh
+```
+
+Repeated movement therefore performs memory reads and writes over the affected region.
+
+For a large movement:
+
+```text
+abc[____]....................xyz
+```
+
+a substantial amount of data may need to be relocated.
+
+The cost is therefore not only algorithmic:
+
+```text
+O(k)
+```
+
+but also involves actual memory traffic.
+
+The larger the distance, the more data the processor must read and write.
+
+## Growing the Buffer
+
+Growing the gap can require even more memory movement.
+
+A larger allocation must be obtained and the existing contents transferred into the new layout:
+
+```text
+Old allocation
+       │
+       ▼
++----------------+
+| existing data  |
++----------------+
+       │
+       ▼
+New allocation
++----------------------------+
+| existing data | larger gap|
++----------------------------+
+```
+
+The operation can therefore generate substantial memory traffic for large documents.
+
+This is one reason resizing should not occur for every individual insertion. A growth policy that provides enough additional capacity allows many subsequent insertions to use the existing gap.
+
+## Memory Overhead
+
+The gap itself consumes allocated memory without representing document content.
+
+For example:
+
+```text
++-----------+-------------+-----------+
+|   Text    |     Gap     |   Text    |
++-----------+-------------+-----------+
+             ↑
+        unused capacity
+```
+
+A larger gap means:
+
+- more capacity for future insertions
+- fewer immediate growth operations
+- more unused memory
+
+A smaller gap means:
+
+- less unused memory
+- more frequent opportunities for growth
+
+The gap is therefore a deliberate memory-for-performance trade-off.
+
+## Cache Locality Is Not the Whole Story
+
+Contiguous storage gives the gap buffer a useful memory-layout property, but cache locality does not eliminate the cost of moving the gap.
+
+These are different concerns:
+
+```text
+Contiguous storage
+       ↓
+Good locality for nearby memory access
+
+Gap movement
+       ↓
+Potentially large amount of data copied
+```
+
+A large copy can still be expensive even though both source and destination are contiguous.
+
+Therefore, a gap buffer combines two characteristics:
+
+```text
++-------------------------+
+| Contiguous memory       |
+|                         |
+| Good spatial locality   |
++-------------------------+
+
+                +
+
++-------------------------+
+| Movable editing gap     |
+|                         |
+| Potential data movement |
++-------------------------+
+```
+
+The first is an advantage of the underlying array layout. The second is the principal cost introduced by the gap-buffer strategy.
+
+## The Practical Picture
+
+For typical local editing:
+
+```text
+[Text][Large Gap][Text]
+          ↑
+        cursor
+
+Insert
+Insert
+Insert
+Delete
+Insert
+```
+
+most operations touch a small region around the gap.
+
+For a large cursor movement:
+
+```text
+[Gap]------------------------------[Cursor]
+```
+
+the data structure may have to move a much larger region.
+
+Thus the memory behavior reinforces the workload conclusion from the previous section:
+
+> A gap buffer benefits from localized editing, while large movements can generate significant memory traffic.
+
+## Summary
+
+A gap buffer keeps its characters in one contiguous allocation, so reading logical characters enjoys good spatial locality and cache behavior. Sequential access still has to skip the gap, but the surrounding characters remain close together in memory. Gap movement and buffer growth, however, can relocate substantial amounts of data, generating real memory traffic rather than a purely algorithmic cost. The gap itself consumes unused memory, a deliberate memory-for-performance trade that reduces future reallocations. Overall, the memory behavior reinforces the workload conclusion: localized editing is cheap, while large movements and large documents are expensive.
+
+In the next section, we will examine what can go wrong when maintaining this physical layout, focusing on the correctness invariants and common implementation failure modes.

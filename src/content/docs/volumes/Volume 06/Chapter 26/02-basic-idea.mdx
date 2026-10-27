@@ -1,0 +1,210 @@
+---
+title: "26.2 The Basic Idea"
+description: "Introduces the three regions of a gap buffer and shows how the gap represents an editing position without appearing in the logical document."
+---
+
+A gap buffer is still based on a contiguous array. The difference is that the array is divided into three logical regions:
+
+```text
++-------------+-------------+-------------+
+| Text Before |     Gap     | Text After  |
++-------------+-------------+-------------+
+              ^
+        editing position
+```
+
+The **gap** is simply unused space reserved inside the array.
+
+For example, suppose the document logically contains:
+
+```text
+Hello World
+```
+
+The physical storage might look like:
+
+```text
+H e l l o _ _ _ _ _ W o r l d
+          └── gap ──┘
+```
+
+The underscores do not represent characters in the document. They represent unused capacity.
+
+From the user's perspective, the document is still:
+
+```text
+Hello World
+```
+
+The gap is an implementation detail of the text buffer.
+
+## The Gap Represents an Editing Position
+
+The most important property of a gap buffer is that the gap is positioned where editing is expected to occur.
+
+Suppose the cursor is between `Hello` and `World`:
+
+```text
+Hello|World
+     ^
+   cursor
+```
+
+The gap buffer tries to arrange its physical storage like this:
+
+```text
+Hello[_____ ]World
+     ^
+    gap
+```
+
+Now consider inserting `X`:
+
+```text
+HelloX[____]World
+```
+
+The character is placed directly into the gap.
+
+The physical representation changes, but the logical document becomes:
+
+```text
+HelloXWorld
+```
+
+The gap has simply become one position smaller.
+
+## Three Logical Regions
+
+It is useful to think of the buffer as three regions:
+
+```text
+              gap_start       gap_end
+                   ↓             ↓
++------------------+-------------+------------------+
+|  text before gap |     gap     |  text after gap  |
++------------------+-------------+------------------+
+```
+
+The regions have different meanings:
+
+**Text before the gap**
+
+Contains document characters that occur before the editing position.
+
+**Gap**
+
+Contains unused storage. It is not part of the document.
+
+**Text after the gap**
+
+Contains document characters that occur after the editing position.
+
+The document therefore exists across both sides of the gap.
+
+## Logical Order vs Physical Order
+
+This is an important distinction.
+
+Physically, the characters are separated:
+
+```text
+Hello [gap] World
+```
+
+Logically, they remain adjacent:
+
+```text
+Hello World
+```
+
+The gap does not introduce a space, newline, or any other character into the document.
+
+We can think of the logical sequence as:
+
+```text
+Logical document:
+
+HelloWorld
+     ↑
+   cursor
+```
+
+while the physical storage is:
+
+```text
+Physical storage:
+
+Hello[____]World
+```
+
+The data structure provides the illusion of one continuous sequence even though the underlying array contains an unused region.
+
+## Why the Gap Is Useful
+
+The gap gives the editor a place to put newly inserted characters without immediately moving the text that follows the cursor.
+
+For example:
+
+```text
+Before:
+
+abc[_____]def
+
+Insert X:
+
+abcX[____]def
+
+Insert Y:
+
+abcXY[___]def
+
+Insert Z:
+
+abcXYZ[__]def
+```
+
+A sequence of nearby insertions gradually consumes the gap.
+
+This is particularly useful for normal typing, where the user often inserts several characters consecutively at approximately the same location.
+
+Eventually, however, the gap may become too small:
+
+```text
+abcXYZ[_]def
+        ^
+     tiny gap
+```
+
+At that point the buffer must create a larger gap before more text can be inserted efficiently. We will examine that process later.
+
+The essential idea is therefore simple:
+
+```text
+Normal array:
+
+[Text][Text][Text][Text]
+          ↑
+       insertion
+          ↓
+     move elements
+
+
+Gap buffer:
+
+[Text][ GAP ][Text]
+          ↑
+       insertion
+          ↓
+       use gap
+```
+
+The gap buffer does not remove the cost of moving data. Instead, it **moves that cost away from repeated local insertions and concentrates it primarily in gap movement and gap growth**.
+
+That trade-off is the foundation of the data structure.
+
+## Summary
+
+A gap buffer is a contiguous array divided into three logical regions: text before the gap, the gap itself, and text after the gap. The gap is unused storage positioned at the editing location, invisible to the logical document, which still reads as one continuous sequence of characters. Repeated local insertions consume the gap one position at a time, so typing several characters at the same spot does not shift the text that follows. Once the gap runs out, the buffer must create more space before it can insert again. The structure thus does not remove the cost of moving data; it moves that cost away from ordinary keystrokes and concentrates it in gap movement and gap growth.
+
+In the next section, we will establish the invariants that describe a valid gap-buffer layout and keep its operations from corrupting the buffer.

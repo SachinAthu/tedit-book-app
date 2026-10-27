@@ -1,0 +1,314 @@
+---
+title: "26.8 Growing the Gap"
+description: "Describes how the buffer allocates larger storage, preserves the logical document, and uses geometric growth to amortize O(n) copies."
+---
+
+The gap buffer makes insertion inexpensive while space remains available at the editing position. But the gap is finite.
+
+Suppose the buffer currently looks like this:
+
+```text
+abcX[ ]def
+```
+
+There is only one unused position left. If the user inserts another character, the buffer needs more space.
+
+A gap buffer therefore needs a mechanism for **growing the gap**.
+
+## Why the Gap Must Grow
+
+Consider a larger example:
+
+```text
+abc[___]def
+```
+
+Repeated insertions consume the available space:
+
+```text
+abcX[__]def
+```
+
+```text
+abcXY[_]def
+```
+
+```text
+abcXYZ[]def
+```
+
+The gap is now empty.
+
+The next insertion cannot simply write into the gap because:
+
+```text
+gap_start == gap_end
+```
+
+The buffer must allocate additional storage.
+
+Conceptually:
+
+```text
+Gap exhausted
+     │
+     ▼
+Allocate larger storage
+     │
+     ▼
+Move existing data
+     │
+     ▼
+Create a larger gap
+     │
+     ▼
+Perform the insertion
+```
+
+## Growing the Underlying Array
+
+Suppose the current capacity is:
+
+```text
+capacity = 16
+```
+
+and the implementation decides to grow it to:
+
+```text
+capacity = 32
+```
+
+The existing document must be preserved while additional unused space is introduced.
+
+Conceptually:
+
+```text
+Before:
+
++---------+-----+---------+
+|  text   | gap |  text   |
++---------+-----+---------+
+        capacity = 16
+
+
+After:
+
++---------+-----------+---------+
+|  text   |    gap    |  text   |
++---------+-----------+---------+
+        capacity = 32
+```
+
+The exact location and size of the new gap depend on the growth strategy.
+
+The important requirement is that the resulting representation must still satisfy the gap-buffer invariants:
+
+```text
+0 ≤ gap_start ≤ gap_end ≤ capacity
+```
+
+and the logical document must remain unchanged.
+
+## Preserving the Logical Document
+
+Growing the buffer must not alter the document.
+
+For example:
+
+```text
+Before:
+
+Hello[ ]World
+```
+
+After growing the gap:
+
+```text
+Hello[________]World
+```
+
+The logical document remains:
+
+```text
+HelloWorld
+```
+
+Only the amount of unused storage has changed.
+
+This illustrates an important property of data structures:
+
+> Resizing changes the physical representation without changing the logical contents.
+
+## Choosing the New Capacity
+
+The buffer needs a policy for deciding how much additional storage to allocate.
+
+A simple strategy is to increase the capacity by a fixed amount:
+
+```text
+16 → 24 → 32 → 40 → ...
+```
+
+Another strategy is to grow geometrically:
+
+```text
+16 → 32 → 64 → 128 → ...
+```
+
+Geometric growth generally reduces how frequently the buffer must be reallocated as it grows.
+
+The exact growth factor is an implementation decision rather than a fundamental property of the gap-buffer concept.
+
+Chapter 25 already introduced dynamic-array resizing and its amortized behavior. Here, we apply that principle specifically to maintaining a usable editing gap rather than re-teaching dynamic-array resizing.
+
+## The Cost of Growing
+
+Growing the buffer requires copying existing data into the new allocation.
+
+If the document contains `n` stored characters, a growth operation can therefore require:
+
+```text
+O(n)
+```
+
+work.
+
+This means insertion has two possible cost profiles:
+
+```text
+Gap available
+     ↓
+Insert directly
+     ↓
+O(1)
+```
+
+or:
+
+```text
+Gap exhausted
+     ↓
+Grow buffer
+     ↓
+Copy existing data
+     ↓
+Insert
+     ↓
+O(n)
+```
+
+The important point is that the expensive operation does not necessarily occur on every insertion.
+
+## Amortized Behavior
+
+Suppose the buffer repeatedly grows geometrically:
+
+```text
+16 → 32 → 64 → 128
+```
+
+Most insertions occur without resizing.
+
+Only occasionally does the buffer need to perform a large copy.
+
+Conceptually:
+
+```text
+Insert Insert Insert Insert Insert Insert
+  O(1)   O(1)   O(1)   O(1)   O(1)   O(1)
+
+                         ↓
+
+                    Gap exhausted
+
+                         ↓
+
+                       Grow
+                       O(n)
+```
+
+The occasional expensive operation is spread across many inexpensive insertions.
+
+This is the same general amortized-cost principle encountered with dynamically growing arrays.
+
+## Growing the Gap vs. Moving the Gap
+
+These are two different operations and should not be confused.
+
+**Moving the gap** changes its position:
+
+```text
+abc[____]def
+       ↓
+abcd[____]ef
+```
+
+**Growing the gap** increases its available space:
+
+```text
+abc[__]def
+       ↓
+abc[________]def
+```
+
+They may both involve moving data, but for different reasons:
+
+```text
+Moving gap
+    → follow the cursor
+
+Growing gap
+    → provide additional insertion capacity
+```
+
+Keeping these responsibilities conceptually separate makes the data structure easier to reason about.
+
+## The Important Trade-off
+
+A larger gap provides more room for consecutive insertions, but unused capacity consumes memory.
+
+For example:
+
+```text
+Small gap:
+
+[Text][__][Text]
+```
+
+uses less unused memory.
+
+A larger gap:
+
+```text
+[Text][__________][Text]
+```
+
+provides more room for future editing but requires more memory.
+
+The gap-buffer design therefore balances two competing concerns:
+
+```text
+Larger gap
+    ↓
+Fewer future reallocations
+    ↓
+More unused memory
+
+
+Smaller gap
+    ↓
+Less unused memory
+    ↓
+More frequent growth
+```
+
+The appropriate choice depends on the expected workload and the chosen growth policy.
+
+The central idea remains simple: **when the gap is exhausted, the buffer expands its storage while preserving the logical document and restoring a region of unused space at the editing position.**
+
+## Summary
+
+When the gap is exhausted, the buffer allocates larger storage, copies the existing text into the new layout, and restores a region of unused space at the editing position. Growing the buffer must preserve the logical document and re-establish the invariant `0 ≤ gap_start ≤ gap_end ≤ capacity`. The copy itself costs `O(n)`, but geometric growth keeps reallocations rare and spreads that cost across many subsequent `O(1)` insertions, giving the buffer favorable amortized behavior. Fixed-increment growth would trigger far more frequent copies, while a larger gap also consumes more unused memory. Growing the gap and moving the gap are distinct operations: growth provides additional insertion capacity, whereas movement follows the cursor.
+
+In the next section, we will consider how the gap buffer fits into an editor whose document is organized as multiple lines rather than a single character sequence.

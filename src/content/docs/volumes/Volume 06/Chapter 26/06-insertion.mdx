@@ -1,0 +1,280 @@
+---
+title: "26.6 Insertion"
+description: "Traces how insertion writes into the gap and advances gap_start, explaining when the operation is O(1) and when growth makes it O(n)."
+---
+
+Insertion is where the gap buffer's design becomes particularly useful.
+
+Suppose the logical document contains:
+
+```text
+abc|def
+```
+
+The cursor is between `c` and `d`.
+
+The physical representation might be:
+
+```text
+abc[____]def
+   ^
+ gap
+```
+
+The gap is already positioned at the insertion point.
+
+## Inserting into the Gap
+
+Suppose the user types `X`.
+
+The editor does not need to move `def`.
+
+It simply places `X` into the first position of the gap:
+
+```text
+Before:
+
+abc[____]def
+
+
+After:
+
+abcX[___]def
+```
+
+The logical document is now:
+
+```text
+abcXdef
+```
+
+Only the gap boundaries need to change.
+
+Conceptually:
+
+```text
+gap_start = gap_start + 1
+```
+
+The end of the gap remains unchanged.
+
+Therefore, the gap becomes one position smaller.
+
+## Consecutive Insertions
+
+The advantage becomes clearer when several characters are inserted consecutively.
+
+Start with:
+
+```text
+abc[_______]def
+```
+
+Insert `X`:
+
+```text
+abcX[______]def
+```
+
+Insert `Y`:
+
+```text
+abcXY[_____]def
+```
+
+Insert `Z`:
+
+```text
+abcXYZ[____]def
+```
+
+No characters from `def` have been moved.
+
+Each insertion simply consumes another position from the gap.
+
+This is exactly the workload that makes a gap buffer attractive for interactive editing.
+
+## What If the Gap Is Empty?
+
+Eventually, repeated insertion can consume the entire gap:
+
+```text
+abcXYZ[ ]def
+```
+
+At this point there is no room for another character.
+
+The editor cannot simply write another character into the gap because:
+
+```text
+gap_start == gap_end
+```
+
+The buffer must first create more unused space.
+
+Conceptually:
+
+```text
+Gap becomes full
+       │
+       ▼
+Create a larger buffer
+       │
+       ▼
+Preserve existing text
+       │
+       ▼
+Create a new gap
+       │
+       ▼
+Insert character
+```
+
+The details of growing the gap will be covered separately in Section 26.8.
+
+## Insertion Does Not Always Mean O(1)
+
+It is tempting to say that gap-buffer insertion is always constant time.
+
+That would be incorrect.
+
+There are two different cases.
+
+**Gap already positioned with sufficient space:**
+
+```text
+Insert → write character → advance gap_start
+```
+
+This is:
+
+```text
+O(1)
+```
+
+**Gap is empty or insufficient:**
+
+```text
+Insert
+  ↓
+Grow gap
+  ↓
+Move/copy existing data
+  ↓
+Insert
+```
+
+This requires work proportional to the amount of data that must be copied:
+
+```text
+O(n)
+```
+
+The important distinction is therefore:
+
+> Insertion at an adequately sized gap is constant time; maintaining the gap when it is exhausted can require linear work.
+
+## Why the Gap Avoids Shifting
+
+Compare the same operation with an ordinary contiguous array.
+
+Without a gap:
+
+```text
+abc|def
+
+Insert X
+
+abcXdef
+   └───┘
+   shifted
+```
+
+The characters after the insertion position must move.
+
+With a gap:
+
+```text
+abc[____]def
+
+Insert X
+
+abcX[___]def
+```
+
+The characters after the gap remain where they are.
+
+The unused space has already been reserved for this purpose.
+
+## The Cursor Moves With the Gap
+
+After insertion, the logical cursor normally advances past the newly inserted character:
+
+```text
+Before:
+
+abc|def
+
+Insert X:
+
+abcX|def
+```
+
+The physical representation is:
+
+```text
+abcX[___]def
+    ^
+  gap starts here
+```
+
+Thus the boundary of the gap continues to represent the editing position.
+
+This relationship is central to the data structure:
+
+```text
+Cursor position
+      │
+      ▼
+gap_start
+      │
+      ▼
++----------+---------+----------+
+| text     |   gap   |  text    |
++----------+---------+----------+
+```
+
+The cursor and gap therefore move together as editing proceeds.
+
+## The Main Benefit
+
+The gap buffer does not make arbitrary insertion cheap.
+
+Instead, it changes the cost profile:
+
+```text
+Ordinary array:
+
+Every middle insertion
+        ↓
+Move following characters
+
+
+Gap buffer:
+
+First move gap if necessary
+        ↓
+Repeated local insertions
+        ↓
+Use reserved space
+        ↓
+No shifting of following text
+```
+
+This is the fundamental optimization provided by the gap buffer.
+
+## Summary
+
+Insertion writes a character into the gap and advances `gap_start`, leaving the text after the gap in place. Consecutive insertions at the same position each consume one gap position, so a sequence of nearby characters is cheap and the following text never needs to shift. Once the gap is exhausted, the buffer must grow, an operation that copies existing data and can cost `O(n)`. Insertion is therefore `O(1)` only when the gap is already positioned with sufficient space; maintaining the gap when it runs out is what introduces linear work. After each insertion the gap boundary continues to represent the editing position, so the cursor and gap move together as typing proceeds.
+
+In the next section, we will examine the corresponding deletion operation and why deleting near the gap can also avoid moving the remaining text.

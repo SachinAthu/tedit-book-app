@@ -1,0 +1,317 @@
+---
+title: "26.12 Gap Buffer Failure Modes"
+description: "Surveys common gap-buffer bugs such as invalid boundaries, stale metadata, and off-by-one errors, and shows how invariant checks aid debugging."
+---
+
+A gap buffer is conceptually simple, but its implementation depends on maintaining a precise relationship between the logical document and the physical array.
+
+Most bugs do not come from the idea of the gap itself. They come from violating the invariants that describe its layout.
+
+## Invalid Gap Boundaries
+
+The fundamental relationship is:
+
+```text
+0 ≤ gap_start ≤ gap_end ≤ capacity
+```
+
+An implementation must never produce a state such as:
+
+```text
+gap_start > gap_end
+```
+
+or:
+
+```text
+gap_end > capacity
+```
+
+Either condition means that the gap no longer describes a valid region of the allocated array.
+
+A useful defensive check during development is:
+
+```text
+assert(0 <= gap_start);
+assert(gap_start <= gap_end);
+assert(gap_end <= capacity);
+```
+
+These checks are especially useful after operations that modify the gap boundaries.
+
+## Accidentally Treating the Gap as Text
+
+The gap contains unused storage:
+
+```text
+abc[____]def
+```
+
+The logical document is:
+
+```text
+abcdef
+```
+
+not:
+
+```text
+abc____def
+```
+
+A common implementation mistake is to iterate through the physical array as though every position contains document data.
+
+For example:
+
+```text
+for every physical position
+    process the character
+```
+
+is not automatically equivalent to iterating through the logical document.
+
+The unused region must be skipped.
+
+## Incorrect Gap Movement
+
+Moving the gap requires characters to cross the gap while preserving their logical order.
+
+Suppose:
+
+```text
+abc[____]def
+```
+
+The correct result of moving the gap right is:
+
+```text
+abcd[____]ef
+```
+
+An incorrect copy direction can overwrite characters before they have been moved.
+
+This is particularly important when a range of elements is shifted within the same allocation.
+
+The general lesson is:
+
+> When moving overlapping regions of memory, the direction of movement matters.
+
+The implementation must preserve every character while changing only its physical location.
+
+## Off-by-One Errors
+
+Gap boundaries use positions between elements as well as array indexes, which can make boundary calculations easy to get wrong.
+
+Consider:
+
+```text
+abc[____]def
+   ↑    ↑
+ gap_start
+        gap_end
+```
+
+If the gap contains four unused positions, then:
+
+```text
+gap_size = gap_end - gap_start
+```
+
+An incorrect `+1` or `-1` can cause the implementation to:
+
+- lose a character
+- overwrite a character
+- create an incorrectly sized gap
+- access memory outside the allocation
+
+Boundary calculations should therefore be kept explicit rather than scattered throughout the implementation.
+
+## Forgetting to Update the Gap Boundaries
+
+After insertion:
+
+```text
+abc[____]def
+```
+
+becomes:
+
+```text
+abcX[___]def
+```
+
+The stored boundary must reflect the new physical layout.
+
+Similarly, deletion changes the size of the gap.
+
+If the character data is modified without updating the corresponding metadata, the buffer's physical contents and its interpretation no longer agree.
+
+This can produce subtle bugs because the array may still appear to contain valid data while subsequent operations interpret it incorrectly.
+
+## Confusing Logical and Physical Positions
+
+A gap buffer has two different notions of position.
+
+The logical document:
+
+```text
+abc|def
+```
+
+contains six characters.
+
+The physical representation might be:
+
+```text
+abc[____]def
+```
+
+The logical position after `c` is not necessarily the same as the physical array index of the next logical character.
+
+Code that confuses these coordinate systems may:
+
+- insert at the wrong location
+- delete the wrong character
+- render the gap
+- calculate incorrect cursor positions
+
+The distinction established earlier in this chapter must therefore remain explicit throughout the implementation.
+
+## Incorrect Gap Growth
+
+When the gap is exhausted, the buffer must allocate additional storage while preserving the logical document.
+
+A faulty resize can:
+
+```text
+abcXYZ[]def
+```
+
+turn into something that has:
+
+- missing characters
+- duplicated characters
+- incorrectly positioned text
+- invalid gap boundaries
+
+The safest way to reason about growth is to treat it as a transformation:
+
+```text
+Valid buffer
+     │
+     ▼
+Allocate new storage
+     │
+     ▼
+Preserve logical text
+     │
+     ▼
+Establish new gap
+     │
+     ▼
+Valid buffer
+```
+
+The operation is successful only if the resulting representation still satisfies the same invariants as the original.
+
+## Empty and Boundary States
+
+Special cases deserve particular attention.
+
+A gap may be:
+
+```text
+[____]abcdef
+```
+
+at the beginning,
+
+```text
+abcdef[____]
+```
+
+at the end, or:
+
+```text
+abcdef[]
+```
+
+completely empty.
+
+The document itself may also be empty:
+
+```text
+[________]
+```
+
+These are not exceptional data structures. They are valid states that normal operations must handle correctly.
+
+Testing only the middle of a non-empty buffer can therefore hide important boundary bugs.
+
+## A Better Way to Debug
+
+Because the gap buffer has a small number of important invariants, debugging can focus on those invariants rather than inspecting the entire implementation blindly.
+
+After each operation, verify:
+
+```text
+0 ≤ gap_start ≤ gap_end ≤ capacity
+```
+
+Then verify that the logical document is unchanged by operations that should only rearrange physical storage.
+
+For example:
+
+```text
+Before:
+
+abc[____]def
+
+
+Move gap:
+
+
+abcd[____]ef
+```
+
+The physical layout changed, but:
+
+```text
+Logical text = abcdef
+```
+
+must remain identical.
+
+This gives us two separate correctness questions:
+
+```text
+Did the physical representation remain valid?
+                +
+Did the logical document remain correct?
+```
+
+Both must be true.
+
+## The Core Lesson
+
+The gap buffer demonstrates an important property of low-level data structures:
+
+> A simple abstraction can still require strict internal invariants.
+
+The gap itself is easy to understand. The difficulty lies in preserving the relationship between:
+
+```text
+Logical document
+        ↕
+Physical storage
+        ↕
+Gap boundaries
+```
+
+Every insertion, deletion, movement, and resize must preserve that relationship.
+
+## Summary
+
+Gap-buffer bugs arise from violating the invariants that tie the logical document, physical storage, and gap boundaries together. The most common failure modes are invalid gap boundaries, treating the gap as text, incorrect copy direction when moving overlapping regions, off-by-one errors, stale metadata, confusing logical and physical positions, and faulty growth. Each of these can lose, duplicate, or corrupt characters even though the array may still appear to hold valid data. Debugging can concentrate on the single invariant `0 ≤ gap_start ≤ gap_end ≤ capacity` together with the requirement that the logical document remains correct. Special boundary states such as an empty gap, a gap at either end, and an empty document are valid and must be tested rather than treated as exceptional.
+
+The **chapter summary** consolidates these ideas, presents exercises, and previews the next chapter.

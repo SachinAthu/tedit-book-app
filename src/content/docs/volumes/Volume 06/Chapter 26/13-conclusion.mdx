@@ -1,0 +1,38 @@
+---
+title: "26.13 Conclusion"
+description: "Consolidates the gap buffer's design and costs, then presents review exercises and a preview of the Piece Table in the next chapter."
+---
+
+A **gap buffer** is a contiguous array that reserves unused space—the gap—at the current editing position. Users edit in local bursts near the cursor, so these reserved positions let repeated insertions and deletions avoid shifting the text that follows. The trade-off: moving the gap to a distant cursor position costs `O(k)`, and exhausting the gap requires an `O(n)` resize, which geometric growth keeps amortized.
+
+The buffer is held together by a single invariant, `0 ≤ gap_start ≤ gap_end ≤ capacity`, plus the rule that the gap is storage, never text. Insertion consumes the gap, deletion expands it, and moving the gap changes only the physical layout, never the logical document. The design therefore rewards editing locality: many operations at one position are cheap, while large cursor jumps and large documents can generate significant memory traffic. Bugs, likewise, almost always trace back to the invariant or to confusing logical and physical positions.
+
+## Exercises
+
+### Review Questions
+
+- Why does a gap buffer contain unused space?
+- What does `gap_start` represent?
+- Why can insertion at the gap be O(1)?
+- Why can moving the gap be expensive?
+
+### Thought Experiments
+
+- Where should the gap be placed when a user is typing continuously?
+- What happens when the user jumps from the beginning to the end of a document?
+
+### Implementation Challenge
+
+Design a gap buffer on paper using:
+
+```text
+capacity = 12
+gap_start = ?
+gap_end = ?
+```
+
+and perform a sequence of insertions and cursor movements.
+
+## Preview of the Next Chapter
+
+In the next chapter, we study the **Piece Table**, a text representation designed for a different weakness: Instead of moving text in memory, it records edits as pieces in a table, leaving the original text untouched. We examine its architecture, operations, and complexity, and see why editors such as VS Code use it.

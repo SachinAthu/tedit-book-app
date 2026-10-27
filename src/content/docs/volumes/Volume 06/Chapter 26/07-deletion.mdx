@@ -1,0 +1,305 @@
+---
+title: "26.7 Deletion"
+description: "Explains how Backspace and Delete enlarge the gap instead of shifting text, keeping local deletions O(1) when the gap is positioned."
+---
+
+Deletion is the other operation that benefits from having a gap at the editing position.
+
+Suppose the buffer currently represents:
+
+```text
+abc|def
+```
+
+with the physical layout:
+
+```text
+abc[____]def
+   ^
+ cursor
+```
+
+If the user presses **Backspace**, the character immediately before the cursor, `c`, should be removed.
+
+With a gap buffer, the editor can enlarge the gap rather than shifting the characters that follow it.
+
+## Deleting Before the Cursor
+
+Before deletion:
+
+```text
+abc[____]def
+   ^
+ cursor
+```
+
+The character `c` is immediately before the gap:
+
+```text
+ab c[____]def
+   ^
+```
+
+After deletion:
+
+```text
+ab[_____]def
+  ^
+```
+
+The logical document has changed from:
+
+```text
+abcdef
+```
+
+to:
+
+```text
+abdef
+```
+
+But the characters `def` did not move.
+
+The gap simply grew by one position toward the left.
+
+Conceptually:
+
+```text
+gap_start = gap_start - 1
+```
+
+The character that was removed is now part of the unused gap.
+
+## Why No Shifting Is Required
+
+With an ordinary contiguous array, deleting `c` from:
+
+```text
+abcdef
+```
+
+would require the characters after it to move:
+
+```text
+abcdef
+  ↓
+abdef
+```
+
+The characters `d`, `e`, and `f` must shift toward the beginning of the array.
+
+With a gap buffer:
+
+```text
+abc[____]def
+```
+
+the gap already provides unused storage at the editing position.
+
+Deletion simply expands that unused region:
+
+```text
+ab[_____]def
+```
+
+The text after the gap remains in place.
+
+## Deleting After the Cursor
+
+Deletion can also occur on the other side of the cursor.
+
+Suppose:
+
+```text
+abc[____]def
+   ^
+ cursor
+```
+
+If the editor performs a **Delete** operation, the character immediately after the cursor, `d`, is removed.
+
+The physical representation can become:
+
+```text
+abc[_____]ef
+   ^
+```
+
+The gap grows toward the right.
+
+Conceptually:
+
+```text
+gap_end = gap_end + 1
+```
+
+Again, the remaining characters do not need to be shifted.
+
+## Backspace and Delete Are Different Operations
+
+It is useful to distinguish the editor commands from the data structure operations.
+
+**Backspace** removes the character before the cursor:
+
+```text
+abc|def
+  ↓
+ab|def
+```
+
+**Delete** removes the character at the cursor:
+
+```text
+abc|def
+   ↓
+abc|ef
+```
+
+The gap buffer provides efficient physical operations for both cases when the gap is already positioned at the cursor.
+
+The Command Engine decides which editing operation the user requested; the gap buffer is concerned only with maintaining its internal representation.
+
+## Deleting Repeatedly
+
+The benefit becomes particularly clear when the user holds Backspace while editing.
+
+Start with:
+
+```text
+abcdef[____]
+      ^
+```
+
+Delete `f`:
+
+```text
+abcde[_____]
+```
+
+Delete `e`:
+
+```text
+abcd[______]
+```
+
+Delete `d`:
+
+```text
+abc[_______]
+```
+
+Each deletion enlarges the gap.
+
+No remaining characters need to be shifted.
+
+This is the opposite of repeatedly inserting characters into a normal contiguous array, where each deletion near the beginning could repeatedly move the remaining text.
+
+## Deletion and the Gap Size
+
+The gap therefore changes in two fundamental ways:
+
+```text
+Insertion:
+
+gap becomes smaller
+
++---------+-------+
+|  text   |  gap  |
++---------+-------+
+              ↓
++---------+-----+
+|  text   | gap |
++---------+-----+
+```
+
+```text
+Deletion:
+
+gap becomes larger
+
++---------+-----+
+|  text   | gap |
++---------+-----+
+              ↓
++---------+-------+
+|  text   |  gap  |
++---------+-------+
+```
+
+This gives us a useful rule:
+
+> Insertion consumes the gap; deletion creates more gap space.
+
+## What Happens at the Beginning or End?
+
+The gap cannot move beyond the document boundaries.
+
+If the cursor is at the beginning:
+
+```text
+|abcdef
+```
+
+there is no character before it, so Backspace has nothing to delete.
+
+Similarly, if the cursor is at the end:
+
+```text
+abcdef|
+```
+
+there is no character after it for Delete to remove.
+
+These are document-level boundary conditions. The gap buffer must preserve its invariants while the higher-level editor decides whether the requested deletion is valid.
+
+## Complexity
+
+When the gap is already at the editing position:
+
+```text
+Backspace → O(1)
+Delete    → O(1)
+```
+
+The operation only changes a gap boundary.
+
+This is one of the main advantages of the gap-buffer representation.
+
+However, this does not mean all deletion operations are always constant time. If the cursor first needs to move a long distance, the gap must move before deletion can occur:
+
+```text
+Cursor movement
+      ↓
+Move gap
+      ↓
+Delete
+```
+
+The movement cost can be proportional to the distance traveled.
+
+The important pattern is therefore:
+
+```text
+Local deletion
+     ↓
+Expand existing gap
+     ↓
+O(1)
+```
+
+rather than:
+
+```text
+Local deletion
+     ↓
+Shift all following characters
+     ↓
+O(n)
+```
+
+## Summary
+
+Deletion enlarges the gap instead of shifting the remaining text. Backspace removes the character before the cursor and moves `gap_start` backward, while Delete removes the character after the cursor and moves `gap_end` forward. When the gap is already at the editing position, both operations are `O(1)` because they only change a gap boundary and the characters beyond the gap stay where they are. Repeated deletions simply expand the gap further, which is the inverse of the way insertion consumes it. If the cursor must first travel a long distance, the gap has to move before the deletion can occur, and the movement cost is proportional to the distance.
+
+In the next section, we will examine what happens when repeated insertions consume the available gap and the buffer must create more space.

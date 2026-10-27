@@ -1,0 +1,234 @@
+---
+title: "26.10 Locality of Editing and Cursor Movement"
+description: "Explains why editing locality and cursor movement determine gap-buffer performance, contrasting local bursts with large navigation jumps."
+---
+
+The gap buffer's performance makes the most sense when we consider how people actually edit text.
+
+A user rarely makes every edit at a completely different location. More commonly, editing happens in **local bursts**.
+
+For example:
+
+```text
+The quick brown fox jumps over the lazy dog
+              ^
+            cursor
+```
+
+The user might type several characters, delete a few, and continue typing without moving far from the current position.
+
+A gap buffer is designed to take advantage of this behavior.
+
+## Local Editing
+
+Suppose the gap is positioned at the cursor:
+
+```text
+The quick[________]brown fox
+```
+
+The user types several characters:
+
+```text
+The quickx[_______]brown fox
+```
+
+```text
+The quickxy[______]brown fox
+```
+
+```text
+The quickxyz[_____]brown fox
+```
+
+The gap remains at the editing position throughout the sequence.
+
+Each insertion can therefore operate directly within the existing gap.
+
+The important property is not simply that one insertion is cheap. It is that **many consecutive operations can reuse the same gap**.
+
+## Temporal Locality
+
+This behavior can be viewed as a form of **temporal locality**.
+
+An editing position that was used recently is likely to be used again shortly afterward:
+
+```text
+Edit
+ ↓
+Edit
+ ↓
+Edit
+ ↓
+Edit
+```
+
+The gap is already positioned where those operations occur.
+
+Consequently, the editor does not repeatedly pay the cost of relocating the gap between every character.
+
+This is the workload assumption that gives the gap buffer much of its practical value.
+
+## What Happens When the User Moves
+
+The situation changes when the cursor moves significantly.
+
+Suppose the gap is here:
+
+```text
+abc[________]defghijklmnop
+   ^
+```
+
+and the user moves the cursor toward the end of the line:
+
+```text
+abc________defghijklmnop
+                    ^
+```
+
+The gap must move toward the new editing position.
+
+Conceptually:
+
+```text
+Old position
+     │
+     ▼
+abc[________]defghijklmnop
+
+          move gap
+
+abcde[________]fghijklmnop
+
+          move gap
+
+abcdefghij[________]klmnop
+```
+
+Characters cross the gap as it moves.
+
+The farther the editing position moves, the more data may need to be relocated.
+
+Therefore, the gap buffer favors:
+
+```text
+Frequent nearby edits
+        ↓
+Gap stays near the cursor
+        ↓
+Low movement cost
+```
+
+rather than:
+
+```text
+Repeated large cursor jumps
+        ↓
+Gap repeatedly travels long distances
+        ↓
+Higher movement cost
+```
+
+## Locality Does Not Mean the Cursor Cannot Move
+
+A gap buffer does not require the user to edit in one location forever.
+
+After a large cursor movement, the gap simply relocates to the new position.
+
+For example:
+
+```text
+Before:
+
+Hello[________]World
+
+
+After moving to another location:
+
+HelloWorld[________]
+```
+
+The logical document is unchanged.
+
+The cost is paid when the gap moves, after which editing at the new location can again become inexpensive.
+
+This gives the data structure a recurring pattern:
+
+```text
+Move to new location
+        ↓
+Pay gap-movement cost
+        ↓
+Perform several local edits
+        ↓
+Move again
+        ↓
+Pay movement cost again
+```
+
+## Why This Matches Interactive Editing
+
+Interactive text editing often consists of alternating phases:
+
+```text
+        Navigate
+           │
+           ▼
+      Editing burst
+           │
+           ▼
+        Navigate
+           │
+           ▼
+      Editing burst
+           │
+           ▼
+        Navigate
+```
+
+The gap buffer is particularly well suited to the **editing bursts**.
+
+During a burst, the gap remains close to the cursor and can be consumed by insertions or expanded by deletions.
+
+During navigation, the data structure may need to move the gap.
+
+This is a deliberate trade-off rather than an accidental characteristic.
+
+## Locality and Performance
+
+We can therefore summarize the relationship as:
+
+```text
+Strong editing locality
+        ↓
+Few large gap movements
+        ↓
+More operations performed at the gap
+        ↓
+Better practical performance
+```
+
+While:
+
+```text
+Poor editing locality
+        ↓
+Frequent large cursor movements
+        ↓
+Frequent gap movement
+        ↓
+Higher data-movement cost
+```
+
+This is why evaluating a data structure requires more than looking at the complexity of an individual operation.
+
+The **workload** matters.
+
+A gap buffer can provide excellent performance for one pattern of editing and less favorable performance for another, even when both workloads contain the same number of insertions and deletions.
+
+## Summary
+
+The gap buffer's advantage depends on the editing workload. Users typically edit in local bursts, so once the gap is positioned at the cursor, many consecutive insertions and deletions reuse the same unused space with `O(1)` cost. After a large cursor movement, the gap must relocate, paying a movement cost proportional to the distance traveled, but editing at the new position then becomes cheap again. This matches interactive editing's alternating phases of navigation and editing bursts. Strong editing locality therefore produces few large gap movements and better practical performance, while frequent long jumps repeatedly relocate the gap and raise the cost, even when the number of insertions and deletions is the same.
+
+In the next section, we will apply the memory and cache concepts from earlier chapters to the physical layout of a gap buffer.
