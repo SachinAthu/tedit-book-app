@@ -1,0 +1,532 @@
+---
+title: "Chapter 29 — Comparing Text Buffers"
+description: "Compares how Nano, Vim, Emacs, VS Code, Helix, Zed, and Sublime Text represent text, connecting each choice to the editor's requirements."
+---
+
+## Introduction
+
+Chapters 25 through 28 each presented a different way to represent editable text: arrays and strings, gap buffers, piece tables, and ropes. Each representation was studied in isolation, on its own terms—how it stores text, how it supports editing, and what it costs. Having seen several valid solutions to the same problem, a natural question now arises:
+
+> **Which text buffer should an editor actually use?**
+
+That question has no single answer. Real editors are built under different constraints. Document size, editing workload, undo model, performance requirements, and surrounding architecture all influence which representation makes sense. A gap buffer that serves Emacs well may be unnecessary for a small terminal editor, and a rope that powers Zed may be overkill for Nano.
+
+This chapter therefore turns from studying data structures in the abstract to studying them **in real editors**. We look at seven editors—Nano, Vim, Emacs, VS Code, Helix, Zed, and Sublime Text—identify the text-buffer approach each one uses, and connect that choice to the editor's broader requirements. We then bring the examples together and ask what they teach us about our own design.
+
+The goal is not to determine a single "best" text buffer or to imitate these larger systems. It is to understand why different editors make different choices, and to recognize which lessons apply to a small, educational editor whose Document is represented as a vector of lines.
+
+## Learning Objectives
+
+Readers should be able to:
+
+- Explain why a text-buffer representation cannot be judged in isolation and why an editor's requirements determine its choice
+- Describe the text-buffer approaches of Nano, Vim, Emacs, VS Code, Helix, and Zed, and what is and is not publicly known about Sublime Text
+- Distinguish an editor's conceptual model of the document from its underlying data structure
+- Explain why the locality of editing can justify a gap buffer
+- Explain why large documents and frequent edits can justify a piece-based structure
+- Explain how large documents, frequent position queries, and concurrency can justify a rope
+- Recognize when implementation details are unavailable and avoid assuming a data structure from observed behavior alone
+- Evaluate whether a given representation's complexity is justified for a particular editor
+- Apply these lessons to justify the vector-of-lines Document chosen for our editor
+
+---
+
+## 29.1 From Data Structures to Real Editors
+
+The previous four chapters examined several ways to represent editable text.
+
+We studied:
+
+- arrays and strings
+- gap buffers
+- piece tables
+- ropes
+
+Each representation solves the same fundamental problem—storing and modifying text—but approaches the problem differently.
+
+At this point, it is tempting to ask:
+
+> Which one is the best?
+
+That is not quite the right question.
+
+Real editors are built under different constraints. A small terminal editor has very different requirements from a large, extensible code editor. The expected document size, editing workload, undo model, performance requirements, and surrounding architecture all influence the eventual design.
+
+So rather than comparing the data structures in isolation, this chapter looks at **real editors** and asks:
+
+> **What text-buffer approach does each editor use, and why does that choice make sense for the editor?**
+
+We will look at seven editors:
+
+- Nano
+- Vim
+- Emacs
+- VS Code
+- Helix
+- Zed
+- Sublime Text
+
+The goal is not to reverse-engineer each editor or reproduce its entire architecture. Instead, we will identify the relevant text-buffer design and connect it to the editor's broader requirements.
+
+This distinction is important because a data structure that is appropriate for one editor may be completely unnecessary for another.
+
+Our own editor is deliberately small and educational. Its architecture already establishes a simple in-memory Document representation, with the current project decision favoring a vector of lines.
+
+The interesting question, then, is not whether our editor should imitate one of these larger systems.
+
+It is:
+
+> **What can we learn from the choices they made?**
+
+---
+
+## 29.2 Nano
+
+GNU nano is a useful place to begin because it is close to the kind of editor we are building.
+
+Nano is deliberately small. Its interface is terminal-based, its editing model is straightforward, and it does not attempt to provide the extensive editing machinery found in modern development environments.
+
+From a text-buffer perspective, the important lesson is that **a small editor does not need an elaborate text representation simply because more sophisticated structures exist**.
+
+A line-oriented representation fits naturally with the way a terminal editor works:
+
+```text
+Document
+   │
+   ├── Line 0
+   ├── Line 1
+   ├── Line 2
+   └── Line 3
+```
+
+The editor can work with individual lines while the cursor maintains a row and column position. Inserting or deleting characters primarily affects the current line, while Enter and line-boundary operations affect the collection of lines. Nano's own implementation stores these lines as a doubly-linked list rather than as a contiguous vector; what matters for the lesson is the line-oriented model, not the exact container.
+
+This approach has an important engineering advantage: **the representation is easy to understand**.
+
+There are fewer layers between an editing operation and the text being modified:
+
+```text
+Cursor
+   │
+   ▼
+Current line
+   │
+   ▼
+Characters
+```
+
+That simplicity matters for a project whose primary goals are usability, maintainability, and a small implementation.
+
+### What We Can Learn from Nano
+
+Nano demonstrates an important principle:
+
+> **A text editor does not need the most sophisticated text buffer available. It needs a representation appropriate to its requirements.**
+
+For a lightweight terminal editor, simplicity can be a feature rather than a limitation.
+
+This is closely aligned with our own design. Our editor is intentionally a small, single-document, educational system, and its Document is represented as a collection of independently stored lines. The choice was made because it maps directly to the editor's row-and-column model and keeps the implementation understandable.
+
+The more interesting question is what happens when an editor's requirements become significantly more demanding.
+
+That leads us to Vim.
+
+---
+
+## 29.3 Vim
+
+Vim provides a useful contrast with Nano because its requirements are considerably broader.
+
+Vim is still fundamentally line-oriented. Its documentation defines a **buffer** as containing lines of text, and distinguishes those stored buffer lines from the logical and screen lines produced for display. Here "buffer" carries Vim's meaning—an editable document in memory—rather than the temporary storage buffer introduced earlier in this book.
+
+Internally, however, Vim does not simply keep the entire document as a basic vector of strings. Its source contains a dedicated **memline** system for storing buffer text. This system organizes text using line segments and supports efficient access to the lines that make up a buffer.
+
+That distinction is important.
+
+The editor's conceptual model can remain simple:
+
+```text
+Buffer
+   │
+   ├── Line 1
+   ├── Line 2
+   ├── Line 3
+   └── ...
+```
+
+while the implementation underneath can become considerably more sophisticated.
+
+Vim also separates the stored text from its presentation. A buffer contains the actual text, while folds, wrapping, windows, and screen layout transform that text into what the user sees.
+
+### What We Can Learn from Vim
+
+Vim demonstrates that **the conceptual model exposed by an editor does not have to be identical to its underlying data structure**.
+
+A developer can think in terms of lines and cursor positions while the implementation uses a more sophisticated storage mechanism underneath.
+
+This is an important architectural lesson:
+
+> **A data structure is an implementation detail; the editor's conceptual model can remain simpler than the machinery that implements it.**
+
+For our editor, there is no need to introduce Vim's additional storage machinery. Our requirements are much smaller, and the simpler Document representation is sufficient. The important lesson is that if those requirements eventually change, the Document's implementation can evolve without necessarily changing the entire editor architecture.
+
+---
+
+## 29.4 Emacs
+
+GNU Emacs provides one of the clearest real-world examples of a **gap buffer** (Chapter 26).
+
+Emacs buffers are implemented using an invisible gap in the text. Insertions fill the gap, while deletions enlarge it. When editing moves to another location, Emacs moves the gap to that location before performing the operation. The GNU Emacs documentation explicitly describes this design.
+
+Conceptually:
+
+```text
+Before editing:
+
+[ existing text ][ gap ][ existing text ]
+                         ^
+                       cursor
+
+After inserting:
+
+[ existing text ][ new text ][ gap ][ existing text ]
+```
+
+The important characteristic is that the gap follows the user's editing location.
+
+This makes repeated insertions and deletions around the current position efficient. The trade-off is that moving the gap can require noticeable work when editing jumps from one distant location to another. Emacs's documentation even notes that the first edit in a far-away part of a large buffer can sometimes introduce a visible delay.
+
+### What We Can Learn from Emacs
+
+Emacs demonstrates why the **editing workload** matters when choosing a text representation.
+
+A user who performs many consecutive edits around the same location benefits from keeping writable space near that location. The gap buffer is designed specifically around this pattern.
+
+It also demonstrates another important lesson:
+
+> **A data structure can remain hidden behind a much simpler editor abstraction.**
+
+To Emacs Lisp code, a buffer is simply editable text. The gap is an implementation detail managed internally by Emacs.
+
+Our editor does not need this additional machinery. A vector of lines is easier to implement and understand for the scope of our project. But Emacs shows that when editing behavior and performance requirements become more demanding, introducing a more specialized representation can be justified.
+
+---
+
+## 29.5 VS Code
+
+Visual Studio Code provides a useful example of what happens when a text editor has to handle much larger and more demanding workloads.
+
+The text buffer used by VS Code is based on a **piece tree**. Microsoft describes it as a multiple-buffer piece table organized with a red-black tree and optimized around the editor's line-based model.
+
+Conceptually:
+
+```text
+Original Buffer ──────┐
+                      │
+Added Text Buffer ────┤
+                      ▼
+                 Piece Tree
+                      │
+                      ▼
+              Logical Document
+```
+
+This is related to the piece table we studied earlier (Chapter 27), but the implementation adds a tree structure to make navigating and modifying a large collection of pieces more practical.
+
+The reason for that additional complexity is important.
+
+VS Code needs to work efficiently with documents that can contain:
+
+- thousands or millions of lines
+- large amounts of text
+- frequent edits
+- arbitrary editing locations
+- operations that need efficient line and position access
+
+Microsoft's own discussion of the implementation compares the piece tree against the earlier line-array implementation using small, medium, and large real-world files.
+
+The result is a good example of a general engineering pattern:
+
+```text
+Simple requirements
+        │
+        ▼
+Simple representation
+
+More demanding requirements
+        │
+        ▼
+More sophisticated representation
+```
+
+### What We Can Learn from VS Code
+
+The important lesson is not simply:
+
+> "VS Code uses a piece tree."
+
+It is:
+
+> **The complexity of the text buffer can grow because the workload justifies it.**
+
+A vector of lines is much easier to understand and implement. But when an editor must efficiently support large documents and frequent edits across those documents, the cost of a more sophisticated representation can become worthwhile.
+
+This is exactly the distinction between our editor and VS Code. Our project intentionally prioritizes simplicity and educational value, while VS Code's text buffer is engineered for a much broader and more demanding workload.
+
+The next examples will show that there is still no single "modern editor" approach. Different editors make different choices based on their own architecture and requirements.
+
+---
+
+## 29.6 Helix and Zed
+
+Helix and Zed provide a useful look at a newer generation of editors. Their text-buffer designs are not simply attempts to make older editors faster; they are closely connected to the broader requirements of modern editing environments.
+
+### Helix
+
+Helix is built around a modern text-editing architecture that uses a **rope** for text storage. This is a natural fit for an editor that needs efficient operations over potentially large documents while also integrating closely with syntax-aware editing.
+
+The important point is that the rope is not useful merely because it has attractive theoretical complexity. It becomes useful because the editor performs many operations that benefit from structured access to large amounts of text.
+
+The relationship can be viewed as:
+
+```text
+Large document
+      │
+      ▼
+Structured text representation
+      │
+      ├── efficient editing
+      ├── efficient navigation
+      └── syntax-aware operations
+```
+
+This illustrates the same principle we encountered with VS Code:
+
+> **The text buffer is chosen as part of the editor's workload, not in isolation.**
+
+### Zed
+
+Zed provides an even more interesting example.
+
+Zed's developers describe its fundamental text-storage structure as a **rope implemented using a B-tree/SumTree structure**. The structure stores chunks of text and maintains additional information that allows the editor to efficiently translate between text offsets and positions such as rows and columns.
+
+Conceptually:
+
+```text
+                Rope / SumTree
+                     │
+          ┌──────────┼──────────┐
+          ▼          ▼          ▼
+       Chunk       Chunk       Chunk
+          │          │          │
+          └──────────┴──────────┘
+                     │
+                     ▼
+                Editor Text
+```
+
+This becomes particularly important because Zed performs position conversions extremely frequently. Its developers describe offset-to-point translation as a hot operation during editing and navigation.
+
+Zed's design is also influenced by requirements that go beyond ordinary single-user editing. Its developers describe the rope as fundamental to the editor's architecture and explain how its structure supports inexpensive snapshots and work across threads.
+
+### What We Can Learn from Helix and Zed
+
+These editors demonstrate an important progression:
+
+```text
+Simple editor
+      │
+      ▼
+Simple text representation
+
+Modern editor
+      │
+      ├── large documents
+      ├── frequent position queries
+      ├── syntax-aware features
+      ├── multiple cursors
+      └── concurrent work
+              │
+              ▼
+      More sophisticated
+      text representation
+```
+
+The lesson is not that a rope is automatically better than a vector of lines.
+
+It is that **the surrounding editor architecture can create requirements that justify a more sophisticated text buffer**.
+
+That is very different from our project. Our editor is intentionally single-threaded, single-document, and educational. Its requirements do not justify the additional complexity of a rope-based architecture.
+
+---
+
+## 29.7 Sublime Text
+
+Sublime Text is a useful final example because it reminds us that **not every editor exposes enough implementation detail for us to identify its internal text representation with confidence**.
+
+Unlike projects such as VS Code, Helix, and Zed, Sublime Text is proprietary software. Its internal text-buffer implementation is not documented publicly at the same level of detail.
+
+Therefore, we should avoid making a claim such as:
+
+> "Sublime Text uses a rope."
+
+unless there is authoritative technical evidence supporting it.
+
+What we can observe is the engineering goal: Sublime Text is designed around responsiveness and performance, including when working with large files and performing frequent editing operations.
+
+That gives us a useful distinction:
+
+```text
+Open-source editor
+       │
+       ▼
+Implementation can often
+be inspected directly
+
+Proprietary editor
+       │
+       ▼
+Implementation details
+may remain private
+```
+
+The absence of public implementation details does **not** mean that the editor has no sophisticated text representation. It simply means that we should separate what we know from what we infer.
+
+### What We Can Learn from Sublime Text
+
+Sublime Text reinforces an important engineering principle:
+
+> **Choose a data structure based on measured requirements, not on assumptions about what another editor uses.**
+
+We can observe an editor's behavior and performance, but that does not tell us exactly which internal data structure produces it.
+
+For our project, this distinction is especially important. We are designing the system ourselves, so we can explicitly document our choice and its reasoning. Our vector-of-lines representation is not intended to compete with the internal implementation of a professional editor. It is intended to satisfy our project's requirements while keeping the architecture understandable.
+
+The next section brings the examples together and gives us a concise view of **which editors use which approaches**.
+
+---
+
+## 29.8 Which Editor Uses What?
+
+The examples we have seen illustrate an important point: **real editors do not all use the same text representation**.
+
+Their choices reflect the requirements of the editor, its expected workload, and the complexity that its developers are willing to maintain.
+
+At a high level:
+
+| Editor           | Text-buffer approach                   | Main lesson                                                                         |
+| ---------------- | -------------------------------------- | ----------------------------------------------------------------------------------- |
+| **Nano**         | Simple, line-oriented buffer           | A small editor can favor simplicity                                                 |
+| **Vim**          | Specialized buffer storage             | A line-oriented model can have sophisticated internals                              |
+| **Emacs**        | Gap buffer                             | Local editing patterns can justify a gap                                            |
+| **VS Code**      | Piece tree                             | Large documents and frequent edits can justify a more complex structure             |
+| **Helix**        | Rope-based representation              | Modern editors can benefit from tree-based text storage                             |
+| **Zed**          | Rope / B-tree-based representation     | Text storage can be deeply integrated with performance and concurrency requirements |
+| **Sublime Text** | Implementation details are proprietary | Observed performance does not reveal the underlying data structure                  |
+
+The progression is more useful than the individual names:
+
+```text
+Simple editor
+     │
+     ▼
+Simple representation
+
+More demanding workload
+     │
+     ▼
+Specialized representation
+
+More complex requirements
+     │
+     ▼
+More sophisticated representation
+```
+
+There is therefore no rule such as:
+
+> "Professional editors use ropes."
+
+Some do. Some use gap buffers, piece-oriented structures, or specialized representations. Others keep their implementation details private.
+
+The important engineering question is always:
+
+> **What requirements led the developers to choose this representation?**
+
+That is the perspective we should carry into our own editor.
+
+---
+
+## 29.9 Conclusion
+
+This chapter answered a question left open by the previous four: which text buffer should an editor actually use? The answer is that there is no single best representation. Each of the seven editors we examined makes a different choice, and each choice reflects the editor's requirements and workload.
+
+Nano shows that a small editor can favor simplicity: a line-oriented buffer maps directly to the terminal's row-and-column model. Vim shows that a simple conceptual model can hide sophisticated internals—its buffer is line-oriented from the user's perspective, while dedicated storage machinery manages the text underneath. Emacs demonstrates that editing workload can justify a gap buffer, keeping writable space near the cursor. VS Code shows that large documents and frequent edits can justify a piece tree. Helix and Zed show how modern requirements—large documents, frequent position queries, syntax-aware operations, and concurrency—can justify tree-based text storage such as a rope. Sublime Text reminds us that observed performance does not reveal an internal data structure, and that we should separate what we know from what we infer.
+
+For our own editor, the conclusion is direct. Our project is deliberately small, single-document, and educational, so a simple vector-of-lines Document is the appropriate choice. The lesson of this chapter is not to imitate larger editors, but to understand how their requirements led to their designs—and to recognize that the same reasoning applies to our own architecture.
+
+## Exercises
+
+### Review Questions
+
+- Why is "which text buffer is best?" the wrong question to ask?
+- What text-buffer approach does each of the seven editors use?
+- How does Vim's buffer concept differ from the storage machinery that implements it?
+- Why is a gap buffer a natural fit for Emacs's editing workload?
+- What requirements lead VS Code to a piece tree, and Helix and Zed to a rope?
+- Why can observed performance alone not reveal an editor's internal data structure?
+- Why is a vector of lines an appropriate representation for our own editor?
+
+### Thought Experiments
+
+- Imagine our editor's documents suddenly needed to handle files with millions of lines. Which operations in a vector-of-lines Document would come under pressure first, and which of the seven editors' approaches would address them?
+- Pick a concrete workload—a large log file, or a source file edited in many small bursts—and decide which representation best fits it, using the reasoning of this chapter.
+- Suppose you discover that an editor you use is built on a rope. Does that alone justify a rope for your own editor? Explain.
+- If our editor later required concurrency or syntax-aware editing, how would the choice of text buffer change?
+
+## Common Mistakes
+
+### Assuming every modern editor uses a rope
+
+Some do—Helix and Zed—but Emacs uses a gap buffer, VS Code uses a piece tree, and others keep their implementation private. There is no single "modern" text representation.
+
+### Inferring a data structure from observed performance
+
+An editor can be fast and responsive with several different internal structures. Observing behavior does not identify the structure that produces it, as the Sublime Text example shows.
+
+### Confusing an editor's conceptual model with its implementation
+
+Vim's buffer is line-oriented from the user's perspective, yet its storage is implemented by a dedicated system underneath. A simple conceptual model can hide sophisticated machinery.
+
+### Assuming a simple interface means a simple implementation
+
+Nano's interface is simple, and Vim's conceptual model is line-oriented, but the underlying storage can still be specialized. Simplicity of interface does not imply simplicity of internals.
+
+### Choosing a structure because another editor uses it
+
+A representation is justified by your own editor's requirements and workload, not by what a larger editor happens to use. The same reasoning that guides each editor's choice should guide ours.
+
+## Preview of the Next Chapter
+
+**Chapter 30 — Search**
+
+With the text-buffer chapter complete, we now move from **how text is stored** to **how users find text inside the document**.
+
+Chapter 30 will explore:
+
+- Linear search
+- Searching through the Text Buffer
+- Forward and backward search
+- Incremental search
+- Search state and user interaction
+- Regular expressions
+- Performance considerations
+- Design alternatives and trade-offs
+
+The chapter will focus on the **engineering behind editor search**, rather than simply implementing a `find()` function.
+
+The key question will be:
+
+> **How does an editor efficiently find what the user is looking for while keeping the editing experience responsive?**
+
+This also begins the transition from **core data structures** into the **professional editor features** introduced in Volume VII.
