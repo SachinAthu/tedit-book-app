@@ -1,0 +1,403 @@
+---
+title: 27.10 Locating a Position in the Piece Table
+description: "Explains how to map a logical document position to the containing piece and source-buffer offset by walking the piece sequence."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+So far, we have seen how a Piece Table represents text and how insertion and deletion modify its pieces. There is one important operation we have not yet examined:
+
+> **Given a logical position in the document, how do we find the corresponding piece and position inside its source buffer?**
+
+This mapping is necessary because users and editor commands work with **logical document positions**, while the Piece Table stores text using **buffer offsets**.
+
+Consider:
+
+```text
+Logical Document
+
+Hello beautiful world
+      ^
+      │
+ logical position
+```
+
+Internally, the text may be represented as:
+
+```text
+P1 → Original[0..6)
+P2 → Add[0..10)
+P3 → Original[6..11)
+```
+
+The logical position does not directly tell us which buffer contains the character.
+
+We must traverse the piece sequence to find out.
+
+## Two Coordinate Systems
+
+A Piece Table therefore introduces two related but different positions.
+
+### Logical Document Position
+
+This is the position a user or editor command sees.
+
+For example:
+
+```text
+Hello beautiful world
+      ^
+      position 6
+```
+
+The position is measured from the beginning of the **logical document**.
+
+### Source Buffer Position
+
+Once we identify the piece containing that position, we can determine where the corresponding text lives in its source buffer.
+
+For example:
+
+```text
+Logical position
+       │
+       ▼
+     Piece
+       │
+       ▼
+Source buffer + offset
+```
+
+The two positions are related, but they are not necessarily equal.
+
+## Finding the Containing Piece
+
+Suppose the logical document is:
+
+```text
+Hello beautiful world
+```
+
+and the pieces are:
+
+```text
+P1 → Original[0..6)
+P2 → Add[0..10)
+P3 → Original[6..11)
+```
+
+The logical lengths of the pieces are:
+
+```text
+P1 = 6
+P2 = 10
+P3 = 5
+```
+
+We can therefore think of the logical document as:
+
+```text
+0       6              16        21
+│       │              │         │
+├───────┼──────────────┼─────────┤
+ P1          P2            P3
+```
+
+Suppose we want logical position `12`.
+
+We begin at the first piece.
+
+```text
+P1
+length = 6
+```
+
+Position `12` is not inside `P1`.
+
+Subtract its length:
+
+```text
+12 - 6 = 6
+```
+
+We then examine `P2`.
+
+```text
+P2
+length = 10
+```
+
+The remaining position `6` falls inside `P2`.
+
+Therefore:
+
+```text
+logical position
+      12
+       │
+       ▼
+      P2
+       │
+       ▼
+offset 6 inside P2
+```
+
+## From Logical Offset to Buffer Offset
+
+Now suppose:
+
+```text
+P2 → Add[20..30)
+```
+
+and logical position `12` corresponds to offset `6` within `P2`.
+
+The corresponding Add Buffer position is:
+
+```text
+20 + 6 = 26
+```
+
+So the complete mapping is:
+
+```text
+Logical position 12
+        │
+        ▼
+Piece P2
+        │
+        ▼
+Offset 6 within piece
+        │
+        ▼
+Add Buffer offset 26
+```
+
+This is the bridge between the logical document and physical text storage.
+
+## The Traversal Algorithm
+
+At a high level, locating a logical position involves walking through the pieces while keeping track of how much logical text has already been covered.
+
+Conceptually:
+
+```text
+remaining_position = logical_position
+
+for each piece:
+    if remaining_position < piece.length:
+        position is inside this piece
+        stop
+
+    remaining_position -= piece.length
+```
+
+Once the containing piece is found:
+
+```text
+source_offset =
+    piece.offset + remaining_position
+```
+
+The result provides everything needed to access the corresponding source text:
+
+```text
+source
+offset
+```
+
+along with the piece itself.
+
+## Why This Mapping Matters
+
+Many editor operations eventually need this translation.
+
+### Insertion
+
+If the user inserts text at a logical position:
+
+```text
+Document position
+       │
+       ▼
+Containing piece
+       │
+       ▼
+Split point
+```
+
+The Piece Table must locate the piece before it can split it.
+
+### Deletion
+
+If the user deletes a range:
+
+```text
+Start position ──────── End position
+       │                     │
+       ▼                     ▼
+   Start piece            End piece
+```
+
+the editor must identify which pieces are affected.
+
+### Rendering
+
+When rendering the logical document, the renderer needs to traverse the pieces and obtain their source text.
+
+### Saving
+
+When writing the document back to disk, the File Manager can traverse the pieces in logical order and write each referenced range.
+
+The same underlying mapping therefore supports several different operations.
+
+## A Position May Fall at a Piece Boundary
+
+There is an important boundary case.
+
+Suppose:
+
+```text
+P1 → "Hello "
+P2 → "beautiful "
+P3 → "world"
+```
+
+The position immediately after `"Hello "` is:
+
+```text
+Hello |beautiful world
+      ^
+```
+
+This position lies exactly at the boundary between `P1` and `P2`.
+
+A Piece Table implementation must establish a consistent convention for boundary positions.
+
+For example, an insertion at that position can be considered to occur:
+
+```text
+after P1
+before P2
+```
+
+The important point is not which equivalent convention is chosen, but that the implementation uses one consistently.
+
+This becomes particularly important when splitting pieces.
+
+## Positions Are Not Character Copies
+
+Notice what the lookup operation does **not** do.
+
+It does not reconstruct the entire document first.
+
+It does not copy every character into a temporary array.
+
+It simply walks the metadata:
+
+```text
+Piece
+Piece
+Piece
+...
+```
+
+until it determines:
+
+```text
+which piece?
+which offset?
+```
+
+This is one of the advantages of separating the logical document from the underlying buffers.
+
+The editor can reason about positions using the piece structure without first creating a contiguous copy of the complete document.
+
+## The Cost of Sequential Lookup
+
+The simple traversal strategy has an obvious limitation.
+
+If there are many pieces and the requested position is near the end of the document, the editor may have to examine many pieces before finding the correct one.
+
+For `n` pieces, a straightforward sequential lookup can require:
+
+```text
+O(n)
+```
+
+piece inspections in the worst case.
+
+This is acceptable for the simple Piece Table model we are studying, but it becomes an important performance consideration as the number of pieces grows.
+
+The data structure therefore has another trade-off:
+
+```text
+Simple representation
+        │
+        ▼
+Simple lookup
+        │
+        ▼
+Potentially expensive with many pieces
+```
+
+More sophisticated Piece Table implementations can introduce additional indexing structures to make position lookup faster.
+
+Those structures are beyond the baseline model here. The important lesson is simply that **piece representation and position lookup are connected**.
+
+## Logical Positions and Editing
+
+We can now see the complete path taken by an editing operation:
+
+```text
+User/editor command
+        │
+        ▼
+Logical position
+        │
+        ▼
+Locate containing piece
+        │
+        ▼
+Calculate offset within piece
+        │
+        ▼
+Calculate source-buffer offset
+        │
+        ▼
+Modify piece structure
+```
+
+The underlying text buffers remain stable.
+
+Only the piece representation changes.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The Piece Table introduces an additional layer of indirection:
+
+```text
+Logical position
+       ↓
+Piece
+       ↓
+Buffer offset
+       ↓
+Actual characters
+```
+
+That indirection is fundamental to the data structure.
+
+It allows the editor to separate **where text appears logically** from **where that text is physically stored**.
+
+The benefit is flexibility in how edits are represented.
+
+The cost is that operations such as position lookup must navigate this additional layer.
+
+</Aside>
+
+## Summary
+
+Locating a logical position means walking the piece sequence, accumulating lengths until the containing piece is found, and then converting the offset inside that piece to a source-buffer offset. The logical document and the buffers are two coordinate systems: the user edits in document positions, while pieces store buffer offsets. A position that falls exactly on a piece boundary needs a consistent rule so insertion and deletion choose the correct neighboring piece. This bridges the user's document position and the Piece Table's physical storage without reconstructing the document or copying characters, at the cost of a linear scan in the simple implementation.
+
+In the next section, we will examine the complexity and performance consequences of this mapping as the piece count grows.

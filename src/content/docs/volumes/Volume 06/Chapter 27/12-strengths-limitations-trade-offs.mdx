@@ -1,0 +1,343 @@
+---
+title: 27.12 Strengths, Limitations, and Trade-offs
+description: "Weighs the Piece Table's stable-text strengths against its metadata, indirection, fragmentation, and retained-text costs, and compares it with contiguous buffers."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The Piece Table makes a deliberate design choice:
+
+> Keep the underlying text stable and represent editing through pieces.
+
+That choice gives the structure several useful properties, but it also introduces costs. Neither side can be considered independently because the strengths and limitations come from the same underlying design.
+
+## Strengths
+
+### Existing Text Is Not Moved
+
+The most direct benefit is that inserting text does not require the existing document text to be shifted through memory.
+
+Instead:
+
+```text
+New text
+   ↓
+Add Buffer
+   ↓
+New piece
+   ↓
+Piece sequence
+```
+
+The existing ranges remain where they are.
+
+This is particularly different from a simple contiguous representation, where making room for inserted characters can require moving a range of existing text.
+
+### Deletion Does Not Require Erasing Text
+
+Deletion is also primarily structural.
+
+Instead of removing characters from the underlying buffers:
+
+```text
+Delete
+  ↓
+Modify pieces
+```
+
+the deleted range simply stops participating in the logical document.
+
+This makes the operation conceptually symmetrical with insertion:
+
+```text
+Insert → add/reference a range
+Delete → remove/adjust a reference
+```
+
+The underlying buffers remain stable.
+
+### Original Content Remains Available
+
+Because the Original Buffer is immutable, the initial document contents remain available throughout the editing session.
+
+For example:
+
+```text
+Original Buffer
+┌────────────────────┐
+│ original text      │
+└────────────────────┘
+```
+
+Even if the logical document changes substantially, that original text has not been overwritten.
+
+This property follows naturally from the Piece Table's storage model.
+
+### Buffer Offsets Remain Stable
+
+Once text exists in either buffer, its location does not need to change simply because another edit occurs elsewhere.
+
+For example:
+
+```text
+Add Buffer
+
+abcdefghij
+   ▲
+   │
+Piece references offset 3
+```
+
+Appending more text:
+
+```text
+Add Buffer
+
+abcdefghijklmnop
+   ▲
+   │
+same referenced offset
+```
+
+does not invalidate the earlier reference.
+
+Stable offsets make piece descriptors easier to reason about.
+
+### The Logical Document Is Independent of Physical Storage
+
+The Piece Table allows the logical document to be assembled from physically separated ranges:
+
+```text
+Original ──┐
+           ├──► Pieces ──► Logical document
+Add ───────┘
+```
+
+The document therefore does not need to exist as one contiguous physical character sequence.
+
+This separation is the defining architectural characteristic of the structure.
+
+## Limitations
+
+The same decisions introduce several costs.
+
+### Position Lookup Can Be Expensive
+
+In the simple implementation, finding a logical position requires traversing the pieces.
+
+With `n` pieces, a sequential lookup can take:
+
+```text
+O(n)
+```
+
+in the worst case.
+
+As the piece count grows, this can become an important performance consideration.
+
+### The Piece Structure Can Fragment
+
+Repeated editing can turn a small number of large pieces into many smaller ones:
+
+```text
+Before:
+
+P1
+
+
+After repeated edits:
+
+P1 P2 P3 P4 P5 P6 P7 ...
+```
+
+The logical document may still be perfectly reasonable, but more metadata is required to describe it.
+
+This can affect both memory usage and traversal cost.
+
+### The Add Buffer Can Retain Deleted Text
+
+Because the Add Buffer is append-only, text inserted and later deleted can remain allocated.
+
+For example:
+
+```text
+Add Buffer
+
+old insertion
+current insertion
+deleted insertion
+```
+
+Only some of that text may currently belong to the logical document.
+
+Therefore, physical storage can become substantially larger than the logical document.
+
+### The Representation Is More Complicated
+
+A contiguous character representation can be conceptually simple:
+
+```text
+characters → document
+```
+
+A Piece Table introduces another layer:
+
+```text
+buffers
+   ↓
+pieces
+   ↓
+logical document
+```
+
+Operations must therefore understand:
+
+- piece boundaries,
+- source buffers,
+- buffer offsets,
+- logical positions,
+- and piece ordering.
+
+The additional flexibility comes with additional implementation complexity.
+
+## The Trade-off
+
+The strengths and limitations are two sides of the same decision.
+
+The Piece Table chooses:
+
+```text
+Stable text storage
+        +
+Indirect document representation
+```
+
+This gives:
+
+```text
+Less movement of existing text
+        +
+Stable buffer offsets
+        +
+Preserved original content
+```
+
+but also:
+
+```text
+More metadata
+        +
+Possible fragmentation
+        +
+Retained deleted text
+        +
+Additional lookup indirection
+```
+
+The design has therefore **moved complexity rather than eliminated it**.
+
+## Compared With a Contiguous Representation
+
+The difference can be summarized conceptually:
+
+```text
+Contiguous representation
+
+Edit
+  ↓
+Move/modify characters
+```
+
+versus:
+
+```text
+Piece Table
+
+Edit
+  ↓
+Modify piece structure
+  ↓
+Reference stable text
+```
+
+The first approach keeps the representation direct but may require physical movement of text.
+
+The second reduces the need to move existing text but introduces indirection and metadata management.
+
+## Compared With the Gap Buffer
+
+The distinction from the Gap Buffer is more specific.
+
+A Gap Buffer tries to make the **next nearby edit** inexpensive by maintaining a gap near the cursor.
+
+A Piece Table instead avoids modifying existing text by representing edits through pieces.
+
+Conceptually:
+
+```text
+Gap Buffer
+
+Cursor location
+      ↓
+    [GAP]
+      ↓
+Efficient nearby editing
+```
+
+while:
+
+```text
+Piece Table
+
+Logical position
+      ↓
+    Pieces
+      ↓
+Stable buffers
+```
+
+Neither approach is universally better.
+
+They optimize different aspects of the editing problem.
+
+## Choosing the Representation
+
+The right question is therefore not:
+
+> Is a Piece Table better than a Gap Buffer?
+
+A better question is:
+
+> **Which representation's trade-offs fit the editor's workload and architecture?**
+
+A Piece Table becomes attractive when the benefits of stable underlying text and indirect editing representation justify the additional metadata and lookup complexity.
+
+A simpler representation may be preferable when the document model and expected workload do not justify those costs.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The most important lesson is broader than Piece Tables.
+
+Data-structure design is often about choosing **where complexity lives**.
+
+The Piece Table chooses to keep character storage relatively stable and move complexity into:
+
+```text
+piece management
++
+position mapping
++
+metadata growth
+```
+
+That is a legitimate engineering trade-off.
+
+A good data structure is therefore not necessarily the one with the lowest cost in every category. It is the one whose costs and benefits fit the problem being solved.
+
+</Aside>
+
+## Summary
+
+The Piece Table's strengths and limitations come from the same design decision: keeping character storage stable and representing the document indirectly through pieces. It avoids moving existing text and preserves the original contents, which helps with undo, diffing, and sharing ranges between views. The price is additional metadata, pointer-like indirection, possible fragmentation, and deleted text that remains in memory until reclaimed. It therefore moves complexity rather than eliminating it, and its value depends on whether stable text and flexible references matter more than simple, contiguous storage.
+
+In the next section, we will apply these trade-offs by asking when a Piece Table is actually a good choice for an editor.

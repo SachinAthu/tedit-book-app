@@ -1,0 +1,462 @@
+---
+title: 27.4 Piece Descriptors
+description: "Defines the piece descriptor as a source, offset, and length triple, showing how ranges are referenced rather than copied and how piece order shapes the document."
+---
+
+The two buffers contain the actual text, but they are not enough to describe the current document.
+
+The editor also needs to know:
+
+- which buffer to use,
+- where the desired text begins,
+- how much text belongs to the document.
+
+This information is stored in a **piece descriptor**.
+
+A piece descriptor is therefore a small piece of metadata that identifies a range of text inside one of the two buffers.
+
+Conceptually, a piece contains three values:
+
+```text
+Piece
+
+source
+offset
+length
+```
+
+For example:
+
+```text
+source = Original
+offset = 0
+length = 6
+```
+
+means:
+
+> Use six characters beginning at position 0 in the Original Buffer.
+
+The piece does not contain those six characters. It only describes where they can be found.
+
+## Source
+
+The `source` identifies which buffer contains the referenced text.
+
+There are only two possibilities:
+
+```text
+Original
+Add
+```
+
+For example:
+
+```text
+Piece
+┌─────────────────────┐
+│ source = Original   │
+│ offset = 0          │
+│ length = 6          │
+└─────────────────────┘
+```
+
+or:
+
+```text
+Piece
+┌─────────────────────┐
+│ source = Add        │
+│ offset = 0          │
+│ length = 10         │
+└─────────────────────┘
+```
+
+The source tells the editor which underlying buffer it must consult when rendering or otherwise accessing that piece.
+
+## Offset
+
+The `offset` identifies where the piece begins inside its source buffer.
+
+Suppose the Original Buffer contains:
+
+```text
+0         1
+0123456789
+Hello world
+```
+
+A piece with:
+
+```text
+source = Original
+offset = 0
+length = 6
+```
+
+references the first six characters of the buffer — `"Hello "`, including the space after `Hello`:
+
+```text
+"Hello "
+```
+
+A different piece could use:
+
+```text
+source = Original
+offset = 6
+length = 5
+```
+
+which references:
+
+```text
+world
+```
+
+The offset is therefore a **buffer position**, not a position within the logical document.
+
+This distinction becomes important once pieces from different buffers are combined.
+
+## Length
+
+The `length` tells us how many characters belong to the piece.
+
+For example:
+
+```text
+source = Original
+offset = 6
+length = 5
+```
+
+means:
+
+```text
+Original Buffer
+      6
+      ↓
+Hello world
+      └─────┘
+       5 chars
+```
+
+The piece represents exactly that range.
+
+The editor therefore obtains a piece's text conceptually as:
+
+```text
+buffer[offset ... offset + length)
+```
+
+The actual representation may use different indexing conventions in an implementation, but the essential idea remains the same: **the piece identifies a contiguous range inside one buffer**.
+
+## A Piece Is Not a Copy
+
+This is one of the easiest details to misunderstand.
+
+Suppose:
+
+```text
+Original Buffer
+
+Hello world
+```
+
+and we create:
+
+```text
+Piece
+
+Original
+0
+6
+```
+
+The piece does **not** contain:
+
+```text
+"Hello "
+```
+
+Instead, it contains something equivalent to:
+
+```text
+Original + 0 + 6
+```
+
+The characters remain in the Original Buffer.
+
+Conceptually:
+
+```text
+Original Buffer
+┌─────────────────┐
+│ Hello world     │
+└─────────────────┘
+       ▲
+       │
+       │ referenced range
+       │
+Piece ─┘
+```
+
+This distinction is fundamental because a Piece Table relies on references rather than copies.
+
+## Multiple Pieces Can Reference One Buffer
+
+There is no requirement that every piece reference a different buffer.
+
+A document can contain several pieces from the Original Buffer:
+
+```text
+Original Buffer
+┌────────────────────────────┐
+│ The quick brown fox        │
+└────────────────────────────┘
+ ▲             ▲        ▲
+ │             │        │
+ P1            P2       P3
+```
+
+For example:
+
+```text
+P1 → Original, 0, 4
+P2 → Original, 4, 6
+P3 → Original, 10, ...
+```
+
+Likewise, multiple pieces can reference different regions of the Add Buffer.
+
+```text
+Add Buffer
+┌──────────────────────────────┐
+│ very beautiful extremely    │
+└──────────────────────────────┘
+   ▲          ▲          ▲
+   │          │          │
+  P4         P5         P6
+```
+
+A piece therefore describes a range, not an entire buffer.
+
+## Pieces Have an Order
+
+Individual pieces are not enough.
+
+The **order of the pieces** determines the order of text in the logical document.
+
+Consider:
+
+```text
+Original Buffer
+
+Hello world
+```
+
+and:
+
+```text
+Add Buffer
+
+"beautiful "
+```
+
+Suppose the pieces are:
+
+```text
+P1 → Original, 0, 6
+P2 → Add,      0, 10
+P3 → Original, 6, 5
+```
+
+Following them in order gives:
+
+```text
+P1
+ ↓
+"Hello "
+
+P2
+ ↓
+"beautiful "
+
+P3
+ ↓
+"world"
+```
+
+Therefore:
+
+```text
+Hello beautiful world
+```
+
+If the same pieces were ordered differently:
+
+```text
+P1
+P3
+P2
+```
+
+the logical document would instead be:
+
+```text
+Hello worldbeautiful
+```
+
+The underlying buffers did not change.
+
+Only the **piece sequence** changed.
+
+This is why the piece sequence is part of the document's representation.
+
+## A Complete Example
+
+Start with:
+
+```text
+Original Buffer
+
+Hello world
+```
+
+The initial Piece Table contains one piece:
+
+```text
+Pieces
+
+┌─────────────────────────────┐
+│ Original | 0 | 11           │
+└─────────────────────────────┘
+```
+
+The logical document is:
+
+```text
+Hello world
+```
+
+Now insert:
+
+```text
+beautiful
+```
+
+The Add Buffer becomes:
+
+```text
+Add Buffer
+
+"beautiful "
+```
+
+The original piece is divided around the insertion point:
+
+```text
+Original Buffer
+
+Hello world
+──────  ─────
+  P1      P3
+```
+
+The new piece references the Add Buffer:
+
+```text
+Add Buffer
+
+"beautiful "
+    │
+    ▼
+    P2
+```
+
+The resulting piece sequence is:
+
+```text
+┌────────────────┬───────────────┬────────────────┐
+│ Original, 0, 6 │ Add, 0, 10    │ Original, 6, 5 │
+└────────────────┴───────────────┴────────────────┘
+```
+
+Reading those pieces produces:
+
+```text
+Hello beautiful world
+```
+
+Again, none of the underlying text was rearranged.
+
+## Logical Position vs. Buffer Position
+
+There are now two different kinds of positions to keep separate.
+
+Suppose the logical document is:
+
+```text
+Hello beautiful world
+```
+
+The word `world` begins at a particular **logical document position**.
+
+But the characters for `world` still live at their original location in the Original Buffer.
+
+Therefore:
+
+```text
+Logical document position
+          │
+          ▼
+       Piece
+          │
+          ▼
+Source buffer position
+```
+
+A logical position does not necessarily equal the offset stored in a piece.
+
+This distinction will become especially important when we discuss how the editor locates a position for insertion or deletion.
+
+## The Piece Table as a Sequence
+
+We can now describe the complete representation:
+
+```text
+                 Piece Table
+                      │
+                      ▼
+              Sequence of Pieces
+                      │
+          ┌───────────┼───────────┐
+          ▼           ▼           ▼
+        Piece 1     Piece 2     Piece 3
+          │           │           │
+          ▼           ▼           ▼
+       Buffer       Buffer       Buffer
+       range        range        range
+```
+
+Each piece identifies:
+
+```text
+(source, offset, length)
+```
+
+and the sequence of pieces determines the logical order of the document.
+
+This gives us a compact conceptual model:
+
+> **Buffers store text; pieces select ranges of that text; piece order constructs the document.**
+
+With that model established, the next question is straightforward:
+
+**How do we obtain the actual logical document by traversing those pieces?**
+
+## Summary
+
+A piece descriptor identifies a contiguous range inside one buffer as a `(source, offset, length)` triple. `source` selects the Original or Add Buffer, `offset` marks where the range begins, and `length` says how many characters it covers. A piece references text rather than containing it, so many pieces can point into the same buffer without copying it. The order of the pieces determines the order of the logical document, which means a logical position and a source-buffer offset are not the same thing and must be translated carefully.
+
+In the next section, we will see how the editor reconstructs the logical document by traversing those pieces in sequence.

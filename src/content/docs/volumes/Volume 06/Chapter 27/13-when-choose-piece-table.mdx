@@ -1,0 +1,242 @@
+---
+title: 27.13 When Would You Choose a Piece Table?
+description: "Explains when a Piece Table's stable buffers justify its metadata costs, and why this project keeps a simpler document representation."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The Piece Table is a useful representation, but its additional indirection and metadata are not automatically worth the cost.
+
+The practical engineering question is therefore:
+
+> **When does the Piece Table's particular set of trade-offs make it a good choice for an editor?**
+
+The answer depends on the editor's workload, requirements, and surrounding architecture.
+
+## When Stable Text Is Valuable
+
+A Piece Table is attractive when keeping existing text unchanged provides meaningful benefits.
+
+Its underlying buffers remain stable:
+
+```text
+Original Buffer ──┐
+                  ├──► Pieces
+Add Buffer ───────┘
+```
+
+Edits change the piece structure rather than repeatedly rewriting existing text.
+
+This can be useful when an editor performs many modifications over a long editing session and wants a representation in which existing text remains stable.
+
+## When Editing Is More Than Simple Local Mutation
+
+A Gap Buffer works particularly well when editing is concentrated around the current cursor position.
+
+A Piece Table does not depend on maintaining a gap near that position.
+
+Instead, it represents edits through pieces:
+
+```text
+logical document
+       ↓
+piece sequence
+       ↓
+stable text ranges
+```
+
+This can make the Piece Table an attractive alternative when the editor's workload does not fit the assumptions that make a gap-based representation especially effective.
+
+However, this does **not** mean that a Piece Table automatically provides better performance for every workload.
+
+Its own costs—especially piece traversal and fragmentation—still matter.
+
+## When Preserving Original Text Is Useful
+
+Because the Original Buffer is immutable, the initial document contents remain available throughout the editing session.
+
+That property can be valuable in systems where the distinction between:
+
+```text
+original text
+```
+
+and:
+
+```text
+newly inserted text
+```
+
+is useful.
+
+The Piece Table naturally maintains that distinction without requiring the original content to be copied into another representation.
+
+## When the Editor Can Accept Metadata Growth
+
+A Piece Table shifts some editing cost away from moving characters and toward maintaining pieces.
+
+That means an editor choosing this representation must be comfortable with:
+
+```text
+Repeated editing
+      ↓
+More pieces
+      ↓
+More metadata
+```
+
+If the editor's workload produces substantial fragmentation, position lookup and traversal can become more expensive.
+
+Therefore, a Piece Table is more appropriate when the additional metadata and indirection are acceptable within the editor's performance requirements.
+
+## When the Architecture Can Isolate the Representation
+
+A Piece Table becomes easier to adopt when the rest of the editor does not depend directly on its internal representation.
+
+Ideally:
+
+```text
+Commands
+   ↓
+Document interface
+   ↓
+Piece Table
+```
+
+rather than:
+
+```text
+Commands
+   ↓
+Piece-specific internals
+   ↓
+Piece Table
+```
+
+This is important because the document representation is an implementation decision.
+
+A well-separated architecture can replace one representation with another without forcing the command engine, cursor model, or renderer to understand the internal storage strategy.
+
+This matches the architecture established for our editor: the Document abstraction separates higher-level editor behavior from the concrete representation of document content.
+
+## When You Might Not Choose It
+
+A Piece Table may be unnecessary when a simpler representation already satisfies the editor's requirements.
+
+For example, if:
+
+- documents are modest in size,
+- editing is predominantly local,
+- the simpler representation is fast enough,
+- implementation simplicity is a priority,
+
+then the additional machinery of a Piece Table may not provide enough benefit to justify its complexity.
+
+This is an important engineering principle:
+
+> **Do not choose a more complicated data structure merely because it can support a more sophisticated workload.**
+
+Choose it when the workload actually benefits from its properties.
+
+## The Decision Is About Trade-offs
+
+The decision can therefore be framed as:
+
+```text
+Does stable text representation provide
+meaningful benefits?
+          │
+       ┌──┴──┐
+      Yes    No
+       │      │
+       ▼      ▼
+ Consider   Prefer
+ Piece      simpler
+ Table      representation
+```
+
+If the answer is yes, the next question is whether the editor can accept:
+
+```text
+piece metadata
++
+position lookup
++
+fragmentation
++
+Add Buffer growth
+```
+
+If those costs fit the requirements, the Piece Table becomes a reasonable architectural choice.
+
+## Piece Table Is a Design Choice, Not a Requirement
+
+There is no rule saying that a serious text editor must use a Piece Table.
+
+The choice depends on what the editor needs.
+
+A simplified decision might look like this:
+
+| Requirement                     | Piece Table Fit |
+| ------------------------------- | --------------- |
+| Stable underlying text          | Strong          |
+| Avoid moving existing text      | Strong          |
+| Preserve original contents      | Strong          |
+| Simple implementation           | Weaker          |
+| Minimal metadata                | Weaker          |
+| Simple position lookup          | Weaker          |
+| Highly fragmented long sessions | Requires care   |
+
+The table is not a performance ranking. It simply summarizes the characteristics we have already examined.
+
+## For Our Editor
+
+Our project deliberately uses a simpler document representation rather than adopting the Piece Table.
+
+The reason is architectural and educational: the current `Document` implementation uses a vector of lines, while the book studies more sophisticated representations separately so their trade-offs can be understood without unnecessarily complicating the baseline editor.
+
+This gives us an important lesson.
+
+A sophisticated data structure can be **appropriate in theory** without being **appropriate for the current implementation**.
+
+The goal is not to use the most advanced representation available.
+
+The goal is to choose the representation whose trade-offs match the problem.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Choosing a Piece Table makes sense when its defining properties solve a real problem:
+
+```text
+Stable buffers
+     +
+Indirect editing
+     +
+Preserved original text
+```
+
+are valuable enough to justify:
+
+```text
+More metadata
+     +
+Position indirection
+     +
+Potential fragmentation
+     +
+Additional implementation complexity
+```
+
+That is the real engineering decision.
+
+A data structure should be selected because its **trade-offs fit the workload and architecture**, not because it is inherently more sophisticated than the alternatives.
+
+The final section connects that decision back to the architecture of the editor we are building.
+
+</Aside>
+
+## Summary
+
+A Piece Table is a reasonable choice when stable underlying text, indirect editing, and preserved original contents are valuable enough to justify the additional metadata, indirection, potential fragmentation, and implementation complexity. It suits editors that edit large files in varied patterns, need cheap undo or diffing, or share text between representations. It is less attractive when documents are small, edits are purely local, or memory and lookup simplicity matter more than stable storage. It is not a requirement for a serious editor; the goal is to choose the representation whose trade-offs fit the workload, as our baseline editor does with its simpler document representation.
+
+In the next section, we will consolidate the chapter's model and review what we have learned.

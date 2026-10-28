@@ -1,0 +1,419 @@
+---
+title: 27.11 Complexity and Performance
+description: "Analyzes position lookup, insertion, deletion, traversal, rendering, and memory costs, showing how performance depends on piece count and fragmentation."
+---
+
+A Piece Table changes the kind of work required during editing, but it does not eliminate cost.
+
+Instead of repeatedly moving character data, the editor works with:
+
+- piece descriptors,
+- buffer ranges,
+- piece traversal,
+- and the Add Buffer.
+
+To understand whether this representation is efficient, we need to examine the cost of its main operations.
+
+The important distinction is between **text data** and **piece metadata**.
+
+```text
+Text data
+    │
+    ├── Original Buffer
+    └── Add Buffer
+
+Metadata
+    │
+    └── Piece sequence
+```
+
+The amount of text and the number of pieces can grow independently.
+
+## Position Lookup
+
+The simplest Piece Table implementation locates a logical position by walking the piece sequence.
+
+If there are `n` pieces, the worst case requires examining all of them:
+
+```text
+O(n)
+```
+
+For example:
+
+```text
+P1 → P2 → P3 → P4 → ... → Pn
+                              ↑
+                         target position
+```
+
+A position near the beginning may be found quickly.
+
+A position near the end may require traversing almost the entire sequence.
+
+This makes piece count an important performance factor.
+
+## Insertion
+
+An insertion has several conceptual steps:
+
+```text
+Insert
+  │
+  ├── append text to Add Buffer
+  │
+  ├── locate logical position
+  │
+  ├── split affected piece if necessary
+  │
+  └── insert/update piece descriptors
+```
+
+The cost therefore has more than one component.
+
+### Locating the Position
+
+With sequential lookup:
+
+```text
+O(n)
+```
+
+in the worst case.
+
+### Appending the New Text
+
+If `k` characters are inserted, the Add Buffer must store those characters.
+
+The work associated with storing the inserted text is proportional to the amount of text being added:
+
+```text
+O(k)
+```
+
+### Piece Modification
+
+Splitting a piece and creating a small number of descriptors is constant-sized work:
+
+```text
+O(1)
+```
+
+assuming the piece sequence can insert those descriptors without requiring a large number of elements to move.
+
+The exact cost of inserting into the metadata collection therefore depends on how the piece sequence itself is represented.
+
+For the simple sequential model, the important observation is:
+
+> **The Piece Table avoids moving the existing document characters, but it still has metadata-management and position-lookup costs.**
+
+## Deletion
+
+Deletion does not require physically erasing characters from the buffers.
+
+Instead, the editor identifies the affected pieces and modifies the piece sequence.
+
+For a deletion covering a range across `p` pieces, the editor may need to inspect and adjust those pieces.
+
+Conceptually:
+
+```text
+Start
+  │
+  ▼
+Find starting piece
+  │
+  ▼
+Process affected pieces
+  │
+  ▼
+Find ending piece
+  │
+  ▼
+Remove / shorten / split
+```
+
+The cost therefore depends on both:
+
+- locating the beginning of the range,
+- and the number of pieces covered by the deletion.
+
+A large deletion may affect many descriptors even though the underlying characters are never moved.
+
+## Traversing the Document
+
+To process the logical document from beginning to end, the editor must visit the pieces in sequence.
+
+If there are `n` pieces, traversal requires visiting those pieces:
+
+```text
+O(n)
+```
+
+But there is another factor: the total amount of text being processed.
+
+If the renderer needs to display `k` characters, it must ultimately process those characters as well.
+
+Therefore, practical work depends on both:
+
+```text
+piece count
++
+characters processed
+```
+
+The Piece Table does not make text processing independent of document size.
+
+It changes how that text is located and organized.
+
+## Rendering
+
+Suppose the renderer needs to display the visible portion of the document.
+
+It traverses the relevant pieces:
+
+```text
+Piece 1
+   ↓
+Piece 2
+   ↓
+Piece 3
+   ↓
+...
+```
+
+and obtains the characters represented by those pieces.
+
+For a screen containing a limited number of visible characters, the amount of rendered text is bounded by the terminal dimensions.
+
+However, a highly fragmented Piece Table may require the renderer to pass through many small pieces to produce the same amount of visible text.
+
+For example:
+
+```text
+Few pieces:
+
+P1 ────────────────► visible text
+
+
+Many pieces:
+
+P1 P2 P3 P4 P5 P6 P7 P8
+│  │  │  │  │  │  │  │
+└──┴──┴──┴──┴──┴──┴──┴──► same visible text
+```
+
+The logical text may be identical, but the metadata traversal is different.
+
+This is one reason fragmentation matters.
+
+## Memory Usage
+
+A Piece Table has at least three important categories of memory:
+
+```text
+Memory
+│
+├── Original Buffer
+├── Add Buffer
+└── Piece Descriptors
+```
+
+The Original Buffer is proportional to the original document.
+
+The Add Buffer grows as new text is inserted.
+
+The piece metadata grows as the document becomes structurally fragmented.
+
+This means the memory footprint is not determined solely by the current document size.
+
+For example:
+
+```text
+Logical document:
+10,000 characters
+
+Original Buffer:
+10,000 characters
+
+Add Buffer:
+50,000 characters
+
+Pieces:
+2,000 descriptors
+```
+
+The logical document may still be relatively small even though the underlying representation is considerably larger.
+
+## Deleted Text and Memory
+
+Deletion illustrates this difference particularly well.
+
+Suppose the user inserts 10,000 characters and then deletes all of them.
+
+The logical document returns to its previous state.
+
+But the Add Buffer may still contain those 10,000 characters.
+
+Therefore:
+
+```text
+Logical document
+        ↓
+smaller
+
+Add Buffer
+        ↓
+does not automatically shrink
+```
+
+This means deletion does not necessarily reduce memory usage.
+
+The immutable-buffer strategy deliberately accepts this behavior.
+
+## Complexity Is Workload-Dependent
+
+It is tempting to summarize a data structure by saying:
+
+> "Insertion is `O(...)`."
+
+For a Piece Table, that can hide important details.
+
+The cost depends on:
+
+- number of pieces,
+- insertion size,
+- location of the edit,
+- number of affected pieces,
+- representation of the piece sequence,
+- and whether additional indexing structures exist.
+
+For the simple model in this chapter, sequential position lookup is the dominant metadata cost.
+
+That means a Piece Table with a small number of pieces can behave very differently from one with thousands of fragmented pieces.
+
+## A Useful Performance Model
+
+Rather than thinking only in terms of document size, consider three quantities:
+
+```text
+D = logical document size
+
+A = Add Buffer size
+
+P = number of pieces
+```
+
+These quantities describe different aspects of the editor's state.
+
+For example:
+
+```text
+D = 1 MB
+A = 20 MB
+P = 5,000
+```
+
+tells us something very different from:
+
+```text
+D = 1 MB
+A = 1 MB
+P = 20
+```
+
+Both logical documents have the same size.
+
+Their Piece Tables do not have the same performance or memory characteristics.
+
+## Cache Locality
+
+A Piece Table also changes the way the editor accesses text in memory.
+
+The original text and added text are stored in contiguous buffers, which is favorable when reading sequential ranges.
+
+However, the logical document may jump between ranges:
+
+```text
+Original
+   ↓
+Add
+   ↓
+Original
+   ↓
+Add
+```
+
+The piece descriptors introduce another level of indirection between the logical document and the actual characters.
+
+Compared with a single contiguous text representation, this can make access less straightforward for the processor's caches.
+
+The effect depends on the workload and degree of fragmentation.
+
+This is one of the practical performance costs of choosing indirection over physical rearrangement.
+
+## The Fundamental Trade-off
+
+The Piece Table moves work away from one place and into another.
+
+A mutable contiguous representation may perform:
+
+```text
+Edit
+  ↓
+Move characters
+```
+
+A Piece Table performs:
+
+```text
+Edit
+  ↓
+Locate pieces
+  ↓
+Modify metadata
+  ↓
+Reference stable buffers
+```
+
+So the fundamental trade-off is:
+
+```text
+Less movement of existing text
+            │
+            ▼
+More indirection and metadata
+```
+
+Neither approach is universally superior.
+
+The appropriate choice depends on the editing workload and the surrounding architecture.
+
+## Summary of Costs
+
+For the simple Piece Table model:
+
+| Operation          | Main Cost                                       |
+| ------------------ | ----------------------------------------------- |
+| Position lookup    | Piece traversal                                 |
+| Insert             | Position lookup + new text + piece changes      |
+| Delete             | Position lookup + affected piece changes        |
+| Document traversal | Piece traversal + text processing               |
+| Rendering          | Relevant piece traversal + character processing |
+| Memory             | Original text + Add Buffer + piece metadata     |
+
+The exact asymptotic behavior can change when the piece sequence is implemented with a more sophisticated structure.
+
+The important lesson is therefore not to memorize one complexity number.
+
+Instead:
+
+> **The performance of a Piece Table depends heavily on how many pieces it contains and how efficiently those pieces can be located and traversed.**
+
+That leads naturally to the next issue: what happens when repeated editing causes the number of pieces to grow substantially.
+
+## Summary
+
+The simple Piece Table moves work away from character data and toward piece metadata: position lookup, insertion, deletion, and traversal all depend on the piece count, while memory is shared between the buffers and the descriptors. Lookup is a linear scan, insertion adds a descriptor and may split a piece, and deletion may touch several pieces; rendering and saving also traverse the whole sequence. Memory therefore grows with both the stored characters and the number of pieces, and heavy fragmentation can make metadata and poor cache locality dominate. The performance of the structure depends heavily on how many pieces it contains and how efficiently they can be located and traversed.
+
+In the next section, we will examine the strengths, limitations, and trade-offs that follow from this representation strategy.

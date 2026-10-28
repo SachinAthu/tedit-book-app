@@ -1,0 +1,355 @@
+---
+title: 27.3 The Two Immutable Buffers
+description: "Explains the distinct roles of the immutable Original Buffer and the append-only Add Buffer, and why neither is edited in place."
+---
+
+The Piece Table is built around two buffers with different roles:
+
+- the **Original Buffer**
+- the **Add Buffer**
+
+Both contain actual text, but neither is edited in place during normal document editing.
+
+This immutability is one of the defining characteristics of the Piece Table. The current document changes by modifying its **pieces**, not by modifying the characters already stored in these buffers.
+
+## The Original Buffer
+
+The Original Buffer contains the document's initial contents.
+
+When the editor opens a file, its text becomes the Original Buffer:
+
+```text
+File
+│
+▼
+Original Buffer
+
+┌──────────────────────────────┐
+│ The quick brown fox          │
+└──────────────────────────────┘
+```
+
+Initially, the Piece Table can describe the entire document with a single piece:
+
+```text
+Piece
+┌─────────────────────────┐
+│ Original | 0 | 19       │
+└─────────────────────────┘
+```
+
+Conceptually, this means:
+
+> Use 19 characters beginning at offset 0 in the Original Buffer.
+
+The logical document is therefore simply:
+
+```text
+The quick brown fox
+```
+
+### The Original Buffer Does Not Change
+
+Suppose the user inserts:
+
+```text
+very
+```
+
+The Original Buffer remains:
+
+```text
+┌──────────────────────────────┐
+│ The quick brown fox          │
+└──────────────────────────────┘
+```
+
+It does not become:
+
+```text
+┌──────────────────────────────────┐
+│ very The quick brown fox         │
+└──────────────────────────────────┘
+```
+
+Instead, the new text is stored elsewhere and the piece sequence changes.
+
+This gives the Original Buffer a stable property:
+
+> **It represents the original text exactly as it was when the document was loaded.**
+
+## The Add Buffer
+
+The Add Buffer stores text introduced during editing.
+
+Suppose the user inserts:
+
+```text
+very
+```
+
+The text is appended to the Add Buffer:
+
+```text
+Add Buffer
+
+┌──────────────┐
+│ "very "      │
+└──────────────┘
+```
+
+The Piece Table can then reference this newly added text.
+
+If the user later inserts:
+
+```text
+fast
+```
+
+the editor does not replace the existing Add Buffer contents.
+
+Instead, it appends the new text:
+
+```text
+Add Buffer
+
+┌──────────────────────┐
+│ "very fast "         │
+└──────────────────────┘
+```
+
+The important rule is:
+
+> **The Add Buffer grows; existing contents are not modified.**
+
+## Why Does the Add Buffer Only Grow?
+
+Consider this editing sequence:
+
+```text
+Insert "hello"
+Insert " world"
+Delete "hello"
+Insert "goodbye"
+```
+
+The Add Buffer might eventually contain:
+
+```text
+hello worldgoodbye
+```
+
+Even though `"hello"` was deleted from the logical document, those characters remain in the Add Buffer.
+
+That may initially seem wasteful.
+
+But the Piece Table does not need to erase them.
+
+The logical document is determined by the current piece sequence, so deleted text simply stops being referenced.
+
+For example:
+
+```text
+Add Buffer
+
+┌─────────────────────────┐
+│ hello worldgoodbye      │
+└─────────────────────────┘
+
+Current pieces
+
+       worldgoodbye
+          ▲      ▲
+          │      │
+      referenced text
+```
+
+The unused `"hello "` remains in storage but has no role in the current logical document.
+
+This is an intentional consequence of the design.
+
+## Why Keep Deleted Text?
+
+Keeping old text untouched provides a useful property:
+
+```text
+Underlying buffers
+        │
+        │ remain stable
+        ▼
+Piece sequence
+        │
+        │ changes
+        ▼
+Logical document
+```
+
+The editor can change the document without rewriting the underlying buffers.
+
+This means that insertion and deletion primarily become operations on **piece descriptors**.
+
+The characters themselves are treated as stable source material.
+
+This is one of the fundamental differences between a Piece Table and a conventional mutable character array.
+
+## The Two Buffers Have Different Histories
+
+Although both buffers are immutable during editing, they serve different purposes.
+
+| Buffer          | Contents                        | Behavior   |
+| --------------- | ------------------------------- | ---------- |
+| Original Buffer | Text present when editing began | Fixed      |
+| Add Buffer      | Text inserted during editing    | Grows only |
+
+Consider a document that begins as:
+
+```text
+Hello world
+```
+
+The initial state is:
+
+```text
+Original Buffer
+┌─────────────────┐
+│ Hello world     │
+└─────────────────┘
+
+Add Buffer
+┌─────────────────┐
+│                 │
+└─────────────────┘
+```
+
+After inserting `"beautiful "`:
+
+```text
+Original Buffer
+┌─────────────────┐
+│ Hello world     │
+└─────────────────┘
+
+Add Buffer
+┌─────────────────┐
+│ "beautiful "    │
+└─────────────────┘
+```
+
+After inserting `"very "` somewhere else:
+
+```text
+Original Buffer
+┌─────────────────┐
+│ Hello world     │
+└─────────────────┘
+
+Add Buffer
+┌──────────────────────────┐
+│ "beautiful very "        │
+└──────────────────────────┘
+```
+
+The original text remains untouched, while all newly created text accumulates in the Add Buffer.
+
+## Buffers Versus Pieces
+
+It is important not to confuse a buffer with a piece.
+
+A buffer **owns characters**.
+
+A piece **references characters**.
+
+For example:
+
+```text
+Add Buffer
+┌──────────────────────────────┐
+│ "beautiful very "            │
+└──────────────────────────────┘
+       ▲              ▲
+       │              │
+       │              │
+    Piece A        Piece B
+```
+
+The two pieces may refer to different ranges of the same buffer.
+
+A piece does not copy the characters into itself.
+
+Instead, it says:
+
+```text
+Use this source
+starting at this offset
+for this many characters.
+```
+
+The same principle applies to the Original Buffer.
+
+## A Useful Analogy
+
+Imagine two books sitting on a desk.
+
+The first book contains the original document.
+
+The second book contains every new passage you write.
+
+You do not cut words out of either book.
+
+Instead, you keep a list saying:
+
+```text
+Read pages 1–3 from Book A
+Then read lines 4–5 from Book B
+Then return to Book A
+Then read another passage from Book B
+```
+
+The list determines what the current document looks like.
+
+The Piece Table works similarly:
+
+```text
+Buffers
+   │
+   ▼
+Stable text
+   │
+   ▼
+Pieces
+   │
+   ▼
+Current document
+```
+
+The analogy is useful because it emphasizes the separation between **stored content** and **the structure that selects that content**.
+
+## The Key Invariant
+
+The two buffers establish an important invariant:
+
+> **Normal editing never changes characters already stored in either buffer.**
+
+Instead:
+
+- the Original Buffer remains fixed,
+- the Add Buffer only grows,
+- the Piece Table changes which ranges are included and how they are ordered.
+
+This invariant greatly simplifies the reasoning behind later operations.
+
+When we study insertion, we will not ask:
+
+> How do we move the existing characters to make room?
+
+Instead, we will ask:
+
+> How do we change the pieces so that the new text appears at the desired position?
+
+That is the central operational idea of the Piece Table.
+
+## Summary
+
+The two buffers have different histories but share one property: neither is modified during normal editing. The Original Buffer stays fixed once loaded, and the Add Buffer only grows as new text is appended. Deleted text is not erased from either buffer; it simply stops being referenced by any piece. Because every edit changes the piece sequence rather than the stored characters, offsets into the buffers remain stable and later operations never have to move or rewrite existing text.
+
+In the next section, we will examine the piece descriptors themselves, the metadata that references ranges inside these buffers.

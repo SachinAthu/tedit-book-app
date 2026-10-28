@@ -1,0 +1,528 @@
+---
+title: 27.8 Editing Through Repeated Operations
+description: "Traces a longer editing session to show how repeated inserts and deletes fragment the piece structure and let the Add Buffer accumulate historical text."
+---
+
+A Piece Table becomes more interesting when we stop looking at one insertion or deletion in isolation.
+
+Real editing consists of a sequence of operations:
+
+```text
+Insert
+Insert
+Delete
+Insert
+Delete
+...
+```
+
+Each operation changes the **piece sequence**, while the underlying buffers remain stable.
+
+This means that the structure of the Piece Table evolves throughout the editing session.
+
+## A Small Editing Session
+
+Start with:
+
+```text
+Hello world
+```
+
+The Original Buffer contains:
+
+```text
+Original Buffer
+
+Hello world
+```
+
+and the initial Piece Table is simple:
+
+```text
+P1 → Original[0..11)
+```
+
+Now suppose the user inserts:
+
+```text
+beautiful
+```
+
+between `Hello ` and `world`.
+
+The Add Buffer becomes:
+
+```text
+"beautiful "
+```
+
+and the pieces become:
+
+```text
+P1 → Original[0..6)
+P2 → Add[0..10)
+P3 → Original[6..11)
+```
+
+The logical document is:
+
+```text
+Hello beautiful world
+```
+
+## Another Insertion
+
+Now suppose the user inserts:
+
+```text
+very
+```
+
+before `beautiful`.
+
+The Add Buffer grows:
+
+```text
+Add Buffer
+
+"beautiful very "
+```
+
+The existing text does not move.
+
+The Piece Table can now reference another range of the Add Buffer:
+
+```text
+P1 → Original[0..6)
+P2 → Add[10..15)
+P3 → Add[0..10)
+P4 → Original[6..11)
+```
+
+The logical document becomes:
+
+```text
+Hello very beautiful world
+```
+
+Notice what has happened.
+
+The Add Buffer contains the inserted text in the order in which it was added:
+
+```text
+"beautiful very "
+```
+
+but the logical document uses it in a different order:
+
+```text
+very beautiful
+```
+
+The piece sequence, rather than the physical order inside the Add Buffer, determines the document order.
+
+## Deleting Inserted Text
+
+Now suppose the user deletes:
+
+```text
+very
+```
+
+The corresponding piece can simply be removed from the active piece sequence.
+
+The Add Buffer remains:
+
+```text
+"beautiful very "
+```
+
+The piece sequence becomes:
+
+```text
+P1 → Original[0..6)
+P2 → Add[0..10)
+P3 → Original[6..11)
+```
+
+and the logical document returns to:
+
+```text
+Hello beautiful world
+```
+
+The text `"very "` still exists in the Add Buffer.
+
+It is simply no longer referenced.
+
+This illustrates an important property of repeated editing:
+
+> **The storage history and the current logical document can gradually diverge.**
+
+## Editing the Same Region Repeatedly
+
+Consider a user repeatedly modifying the same location:
+
+```text
+Insert "A"
+Delete "A"
+Insert "B"
+Delete "B"
+Insert "C"
+```
+
+The Add Buffer may eventually contain:
+
+```text
+ABC
+```
+
+while the current document contains none of those characters.
+
+The Piece Table might have returned to essentially its original logical structure:
+
+```text
+Original[...]
+```
+
+but the Add Buffer has continued to grow.
+
+This is an important consequence of immutable storage.
+
+The current document does not tell us how much historical text is physically retained by the Piece Table.
+
+## Editing Different Regions
+
+Now consider edits distributed throughout a document:
+
+```text
+Original:
+
+The quick brown fox jumps over the lazy dog.
+```
+
+A user might:
+
+1. Insert text near the beginning.
+2. Insert text near the middle.
+3. Delete text near the end.
+4. Insert more text near the beginning.
+5. Delete part of an earlier insertion.
+
+Each operation can split or remove pieces.
+
+The piece sequence may gradually evolve from:
+
+```text
+P1
+```
+
+to:
+
+```text
+P1 P2 P3
+```
+
+then:
+
+```text
+P1 P2 P3 P4 P5
+```
+
+and eventually:
+
+```text
+P1 P2 P3 P4 P5 P6 P7 ...
+```
+
+The document remains logically simple from the user's perspective.
+
+Internally, however, its representation may become increasingly fragmented.
+
+## Piece Fragmentation
+
+This is one of the most important long-term effects of repeated editing.
+
+Suppose one original piece represents:
+
+```text
+ABCDEFGHIJKLMNO
+```
+
+Repeated edits can divide it into many smaller pieces:
+
+```text
+ABC
+DEF
+GHI
+JK
+LMN
+O
+```
+
+The characters may still reside in the same Original Buffer.
+
+What has grown is the number of descriptors required to describe which portions are currently active.
+
+Conceptually:
+
+```text
+Before
+
+Original[0..15)
+
+
+After many edits
+
+Original[0..3)
+Original[3..6)
+Original[6..9)
+Original[9..11)
+Original[11..14)
+Original[14..15)
+```
+
+The underlying text has not become fragmented in memory.
+
+The **description of the document** has become fragmented.
+
+This distinction is important.
+
+## The Add Buffer Also Accumulates History
+
+Repeated insertion produces a different kind of growth.
+
+Suppose the user performs:
+
+```text
+Insert "one"
+Insert "two"
+Insert "three"
+Delete "two"
+Insert "four"
+```
+
+The Add Buffer may contain:
+
+```text
+onetwothreefour
+```
+
+while the current document might contain:
+
+```text
+onethreefour
+```
+
+The deleted `"two"` remains physically present.
+
+Therefore, two independent forms of growth can occur:
+
+```text
+Editing session
+       │
+       ├──────────────► Add Buffer grows
+       │
+       └──────────────► Piece structure changes
+                              │
+                              ▼
+                       Possible fragmentation
+```
+
+The Add Buffer records newly introduced text.
+
+The piece sequence records which parts of all stored text currently belong to the document.
+
+## Logical Size vs Physical Representation
+
+After many edits, these quantities may differ significantly.
+
+For example:
+
+```text
+Logical document
+
+1,000 characters
+```
+
+while:
+
+```text
+Original Buffer
+
+900 characters
+
+Add Buffer
+
+2,000 characters
+
+Piece descriptors
+
+150 pieces
+```
+
+The logical document is only 1,000 characters, but the Piece Table's physical representation contains considerably more information.
+
+This is not necessarily a problem.
+
+It is simply a consequence of the representation strategy.
+
+The Piece Table prioritizes stable underlying text and structural editing over maintaining a compact physical representation at every moment.
+
+## Why This Can Still Be Useful
+
+The accumulated structure provides an interesting property.
+
+The editor does not need to destroy old text whenever the user changes the document.
+
+Instead, the history of modifications can remain represented indirectly:
+
+```text
+Stable text
+     +
+New text
+     +
+Changing piece sequence
+```
+
+This can be valuable for editor architectures where preserving previous text is useful.
+
+However, the Piece Table itself does **not** automatically provide a complete undo/redo system.
+
+Undo and redo require additional state and policies for recording and reversing editing operations. Those mechanisms belong to the later discussion of Undo/Redo rather than this chapter.
+
+The Piece Table merely provides a representation in which underlying text remains available.
+
+## A Longer Example
+
+Consider:
+
+```text
+Original:
+
+Hello world
+```
+
+### Operation 1
+
+Insert:
+
+```text
+beautiful
+```
+
+Result:
+
+```text
+Hello beautiful world
+```
+
+Pieces:
+
+```text
+Original[0..6)
+Add[0..10)
+Original[6..11)
+```
+
+### Operation 2
+
+Insert:
+
+```text
+very
+```
+
+before `beautiful`.
+
+Result:
+
+```text
+Hello very beautiful world
+```
+
+The Add Buffer now contains both insertions.
+
+The piece sequence may reference them in an order different from their physical order in the Add Buffer.
+
+### Operation 3
+
+Delete:
+
+```text
+beautiful
+```
+
+The relevant piece is removed or adjusted.
+
+Result:
+
+```text
+Hello very world
+```
+
+The Add Buffer still contains:
+
+```text
+"beautiful very "
+```
+
+### Operation 4
+
+Delete:
+
+```text
+very
+```
+
+The corresponding piece is removed.
+
+Result:
+
+```text
+Hello world
+```
+
+At this point, the logical document has returned to its starting contents.
+
+But the Piece Table's physical state has not returned to its starting state.
+
+The Add Buffer still contains the text created during the editing session.
+
+This is a fundamental characteristic of the model:
+
+```text
+Logical state
+      ≠
+Physical history
+```
+
+## The Important Trade-off
+
+The Piece Table's strength and its cost come from the same design decision.
+
+Because the buffers are immutable:
+
+**Advantages**
+
+- Existing text does not need to be moved.
+- Deletion does not require physically erasing text.
+- Piece references remain stable.
+- The original contents remain available.
+
+**Costs**
+
+- Deleted inserted text can remain allocated.
+- Repeated edits can increase the number of pieces.
+- Traversing the document can involve more descriptors.
+- The physical representation can become larger than the logical document.
+
+The data structure therefore trades **physical mutation** for **structural growth**.
+
+That trade-off is central to understanding why Piece Tables are useful—and why their behavior must be considered over the lifetime of an editing session rather than one operation at a time.
+
+## Summary
+
+Repeated editing causes the Add Buffer to grow and the piece structure to fragment, so the logical document and the physical representation can diverge considerably. Each insertion can split a piece, and each deletion can remove or shorten several, so the piece count tends to rise over a long session even when the visible text stays small. Old text remains in the buffers as unreferenced history, which is useful for undo and versioning but increases memory use. The Piece Table trades physical mutation for structural growth, a trade-off that only becomes fully visible over the course of a longer editing session.
+
+In the next section, we will formalize the invariants that must remain true as this structure evolves.

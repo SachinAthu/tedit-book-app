@@ -1,0 +1,48 @@
+---
+title: "Chapter 27 — Piece Table"
+description: "Shows how a Piece Table represents a document as immutable buffers plus an ordered set of piece descriptors, so edits change references instead of characters."
+---
+
+## Introduction
+
+Chapter 26 answered the cost of editing with the gap buffer, which keeps unused space near the cursor so that repeated local edits avoid moving existing text. That representation still treats the document as one mutable, contiguous sequence of characters.
+
+The **Piece Table** takes a different approach. It keeps the underlying text in buffers and represents the current document as a sequence of references to portions of those buffers, so that editing changes the description of the document rather than the stored characters. The central question is:
+
+> **How can a document be represented as stable text plus references, so that insertion and deletion modify a description instead of rearranging characters?**
+
+We begin with the idea that motivates this alternative, then build the Piece Table from its two buffers and its piece descriptors. We examine how the document is reconstructed, how insertion and deletion work, how repeated editing changes the structure over time, and the invariants that keep it valid. We then see how logical positions map to stored text and analyze the complexity and trade-offs that determine when a Piece Table is worth choosing.
+
+## Learning Objectives
+
+Readers should be able to:
+
+- Explain why a Piece Table stores text in buffers and describes the document through references to ranges
+- Distinguish the Original Buffer, the Add Buffer, and the piece sequence
+- Explain why the Original Buffer is immutable and why the Add Buffer only grows
+- Describe a piece descriptor as a `(source, offset, length)` reference and explain why a piece is not a copy
+- Reconstruct the logical document by traversing the pieces in order
+- Explain how insertion appends to the Add Buffer and splits pieces without moving existing text
+- Explain how deletion removes or shortens pieces rather than erasing characters
+- Describe how repeated editing fragments the piece structure and lets the logical document and physical storage diverge
+- State the invariants that define a valid Piece Table
+- Convert a logical document position into a source-buffer offset by locating the containing piece
+- Analyze the complexity of position lookup, insertion, deletion, traversal, and memory usage
+- Evaluate when a Piece Table's trade-offs make it a better choice than a simpler representation
+
+## Sections
+
+- [27.1 Why Another Text Buffer?](/volumes/volume-06/chapter-27/01-why-another-text-buffer/)
+- [27.2 The Core Idea of a Piece Table](/volumes/volume-06/chapter-27/02-core-idea-of-piece-table/)
+- [27.3 The Two Immutable Buffers](/volumes/volume-06/chapter-27/03-two-immutable-buffers/)
+- [27.4 Piece Descriptors](/volumes/volume-06/chapter-27/04-piece-descriptors/)
+- [27.5 Reconstructing the Document](/volumes/volume-06/chapter-27/05-reconstructing-document/)
+- [27.6 Inserting Text](/volumes/volume-06/chapter-27/06-inserting-text/)
+- [27.7 Deleting Text](/volumes/volume-06/chapter-27/07-deleting-text/)
+- [27.8 Editing Through Repeated Operations](/volumes/volume-06/chapter-27/08-editing-through-repeated-operations/)
+- [27.9 Piece Table Invariants](/volumes/volume-06/chapter-27/09-piece-table-invariants/)
+- [27.10 Locating a Position in the Piece Table](/volumes/volume-06/chapter-27/10-locating-position-in-piece-table/)
+- [27.11 Complexity and Performance](/volumes/volume-06/chapter-27/11-complexity-and-performance/)
+- [27.12 Strengths, Limitations, and Trade-offs](/volumes/volume-06/chapter-27/12-strengths-limitations-trade-offs/)
+- [27.13 When Would You Choose a Piece Table?](/volumes/volume-06/chapter-27/13-when-choose-piece-table/)
+- [27.14 Conclusion](/volumes/volume-06/chapter-27/14-conclusion/)

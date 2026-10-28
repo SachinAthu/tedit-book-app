@@ -1,0 +1,478 @@
+---
+title: 27.5 Reconstructing the Document
+description: "Explains how traversing the ordered pieces and concatenating their buffer ranges reconstructs the document without creating a second contiguous copy."
+---
+
+A Piece Table stores text in two buffers, but neither buffer by itself represents the current document.
+
+The current document is defined by the **ordered sequence of pieces**.
+
+To obtain the logical document, the editor traverses the pieces in order and reads the corresponding ranges from their source buffers.
+
+The process is conceptually simple:
+
+```text
+Piece 1
+   │
+   ▼
+Read its referenced range
+
+Piece 2
+   │
+   ▼
+Read its referenced range
+
+Piece 3
+   │
+   ▼
+Read its referenced range
+
+       ...
+
+       │
+       ▼
+Concatenate the results
+
+       │
+       ▼
+Logical Document
+```
+
+## A Simple Example
+
+Suppose the Original Buffer contains:
+
+```text
+Hello world
+```
+
+and the Add Buffer contains:
+
+```text
+"beautiful "
+```
+
+The piece sequence is:
+
+```text
+P1 → Original, offset 0, length 6
+P2 → Add,      offset 0, length 10
+P3 → Original, offset 6, length 5
+```
+
+The editor processes them from left to right.
+
+### Piece 1
+
+```text
+Original[0..6)
+```
+
+produces:
+
+```text
+"Hello "
+```
+
+### Piece 2
+
+```text
+Add[0..10)
+```
+
+produces:
+
+```text
+"beautiful "
+```
+
+### Piece 3
+
+```text
+Original[6..11)
+```
+
+produces:
+
+```text
+world
+```
+
+Combining the results gives:
+
+```text
+Hello beautiful world
+```
+
+The complete process can be visualized as:
+
+```text
+Original Buffer
+┌─────────────────┐
+│ Hello world     │
+└─────────────────┘
+  │       │
+  │       └──────────────┐
+  ▼                      ▼
+"Hello "               "world"
+  ▲                      ▲
+  │                      │
+  │                      │
+  └──────────┐    ┌──────┘
+             │    │
+Add Buffer   │    │
+┌────────────┘    │
+│ "beautiful "    │
+└─────────────────┘
+       │
+       ▼
+   "beautiful "
+
+Piece order:
+
+"Hello " → "beautiful " → "world"
+
+Logical document:
+
+Hello beautiful world
+```
+
+The important point is that the logical document is **assembled**, not stored as a separate copy.
+
+## Traversing the Pieces
+
+At a conceptual level, reconstruction looks like this:
+
+```text
+for each piece in order
+    locate its source buffer
+    locate its starting offset
+    read its specified length
+    append that text to the output
+```
+
+The operation therefore has two levels of traversal:
+
+```text
+Piece sequence
+      │
+      ▼
+  Piece 1 ─────► Buffer range
+      │
+      ▼
+  Piece 2 ─────► Buffer range
+      │
+      ▼
+  Piece 3 ─────► Buffer range
+      │
+      ▼
+     ...
+```
+
+The pieces determine **what to read**.
+
+The buffers provide **where the characters come from**.
+
+## The Document Does Not Need a Second Copy
+
+It might be tempting to reconstruct the complete document into another string whenever the editor needs to access it.
+
+That is not necessary.
+
+The Piece Table itself can serve as the document representation.
+
+For example, the renderer can traverse the pieces and obtain the characters it needs:
+
+```text
+Piece Table
+     │
+     ▼
+Renderer reads pieces
+     │
+     ▼
+Characters are rendered
+     │
+     ▼
+Screen Buffer
+```
+
+Likewise, a file-saving operation can traverse the pieces and write their referenced ranges to the output file.
+
+This is an important consequence of the design:
+
+> The logical document can be treated as a sequence without requiring a second contiguous copy of all its text.
+
+## Physical Storage and Logical Order
+
+The physical order of characters in the buffers does not necessarily match their order in the document.
+
+Consider:
+
+```text
+Original Buffer
+
+ABCDEF
+```
+
+and:
+
+```text
+Add Buffer
+
+XYZ
+```
+
+The piece sequence might be:
+
+```text
+Original[0..3)
+Add[0..3)
+Original[3..6)
+```
+
+giving:
+
+```text
+ABCXYZDEF
+```
+
+The characters are physically located like this:
+
+```text
+Original:
+ABCDEF
+
+Add:
+XYZ
+```
+
+but logically appear like this:
+
+```text
+ABCXYZDEF
+```
+
+The piece sequence is what establishes the logical ordering.
+
+This distinction is one of the most important ideas in understanding Piece Tables.
+
+## Pieces Can Refer to Non-Adjacent Storage
+
+Two consecutive pieces in the document can point to completely different locations.
+
+For example:
+
+```text
+Piece 1 → Original offset 0
+Piece 2 → Add offset 20
+Piece 3 → Original offset 100
+Piece 4 → Add offset 5
+```
+
+The logical document simply follows that order:
+
+```text
+Piece 1
+   +
+Piece 2
+   +
+Piece 3
+   +
+Piece 4
+```
+
+The physical locations of those ranges are irrelevant to the logical ordering.
+
+This is what allows the document to be assembled from text that is physically scattered across the two buffers.
+
+## The Piece Table as a View
+
+A useful way to think about this is that the Piece Table provides a **view over the two buffers**.
+
+```text
+        Original Buffer
+              │
+              │
+              ▼
+        ┌─────────────┐
+        │             │
+        │   Pieces    │
+        │             │
+        └─────────────┘
+              ▲
+              │
+              │
+          Add Buffer
+```
+
+The buffers hold stable text.
+
+The pieces decide which portions are visible in the logical document.
+
+Changing the pieces changes the view.
+
+For example:
+
+```text
+Before
+
+Original[0..11)
+
+        ↓
+
+Hello world
+```
+
+After an insertion:
+
+```text
+Original[0..6)
+Add[0..10)
+Original[6..11)
+
+        ↓
+
+Hello beautiful world
+```
+
+The buffers did not need to be rearranged.
+
+The **view changed**.
+
+## What Happens During Deletion?
+
+This model also explains deletion.
+
+Suppose the logical document is:
+
+```text
+Hello beautiful world
+```
+
+and the user deletes:
+
+```text
+beautiful
+```
+
+The buffers remain unchanged:
+
+```text
+Original Buffer
+Hello world
+
+Add Buffer
+"beautiful "
+```
+
+The piece referencing the Add Buffer is simply removed from the active sequence.
+
+The pieces become:
+
+```text
+Original[0..6)
+Original[6..11)
+```
+
+which reconstructs:
+
+```text
+Hello world
+```
+
+The deleted characters still exist in the Add Buffer, but they are no longer part of the logical document.
+
+This is a recurring pattern:
+
+```text
+Edit
+  │
+  ▼
+Change piece structure
+  │
+  ▼
+Different logical document
+```
+
+rather than:
+
+```text
+Edit
+  │
+  ▼
+Rewrite existing text
+```
+
+## Reconstruction Is Not the Same as Copying
+
+There is an important distinction between **logical reconstruction** and **physically creating a second document copy**.
+
+When we say that the logical document is:
+
+```text
+Hello beautiful world
+```
+
+we are describing the result of interpreting the piece sequence.
+
+We are not saying that the Piece Table necessarily contains a separate allocation holding:
+
+```text
+Hello beautiful world
+```
+
+Instead:
+
+```text
+Original Buffer ──┐
+                  │
+                  ▼
+              Pieces
+                  │
+                  ▼
+          Logical sequence
+```
+
+The logical document is therefore a conceptual sequence produced from the underlying representation.
+
+This is similar to how a database query can produce a logical result without permanently storing another copy of every row in that result.
+
+## Why This Model Matters for Editing
+
+Once the editor represents the document as pieces, editing operations can work against **logical positions** while the underlying text remains physically separated.
+
+For example:
+
+```text
+Logical position
+       │
+       ▼
+Piece sequence
+       │
+       ▼
+Containing piece
+       │
+       ▼
+Source buffer
+       │
+       ▼
+Physical offset
+```
+
+This mapping is essential.
+
+An editor command might say:
+
+> Insert text at logical position 15.
+
+The Piece Table must determine which piece contains that position and where inside the corresponding buffer range the surrounding text resides.
+
+That problem leads directly to the next stage of the design.
+
+But before modifying anything, we need to understand the structure of a single piece precisely enough to split it when an insertion occurs.
+
+## Summary
+
+The logical document is assembled by traversing the ordered piece sequence and concatenating the referenced buffer ranges; it does not require a second contiguous copy of the text. Pieces may point to non-adjacent regions, and the same buffer may be visited more than once, so physical storage order and logical document order can differ. Because the pieces form a view over stable buffers, the editor can reconstruct, render, save, and edit the document without rearranging its stored characters. Reconstruction costs time proportional to the number of pieces and the characters they cover, but it never mutates the underlying buffers.
+
+In the next section, we will examine insertion, the first editing operation, and how it appends text and adjusts the piece sequence without moving existing characters.

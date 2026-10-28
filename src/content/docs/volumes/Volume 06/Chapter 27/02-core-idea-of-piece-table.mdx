@@ -1,0 +1,357 @@
+---
+title: 27.2 The Core Idea of a Piece Table
+description: "Describes the Piece Table's three-part model—two text buffers, piece descriptors, and a logical document assembled by following pieces in order."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A Piece Table represents a document using **two underlying text buffers and a sequence of piece descriptors**.
+
+The two buffers contain the actual text. The pieces describe which portions of those buffers belong to the current document.
+
+The basic structure is:
+
+```text
+                    Piece Table
+                         │
+             ┌───────────┴───────────┐
+             │                       │
+             ▼                       ▼
+      Original Buffer           Add Buffer
+             │                       │
+             └───────────┬───────────┘
+                         │
+                         ▼
+                  Piece Descriptors
+                         │
+                         ▼
+                  Logical Document
+```
+
+This gives us three distinct concepts:
+
+1. **Buffers** store characters.
+2. **Pieces** reference ranges within those buffers.
+3. **The logical document** is the text obtained by following the pieces in order.
+
+The distinction between these concepts is essential.
+
+## The Original Buffer
+
+When a file is opened, its initial contents are placed into the **Original Buffer**.
+
+For example:
+
+```text
+Original Buffer
+
+0         1         2
+0123456789012345678
+───────────────────
+The quick brown fox
+```
+
+The important property is that the Original Buffer is **not modified as the document is edited**.
+
+If the user inserts or deletes text, the existing characters remain where they were.
+
+This gives the Piece Table a stable source of the document's original contents.
+
+## The Add Buffer
+
+New text cannot be placed into the Original Buffer because that buffer is immutable.
+
+Instead, newly inserted text is appended to an **Add Buffer**.
+
+Suppose the user inserts:
+
+```text
+very
+```
+
+The inserted text is stored together with the space that follows it, so the Add Buffer receives five characters:
+
+```text
+Add Buffer
+
+0    4
+──────
+very 
+```
+
+If the user later inserts:
+
+```text
+fast
+```
+
+the new text is appended in the same way:
+
+```text
+Add Buffer
+
+0         1
+0123456789
+──────────
+very fast 
+```
+
+Existing text in the Add Buffer is not moved or overwritten.
+
+The buffer therefore grows as editing continues.
+
+## Pieces Describe the Document
+
+The buffers alone do not tell us what the current document looks like.
+
+We need another structure.
+
+A **piece** identifies a range of text in one of the two buffers.
+
+For example:
+
+```text
+Piece 1
+Source: Original
+Offset: 0
+Length: 4
+```
+
+means:
+
+> Take four characters starting at offset 0 from the Original Buffer.
+
+If the Original Buffer contains:
+
+```text
+The quick brown fox
+```
+
+then that piece represents:
+
+```text
+"The "  (T, h, e, and a space)
+```
+
+Another piece might refer to the Add Buffer:
+
+```text
+Piece 2
+Source: Add
+Offset: 0
+Length: 5
+```
+
+which represents:
+
+```text
+"very "  (v, e, r, y, and a space)
+```
+
+A third piece could refer back to the Original Buffer:
+
+```text
+Piece 3
+Source: Original
+Offset: 4
+Length: 15
+```
+
+Together, these pieces describe:
+
+```text
+The very quick brown fox
+```
+
+The actual characters still live in the buffers.
+
+The pieces merely tell us **which characters to use and in what order**.
+
+## The Logical Document
+
+This gives us two different views of the same document.
+
+### Physical storage
+
+```text
+Original Buffer
+┌──────────────────────────┐
+│ The quick brown fox      │
+└──────────────────────────┘
+
+Add Buffer
+┌──────────────┐
+│ "very "      │
+└──────────────┘
+```
+
+### Logical document
+
+```text
+Piece 1 ──► Original[0..4]
+Piece 2 ──► Add[0..5]
+Piece 3 ──► Original[4..]
+
+             │
+             ▼
+
+"The very quick brown fox"
+```
+
+The logical document therefore does **not** need to occupy one contiguous region of memory.
+
+It is assembled from references.
+
+## A More Interesting Example
+
+Consider the original document:
+
+```text
+Hello world
+```
+
+Initially, there is only one piece:
+
+```text
+Original Buffer
+┌─────────────────┐
+│ Hello world     │
+└─────────────────┘
+
+Pieces:
+
+┌───────────────────────────┐
+│ Original, 0, 11           │
+└───────────────────────────┘
+```
+
+The logical document is:
+
+```text
+Hello world
+```
+
+Now suppose the user inserts:
+
+```text
+beautiful
+```
+
+between `Hello ` and `world`.
+
+The Add Buffer becomes:
+
+```text
+Add Buffer
+┌──────────────┐
+│ "beautiful " │
+└──────────────┘
+```
+
+The original piece can no longer describe the document by itself.
+
+Instead, it is divided into two pieces:
+
+```text
+Original[0..6]
+        +
+Add[0..10]
+        +
+Original[6..]
+```
+
+Conceptually:
+
+```text
+Original Buffer
+┌─────────────────┐
+│ Hello world     │
+└─────────────────┘
+  │       │
+  │       └───────────────┐
+  ▼                       ▼
+"Hello "                "world"
+
+Add Buffer
+┌────────────────┐
+│ "beautiful "   │
+└────────────────┘
+       │
+       ▼
+   "beautiful "
+```
+
+The piece sequence becomes:
+
+```text
+┌────────────┬───────────────┬─────────────┐
+│ Original   │ Add           │ Original    │
+│ 0, 6       │ 0, 10         │ 6, 5        │
+└────────────┴───────────────┴─────────────┘
+```
+
+Following those pieces produces:
+
+```text
+Hello beautiful world
+```
+
+Notice what did **not** happen:
+
+- `Hello ` was not copied.
+- `world` was not moved.
+- The Original Buffer was not modified.
+- The inserted text was not inserted into the middle of an existing character array.
+
+Only the **piece description changed**.
+
+## The Central Mental Model
+
+This is the idea to keep in mind for the rest of the chapter:
+
+```text
+             Actual characters
+                    │
+        ┌───────────┴───────────┐
+        ▼                       ▼
+ Original Buffer           Add Buffer
+        │                       │
+        └───────────┬───────────┘
+                    │
+                    ▼
+             Piece Descriptors
+                    │
+                    │ order
+                    ▼
+             Logical Document
+```
+
+The buffers provide **storage**.
+
+The pieces provide **structure**.
+
+The logical document is the **result** of interpreting that structure.
+
+This separation is what allows a Piece Table to represent edits without repeatedly rewriting the text that already exists.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The Piece Table is therefore not primarily an optimization trick. It is a different **representation strategy**.
+
+A Gap Buffer asks:
+
+> Where should free space be maintained so that editing is efficient?
+
+A Piece Table asks:
+
+> How can the current document be described as a sequence of existing and newly added text?
+
+That difference in representation is what ultimately determines the behavior, complexity, memory usage, and trade-offs we will examine later in the chapter.
+
+</Aside>
+
+## Summary
+
+A Piece Table represents a document as two text buffers plus an ordered sequence of piece descriptors that select ranges of those buffers. The Original Buffer holds the document as it first loaded, while the Add Buffer receives every newly inserted string and only ever grows. Each piece records a source, an offset, and a length; reading the pieces in order produces the logical document. The buffers provide storage, the pieces provide structure, and edits change that structure rather than the stored characters.
+
+In the next section, we will examine the two immutable buffers and the different roles they play during editing.

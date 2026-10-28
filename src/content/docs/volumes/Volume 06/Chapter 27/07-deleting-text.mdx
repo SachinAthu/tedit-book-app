@@ -1,0 +1,517 @@
+---
+title: 27.7 Deleting Text
+description: "Shows how deletion removes, shortens, or splits piece descriptors so text stops participating in the document while the buffers remain untouched."
+---
+
+Insertion adds new text to the Piece Table by appending it to the Add Buffer and changing the piece sequence. Deletion follows the same general philosophy, but in the opposite direction.
+
+The important difference is:
+
+> **Deleting text does not require deleting the characters from either underlying buffer.**
+
+Instead, the Piece Table changes which ranges are included in the logical document.
+
+## A Simple Deletion
+
+Consider this document:
+
+```text
+Hello beautiful world
+```
+
+Suppose its pieces are:
+
+```text
+Original[0..6)
+Add[0..10)
+Original[6..11)
+```
+
+which produces:
+
+```text
+Hello beautiful world
+```
+
+Now the user deletes:
+
+```text
+beautiful
+```
+
+The Add Buffer still contains:
+
+```text
+"beautiful "
+```
+
+Nothing is erased from it.
+
+The Piece Table simply stops referencing that range.
+
+The piece sequence becomes:
+
+```text
+Original[0..6)
+Original[6..11)
+```
+
+which produces:
+
+```text
+Hello world
+```
+
+The underlying storage remains:
+
+```text
+Original Buffer
+┌─────────────────┐
+│ Hello world     │
+└─────────────────┘
+
+Add Buffer
+┌──────────────┐
+│ "beautiful " │
+└──────────────┘
+```
+
+Only the active description of the document has changed.
+
+## Deleting an Entire Piece
+
+The simplest case occurs when the deletion exactly covers a piece.
+
+Suppose:
+
+```text
+Pieces:
+
+P1 → Original[0..6)
+P2 → Add[0..10)
+P3 → Original[6..11)
+```
+
+and the user deletes the entire `P2`.
+
+The result is simply:
+
+```text
+P1 → Original[0..6)
+P3 → Original[6..11)
+```
+
+The piece is removed from the active sequence.
+
+The Add Buffer itself is untouched.
+
+```text
+Add Buffer
+
+"beautiful "
+   ▲
+   │
+no active piece references this range
+```
+
+This illustrates an important distinction:
+
+**Removing a piece is not the same as deleting the text it references.**
+
+## Deleting Part of a Piece
+
+Deletion becomes more interesting when the selected text occupies only part of a piece.
+
+Suppose the Original Buffer contains:
+
+```text
+ABCDEFGHIJ
+```
+
+and the Piece Table contains:
+
+```text
+Original[0..10)
+```
+
+Now suppose the user deletes:
+
+```text
+DE
+```
+
+The logical document is:
+
+```text
+ABC DE FGHIJ
+```
+
+with the deleted region shown conceptually:
+
+```text
+ABC|DE|FGHIJ
+   ^^^^
+```
+
+The original piece cannot remain unchanged because it describes the entire range.
+
+Instead, it is split around the deleted region:
+
+```text
+Original[0..3)
+Original[5..10)
+```
+
+The logical document becomes:
+
+```text
+ABCDEFGHIJ
+   ↓
+ABC + FGHIJ
+
+ABCFGHIJ
+```
+
+Again, the Original Buffer remains:
+
+```text
+ABCDEFGHIJ
+```
+
+The deleted characters `DE` are still physically present.
+
+They simply aren't represented by an active piece.
+
+## Deleting the Beginning of a Piece
+
+Suppose we have:
+
+```text
+Original[0..10)
+```
+
+representing:
+
+```text
+ABCDEFGHIJ
+```
+
+and the user deletes:
+
+```text
+ABC
+```
+
+The remaining piece can begin later in the same buffer:
+
+```text
+Original[3..10)
+```
+
+producing:
+
+```text
+DEFGHIJ
+```
+
+No copying is required.
+
+The piece's starting offset simply moves forward.
+
+Conceptually:
+
+```text
+Before
+
+ABCDEFGHIJ
+───┬───────
+   │
+ deleted
+
+
+After
+
+ABCDEFGHIJ
+   └───────
+    kept
+```
+
+The buffer still contains all ten characters.
+
+## Deleting the End of a Piece
+
+The opposite case is similarly simple.
+
+Starting with:
+
+```text
+Original[0..10)
+```
+
+delete:
+
+```text
+HIJ
+```
+
+The remaining piece becomes:
+
+```text
+Original[0..7)
+```
+
+producing:
+
+```text
+ABCDEFG
+```
+
+The piece's length is reduced.
+
+The underlying buffer is unchanged.
+
+## Deleting Through the Middle of Several Pieces
+
+A deletion can also cross piece boundaries.
+
+Consider:
+
+```text
+Pieces:
+
+P1 → Original[0..6)
+P2 → Add[0..10)
+P3 → Original[6..11)
+```
+
+which produces:
+
+```text
+Hello beautiful world
+```
+
+Suppose the user selects:
+
+```text
+lo beautiful wo
+```
+
+The selection crosses all three pieces:
+
+```text
+Hel|lo |beautiful |wo|rld
+    ^^^^^^^^^^^^^^^^^^^
+```
+
+The deletion therefore has to modify multiple pieces.
+
+The result might leave:
+
+```text
+P1 → Original[0..3)
+P3 → Original[8..11)
+```
+
+which produces:
+
+```text
+Helrld
+```
+
+The exact offsets depend on the selected range, but the mechanism is consistent:
+
+```text
+Deletion
+   │
+   ├── remove completely covered pieces
+   │
+   ├── shorten pieces partially covered
+   │
+   └── split pieces when the deletion begins or ends inside them
+```
+
+The underlying buffers remain untouched throughout.
+
+## Deletion Is Structural
+
+This gives us another useful way to think about Piece Table operations.
+
+Insertion:
+
+```text
+New text
+   ↓
+Add Buffer
+   ↓
+New piece
+   ↓
+Piece sequence changes
+```
+
+Deletion:
+
+```text
+Selected range
+   ↓
+Affected pieces
+   ↓
+Pieces removed/split/shortened
+   ↓
+Piece sequence changes
+```
+
+Both operations primarily manipulate the **representation of the document**.
+
+The text buffers themselves remain stable.
+
+## Deleted Text Is Not Reclaimed Immediately
+
+There is an important consequence.
+
+Suppose the user inserts:
+
+```text
+one two three four
+```
+
+into the Add Buffer and then deletes:
+
+```text
+two
+```
+
+The Add Buffer may still contain:
+
+```text
+one two three four
+```
+
+even though the logical document no longer contains `"two"`.
+
+This means:
+
+```text
+Logical document size
+```
+
+and:
+
+```text
+Underlying buffer size
+```
+
+can diverge.
+
+For a long editing session, the Add Buffer can therefore contain text that is no longer part of the current document.
+
+This is not an implementation accident. It follows directly from the decision to keep the buffer immutable.
+
+We will examine the resulting memory implications later in the chapter.
+
+## Why Not Remove the Deleted Characters?
+
+One might ask why the editor cannot simply compact the Add Buffer after deletion.
+
+Doing so would undermine one of the Piece Table's central properties.
+
+If text were physically removed or moved inside the buffer, every piece referring to positions after the changed region could potentially become invalid.
+
+For example:
+
+```text
+Add Buffer
+
+ABCDEFGHIJ
+```
+
+Suppose pieces reference:
+
+```text
+Add[0..3)
+Add[6..10)
+```
+
+If characters were removed from the middle:
+
+```text
+ABCDEF...
+```
+
+the second piece's offset might need to change.
+
+Keeping the buffer immutable avoids this problem.
+
+Once a piece refers to:
+
+```text
+Add[offset, length]
+```
+
+that range remains stable for the lifetime of the buffer.
+
+This makes the pieces easier to reason about.
+
+## Insertion and Deletion Are Mirror Operations
+
+We can now compare the two fundamental editing operations conceptually:
+
+```text
+             Piece Table
+                  │
+        ┌─────────┴─────────┐
+        │                   │
+     Insert               Delete
+        │                   │
+        ▼                   ▼
+   Add text             Remove/
+        │               shorten/split
+        ▼                   │
+   Add Buffer                │
+        │                   │
+        └─────────┬─────────┘
+                  ▼
+           Modify pieces
+                  │
+                  ▼
+          New logical document
+```
+
+Insertion introduces a new range into the logical document.
+
+Deletion removes a range from the logical document.
+
+Neither operation requires rewriting the underlying text that already exists.
+
+## The Key Idea
+
+The most important rule to remember is:
+
+> **A Piece Table deletes references, not characters.**
+
+The buffers represent stable historical text.
+
+The piece sequence represents the current version of the document.
+
+Therefore:
+
+```text
+Buffers
+   │
+   │ remain stable
+   ▼
+Pieces
+   │
+   │ change
+   ▼
+Logical document
+```
+
+This separation is what gives the Piece Table its distinctive behavior—and it also explains why repeated editing can cause the piece structure and Add Buffer to grow over time.
+
+That long-term behavior is the next thing we need to examine.
+
+## Summary
+
+Deletion removes, shortens, or splits piece descriptors so that the selected range stops participating in the logical document. Deleting a whole piece removes a descriptor, deleting at an edge trims an offset or length, and deleting through the middle splits one piece into two. The underlying buffers are never rewritten, and the deleted text remains stored but unreferenced. The work therefore depends on how many pieces the deleted range touches, not on how many characters the buffers contain.
+
+In the next section, we will observe what happens when insertion and deletion are combined into the repeated operations of a real editing session.

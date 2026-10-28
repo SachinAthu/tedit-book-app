@@ -1,0 +1,554 @@
+---
+title: 27.9 Piece Table Invariants
+description: "States the Piece Table's invariants—valid ranges, immutable Original Buffer, append-only Add Buffer, ordered pieces, and correct lengths—as a correctness framework."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A Piece Table becomes easier to reason about when we stop thinking only about individual operations and define the rules that must **always** remain true.
+
+These rules are called **invariants**.
+
+An invariant is a property that must remain valid before and after every operation. If an insertion, deletion, or other modification violates one of these properties, the Piece Table is no longer a valid representation of the document.
+
+The core invariants are:
+
+1. Pieces reference valid buffer ranges.
+2. The Original Buffer is never modified.
+3. The Add Buffer only grows.
+4. Piece order defines document order.
+5. A piece's length determines exactly how much text it represents.
+6. The logical document is the concatenation of all active pieces.
+
+These rules provide a foundation for reasoning about correctness.
+
+## Pieces Must Reference Valid Ranges
+
+Every piece refers to a range inside either the Original Buffer or the Add Buffer.
+
+Suppose a buffer contains:
+
+```text
+ABCDEFGHIJ
+```
+
+and a piece says:
+
+```text
+source = Original
+offset = 3
+length = 4
+```
+
+The referenced range is:
+
+```text
+ABC[DEFG]HIJ
+   └────┘
+```
+
+This is valid because the requested range exists within the buffer.
+
+A piece such as:
+
+```text
+offset = 8
+length = 5
+```
+
+would be invalid because it extends beyond the available characters.
+
+Conceptually, every piece must satisfy:
+
+```text
+offset >= 0
+length >= 0
+
+offset + length <= source_buffer_length
+```
+
+The exact representation may use unsigned types or different implementation details, but the invariant is the same:
+
+> **A piece must never refer to text outside its source buffer.**
+
+This becomes particularly important when pieces are split or shortened.
+
+## The Original Buffer Is Immutable
+
+Once the Original Buffer has been created, normal editing operations must not modify it.
+
+For example:
+
+```text
+Original Buffer
+
+Hello world
+```
+
+must remain:
+
+```text
+Hello world
+```
+
+even if the logical document changes to:
+
+```text
+Hello beautiful world
+```
+
+or:
+
+```text
+Hello
+```
+
+or:
+
+```text
+Goodbye world
+```
+
+The Original Buffer remains the stable source from which pieces can continue to reference ranges.
+
+This gives us a strong invariant:
+
+```text
+Original Buffer
+       │
+       │ never modified
+       ▼
+Stable source text
+```
+
+If an editing operation physically changes characters in the Original Buffer, it is no longer following the Piece Table model described in this chapter.
+
+## The Add Buffer Only Grows
+
+The Add Buffer follows a similar rule, but with one important difference.
+
+Unlike the Original Buffer, it is expected to receive new text.
+
+For example:
+
+```text
+Add Buffer
+
+"beautiful "
+```
+
+can become:
+
+```text
+Add Buffer
+
+"beautiful very "
+```
+
+when another insertion occurs.
+
+But the existing `"beautiful"` portion is not modified.
+
+Therefore:
+
+```text
+Add Buffer
+    │
+    ├── existing text remains stable
+    │
+    └── new text is appended
+```
+
+The important invariant is:
+
+> **Existing positions in the Add Buffer remain stable after text has been appended.**
+
+This stability is what allows pieces to keep referencing previously inserted text without having their offsets adjusted whenever another insertion occurs.
+
+## Piece Order Defines Document Order
+
+The buffers themselves do not determine the order of the logical document.
+
+The piece sequence does.
+
+Suppose:
+
+```text
+Original Buffer
+
+ABCDEF
+```
+
+and:
+
+```text
+Add Buffer
+
+XYZ
+```
+
+The pieces could be:
+
+```text
+Original[0..3)
+Add[0..3)
+Original[3..6)
+```
+
+which produces:
+
+```text
+ABCXYZDEF
+```
+
+If their order changes:
+
+```text
+Original[0..3)
+Original[3..6)
+Add[0..3)
+```
+
+the document becomes:
+
+```text
+ABCDEFXYZ
+```
+
+Nothing changed inside either buffer.
+
+Only the piece order changed.
+
+Therefore:
+
+> **The sequence of pieces is the authoritative ordering of the logical document.**
+
+This is why a Piece Table cannot be understood by examining the buffers alone.
+
+## Piece Length Defines Its Range
+
+A piece describes a contiguous range:
+
+```text
+source + offset + length
+```
+
+The `length` determines exactly how many characters belong to that piece.
+
+Suppose:
+
+```text
+Original Buffer
+
+ABCDEFGHIJ
+```
+
+and:
+
+```text
+Original[2..7)
+```
+
+The piece represents:
+
+```text
+AB[CDEFG]HIJ
+  └─────┘
+```
+
+If the piece's length changes from five to four, the logical text represented by that piece changes accordingly.
+
+The piece must therefore never claim more characters than its declared range.
+
+This sounds straightforward, but it becomes important during deletion and splitting because those operations modify piece boundaries.
+
+## The Logical Document Is the Concatenation of Pieces
+
+This is perhaps the most important invariant.
+
+If the active piece sequence is:
+
+```text
+P1
+P2
+P3
+```
+
+then the logical document is:
+
+```text
+text(P1) + text(P2) + text(P3)
+```
+
+For example:
+
+```text
+P1 → "Hello "
+P2 → "beautiful "
+P3 → "world"
+```
+
+produces:
+
+```text
+Hello beautiful world
+```
+
+There is no additional ordering rule hidden elsewhere.
+
+The document is simply the concatenation of the text represented by the pieces in sequence.
+
+We can express the model conceptually as:
+
+```text
+Logical Document
+=
+Piece 1
++
+Piece 2
++
+Piece 3
++
+...
++
+Piece N
+```
+
+This invariant gives us a straightforward way to reason about whether an operation produced the intended document.
+
+## Invariants During Insertion
+
+Consider:
+
+```text
+Original:
+
+Hello world
+```
+
+with:
+
+```text
+P1 → Original[0..11)
+```
+
+Insert:
+
+```text
+beautiful
+```
+
+The resulting pieces might be:
+
+```text
+P1 → Original[0..6)
+P2 → Add[0..10)
+P3 → Original[6..11)
+```
+
+Check the invariants:
+
+### Original Buffer
+
+Still:
+
+```text
+Hello world
+```
+
+Valid.
+
+### Add Buffer
+
+Contains the newly appended text:
+
+```text
+"beautiful "
+```
+
+Valid.
+
+### Piece Ranges
+
+All referenced ranges exist.
+
+Valid.
+
+### Piece Order
+
+```text
+P1 → P2 → P3
+```
+
+produces:
+
+```text
+Hello beautiful world
+```
+
+Valid.
+
+The operation therefore preserves the Piece Table's invariants.
+
+## Invariants During Deletion
+
+Now delete:
+
+```text
+beautiful
+```
+
+The corresponding piece is removed:
+
+```text
+Before:
+
+P1 → P2 → P3
+
+
+After:
+
+P1 → P3
+```
+
+Again:
+
+- The Original Buffer remains unchanged.
+- The Add Buffer remains unchanged.
+- The remaining pieces reference valid ranges.
+- Their order still determines document order.
+- Their concatenation produces the new logical document.
+
+The resulting document is:
+
+```text
+Hello world
+```
+
+The deletion therefore preserves the same fundamental rules.
+
+## Why Invariants Matter
+
+Without invariants, every operation would need to be understood independently.
+
+With invariants, we have a stable framework:
+
+```text
+             Valid Piece Table
+                    │
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+    Valid       Stable       Ordered
+    ranges      buffers      pieces
+        │           │           │
+        └───────────┼───────────┘
+                    ▼
+             Correct document
+```
+
+When implementing an operation, we can ask:
+
+> Does this operation preserve every invariant?
+
+That question is much more useful than simply asking whether one example appears to work.
+
+## Invariants Are Especially Important When Pieces Split
+
+Piece splitting is one of the most common places where implementation errors can occur.
+
+Suppose we start with:
+
+```text
+Original[10..30)
+```
+
+and split it at an offset of five characters into the piece.
+
+The resulting pieces must be:
+
+```text
+Original[10..15)
+Original[15..30)
+```
+
+The two ranges must:
+
+- cover the original range,
+- remain within the buffer,
+- preserve their original order,
+- not overlap incorrectly,
+- not accidentally skip characters.
+
+Conceptually:
+
+```text
+Before
+
+Original
+          ┌────────────────────┐
+          │     one range      │
+          └────────────────────┘
+
+
+After
+
+          ┌───────────┬────────┐
+          │ left      │ right  │
+          └───────────┴────────┘
+```
+
+The combined text represented by the two new pieces must be identical to the text represented by the original piece.
+
+This is a useful local correctness rule:
+
+> **Splitting a piece must preserve the text represented by that piece.**
+
+## A Compact Set of Rules
+
+We can summarize the Piece Table's invariants as follows:
+
+| Invariant              | Meaning                                                 |
+| ---------------------- | ------------------------------------------------------- |
+| Valid ranges           | Every piece references existing buffer text             |
+| Immutable Original     | Original text never changes                             |
+| Append-only Add Buffer | New text is appended; existing text remains stable      |
+| Ordered pieces         | Piece order determines logical document order           |
+| Correct lengths        | Each piece represents exactly its declared range        |
+| Concatenation          | The document is the ordered concatenation of all pieces |
+
+Together, these rules define what it means for the Piece Table to be structurally valid.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Invariants are more than documentation.
+
+They are a practical engineering tool.
+
+When a future implementation performs an insertion, deletion, or piece split, we can reason about it in two stages:
+
+```text
+Perform operation
+       │
+       ▼
+Check invariants
+       │
+       ├── Valid → continue
+       │
+       └── Invalid → implementation error
+```
+
+This approach becomes particularly valuable as the number of pieces grows and operations become more complicated.
+
+The next challenge is to answer a different question:
+
+> Given a logical position in the document, **which piece contains it?**
+
+That mapping connects the user's view of the document to the Piece Table's internal representation.
+
+</Aside>
+
+## Summary
+
+The Piece Table is governed by a small set of invariants: pieces reference valid buffer ranges, the Original Buffer is immutable, the Add Buffer only grows, piece order defines document order, each piece represents exactly its declared range, and the logical document is the concatenation of all active pieces. Insertion and deletion are only correct if they preserve those rules while splitting, trimming, or removing descriptors. Checking the invariants before and after every operation turns them from documentation into a practical engineering tool. When a bug appears, it usually shows up as a violated range, a stale length, or a piece referencing text that should no longer be visible.
+
+In the next section, we will answer the question those invariants raise: given a logical position in the document, which piece contains it?

@@ -1,0 +1,238 @@
+---
+title: 27.1 Why Another Text Buffer?
+description: "Explains why moving text in contiguous buffers is costly and how referencing stable stored text avoids rearranging characters during edits."
+---
+
+A text editor spends much of its time modifying text. Every insertion, deletion, and line change alters the document that the user is working on.
+
+In earlier chapters, we saw how arrays and strings represent text directly in memory. That approach is simple and useful, but editing a contiguous sequence of characters can require existing characters to move. The Gap Buffer improves this situation by keeping unused space near the current editing position, making repeated local edits more efficient.
+
+But a gap buffer still represents the document as a mutable sequence of characters. Text surrounding the gap may eventually need to move when the editing position changes significantly, and the structure is fundamentally organized around maintaining one contiguous editable region.
+
+The **Piece Table** takes a different approach.
+
+Instead of repeatedly moving existing text, it keeps the underlying text in buffers and represents the current document as a sequence of **references to portions of those buffers**.
+
+The important change is conceptual:
+
+```text
+Gap Buffer
+
+Document
+    ↓
+Mutable sequence of characters
+```
+
+versus:
+
+```text
+Piece Table
+
+Buffers
+    ↓
+Pieces
+    ↓
+Logical Document
+```
+
+The document is no longer stored as one continuously modified sequence of characters. Instead, the editor describes how the current document should be assembled from smaller regions of stored text.
+
+## The Problem With Moving Text
+
+Consider a document containing:
+
+```text
+The quick brown fox
+```
+
+Suppose the user moves to the beginning and inserts:
+
+```text
+very
+```
+
+A contiguous character representation has to make room for the new characters.
+
+Conceptually:
+
+```text
+Before
+
+The quick brown fox
+^
+cursor
+
+
+After
+
+very The quick brown fox
+```
+
+The existing characters occupy memory positions that may need to change.
+
+The Gap Buffer reduces this cost when the cursor is near its gap. But the underlying idea remains:
+
+> Editing changes the arrangement of the stored characters.
+
+A Piece Table approaches the problem differently.
+
+Rather than moving the original characters, it can preserve them exactly where they are and describe the insertion separately.
+
+For example:
+
+```text
+Original Buffer
+
+The quick brown fox
+```
+
+The inserted text is placed into a separate buffer:
+
+```text
+Add Buffer
+
+"very "
+```
+
+The logical document can then be described as:
+
+```text
+Original:  "The quick brown fox"
+Add:        "very "
+
+Pieces:
+
+Add      → "very "
+Original → "The quick brown fox"
+```
+
+The original text was never moved.
+
+The new text was stored separately.
+
+The document is produced by following the pieces in order.
+
+## A Different Way to Think About Editing
+
+This leads to an important distinction.
+
+A conventional character array answers:
+
+> **Where are the characters stored?**
+
+A Piece Table answers:
+
+> **Which pieces of stored text make up the document?**
+
+That difference is the foundation of the entire data structure.
+
+Consider:
+
+```text
+Original Buffer
+┌─────────────────────────┐
+│ The quick brown fox     │
+└─────────────────────────┘
+
+Add Buffer
+┌─────────────────────────┐
+│ "very "                 │
+└─────────────────────────┘
+
+Piece sequence
+┌──────────┬──────────────────────┐
+│ Add      │ Original             │
+└──────────┴──────────────────────┘
+
+Logical document
+"very The quick brown fox"
+```
+
+The logical document appears to be one continuous string to the user.
+
+Physically, however, its characters are stored in two different places.
+
+The **pieces** provide the connection between those two views.
+
+## Why Preserve the Original Text?
+
+The Piece Table's design becomes especially interesting when we consider deletion.
+
+Suppose the user deletes:
+
+```text
+quick
+```
+
+from:
+
+```text
+The quick brown fox
+```
+
+A conventional representation would remove those characters from the document's storage.
+
+A Piece Table does not need to erase them.
+
+The original buffer can remain:
+
+```text
+The quick brown fox
+```
+
+The piece sequence simply changes so that the deleted region is no longer referenced.
+
+The logical document becomes:
+
+```text
+The brown fox
+```
+
+while the original bytes remain untouched.
+
+This is a fundamental property of the structure:
+
+> **Editing changes the description of the document rather than necessarily changing the underlying stored text.**
+
+That distinction will become increasingly important as we examine insertion and deletion in detail.
+
+## Why Introduce This After the Gap Buffer?
+
+The Piece Table is not simply a more complicated version of a Gap Buffer.
+
+The two structures solve the editing problem using different ideas.
+
+The Gap Buffer concentrates on **where the next edit occurs**.
+
+```text
+Text
+───────────
+     GAP
+───────────
+       ↑
+    Cursor
+```
+
+The Piece Table concentrates on **how the document is assembled**.
+
+```text
+Original Buffer ──┐
+                  ├──► Pieces ──► Document
+Add Buffer ───────┘
+```
+
+This makes the Piece Table particularly useful for understanding an important class of data structures:
+
+> A data structure does not always need to store the final logical object directly. It can store a representation from which that object is reconstructed.
+
+That is the central idea we will develop throughout this chapter.
+
+The project itself does **not** switch to a Piece Table. Our editor's baseline Document representation remains the simpler vector-of-lines design chosen for clarity and educational value. The Piece Table is being studied as an alternative architecture whose behavior and trade-offs we can understand independently.
+
+In the following sections, we will build the Piece Table from this basic idea, beginning with the two buffers that form its foundation.
+
+## Summary
+
+A Piece Table stores text in stable buffers and describes the current document as a sequence of references to ranges of those buffers. A contiguous array, by contrast, must shift the suffix after every mid-document insertion, while a Gap Buffer merely relocates that movement to cursor jumps and gap growth. The Piece Table removes the movement from the common editing path entirely: insertion and deletion change which ranges the pieces select, so the stored characters stay where they are. That is the conceptual shift that distinguishes it from a Gap Buffer and from a mutable character array, and it is what makes preserved original text useful for later operations.
+
+In the next section, we will introduce the core idea of a Piece Table and examine how its two buffers and piece descriptors combine to produce the logical document.

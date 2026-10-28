@@ -1,0 +1,515 @@
+---
+title: 27.6 Inserting Text
+description: "Walks through insertion: appending new text to the Add Buffer, splitting the containing piece, and adding a descriptor without moving existing characters."
+---
+
+Insertion is where the Piece Table's design becomes particularly interesting.
+
+In a conventional contiguous representation, inserting characters means making room for them. In a Piece Table, the editor instead:
+
+1. appends the new text to the Add Buffer,
+2. finds the piece containing the insertion position,
+3. splits that piece when necessary,
+4. creates a new piece for the inserted text,
+5. places the pieces in the correct order.
+
+The underlying buffers remain unchanged.
+
+## A Simple Insertion
+
+Start with:
+
+```text
+Original Buffer
+
+Hello world
+```
+
+Initially, the Piece Table contains:
+
+```text
+P1 → Original, offset 0, length 11
+```
+
+So the logical document is:
+
+```text
+Hello world
+```
+
+Now suppose the user inserts:
+
+```text
+beautiful
+```
+
+between `Hello ` and `world`.
+
+The insertion point is immediately before `world`, so the inserted text is stored together with the space that separates it from `world`:
+
+```text
+"beautiful "
+```
+
+The insertion position is:
+
+```text
+Hello |world
+      ^
+   position
+```
+
+The existing piece represents the entire original text:
+
+```text
+Original[0..11)
+```
+
+But the insertion occurs in the middle of that range.
+
+The piece therefore has to be divided.
+
+## Step 1 — Append to the Add Buffer
+
+The inserted text is first added to the Add Buffer:
+
+```text
+Add Buffer
+
+┌──────────────┐
+│ "beautiful " │
+└──────────────┘
+```
+
+The Original Buffer remains:
+
+```text
+Original Buffer
+
+┌─────────────────┐
+│ Hello world     │
+└─────────────────┘
+```
+
+Neither existing buffer has been modified.
+
+## Step 2 — Split the Existing Piece
+
+Before insertion, we have:
+
+```text
+P1 → Original[0..11)
+```
+
+The insertion point occurs after six characters:
+
+```text
+Hello |world
+     6
+```
+
+The original piece can therefore be divided into two pieces:
+
+```text
+P1 → Original[0..6)
+P3 → Original[6..11)
+```
+
+Visually:
+
+```text
+Original Buffer
+
+Hello world
+────── ─────
+   │      │
+   │      └── P3
+   └───────── P1
+```
+
+The original text itself has not changed.
+
+Only the description of which ranges belong to the logical document has changed.
+
+## Step 3 — Create a Piece for the New Text
+
+The inserted text occupies a range in the Add Buffer:
+
+```text
+P2 → Add[0..10)
+```
+
+The three pieces are now:
+
+```text
+P1 → Original[0..6)
+P2 → Add[0..10)
+P3 → Original[6..11)
+```
+
+Their order is important.
+
+```text
+P1
+ ↓
+P2
+ ↓
+P3
+```
+
+produces:
+
+```text
+"Hello "
+"beautiful "
+"world"
+```
+
+or:
+
+```text
+Hello beautiful world
+```
+
+## The Complete Transformation
+
+The insertion can be visualized as:
+
+```text
+Before
+
+Original Buffer
+┌─────────────────┐
+│ Hello world     │
+└─────────────────┘
+
+Pieces
+┌──────────────────────────────┐
+│ Original[0..11)              │
+└──────────────────────────────┘
+
+
+After
+
+Original Buffer
+┌─────────────────┐
+│ Hello world     │
+└─────────────────┘
+
+Add Buffer
+┌──────────────┐
+│ "beautiful " │
+└──────────────┘
+
+Pieces
+┌──────────────┬─────────────┬───────────────┐
+│ Original     │ Add         │ Original      │
+│ [0..6)       │ [0..10)     │ [6..11)       │
+└──────────────┴─────────────┴───────────────┘
+```
+
+The logical document changes from:
+
+```text
+Hello world
+```
+
+to:
+
+```text
+Hello beautiful world
+```
+
+without rewriting the original characters.
+
+## Insertion at the Beginning
+
+An insertion does not always require splitting an existing piece.
+
+Suppose the document is:
+
+```text
+Hello world
+```
+
+and the user inserts:
+
+```text
+Welcome:
+```
+
+at position zero:
+
+```text
+|Hello world
+^
+```
+
+The inserted text is stored together with the space that separates it from the existing text, so the Add Buffer receives nine characters:
+
+```text
+"Welcome: "
+```
+
+The existing piece remains intact:
+
+```text
+P2 → Add[0..9)
+P1 → Original[0..11)
+```
+
+The logical document becomes:
+
+```text
+Welcome: Hello world
+```
+
+The new piece is simply placed before the existing piece.
+
+## Insertion at the End
+
+The same principle applies at the end.
+
+Suppose:
+
+```text
+Hello world|
+           ^
+```
+
+and the user inserts:
+
+```text
+!
+```
+
+The Add Buffer receives:
+
+```text
+!
+```
+
+The pieces become:
+
+```text
+P1 → Original[0..11)
+P2 → Add[...]
+```
+
+producing:
+
+```text
+Hello world!
+```
+
+No original piece needs to be split because the insertion occurs at its boundary.
+
+## Insertion in the Middle
+
+The middle case is the most important.
+
+Consider:
+
+```text
+ABCDEFGHIJ
+```
+
+with an insertion between `E` and `F`:
+
+```text
+ABCDE|FGHIJ
+```
+
+The original piece:
+
+```text
+Original[0..10)
+```
+
+becomes:
+
+```text
+Original[0..5)
+Add[new text]
+Original[5..10)
+```
+
+Conceptually:
+
+```text
+        insertion
+            │
+            ▼
+ABCDE | FGHIJ
+─────   ─────
+  P1      P3
+       P2
+```
+
+This **split-and-insert** operation is the fundamental editing mechanism of a Piece Table.
+
+## Why Splitting Works
+
+The key observation is that a piece represents a **range**, not an indivisible block.
+
+Suppose we have:
+
+```text
+P1 → Original[offset, length]
+```
+
+and the insertion occurs `k` characters into that piece.
+
+The original piece can be represented as two ranges:
+
+```text
+Left:
+
+Original[offset, k]
+
+Right:
+
+Original[offset + k, length - k]
+```
+
+The inserted text then becomes a separate piece between them:
+
+```text
+Left → Inserted → Right
+```
+
+So the transformation is:
+
+```text
+Before:
+
+┌────────────────────────────┐
+│ Original range             │
+└────────────────────────────┘
+
+
+After:
+
+┌──────────────┬──────────┬──────────────┐
+│ Left range   │ New text │ Right range  │
+└──────────────┴──────────┴──────────────┘
+```
+
+This is the central operation that allows the Piece Table to represent insertion without moving existing text.
+
+## Repeated Insertions
+
+Now consider what happens when the user performs another insertion.
+
+Suppose the document is:
+
+```text
+Hello beautiful world
+```
+
+and the user inserts:
+
+```text
+very
+```
+
+before `beautiful`.
+
+The Add Buffer grows:
+
+```text
+Add Buffer
+
+"beautiful very "
+```
+
+The Piece Table can then reference another range of the Add Buffer.
+
+The important point is that the Add Buffer does not need to be reorganized.
+
+The editor only creates or modifies piece descriptors.
+
+The structure might conceptually become:
+
+```text
+Original[0..6)
+Add[10..15)
+Add[0..10)
+Original[6..11)
+```
+
+which produces:
+
+```text
+Hello very beautiful world
+```
+
+The precise piece boundaries depend on the insertion positions and the implementation's piece-management policy, but the underlying principle remains the same.
+
+## What Insertion Does Not Do
+
+It is useful to state explicitly what the operation avoids.
+
+A Piece Table insertion does **not**:
+
+- move the original text,
+- rewrite the Original Buffer,
+- insert characters into the middle of the Add Buffer,
+- delete existing characters from either buffer,
+- copy the entire logical document.
+
+Instead, it:
+
+```text
+Append new text
+      ↓
+Create/modify pieces
+      ↓
+Change piece order
+      ↓
+New logical document
+```
+
+This is the fundamental reason the Piece Table can avoid the character-shifting behavior associated with contiguous text storage.
+
+## The Cost Has Moved
+
+However, the work has not disappeared.
+
+The Piece Table has exchanged one kind of work for another.
+
+A contiguous representation may need to move characters:
+
+```text
+Characters
+████████████████
+        ↓
+    move data
+```
+
+A Piece Table changes metadata:
+
+```text
+Pieces
+████
+ ↓
+split
+ ↓
+insert descriptor
+```
+
+This is an important engineering trade-off.
+
+The Piece Table does not make editing free. It changes **what must be modified** when an edit occurs.
+
+The consequences of that choice—especially piece count, position lookup, and metadata growth—will be examined later in the chapter.
+
+For now, the essential mechanism is:
+
+> **To insert text into a Piece Table, append the new text to the Add Buffer and adjust the piece sequence so that the new range appears at the requested logical position.**
+
+## Summary
+
+Insertion appends the new text to the Add Buffer, locates the piece containing the insertion position, splits that piece when necessary, and inserts a new descriptor into the sequence. Inserting at a piece boundary avoids a split, while inserting inside a piece creates two descriptors around the new text. The existing characters are never moved; the cost shifts from shifting text to managing metadata. Because the Piece Table must first locate the containing piece, insertion is linear in the number of pieces in the simple implementation, but it remains independent of the total document length.
+
+In the next section, we will examine deletion, the mirror operation, and why removing text also leaves the underlying buffers untouched.

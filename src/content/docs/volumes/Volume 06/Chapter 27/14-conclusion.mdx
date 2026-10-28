@@ -1,0 +1,75 @@
+---
+title: 27.14 Conclusion
+description: "Consolidates the Piece Table model and its trade-offs, then lists review questions, common mistakes, and a preview of the Rope."
+---
+
+A **Piece Table** represents a document as two stable text buffers plus an ordered sequence of piece descriptors. The **Original Buffer** holds the document's initial contents without ever being modified, while the **Add Buffer** grows as new text is inserted. Each **piece descriptor** is a `(source, offset, length)` reference that selects a range inside one of the buffers, and the **logical document** is whatever those references produce when read in sequence.
+
+Editing therefore changes the _description_ of the document rather than the stored text:
+
+```text
+Original Buffer ─┐
+                 ├──► Pieces ───► Logical Document
+Add Buffer ──────┘
+```
+
+Insertion appends text to the Add Buffer, splits the piece containing the insertion point, and inserts a new descriptor. Deletion removes, shortens, or splits descriptors so that the selected range stops participating in the document. Neither operation rewrites the existing characters—a fundamental shift from the mutable, contiguous representations studied in earlier chapters.
+
+This design carries consequences. Repeated editing can fragment the piece structure and let the Add Buffer retain deleted text, so the physical representation can diverge from the logical document. Position lookup, traversal, and memory usage all grow with the piece count, making metadata as important as text. The Piece Table's strengths—stable text, preserved original content, edits without moving characters—and its costs—fragmentation, indirection, retained text—come from the same decision. As with the gap buffer, the question is not which representation is better, but whose trade-offs fit the editor's workload.
+
+## Exercises
+
+### Review Questions
+
+- What are the two buffers?
+- Why is the Original Buffer immutable?
+- Why does the Add Buffer only grow?
+- What does a piece descriptor contain?
+- How does deletion work without deleting characters?
+
+### Thought Experiments
+
+- Insert text repeatedly at the beginning of a document.
+- Delete half the document.
+- Insert and delete repeatedly in the same region.
+- Predict how the piece sequence changes.
+
+## Common Mistakes
+
+### Treating pieces as copies of text
+
+A piece references a range inside a buffer; it does not contain the characters it selects. Believing that a piece stores its own text leads to copying characters that remain happily in the buffer, defeating the purpose of the representation.
+
+### Modifying the Original Buffer
+
+The Original Buffer is a stable source of the document's initial contents. Physically changing characters there invalidates pieces that reference that region and breaks the invariant that normal editing never rewrites stored text.
+
+### Removing deleted characters from the buffers
+
+Deletion changes the piece sequence; it does not erase characters from the buffers. Compacting the Add Buffer after a deletion would move the very text that other pieces still reference, corrupting their offsets.
+
+### Confusing piece offsets with document offsets
+
+A piece's `offset` is a position inside its source buffer, while the document position is a position within the logical document. Conflating the two makes insertion and deletion target the wrong text.
+
+### Forgetting that the Add Buffer only grows
+
+The Add Buffer retains text even after it stops being referenced. Since deleted insertions remain in storage, the buffer's physical size is not a reliable indicator of the current document's size.
+
+### Assuming one piece equals one edit
+
+A single insertion can split an existing piece, and a single deletion can span several pieces. Piece count reflects structure, not the number of edits made.
+
+### Ignoring piece fragmentation
+
+Repeated edits can turn one large piece into many small ones. Fragmentation grows metadata and makes lookup and traversal more expensive, so it must be considered over a whole editing session, not one operation at a time.
+
+### Mixing logical positions with source-buffer positions
+
+Users and editor commands work in logical document positions; the Piece Table stores text at buffer offsets. Failing to translate between them produces wrong edits, especially when pieces come from both buffers.
+
+## Preview of the Next Chapter
+
+**Chapter 28 — Rope**
+
+The Piece Table represents text indirectly through immutable buffers and descriptors. The next chapter takes a different approach: representing the document as a tree of smaller text fragments. We will examine how ropes use hierarchical structure to scale text operations and why balancing becomes central to their performance.
