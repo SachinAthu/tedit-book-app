@@ -1,0 +1,599 @@
+---
+title: 28.9 Leaf Size and Granularity
+description: "Explores how leaf size trades structural overhead against local edit cost, and why the right granularity depends on workload rather than a fixed value."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A Rope is made from a tree of nodes, but the leaves still have to store actual text.
+
+That creates an important design question:
+
+> **How much text should each leaf contain?**
+
+The answer has a significant effect on the Rope's memory usage, tree size, cache behavior, and editing cost.
+
+There are two extremes.
+
+```text
+Very small leaves
+        ↕
+Very large leaves
+```
+
+Neither is ideal in every situation.
+
+The goal is to choose a **reasonable granularity** that balances tree overhead against the cost of manipulating text inside a leaf.
+
+## One Character Per Leaf
+
+The simplest possible approach is to put one character in each leaf:
+
+```text
+[A][B][C][D][E][F][G][H]
+```
+
+The corresponding tree might look like:
+
+```text
+                 Root
+                /    \
+              Node   Node
+             /  \    /  \
+            A    B  C    D
+```
+
+For a very small document, this might appear manageable.
+
+But consider a document containing one million characters.
+
+A one-character-per-leaf Rope would require an enormous number of nodes.
+
+Each node may need to store information such as:
+
+```text
+child references
+subtree metadata
+balancing information
+```
+
+The actual character may occupy only a small amount of memory, while the structural information around it can become comparatively large.
+
+This is a poor use of memory.
+
+## Larger Text Fragments
+
+Instead, leaves can contain chunks of text:
+
+```text
+["The quick brown "]
+["fox jumps over "]
+["the lazy dog."]
+```
+
+Now the tree contains only a few leaves:
+
+```text
+                 Root
+                /    \
+              Node   "the lazy dog."
+             /   \
+ "The quick brown " "fox jumps over "
+```
+
+The text remains logically identical:
+
+```text
+The quick brown fox jumps over the lazy dog.
+```
+
+But the number of structural nodes is much smaller.
+
+This reduces:
+
+- node allocation
+- pointer storage
+- metadata
+- tree traversal overhead
+
+The trade-off is that operations within a leaf may now involve more text.
+
+## Small Leaves vs. Large Leaves
+
+The basic trade-off can be summarized like this:
+
+```text
+Small leaves
+    │
+    ├── More nodes
+    ├── More metadata
+    ├── More tree structure
+    └── Smaller local text operations
+
+
+Large leaves
+    │
+    ├── Fewer nodes
+    ├── Less metadata
+    ├── Less tree structure
+    └── Larger local text operations
+```
+
+This is one of the most important tuning decisions in a Rope.
+
+## Very Small Leaves
+
+Suppose each leaf contains only a few characters:
+
+```text
+["abc"]
+["def"]
+["ghi"]
+["jkl"]
+["mno"]
+...
+```
+
+The tree becomes highly fragmented.
+
+### Advantages
+
+Small leaves can make individual fragments easy to manipulate.
+
+If an edit affects a particular fragment, the amount of text inside that fragment is small.
+
+For example:
+
+```text
+["abc"]
+```
+
+can be split or replaced without handling a large amount of text.
+
+### Disadvantages
+
+The tree needs many nodes.
+
+That means more:
+
+- pointers
+- metadata
+- allocations
+- balancing work
+- cache misses
+
+The tree itself begins to represent a significant portion of the data structure.
+
+## Very Large Leaves
+
+At the other extreme, imagine that each leaf contains a very large amount of text:
+
+```text
+["A very large portion of the document........................"]
+```
+
+There may now be relatively few nodes.
+
+This reduces structural overhead.
+
+The tree can become much smaller:
+
+```text
+             Root
+            /    \
+      Large Leaf  Large Leaf
+```
+
+However, an edit inside one of those leaves may require more local work.
+
+Suppose we insert text into the middle:
+
+```text
+"AAAAAAAAAA|BBBBBBBBBB"
+          ↑
+        insert
+```
+
+The affected leaf may need to be divided:
+
+```text
+"AAAAAAAAAA"
+"BBBBBBBBBB"
+```
+
+If the leaf is extremely large, manipulating its contents can become more expensive.
+
+## The Sweet Spot
+
+The practical goal is therefore somewhere between the extremes.
+
+Conceptually:
+
+```text
+        Leaf Size
+            │
+     ┌──────┴──────┐
+     │             │
+ Too Small      Too Large
+     │             │
+ Tree overhead   Local edit cost
+     │             │
+     └──────┬──────┘
+            │
+            ▼
+      Reasonable size
+```
+
+A good leaf size keeps the number of tree nodes manageable while ensuring that operations inside individual leaves remain reasonably cheap.
+
+There is no universal value that is correct for every Rope.
+
+The appropriate choice depends on:
+
+- document workload
+- edit patterns
+- memory characteristics
+- implementation strategy
+- balancing algorithm
+- hardware
+
+## Leaf Granularity and Tree Height
+
+Leaf size also affects the number of leaves.
+
+Suppose a document contains:
+
+```text
+1,000,000 characters
+```
+
+If each leaf contains approximately:
+
+```text
+10 characters
+```
+
+we need roughly:
+
+```text
+100,000 leaves
+```
+
+If each leaf contains approximately:
+
+```text
+1,000 characters
+```
+
+we need roughly:
+
+```text
+1,000 leaves
+```
+
+The second Rope can have dramatically fewer structural nodes.
+
+This matters because the tree organizes **leaves**, not individual characters.
+
+```text
+More leaves
+    ↓
+More tree nodes
+    ↓
+Potentially greater structural overhead
+
+
+Fewer leaves
+    ↓
+Smaller tree
+    ↓
+Less structural overhead
+```
+
+Leaf size therefore indirectly affects the height and shape of the tree.
+
+## Leaf Granularity and Local Work
+
+There is a corresponding cost on the other side.
+
+Suppose an insertion occurs inside a leaf.
+
+```text
+Leaf:
+
+"abcdefghijklmnopqrstuvwxyz"
+             ↑
+           insert
+```
+
+The implementation must modify the leaf's text representation.
+
+If the leaf is small, the affected amount of text may also be small.
+
+If the leaf is very large:
+
+```text
+"...................................................."
+                         ↑
+                       insert
+```
+
+more local data may potentially need to be manipulated.
+
+The exact cost depends on how leaf text is stored.
+
+For example, a leaf might use:
+
+- a dynamically sized array
+- a fixed-capacity chunk
+- another small text representation
+
+The Rope therefore has **two levels of data-structure design**:
+
+```text
+Rope
+ │
+ ├── Tree design
+ │
+ └── Leaf design
+```
+
+Optimizing only one of them is not enough.
+
+## Relationship to Cache Locality
+
+Leaf size also affects memory locality.
+
+A leaf containing a contiguous chunk of characters can often be processed sequentially:
+
+```text
+[A][B][C][D][E][F][G][H]
+ ↑
+ └── sequential access
+```
+
+This is favorable for modern processors because nearby data is often brought into the CPU cache together.
+
+A Rope with many tiny leaves introduces more structural indirection:
+
+```text
+Node
+ ↓
+Leaf
+ ↓
+Node
+ ↓
+Leaf
+ ↓
+Node
+ ↓
+Leaf
+```
+
+The processor may have to follow more pointers to access the document.
+
+Therefore, increasing the number of leaves can have costs beyond the memory consumed by the nodes themselves.
+
+This connects directly to the cache-locality discussion from the earlier complexity chapters.
+
+The important point here is simply:
+
+> **Leaf granularity influences not only algorithmic complexity but also how efficiently the processor can access the data.**
+
+We will examine this broader memory-layout issue in the next section.
+
+## Leaf Size and Editing Patterns
+
+There is also no single ideal leaf size because different users edit text differently.
+
+Consider two workloads.
+
+### Workload A — Small Local Edits
+
+A user frequently inserts individual characters near the current cursor:
+
+```text
+abc|def
+   ↑
+ insert
+```
+
+Smaller leaves may make local restructuring easier.
+
+But the tree may become fragmented if every edit creates additional fragments.
+
+### Workload B — Large Text Operations
+
+A user frequently inserts or deletes large blocks of text.
+
+For example:
+
+```text
+Paste 50 KB of text
+```
+
+Larger leaves may reduce structural overhead.
+
+However, very large leaves can make individual modifications inside those chunks more expensive.
+
+Therefore:
+
+```text
+Workload
+   +
+Leaf size
+   ↓
+Actual performance
+```
+
+is an important relationship.
+
+## Leaf Splitting
+
+Leaves also provide a natural mechanism for maintaining reasonable fragment sizes.
+
+Suppose a leaf becomes too large:
+
+```text
++------------------------------------------+
+|              Very large leaf             |
++------------------------------------------+
+```
+
+The implementation can split it:
+
+```text
++------------------+  +------------------+
+|     fragment A   |  |    fragment B    |
++------------------+  +------------------+
+```
+
+The tree can then organize those fragments separately.
+
+Likewise, if neighboring leaves become unnecessarily small, an implementation may be able to combine them.
+
+Conceptually:
+
+```text
+Large leaf
+    ↓
+Split
+
+
+Small neighboring leaves
+    ↓
+Possibly merge
+```
+
+These operations help maintain a useful level of granularity.
+
+The exact policy is implementation-dependent.
+
+## Granularity Is a Balancing Problem Too
+
+Notice the connection between this section and the previous one.
+
+Section 28.7 discussed balancing the **tree**.
+
+Here we are discussing balancing the **leaf granularity**.
+
+They are related but not identical.
+
+```text
+Rope
+ │
+ ├── Tree balance
+ │      ↓
+ │   Controls height
+ │
+ └── Leaf granularity
+        ↓
+     Controls fragment size
+```
+
+A Rope can have a nicely balanced tree but poorly chosen leaves.
+
+For example:
+
+```text
+Balanced tree
+     +
+Millions of tiny leaves
+     ↓
+Large structural overhead
+```
+
+Likewise:
+
+```text
+Balanced tree
+     +
+Extremely large leaves
+     ↓
+Expensive local modifications
+```
+
+Good Rope design therefore requires attention to both levels.
+
+## There Is No Magic Leaf Size
+
+It may be tempting to ask:
+
+> What is the correct number of characters per leaf?
+
+There is no answer that applies universally.
+
+A production implementation might choose a target chunk size based on empirical measurements.
+
+It may also use adaptive behavior:
+
+```text
+Observe workload
+      ↓
+Create / split / merge chunks
+      ↓
+Maintain reasonable granularity
+```
+
+The important engineering principle is:
+
+> **Data-structure parameters should be chosen according to workload and measured behavior rather than assumed to be universally optimal.**
+
+This becomes particularly important when a data structure is intended for very large documents.
+
+## A Conceptual Comparison
+
+We can summarize the extremes:
+
+| Leaf strategy | Main advantage        | Main cost                |
+| ------------- | --------------------- | ------------------------ |
+| Very small    | Small local fragments | High structural overhead |
+| Medium        | Balanced trade-off    | Requires tuning          |
+| Very large    | Low tree overhead     | More local edit work     |
+
+The ideal point is somewhere between the extremes.
+
+And because the optimal point depends on the workload, a Rope should be thought of as a **family of implementations**, not one rigid structure.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The Rope's performance is determined by more than its Big-O complexity.
+
+We can now see three interacting levels:
+
+```text
+Document
+    │
+    ▼
+Rope tree
+    │
+    ├── Tree height
+    │
+    └── Leaf structure
+          │
+          ├── Leaf size
+          ├── Local representation
+          └── Memory layout
+```
+
+A theoretically efficient tree can still perform poorly if its leaves are too small, too large, or badly distributed in memory.
+
+This is another example of the difference between **algorithmic complexity** and **real-world performance**.
+
+The Rope's tree gives us scalable structural organization, but that organization comes with pointer-heavy metadata and potentially fragmented memory.
+
+The next section examines those costs directly: **how a Rope's memory layout affects cache behavior, allocation overhead, and practical performance.**
+
+</Aside>
+
+## Summary
+
+Leaf size is a key tuning decision for a Rope.
+
+Very small leaves reduce local edit work but create heavy structural overhead, while very large leaves reduce tree overhead but make local modifications costlier.
+
+The right granularity sits between these extremes and depends on the workload, so a Rope is best thought of as a family of implementations rather than one rigid structure.
+
+Leaf size also changes the number of leaves and therefore the number of tree nodes, so it indirectly shapes tree height and traversal depth. Because the leaf is a second level of data-structure design, a well-balanced tree can still perform poorly if its text chunks are poorly sized or awkwardly laid out.
+
+The next section turns to the physical consequences of this choice: **how a Rope's memory layout affects cache behavior and practical performance.**

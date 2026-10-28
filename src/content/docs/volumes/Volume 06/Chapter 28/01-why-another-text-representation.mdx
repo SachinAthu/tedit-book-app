@@ -1,0 +1,322 @@
+---
+title: 28.1 Why Another Text Representation?
+description: "Explains why contiguous text struggles with large structural edits and how dividing a document into tree-organized fragments changes where work happens."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+By this point, we have already seen several ways to represent editable text.
+
+A simple string stores the document as one contiguous sequence of characters. A vector of lines divides that sequence according to the document's line structure. A gap buffer introduces a movable gap so that nearby insertions and deletions can be performed without repeatedly shifting the entire remainder of the text. A piece table takes a different approach by keeping text in buffers and representing the current document as a sequence of pieces.
+
+Each representation solves a particular set of problems.
+
+That raises an important question:
+
+> **If these structures already work, why do we need another one?**
+
+The answer is not that the previous structures are inadequate. The answer is that **different workloads create different performance pressures**.
+
+A text editor may need to handle documents that are extremely large, perform edits far from one another, or repeatedly restructure large portions of a document. As the amount of text grows, the cost of maintaining a large contiguous structure can become increasingly important.
+
+A Rope approaches this problem from a different direction.
+
+Instead of trying to organize the entire document as one contiguous sequence, it divides the text into smaller pieces and organizes those pieces into a tree.
+
+```text
+                    Rope
+                     │
+              ┌──────┴──────┐
+              │             │
+            Node           Node
+           /    \         /    \
+        Text    Text    Text    Text
+```
+
+The document is still logically one sequence of characters.
+
+Physically, however, those characters no longer have to live in one large contiguous region.
+
+This distinction is the central idea behind the Rope.
+
+## The Problem with Large Contiguous Text
+
+Consider a document represented as a single character array:
+
+```text
++------------------------------------------------------+
+| A | B | C | D | E | F | G | H | I | J | K | L | ... |
++------------------------------------------------------+
+```
+
+Suppose we insert several characters near the beginning:
+
+```text
+ABCDEF...
+  ↑
+insert
+```
+
+Characters following the insertion point may need to move:
+
+```text
+Before:
+
+A B C D E F G H I J
+  ↑
+
+After:
+
+A X Y C D E F G H I J
+```
+
+The underlying representation must make room for the new characters.
+
+For a sufficiently large document, moving large amounts of contiguous data can become expensive.
+
+The same problem appears when deleting text.
+
+```text
+A B C D E F G H I J
+    └───────┘
+      delete
+```
+
+The remaining characters may need to be shifted together to close the gap.
+
+The exact cost depends on the representation and the operation, as we examined in the previous chapters. The important point here is simply this:
+
+> **Contiguous storage can make large structural changes expensive because the physical layout of the text must be maintained.**
+
+A Rope asks whether we can avoid moving all of that text.
+
+## Divide the Document Instead
+
+Imagine that the document is divided into several chunks:
+
+```text
+"Hello "
+"this is "
+"a very "
+"large "
+"document..."
+```
+
+Logically, these pieces still form one document:
+
+```text
+"Hello " + "this is " + "a very " + "large " + "document..."
+```
+
+But they do not have to be stored as one giant character array.
+
+A Rope organizes those chunks into a tree:
+
+```text
+                    Root
+                   /    \
+                  /      \
+             "Hello "    Node
+                         /    \
+                  "this is "  Node
+                              /    \
+                         "a very "  "large ..."
+```
+
+The tree provides structure around the fragments.
+
+This gives us a fundamentally different way to think about editing.
+
+Instead of asking:
+
+> How do I move these characters to make room?
+
+we can often ask:
+
+> How do I rearrange the tree that references these pieces?
+
+That change in perspective is what makes the Rope interesting.
+
+## Why a Tree?
+
+A tree gives us a hierarchy.
+
+Consider four pieces of text:
+
+```text
+A
+B
+C
+D
+```
+
+They could be organized as:
+
+```text
+          Root
+         /    \
+        A      B
+```
+
+and then extended:
+
+```text
+              Root
+             /    \
+            Node   Node
+           /  \    /  \
+          A    B  C    D
+```
+
+The leaves contain the actual text fragments.
+
+The internal nodes organize those fragments.
+
+Reading the leaves from left to right reconstructs the original document:
+
+```text
+A → B → C → D
+```
+
+The tree therefore does not change the **logical** document.
+
+It changes how that document is **physically organized**.
+
+This distinction is important throughout this chapter:
+
+```text
+Logical document
+        │
+        ▼
+A sequence of characters
+        │
+        ▼
+Physical representation
+        │
+        ▼
+A tree of text fragments
+```
+
+The user still sees one document. The Rope is simply the machinery used to represent it.
+
+## A Different Performance Strategy
+
+The goal of a Rope is not to make every operation magically constant time.
+
+Instead, it changes where the work happens.
+
+With contiguous storage, modifying text can require moving characters.
+
+With a Rope, modifying text can instead require:
+
+- navigating the tree
+- splitting a text fragment
+- creating or removing nodes
+- joining subtrees
+- maintaining the tree's balance
+
+The cost therefore shifts from **moving large contiguous regions of text** toward **managing a tree structure**.
+
+That is an important trade.
+
+```text
+Contiguous representation
+
+Edit
+ │
+ ▼
+Move characters
+ │
+ ▼
+Maintain contiguous storage
+```
+
+versus:
+
+```text
+Rope
+
+Edit
+ │
+ ▼
+Navigate tree
+ │
+ ▼
+Split / join fragments
+ │
+ ▼
+Maintain tree structure
+```
+
+Neither strategy is universally better.
+
+For small documents and simple workloads, the overhead of a tree may be unnecessary. A contiguous representation can be simpler and faster because modern processors are very good at working with compact, contiguous memory.
+
+For very large documents or workloads involving substantial structural changes, however, the Rope's ability to keep text divided into manageable pieces can become valuable.
+
+## The Core Question
+
+The Rope therefore exists to address a particular class of problem:
+
+> **How can we represent a large sequence of editable text without requiring every structural modification to rearrange a large contiguous region of memory?**
+
+Its answer is:
+
+> **Divide the text into fragments and organize those fragments using a tree.**
+
+That answer introduces a new set of problems.
+
+A tree must be navigated.
+
+Its height matters.
+
+Its nodes consume memory.
+
+Its fragments must be chosen carefully.
+
+And, most importantly, an unbalanced tree can lose the performance characteristics that motivated the design in the first place.
+
+Those are the problems we will explore throughout this chapter.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A data structure should not be introduced because it is more sophisticated than the previous one.
+
+It should be introduced because it solves a problem that matters.
+
+The Rope is useful precisely because it represents a different point in the design space:
+
+```text
+Simple
+  │
+  ├── contiguous representations
+  │
+  ├── gap-based representations
+  │
+  ├── piece-based representations
+  │
+  └── tree-based representations
+          │
+          ▼
+       Rope
+```
+
+The goal of this chapter is not to conclude that the Rope is the "best" text buffer.
+
+It is to understand **what problem the Rope solves, what it costs to solve it, and when that trade-off is worth making**.
+
+That distinction will become particularly important when we eventually decide which representation belongs in our own editor. Our baseline architecture deliberately favors simplicity and educational value, while allowing the document representation to be replaced if future requirements justify it.
+
+</Aside>
+
+## Summary
+
+We introduced the Rope as a tree of text fragments, a representation that sits at a different point in the design space than the contiguous, gap-based, and piece-based structures we studied earlier.
+
+Its central promise is that a document can remain one logical sequence while being physically divided into pieces organized by a tree, shifting the cost of large edits from moving text to restructuring a tree.
+
+This benefit is not universal; it is worth considering only for large or structurally demanding workloads.
+
+That shift does not eliminate work: the tree must be navigated, balanced, and allocated, and its nodes and metadata consume memory beyond the characters themselves. For small or edit-light documents, that overhead can outweigh the benefit.
+
+The next section examines the core idea directly: **how a single logical sequence can be represented by many physical fragments organized into a tree.**

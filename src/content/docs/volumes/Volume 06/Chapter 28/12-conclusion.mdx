@@ -1,0 +1,73 @@
+---
+title: 28.12 Conclusion
+description: "Consolidates the Rope model and its trade-offs, then lists review questions, common mistakes, and a preview of Chapter 29's text buffer comparison."
+---
+
+A **Rope** represents a document as a tree of text fragments rather than as one contiguous sequence. The document remains a single logical sequence, but its physical storage is divided into leaves that hold chunks of text, organized by internal nodes whose subtree weights describe how much text each region represents.
+
+Editing therefore changes the _structure_ of the tree rather than shifting a large contiguous region:
+
+```text
+            Document
+               │
+        ┌──────┴──────┐
+        │             │
+   Split          Concatenate
+        │             │
+        └──────┬──────┘
+               │
+               ▼
+        Text Fragments
+        (leaves + tree)
+```
+
+Insertion splits the Rope at the target position and joins new text between the parts; deletion splits around a region and discards the middle. Position lookup navigates the tree using subtree weights. Both operations restructure the tree and rely on balancing to keep the height, and therefore the navigation cost, under control.
+
+This design carries consequences. An unbalanced Rope can degenerate into a chain that loses its logarithmic advantage, and leaf size creates a trade-off between tree overhead and local edit cost. Pointers, metadata, allocation, and cache behavior mean a Rope uses more than the sum of its characters. Its strengths—large-scale structural edits without moving large regions—are greatest for large, structurally demanding workloads, which our small educational editor does not require. As with the other representations, the question is not which is "best," but whose trade-offs fit the workload.
+
+## Exercises
+
+### Review Questions
+
+- What two kinds of nodes does a Rope contain, and what does each do?
+- How do subtree weights make position lookup efficient?
+- How are concatenation and splitting used to express insertion and deletion?
+- Why can an unbalanced Rope lose its performance advantage?
+- What trade-off does leaf size create?
+- How does a Rope's memory layout differ from a contiguous representation's?
+
+### Thought Experiments
+
+- Insert text repeatedly at the beginning of a large document.
+- Delete large blocks scattered across the document.
+- Build a Rope by repeated concatenation on one side.
+- Predict how the tree shape, height, and leaf count change.
+- Judge whether a Rope's complexity is justified for a small editor.
+
+## Common Mistakes
+
+### Confusing the logical and physical views
+
+The Rope keeps the document logically contiguous while storing text physically in fragments. Assuming that a Rope means the document itself is no longer in order confuses the logical sequence with its physical layout.
+
+### Treating the tree as automatically balanced
+
+A Rope is not automatically O(log n). Repeated edits can skew the tree into a near chain, so navigation may approach linear cost unless balancing keeps the height under control.
+
+### Assuming concatenation and splitting are always cheap
+
+Concatenating trees of very different heights may require restructuring, and splitting inside a large leaf may itself copy text. The cost depends on the tree, leaves, and balancing strategy, not only on the conceptual operation.
+
+### Ignoring leaf granularity
+
+Both extreme leaf sizes are poor. Tiny leaves create massive structural overhead, while huge leaves make local edits expensive. A Rope needs a reasonable granularity matched to its workload.
+
+### Judging a Rope only by Big-O
+
+A Rope's practical performance also depends on pointer chasing, node allocation, metadata, and cache behavior. A better asymptotic bound does not automatically mean lower real-world latency.
+
+## Preview of the Next Chapter
+
+**Chapter 29 — Comparing Text Buffers**
+
+The Rope represents text as a tree of fragments, just as the gap buffer and piece table restructure text in their own ways. The next chapter brings these representations together, comparing them against the workloads and requirements of our editor to decide which trade-offs actually matter for a document representation.

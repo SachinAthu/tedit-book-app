@@ -1,0 +1,843 @@
+---
+title: 28.10 Memory Layout and Cache Behavior
+description: "Examines Rope memory layout, pointer chasing, allocation, fragmentation, and cache behavior to explain why better Big-O does not guarantee lower latency."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+So far, we have mostly considered a Rope from the perspective of its abstract data structure: text is divided into fragments, those fragments are represented by leaves, and the leaves are connected through a tree.
+
+That description tells us **what the Rope looks like logically**.
+
+It does not yet tell us what the CPU actually experiences when the editor uses it.
+
+This distinction matters because a data structure does not execute in the abstract. It executes as machine instructions operating on memory. Two representations can have similar theoretical complexity while behaving very differently on real hardware.
+
+A Rope is a particularly useful example because its structure introduces something that simpler representations largely avoid:
+
+> **The text and the structure describing the text may be spread across many different memory locations.**
+
+That affects pointer traversal, cache utilization, allocation behavior, and ultimately latency.
+
+The result is an important engineering lesson:
+
+> **Asymptotic complexity describes how an algorithm scales. Memory layout helps determine how fast that algorithm actually runs.**
+
+This is why cache locality is considered alongside time complexity in practical data-structure analysis, rather than treating Big-O as the complete performance story. The book's engineering philosophy explicitly asks us to consider complexity, performance, memory implications, and simplicity together.
+
+## The CPU Does Not See a Tree
+
+Consider a simplified Rope:
+
+```text
+                    +-----------+
+                    | Internal  |
+                    |   Node    |
+                    +-----------+
+                       /       \
+                      /         \
+                     v           v
+              +---------+   +---------+
+              |  Leaf   |   |  Leaf   |
+              +---------+   +---------+
+                 |              |
+                 v              v
+              "Hello "       "world!"
+```
+
+Conceptually, this is easy to understand.
+
+But in memory, the objects might be located somewhere like this:
+
+```text
+Memory
+
+0x1000  Internal Node
+        ├── left  = 0x7300
+        └── right = 0xA900
+
+0x7300  Leaf Node
+        └── text = 0xB200
+
+0xA900  Leaf Node
+        └── text = 0xC700
+
+0xB200  "Hello "
+
+0xC700  "world!"
+```
+
+The addresses are illustrative, but the important point is real:
+
+**The logical tree does not imply that the physical objects are adjacent in memory.**
+
+The internal node may be far away from its children.
+
+The leaf node may be far away from its text storage.
+
+Another leaf may be somewhere else entirely.
+
+The CPU therefore has to follow addresses to discover the next object it needs.
+
+This is commonly called **pointer chasing**.
+
+## Pointer Chasing
+
+Suppose the editor needs to traverse a Rope from one leaf to another.
+
+At a high level, the operation looks simple:
+
+```text
+Current Node
+     │
+     ▼
+Read child pointer
+     │
+     ▼
+Go to child
+     │
+     ▼
+Read another pointer
+     │
+     ▼
+Go to next node
+```
+
+Each pointer contains an address.
+
+The CPU must obtain that address before it knows where the next object is located.
+
+Compare this with a contiguous array:
+
+```text
+Array
+
++------+------+------+------+------+
+|  A   |  B   |  C   |  D   |  E   |
++------+------+------+------+------+
+  ^
+  |
+  sequential memory
+```
+
+Once the CPU has accessed one element, nearby elements are usually located nearby in memory.
+
+A Rope has a less predictable access pattern:
+
+```text
+Node A
+   |
+   +-------> Node B
+                |
+                +-------> Node C
+                             |
+                             +-------> Leaf
+```
+
+The next address depends on data stored in the current object.
+
+This makes it harder for the processor to predict exactly what memory will be needed next.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A pointer-based data structure can have an excellent theoretical operation count while still suffering from expensive memory accesses.
+
+The CPU does not care that an operation is described as `O(log n)`.
+
+It cares how many instructions execute, how often memory must be fetched, whether that memory is already in cache, and whether the processor must wait for it.
+
+</Aside>
+
+## CPU Caches
+
+Modern processors do not normally access main memory for every load.
+
+They use several levels of increasingly large but slower memory caches.
+
+A simplified model is:
+
+```text
+CPU
+ │
+ ▼
+L1 Cache
+ │
+ ▼
+L2 Cache
+ │
+ ▼
+L3 Cache
+ │
+ ▼
+Main Memory
+```
+
+The exact hierarchy depends on the processor, but the general principle is consistent:
+
+> **Nearby, recently used data is much cheaper to access than data that must be fetched from farther away in the memory hierarchy.**
+
+This creates two important forms of locality.
+
+### Temporal locality
+
+If a program accesses some data, it is often likely to access the same data again soon.
+
+For example:
+
+```text
+read node
+read node
+read node
+```
+
+Keeping that node in a cache can make subsequent accesses inexpensive.
+
+### Spatial locality
+
+If a program accesses one memory location, it is often likely to access nearby locations soon.
+
+For example:
+
+```text
+array[100]
+array[101]
+array[102]
+array[103]
+```
+
+A contiguous representation benefits strongly from this behavior.
+
+This is one reason sequential processing of arrays is often extremely efficient even when the individual operations appear no more sophisticated than those of a pointer-based structure.
+
+## Why Leaves Are Different
+
+A Rope does not consist only of pointers.
+
+Its leaves contain actual text.
+
+That creates an important distinction.
+
+Consider:
+
+```text
+             Rope
+              │
+        +-----+-----+
+        │           │
+        v           v
+      Leaf         Leaf
+        │           │
+        v           v
+   "abcdefgh"   "ijklmnop"
+```
+
+Once the CPU reaches a leaf, it can often process several characters sequentially.
+
+For example:
+
+```text
+a b c d e f g h
+^
+|
+start here
+```
+
+If those characters are stored contiguously, processing the next character does not require following another pointer for every character.
+
+That is a significant advantage.
+
+The Rope therefore has **two different locality characteristics**:
+
+```text
+Tree structure
+    ↓
+pointer-based
+less predictable locality
+
+Text within a leaf
+    ↓
+contiguous
+good sequential locality
+```
+
+This distinction is important when thinking about the practical behavior of a Rope.
+
+The tree structure may cause scattered memory accesses, while the actual text inside each leaf can still be processed efficiently.
+
+This is also why leaf granularity matters. Chapter 28.9 established how leaf size determines the balance between structural overhead and local text processing. Here, we are concerned with the consequence of that choice for the memory hierarchy rather than re-examining the choice itself.
+
+## Sequential Traversal
+
+Imagine rendering a document from beginning to end.
+
+The editor eventually needs to visit the document's text in order:
+
+```text
+Leaf 1 → Leaf 2 → Leaf 3 → Leaf 4 → ...
+```
+
+Inside each leaf, processing can be sequential:
+
+```text
+Leaf 1
+
++---+---+---+---+---+---+
+| a | b | c | d | e | f |
++---+---+---+---+---+---+
+  →   →   →   →   →
+```
+
+That part has good spatial locality.
+
+However, moving between leaves may involve following pointers:
+
+```text
+Leaf 1
+   │
+   ▼
+Leaf 2
+   │
+   ▼
+Leaf 3
+   │
+   ▼
+Leaf 4
+```
+
+If those leaves happen to be physically close, traversal may behave well.
+
+If they are scattered:
+
+```text
+Memory
+
+Leaf 1 ──────────────┐
+                     │
+Leaf 2 ────────┐     │
+               │     │
+Leaf 3 ────────┘     │
+                     │
+Leaf 4 ──────────────┘
+```
+
+the processor may repeatedly need to access different regions of memory.
+
+So even a logically sequential document traversal does not necessarily produce completely sequential memory access.
+
+### Important distinction
+
+There are therefore two meanings of "sequential":
+
+**Logical sequential access**
+
+```text
+character 1
+character 2
+character 3
+character 4
+```
+
+**Physical sequential access**
+
+```text
+memory address A
+memory address A + 1
+memory address A + 2
+memory address A + 3
+```
+
+A Rope guarantees the first through its logical ordering.
+
+It does not guarantee the second.
+
+## Node Allocation
+
+The physical layout of a Rope also depends on how its nodes are allocated.
+
+A simple implementation might allocate nodes individually:
+
+```text
+allocate internal node
+allocate leaf
+allocate leaf
+allocate internal node
+allocate leaf
+...
+```
+
+Each allocation can place an object at a different location.
+
+Over time, this can produce a memory layout such as:
+
+```text
++--------+       +--------+
+| Node A |       | Node D |
++--------+       +--------+
+       +-----------+
+       |
+       v
++--------+                    +--------+
+| Leaf B |                    | Leaf E |
++--------+                    +--------+
+```
+
+The allocator is responsible for deciding where these objects live.
+
+The Rope's logical structure does not control their physical placement.
+
+This matters because a Rope can contain many small structural objects:
+
+```text
+Internal node
+Internal node
+Leaf node
+Internal node
+Leaf node
+Leaf node
+...
+```
+
+Every object carries some structural information.
+
+For example, a node may need:
+
+- child pointers
+- subtree weight
+- node type information
+- leaf-related metadata
+- references to text storage
+
+The exact representation depends on the implementation, but the general principle is the same:
+
+> **The Rope requires memory not only for text, but also for the structure that organizes that text.**
+
+## Metadata Is Real Memory
+
+It is easy to think of a Rope as simply:
+
+```text
+document text
+```
+
+But its physical representation is closer to:
+
+```text
+Text
++
+Leaf metadata
++
+Internal-node metadata
++
+Pointers
++
+Allocation overhead
+```
+
+For a sufficiently large document, the text itself may dominate memory usage.
+
+But for smaller documents, structural overhead can become proportionally more noticeable.
+
+Consider a simplified representation:
+
+```text
++-------------------+
+| Internal Node     |
+| left pointer      |
+| right pointer     |
+| weight            |
++-------------------+
+
++-------------------+
+| Leaf Node         |
+| text pointer      |
+| length            |
++-------------------+
+
++-------------------+
+| Text Storage      |
+| characters...     |
++-------------------+
+```
+
+The user sees only the characters.
+
+The program must store all three layers.
+
+This is one of the reasons the Rope's memory efficiency cannot be judged by asking only:
+
+> How many characters does the document contain?
+
+A better question is:
+
+> How many characters, nodes, pointers, metadata fields, and allocations are required to represent this particular document?
+
+## Fragmentation
+
+Another consequence of separately allocated nodes and leaves is **memory fragmentation**.
+
+Fragmentation does not necessarily mean that the Rope is broken or unusable. It simply means that related objects may be distributed across different regions of memory.
+
+For example:
+
+```text
+Memory
+
+[unrelated data]
+[Leaf A]
+[other allocation]
+[Node]
+[unrelated data]
+[Leaf B]
+[other allocation]
+[Leaf C]
+```
+
+The Rope's logical order might be:
+
+```text
+Leaf A → Leaf B → Leaf C
+```
+
+while its physical order is:
+
+```text
+Leaf A
+
+        Leaf B
+
+                Leaf C
+```
+
+This can reduce spatial locality.
+
+The effect depends heavily on the implementation and allocator. A carefully designed Rope can improve locality through techniques such as pooling or arena-style allocation, while a simple implementation using many independent allocations may experience worse locality.
+
+The important lesson is not that every Rope must be heavily fragmented.
+
+It is this:
+
+> **A pointer-based representation gives the implementation less natural physical locality than a contiguous representation.**
+
+Achieving good locality becomes another engineering concern.
+
+## A Better Complexity Does Not Guarantee Better Latency
+
+Suppose two representations perform an operation in:
+
+```text
+Representation A: O(n)
+Representation B: O(log n)
+```
+
+It is tempting to conclude immediately:
+
+```text
+B must be faster
+```
+
+That conclusion is incomplete.
+
+Imagine that Representation A performs a small amount of work over contiguous memory:
+
+```text
+A → A+1 → A+2 → A+3 → A+4
+```
+
+while Representation B performs fewer logical steps but repeatedly follows pointers:
+
+```text
+A → 0x7300 → 0x1A00 → 0xB900 → 0x4200
+```
+
+The second operation may involve more expensive memory behavior.
+
+The theoretical algorithm is still `O(log n)`.
+
+Nothing about that complexity statement is wrong.
+
+It simply does not describe the full cost of execution on a real processor.
+
+This is why practical performance has several dimensions:
+
+```text
+Algorithm
+    │
+    ├── Time complexity
+    │
+    ├── Space complexity
+    │
+    ├── Memory locality
+    │
+    ├── Allocation behavior
+    │
+    └── Constant factors
+```
+
+The book's complexity guidelines explicitly treat cache locality and latency as engineering considerations alongside Big-O analysis.
+
+## The Cost of a Cache Miss
+
+A useful mental model is to imagine that the CPU asks:
+
+> "Do I already have this memory?"
+
+If the required data is in a nearby cache, execution can continue relatively quickly.
+
+If not, the processor may have to wait while the data is fetched from a lower level of the memory hierarchy.
+
+Conceptually:
+
+```text
+CPU
+ │
+ │ data available
+ ▼
+Cache
+ │
+ └── continue
+
+CPU
+ │
+ │ data unavailable
+ ▼
+Lower cache / RAM
+ │
+ ▼
+fetch data
+ │
+ ▼
+continue
+```
+
+A single cache miss is not necessarily catastrophic.
+
+The problem is repetition.
+
+If a workload repeatedly follows pointers to unrelated memory locations, those misses can accumulate.
+
+This is especially relevant to operations that traverse Rope structure frequently.
+
+The theoretical number of tree nodes visited might remain small, but the cost of retrieving those nodes from memory can vary considerably depending on where they reside.
+
+## Hardware and Implementation Matter
+
+There is no universal statement such as:
+
+> "Ropes are slow because they use pointers."
+
+That would be too simplistic.
+
+The actual behavior depends on several factors:
+
+```text
+                 Rope Performance
+                       │
+       +---------------+---------------+
+       │               │               │
+   Node layout     Leaf layout      Allocator
+       │               │               │
+       +---------------+---------------+
+                       │
+                    CPU cache
+                       │
+                    Hardware
+```
+
+Two Rope implementations can therefore behave differently even when they implement the same abstract data structure.
+
+An implementation can deliberately improve locality by:
+
+- storing related metadata together
+- allocating nodes from contiguous pools
+- reducing unnecessary indirection
+- keeping leaf text contiguous
+- choosing suitable leaf sizes
+- reusing allocated structures where practical
+
+These techniques do not eliminate the structural nature of the Rope, but they can reduce some of its memory-system costs.
+
+This is a useful reminder that a data structure is not merely an abstract diagram.
+
+There is always a second question:
+
+> **How is that structure laid out in memory?**
+
+## Comparing the Mental Models
+
+It helps to place the Rope beside a contiguous representation.
+
+### Contiguous representation
+
+```text
+Memory
+
++----+----+----+----+----+----+----+----+
+| A  | B  | C  | D  | E  | F  | G  | H  |
++----+----+----+----+----+----+----+----+
+```
+
+The text occupies a continuous region.
+
+Sequential traversal naturally follows nearby addresses.
+
+### Rope
+
+```text
+Tree structure
+
+             Node
+            /    \
+           /      \
+        Leaf      Leaf
+         |          |
+       Text       Text
+```
+
+The text remains logically continuous, but its physical representation is distributed.
+
+```text
+Memory
+
+[Node]       [Leaf]      [Text]
+       [Leaf]       [Node]
+              [Text]
+```
+
+The Rope trades some natural memory locality for structural flexibility.
+
+That trade is not inherently good or bad.
+
+It is useful when the flexibility provided by the structure matters enough to justify the additional machinery.
+
+## What This Means for an Editor
+
+Now consider how our terminal editor actually uses its Document.
+
+The Renderer reads the visible document contents and produces a complete frame. Our rendering architecture intentionally uses a full-screen redraw strategy, with the Renderer reading Editor State rather than maintaining a separate editable representation.
+
+That means document traversal is not an abstract operation performed in isolation.
+
+The representation participates in the entire pipeline:
+
+```text
+Document
+    │
+    ▼
+Read text
+    │
+    ▼
+Renderer
+    │
+    ▼
+Screen Buffer
+    │
+    ▼
+Terminal
+```
+
+A representation that makes structural edits efficient may introduce additional work when the editor frequently traverses text sequentially.
+
+This does not mean a Rope cannot be used for rendering.
+
+It means that **editing performance is only one part of the workload**.
+
+The representation must be considered against the complete behavior of the application.
+
+Our project explicitly prioritizes simplicity, readability, and educational value over advanced optimization techniques.
+
+That makes the memory-system cost of a Rope especially relevant to the design discussion: additional nodes, pointers, metadata, and less predictable locality are not free complexity.
+
+## The Broader Engineering Lesson
+
+The Rope gives us a useful example of a principle that applies far beyond text editors.
+
+When evaluating a data structure, there are at least three layers of reasoning:
+
+```text
+                    Data Structure
+                          │
+             +------------+------------+
+             │                         │
+       Logical behavior          Physical behavior
+             │                         │
+        Big-O analysis          Memory layout
+             │                         │
+             +------------+------------+
+                          │
+                          ▼
+                   Real performance
+```
+
+The first layer asks:
+
+> How many operations are required?
+
+The second asks:
+
+> What memory does the CPU actually have to access to perform them?
+
+The third asks:
+
+> What does that mean for the application's real workload?
+
+A Rope can have excellent asymptotic behavior for certain editing operations while still paying costs associated with pointer chasing, node allocation, metadata, and cache locality.
+
+Conversely, a simpler contiguous representation can sometimes perform surprisingly well because modern processors are extremely effective at processing predictable, contiguous memory.
+
+Neither observation invalidates the other.
+
+They describe different aspects of the same design.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+**Big-O is a model of algorithmic growth, not a stopwatch.**
+
+A good data structure must be evaluated at several levels:
+
+```text
+Algorithmic complexity
+        +
+Memory consumption
+        +
+Cache behavior
+        +
+Allocation behavior
+        +
+Actual workload
+        =
+Practical performance
+```
+
+This is why choosing a text representation cannot be reduced to finding the data structure with the "best" Big-O complexity.
+
+The correct question is:
+
+> **Which representation provides the right performance characteristics for the workload we actually have, at an acceptable implementation and memory cost?**
+
+That question will become especially important in the next section, where we examine Rope behavior across different workloads rather than treating document size alone as the deciding factor.
+
+</Aside>
+
+## Summary
+
+A Rope's logical tree structure has physical consequences.
+
+- Internal nodes and leaves may be distributed across memory.
+- Pointer chasing can produce less predictable memory access.
+- Text within a leaf can still benefit from contiguous storage and sequential locality.
+- Separately allocated nodes introduce allocation and metadata overhead.
+- Fragmented memory can reduce spatial locality.
+- Cache behavior can affect real execution time even when asymptotic complexity remains unchanged.
+- Rope performance depends on implementation details, allocator behavior, leaf layout, and hardware.
+- A better Big-O complexity does not automatically produce lower real-world latency.
+- Practical data-structure evaluation must consider both algorithmic complexity and the memory system.
+
+The important lesson is simple:
+
+> **A data structure's shape in theory and its layout in memory are two different things.**
+
+For a Rope, understanding both is necessary to understand its actual performance.
+
+Two implementations of the same logical Rope can therefore differ substantially in practice because their node layout, allocator, and leaf strategy determine how often the CPU stalls on memory. Locality is not a property of the abstract tree but of the concrete objects and addresses it produces.
+
+The next section applies these ideas to the workloads that motivate a Rope, examining **how Rope behavior scales across different editing patterns rather than treating document size alone as the deciding factor.**

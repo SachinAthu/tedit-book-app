@@ -1,0 +1,527 @@
+---
+title: 28.4 Finding a Position in a Rope
+description: "Shows how subtree weights guide a Rope from a logical character position down to the containing leaf, at a cost set by tree height."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A text editor constantly needs to answer questions such as:
+
+> Which character corresponds to logical position 15?
+
+With a contiguous string, this is straightforward: position 15 is simply the fifteenth element of the sequence.
+
+With a Rope, the text is divided among multiple leaves. We therefore need a way to navigate the tree and determine **which leaf contains a requested logical position**.
+
+This is where the subtree weights introduced in the previous section become important.
+
+## The Position Is Logical
+
+First, we need to establish what position means.
+
+Suppose the document is:
+
+```text
+Hello world! from Rope
+```
+
+and we number its characters from the beginning:
+
+```text
+0 1 2 3 4 5 6 7 8 9 ...
+H e l l o   w o r l d ...
+```
+
+A position identifies a location in the **logical document sequence**.
+
+It does not identify:
+
+- a memory address
+- a particular tree node
+- a byte offset in a UTF-8 file
+- a terminal screen position
+
+The Rope's job is to translate that logical position into the appropriate location within its physical tree.
+
+This is similar to the distinction established earlier between a logical document position and its physical representation.
+
+## A Simple Rope
+
+Consider this Rope:
+
+```text
+                     [22]
+                    /    \
+                 [12]    [10]
+                /   \    / \
+               A     B  C   D
+```
+
+Suppose the leaves contain:
+
+```text
+A = "Hello "
+B = "world!"
+C = " from "
+D = "Rope"
+```
+
+The exact numbers in the diagram would depend on the actual fragment lengths. For this example, we will use the subtree weights shown to illustrate navigation.
+
+The important information is:
+
+```text
+Left subtree  → 12 characters
+Right subtree → 10 characters
+Total         → 22 characters
+```
+
+The root therefore tells us something useful immediately:
+
+> The first 12 logical characters are represented by the left subtree.
+
+Everything after those belongs to the right subtree.
+
+## Finding a Position
+
+Suppose we want to find logical position `5`.
+
+We start at the root:
+
+```text
+                     [22]
+                    /    \
+                 [12]    [10]
+                  ↑
+```
+
+The left subtree contains 12 characters.
+
+Since:
+
+```text
+5 < 12
+```
+
+position 5 must be somewhere inside the left subtree.
+
+So we move left.
+
+```text
+                 [12]
+                /   \
+               A     B
+```
+
+We continue the same reasoning.
+
+The process is recursive:
+
+```text
+At each internal node:
+
+Is the requested position
+inside the left subtree?
+
+Yes → go left.
+
+No → subtract the left subtree's size
+     and go right.
+```
+
+Eventually, we reach a leaf.
+
+## Moving Right
+
+Now suppose we want position `15`.
+
+At the root:
+
+```text
+                     [22]
+                    /    \
+                 [12]    [10]
+                         ↑
+```
+
+The first 12 positions belong to the left subtree.
+
+Because:
+
+```text
+15 > 12
+```
+
+the desired position lies in the right subtree.
+
+But we cannot continue using `15` as though the right subtree also started at position zero.
+
+We adjust the position:
+
+```text
+15 - 12 = 3
+```
+
+So inside the right subtree, we are looking for position `3`.
+
+Conceptually:
+
+```text
+Global position
+       │
+       ▼
+      15
+       │
+       │ subtract 12
+       ▼
+Local position
+       3
+```
+
+This is the key operation that allows the search to continue recursively.
+
+## The General Rule
+
+At an internal node, let:
+
+```text
+left_weight
+```
+
+represent the number of characters contained in the left subtree.
+
+For a requested position `p`:
+
+```text
+if p < left_weight
+    search the left subtree
+else
+    search the right subtree
+    using position p - left_weight
+```
+
+The process continues until we reach a leaf.
+
+In simplified form:
+
+```text
+                 Node
+                /    \
+             Left    Right
+              │
+              │ left_weight
+              ▼
+
+p < left_weight?
+   │
+   ├── yes → Left
+   │
+   └── no  → Right
+             position = p - left_weight
+```
+
+This is the basic navigation algorithm of a weighted Rope.
+
+## Why the Weights Matter
+
+Without subtree weights, the tree would tell us how fragments are organized, but not how much text each subtree represents.
+
+Consider:
+
+```text
+                     Root
+                    /    \
+                  Node   Node
+                 /  \   /  \
+                A    B C    D
+```
+
+If we ask:
+
+> Which leaf contains character 500,000?
+
+the tree structure alone does not tell us which direction to take.
+
+We would need to inspect the amount of text represented by the preceding fragments.
+
+Weights provide that information directly:
+
+```text
+                     [5000000]
+                    /        \
+               [3000000]    [2000000]
+```
+
+Now the tree itself can guide the search.
+
+This is an example of a broader data-structure principle:
+
+> **Metadata can make structural navigation efficient.**
+
+The metadata does not contain the requested character. It tells us **where to look for it**.
+
+## From Tree Navigation to Character Access
+
+Once the search reaches a leaf, we still need to find the character inside that leaf.
+
+Suppose the search determines that the requested position lies inside:
+
+```text
++----------------+
+| "text editor"  |
++----------------+
+```
+
+and the local position is `4`.
+
+The Rope has now completed the tree portion of the lookup.
+
+The final step is simply:
+
+```text
+leaf text + local position
+```
+
+So the complete operation has two conceptual stages:
+
+```text
+Logical document position
+          │
+          ▼
+   Navigate Rope tree
+          │
+          ▼
+      Find leaf
+          │
+          ▼
+   Calculate local offset
+          │
+          ▼
+      Access text
+```
+
+This separation is useful because the tree handles **large-scale navigation**, while the leaf handles **local character access**.
+
+## Why Balance Matters
+
+The efficiency of this search depends heavily on the height of the tree.
+
+Consider a well-shaped tree:
+
+```text
+                  Root
+                /      \
+              Node     Node
+             /  \     /  \
+            A    B   C    D
+```
+
+The search reaches a leaf after only a few levels.
+
+Now consider a badly shaped Rope:
+
+```text
+Root
+  \
+   Node
+     \
+      Node
+        \
+         Node
+           \
+            Leaf
+```
+
+The tree has effectively become a chain.
+
+Searching for a position now requires walking through many nodes.
+
+This is why **balancing is not an optional detail**.
+
+The Rope's tree structure is intended to make navigation efficient. If the tree becomes excessively deep, that advantage can disappear.
+
+We will examine this problem in detail in Section 28.7.
+
+## Position Lookup Is Not the Same as Traversing the Document
+
+There is an important distinction between these two operations:
+
+```text
+Find position 500,000
+```
+
+and:
+
+```text
+Read every character from position 0
+through position 500,000
+```
+
+The first is a **position lookup**.
+
+The second is a **sequential traversal**.
+
+A Rope's tree structure is particularly useful for the first kind of operation because subtree weights allow it to skip over entire regions of the document.
+
+For example:
+
+```text
+                     [1,000,000]
+                    /           \
+              [700,000]       [300,000]
+```
+
+If we want position `900,000`, we immediately know that it lies in the right subtree.
+
+We do not need to inspect the first 700,000 characters individually.
+
+Instead:
+
+```text
+900,000 - 700,000
+=
+200,000
+```
+
+and continue searching within the smaller subtree.
+
+The tree therefore lets the search operate at the level of **subtrees rather than individual characters**.
+
+## What Happens When the Position Is Near a Boundary?
+
+Suppose:
+
+```text
+                     [100]
+                    /     \
+                  [60]    [40]
+```
+
+and we request position `60`.
+
+The exact convention for whether positions are zero-based and how boundary positions are interpreted must be defined by the Rope implementation.
+
+The important conceptual point is that the algorithm must distinguish:
+
+- positions belonging to the left subtree
+- positions belonging to the right subtree
+- the boundary between them
+
+This is one reason precise position semantics matter in text data structures.
+
+A production implementation should define these rules explicitly rather than relying on informal assumptions.
+
+## Complexity
+
+If the Rope is reasonably balanced, the height of the tree grows approximately with the logarithm of the amount of represented text.
+
+Therefore, navigating from the root to a leaf generally requires approximately:
+
+```text
+O(log n)
+```
+
+tree steps for a balanced structure, ignoring the cost of accessing or modifying the text inside the leaf.
+
+This is one of the key performance properties of a Rope.
+
+However, that statement requires an important qualification:
+
+> **A Rope is not automatically O(log n).**
+
+The bound depends on the tree remaining sufficiently balanced and on the implementation's metadata and leaf representation.
+
+An unbalanced Rope can approach:
+
+```text
+O(n)
+```
+
+tree traversal in the worst structural case.
+
+We will return to this distinction when we examine balancing and complexity.
+
+## The Complete Lookup
+
+We can now visualize the complete operation:
+
+```text
+Logical Position
+       │
+       ▼
++-------------------+
+| Start at Root     |
++-------------------+
+       │
+       ▼
++-------------------+
+| Inspect Weight    |
++-------------------+
+       │
+       ├───────────────┐
+       │               │
+       ▼               ▼
+   Go Left         Go Right
+                       │
+                       ▼
+               Adjust Position
+       │               │
+       └───────┬───────┘
+               ▼
+        Repeat at Node
+               │
+               ▼
+          Reach Leaf
+               │
+               ▼
+      Local Leaf Offset
+               │
+               ▼
+        Character/Text
+```
+
+The important idea is that the Rope uses the tree's structure and metadata to turn a global logical position into a local position inside one text fragment.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The Rope's subtree weights are an example of **useful metadata**.
+
+They do not change the document.
+
+They do not contain additional user-visible text.
+
+Instead, they provide information that makes the structure easier to navigate.
+
+```text
+Document text
+     │
+     ├── actual content → leaves
+     │
+     └── navigation information → subtree metadata
+```
+
+This pattern appears throughout computer science: additional information can consume memory, but in exchange it can reduce the amount of work required to answer important queries.
+
+For a Rope, the fundamental query is:
+
+> **Where is logical position `p`?**
+
+Once position lookup is understood, the next question becomes much more interesting:
+
+> **How can we combine and divide Ropes efficiently?**
+
+That leads directly to concatenation and splitting.
+
+</Aside>
+
+## Summary
+
+Position lookup in a Rope translates a logical character position into a location inside one text fragment.
+
+Using subtree weights, the Rope navigates from the root toward the appropriate leaf, going left when the position falls inside the left subtree and subtracting the left weight before moving right.
+
+For a balanced tree this navigation is logarithmic, but it depends on the tree staying reasonably shaped.
+
+The final step—indexing inside the chosen leaf—is separate from the tree walk, so total cost combines logarithmic navigation with whatever work the leaf representation requires. If the tree degenerates into a chain, the same lookup approaches linear time no matter how efficient the weights are.
+
+The next section builds on this: **once we can locate positions, we can examine the structural operations of concatenation and splitting that make editing possible.**

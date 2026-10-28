@@ -1,0 +1,630 @@
+---
+title: 28.5 Concatenation and Splitting
+description: "Explains concatenation and splitting as structural Rope operations that join or divide trees and can cut a leaf at an arbitrary position."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Two of the most important operations in a Rope are **concatenation** and **splitting**.
+
+They may sound simple, but they reveal why the tree representation is useful.
+
+Concatenation asks:
+
+> How do we join two sequences of text?
+
+Splitting asks:
+
+> How do we divide one sequence at a particular logical position?
+
+Together, these operations provide the building blocks for many Rope editing operations.
+
+## Concatenating Two Ropes
+
+Suppose we have two independent Ropes.
+
+The first contains:
+
+```text
+Hello world
+```
+
+and the second contains:
+
+```text
+ from Rope
+```
+
+Logically, we want:
+
+```text
+Hello world from Rope
+```
+
+With a contiguous character array, concatenating two sequences can require allocating a new region and copying the contents of both sequences.
+
+A Rope can approach the same operation structurally.
+
+Suppose:
+
+```text
+Rope A:
+
+       A
+      / \
+    ... ...
+
+
+Rope B:
+
+       B
+      / \
+    ... ...
+```
+
+We can create a new root:
+
+```text
+             Root
+            /    \
+         Rope A  Rope B
+```
+
+The resulting Rope represents:
+
+```text
+Rope A + Rope B
+```
+
+No single contiguous buffer containing the complete combined text is necessarily required.
+
+The important idea is:
+
+> **Concatenation can be represented by connecting existing Rope structures rather than immediately copying all their text into one new sequence.**
+
+## Concatenation Preserves Order
+
+The order of the children determines the order of the document.
+
+Consider:
+
+```text
+             Root
+            /    \
+       "Hello"   "world"
+```
+
+The resulting document is:
+
+```text
+Hello world
+```
+
+If the children are reversed:
+
+```text
+             Root
+            /    \
+       "world"   "Hello"
+```
+
+the result becomes:
+
+```text
+worldHello
+```
+
+Therefore, concatenation is an ordered operation:
+
+```text
+A + B
+```
+
+is different from:
+
+```text
+B + A
+```
+
+The Rope must preserve that ordering throughout its tree structure.
+
+## Concatenating Larger Trees
+
+The two Ropes do not have to be simple leaves.
+
+For example:
+
+```text
+Rope A:
+
+             A
+            / \
+           X   Y
+```
+
+and:
+
+```text
+Rope B:
+
+             B
+            / \
+           Z   W
+```
+
+can be combined as:
+
+```text
+                  Root
+                 /    \
+                A      B
+               / \    / \
+              X   Y  Z   W
+```
+
+The resulting sequence is:
+
+```text
+X → Y → Z → W
+```
+
+The existing subtrees remain intact.
+
+This is one of the most attractive properties of tree-based text representation: **large structures can sometimes be combined by changing a small number of structural relationships**.
+
+However, there is an important qualification.
+
+Simply creating a new root does not guarantee that the resulting Rope is well balanced.
+
+For example:
+
+```text
+                 Root
+                /    \
+          Very Large  Tiny
+             Rope      Rope
+```
+
+may produce an undesirable shape.
+
+A Rope implementation may therefore need to rebalance or otherwise restructure the tree after concatenation.
+
+We will examine that issue in Section 28.7.
+
+## Splitting a Rope
+
+Concatenation combines two sequences.
+
+Splitting does the opposite.
+
+Suppose the document is:
+
+```text
+Hello beautiful world
+```
+
+and we split it at a particular logical position:
+
+```text
+Hello beautiful world
+     ↑
+   split
+```
+
+The desired result is conceptually:
+
+```text
+Left Rope:
+
+Hello
+```
+
+and:
+
+```text
+Right Rope:
+
+ beautiful world
+```
+
+The original Rope has been divided into two independent logical sequences:
+
+```text
+Original
+   │
+   ▼
+┌───────────────┐
+│ Left | Right  │
+└───────────────┘
+```
+
+The exact position determines where the boundary occurs.
+
+## Splitting the Tree
+
+The challenge is that the requested position may fall at different places in the tree.
+
+Consider:
+
+```text
+                  Root
+                 /    \
+               [12]   [8]
+              /  \    / \
+             A    B  C   D
+```
+
+Suppose we want to split somewhere inside the left subtree.
+
+The Rope first navigates to the position using the subtree weights discussed in Section 28.4.
+
+Once the appropriate leaf is found, the tree can be divided around that position.
+
+Conceptually:
+
+```text
+                 Original
+                    │
+                    ▼
+              Find split position
+                    │
+                    ▼
+             Locate affected leaf
+                    │
+                    ▼
+              Divide the structure
+               /             \
+          Left Rope        Right Rope
+```
+
+The exact algorithm depends on the Rope implementation, but the important point is that **splitting is a structural operation guided by the tree**.
+
+## What If the Split Falls Inside a Leaf?
+
+This is an important case.
+
+Suppose a leaf contains:
+
+```text
+"Hello world"
+```
+
+and we want to split after `"Hello"`:
+
+```text
+"Hello| world"
+      ↑
+```
+
+The leaf itself must be divided:
+
+```text
+"Hello"
+" world"
+```
+
+The Rope can then place those fragments on opposite sides of the split.
+
+Conceptually:
+
+```text
+Before:
+
+       Leaf
+        │
+ "Hello world"
+
+
+After:
+
+       Left        Right
+        │            │
+    "Hello"      " world"
+```
+
+The tree therefore does not require every logical boundary to already exist as a leaf boundary.
+
+A split can create a new boundary inside an existing text fragment.
+
+## Splitting Is More Than Cutting a String
+
+This distinction is important.
+
+A simple string split might be thought of as:
+
+```text
+copy left part
+copy right part
+```
+
+A Rope split instead involves:
+
+```text
+locate position
+      ↓
+identify affected leaf
+      ↓
+possibly split leaf text
+      ↓
+reorganize tree
+      ↓
+produce two Ropes
+```
+
+The text itself may be divided, but much of the existing tree structure can potentially be reused or rearranged rather than reconstructing the entire document from scratch.
+
+This is one of the reasons Rope implementations can support efficient structural operations.
+
+## Concatenation and Splitting Work Together
+
+These two operations become particularly powerful when combined.
+
+Suppose the document is:
+
+```text
+A B C D
+```
+
+and we want to insert:
+
+```text
+X
+```
+
+between `B` and `C`.
+
+We can conceptually perform:
+
+```text
+Original
+   │
+   ▼
+Split at insertion position
+   │
+   ├───────────┐
+   ▼           ▼
+ Left         Right
+```
+
+giving:
+
+```text
+Left  = A B
+Right = C D
+```
+
+Then create a Rope for the inserted text:
+
+```text
+New = X
+```
+
+Finally concatenate:
+
+```text
+Left + New + Right
+```
+
+giving:
+
+```text
+A B X C D
+```
+
+The entire operation can therefore be expressed in terms of two primitive structural operations:
+
+```text
+Split
+  +
+Concatenate
+```
+
+This is an important characteristic of the Rope.
+
+## Deletion Uses the Same Idea
+
+Deletion can be expressed similarly.
+
+Suppose:
+
+```text
+A B C D E
+```
+
+and we want to delete:
+
+```text
+B C D
+```
+
+We can split around the region:
+
+```text
+A | B C D | E
+```
+
+producing:
+
+```text
+Left  = A
+Middle = B C D
+Right = E
+```
+
+Then discard the middle:
+
+```text
+Left + Right
+```
+
+producing:
+
+```text
+A E
+```
+
+Conceptually:
+
+```text
+Original
+    │
+    ▼
+Split at start
+    │
+    ▼
+Left | Remaining
+          │
+          ▼
+      Split at end
+          │
+          ▼
+    Left | Middle | Right
+          │
+          X discard
+          │
+          ▼
+       Left + Right
+```
+
+Again, the editor does not necessarily need to move all remaining characters into a new contiguous region.
+
+The operation is primarily a combination of tree operations.
+
+## Why This Matters
+
+At this point, we can see a major difference between a Rope and a contiguous representation.
+
+With contiguous storage, the central concern is often:
+
+> **How much text must be moved?**
+
+With a Rope, the central concern becomes:
+
+> **How much of the tree must be navigated and restructured?**
+
+The representation changes the type of work the editor performs.
+
+```text
+Contiguous representation:
+
+Edit
+ ↓
+Move text
+ ↓
+Maintain contiguous storage
+```
+
+versus:
+
+```text
+Rope:
+
+Edit
+ ↓
+Find position
+ ↓
+Split / join
+ ↓
+Maintain tree
+```
+
+Neither is inherently better.
+
+The Rope simply provides a different set of trade-offs.
+
+## The Cost of Structural Operations
+
+It would be incorrect to conclude that concatenation and splitting are always cheap.
+
+Several things can affect their actual cost:
+
+- tree height
+- balancing strategy
+- leaf size
+- amount of text inside a split leaf
+- metadata updates
+- memory allocation
+- tree restructuring
+
+For example, if the split occurs inside a leaf containing a large amount of text, dividing that leaf may itself involve moving or copying some characters.
+
+Likewise, concatenating two Ropes with very different heights may require additional restructuring to maintain a useful tree shape.
+
+Therefore, the Rope's performance comes from the **combination** of its tree structure, leaf representation, and balancing strategy—not from the tree alone.
+
+## A Useful Abstraction
+
+We can now describe Rope editing at a higher level:
+
+```text
+              Document
+                  │
+        ┌─────────┴─────────┐
+        │                   │
+      Split             Concatenate
+        │                   │
+        └─────────┬─────────┘
+                  │
+                  ▼
+              Edit Text
+```
+
+This is useful because higher-level operations do not need to think about every individual character movement.
+
+They can operate on structural transformations.
+
+For example:
+
+```text
+Insert
+  =
+Split + Concatenate
+
+Delete
+  =
+Split + Discard + Concatenate
+```
+
+These are conceptual decompositions; an optimized implementation may combine steps rather than literally execute each as a separate public operation.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Concatenation and splitting reveal one of the most important ideas behind the Rope:
+
+> **A large document can sometimes be modified by changing its structure rather than moving most of its contents.**
+
+That does not mean the Rope performs no copying.
+
+Text may still need to be copied when a leaf is split, and tree nodes may need to be allocated or reorganized.
+
+The advantage is that the amount of work can depend more strongly on the **tree structure and affected fragments** than on the total amount of text following an edit.
+
+But that advantage depends on one critical condition:
+
+```text
+Efficient tree operations
+        ↓
+Require a useful tree height
+        ↓
+Require balancing
+```
+
+If repeated edits produce a severely unbalanced tree, navigation and structural operations can become increasingly expensive.
+
+That is why the next major question is:
+
+> **How do we keep a Rope's tree balanced as the document changes?**
+
+</Aside>
+
+## Summary
+
+Concatenation and splitting are the two fundamental structural operations of a Rope.
+
+Concatenation joins two sequences by connecting their trees, while splitting divides one sequence at a logical position, possibly breaking a leaf apart.
+
+Together they let insertion and deletion be expressed as tree restructuring rather than as shifts of a large contiguous region.
+
+Neither operation is automatically cheap: concatenating trees of very different heights may require rebalancing, and splitting inside a large leaf may copy text to create the new boundary. Their advantage comes from touching the affected path and fragments rather than the entire document, provided the tree remains reasonably shaped.
+
+The next section applies these primitives directly to editing, examining **insertion and deletion in a Rope.**

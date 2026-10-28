@@ -1,0 +1,659 @@
+---
+title: 28.6 Insertion and Deletion
+description: "Expresses insertion and deletion as split-and-concatenate restructuring, limiting copying to affected fragments instead of shifting a suffix."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In the previous section, we saw that splitting and concatenating Ropes provide two fundamental structural operations.
+
+We can now use those operations to describe editing.
+
+The key idea is:
+
+> **Insertion and deletion can be expressed as transformations of the Rope's structure rather than as operations that necessarily shift a large contiguous region of text.**
+
+This is where the Rope begins to behave differently from the simpler representations we studied earlier.
+
+## Insertion
+
+Suppose the document contains:
+
+```text
+Hello world
+```
+
+and the user wants to insert:
+
+```text
+beautiful
+```
+
+between `Hello ` and `world`.
+
+The desired result is:
+
+```text
+Hello beautiful world
+```
+
+Conceptually, the document can be divided at the insertion position:
+
+```text
+Hello | world
+```
+
+This gives us two Ropes:
+
+```text
+Left  = "Hello "
+Right = "world"
+```
+
+We then create a Rope containing the new text:
+
+```text
+Middle = "beautiful "
+```
+
+Finally, we combine them:
+
+```text
+Left + Middle + Right
+```
+
+giving:
+
+```text
+Hello beautiful world
+```
+
+The conceptual operation is therefore:
+
+```text
+                Original
+                   │
+                   ▼
+             Split at p
+              /       \
+             /         \
+          Left         Right
+
+
+                New Text
+                   │
+                   ▼
+
+        Left + New Text + Right
+                   │
+                   ▼
+              New Document
+```
+
+The important observation is that the existing text does not have to be reconstructed as one large contiguous sequence.
+
+## A Tree-Level View
+
+Suppose the original Rope looks like:
+
+```text
+                 Root
+                /    \
+              A       B
+```
+
+where:
+
+```text
+A = "Hello "
+B = "world"
+```
+
+We want to insert:
+
+```text
+X = "beautiful "
+```
+
+The resulting structure can conceptually become:
+
+```text
+                  Root
+                 /    \
+               Node    B
+              /   \
+             A     X
+```
+
+The logical sequence is now:
+
+```text
+A → X → B
+```
+
+or:
+
+```text
+"Hello " + "beautiful " + "world"
+```
+
+The exact shape of the resulting tree depends on the implementation and its balancing rules.
+
+The important part is the logical relationship:
+
+```text
+Left → New Text → Right
+```
+
+## Inserting Into the Middle of a Leaf
+
+There is still a case where the Rope must modify actual text storage.
+
+Suppose a leaf contains:
+
+```text
+"Hello world"
+```
+
+and the insertion occurs between the two words:
+
+```text
+"Hello | world"
+```
+
+The leaf cannot simply remain unchanged.
+
+It may need to be divided:
+
+```text
+"Hello "
+"world"
+```
+
+The new text can then become another fragment:
+
+```text
+"Hello "
+"beautiful "
+"world"
+```
+
+and those fragments can be organized into the Rope.
+
+So the Rope does **not** eliminate text movement or copying completely.
+
+Instead, it limits the operation to the affected fragment rather than requiring the entire remainder of the document to be shifted.
+
+This distinction is important.
+
+> **Ropes reduce the need for large-scale contiguous movement; they do not make text manipulation free.**
+
+## Inserting at the Beginning
+
+Consider:
+
+```text
+Hello world
+```
+
+and insert:
+
+```text
+Start:
+```
+
+at position zero.
+
+Conceptually:
+
+```text
+New Text + Original
+```
+
+becomes:
+
+```text
+Start: Hello world
+```
+
+The existing Rope can remain structurally intact while a new piece is introduced before it.
+
+```text
+             Root
+            /    \
+       New Text  Original
+```
+
+This is particularly natural for a tree-based representation.
+
+## Inserting at the End
+
+Likewise, appending text is conceptually:
+
+```text
+Original + New Text
+```
+
+For:
+
+```text
+Hello world
+```
+
+and:
+
+```text
+!
+```
+
+we get:
+
+```text
+Hello world!
+```
+
+The operation is again a concatenation of existing structure and new text.
+
+This demonstrates an important symmetry:
+
+```text
+Beginning insertion → New + Existing
+Middle insertion    → Left + New + Right
+End insertion       → Existing + New
+```
+
+The middle case simply requires a split first.
+
+## Deletion
+
+Deletion can be expressed using the same primitives.
+
+Suppose the document contains:
+
+```text
+Hello beautiful world
+```
+
+and we want to remove:
+
+```text
+beautiful
+```
+
+The relevant region can be identified by two positions:
+
+```text
+Hello | beautiful | world
+       ↑         ↑
+      start     end
+```
+
+The Rope can conceptually split at the beginning and end of the region.
+
+First:
+
+```text
+Hello | beautiful world
+```
+
+Then:
+
+```text
+Hello | beautiful | world
+```
+
+We now have three logical pieces:
+
+```text
+Left
+Middle
+Right
+```
+
+The middle piece represents the text being deleted.
+
+We discard it and concatenate the remaining pieces:
+
+```text
+Left + Right
+```
+
+producing:
+
+```text
+Hello world
+```
+
+The conceptual process is:
+
+```text
+Original
+   │
+   ▼
+Split at deletion start
+   │
+   ▼
+Left | Remaining
+         │
+         ▼
+    Split at deletion end
+         │
+         ▼
+Left | Middle | Right
+         │
+         X
+         │
+         ▼
+     Left + Right
+```
+
+## Deleting a Single Character
+
+A single-character deletion is simply a special case.
+
+Suppose:
+
+```text
+Hello
+```
+
+and the character `l` at a particular position must be removed.
+
+Conceptually:
+
+```text
+He | l | lo
+```
+
+The middle fragment is discarded:
+
+```text
+He + lo
+```
+
+giving:
+
+```text
+Helo
+```
+
+An optimized Rope implementation does not necessarily perform three complete public operations for every character deletion.
+
+It can combine these steps internally.
+
+The decomposition is useful because it shows the **structural model** of the operation.
+
+## Deleting a Large Region
+
+The same approach works for a much larger region.
+
+Suppose:
+
+```text
+A B C D E F G H I J
+```
+
+and we remove:
+
+```text
+C D E F G H
+```
+
+The logical operation is:
+
+```text
+A B | C D E F G H | I J
+```
+
+followed by:
+
+```text
+A B + I J
+```
+
+The size of the deleted region does not necessarily determine how much of the remaining document must be physically moved.
+
+That is one of the important reasons tree-based representations can be attractive for large documents.
+
+## Line Operations
+
+A text editor also needs to handle line boundaries.
+
+Suppose the document contains:
+
+```text
+Hello world
+```
+
+and the user presses Enter between the words:
+
+```text
+Hello | world
+```
+
+The logical document becomes:
+
+```text
+Hello
+world
+```
+
+At the Rope level, the same structural principles apply.
+
+The text around the insertion position is divided, and a line boundary becomes part of the logical text representation.
+
+Similarly, deleting a line boundary can join two adjacent regions:
+
+```text
+Hello
+world
+```
+
+becomes:
+
+```text
+Hello world
+```
+
+The Rope itself does not need to give line operations a fundamentally different representation.
+
+A line break is simply part of the document sequence.
+
+The editor's higher-level Document model can interpret those boundaries as lines.
+
+## Why This Differs from a Gap Buffer
+
+The difference becomes clearer when we compare the conceptual operations.
+
+A gap buffer maintains a contiguous sequence with a gap:
+
+```text
+Text before gap
+       │
+       ▼
+AAAAAAA [     ] BBBBBBB
+                  ▲
+                  │
+             Text after gap
+```
+
+An insertion near the gap can be inexpensive because the gap provides available space.
+
+But if the next edit occurs far away, the gap may need to move.
+
+A Rope instead maintains multiple fragments:
+
+```text
+        Tree
+       /    \
+   Fragment Fragment
+      / \      / \
+     ... ...  ... ...
+```
+
+The Rope does not have to move one global gap to the new editing position.
+
+Instead, it navigates to the relevant part of the tree and restructures the affected region.
+
+This is a fundamental difference in strategy:
+
+```text
+Gap Buffer
+    ↓
+Move the editing gap
+
+
+Rope
+    ↓
+Navigate and restructure the tree
+```
+
+Neither strategy is universally superior.
+
+The important question is which workload each representation handles well.
+
+## The Cost Has Moved
+
+We can now see a recurring pattern.
+
+A contiguous representation tends to make us concerned about:
+
+```text
+Character movement
+```
+
+A Rope makes us concerned about:
+
+```text
+Tree navigation
+Tree restructuring
+Node allocation
+Metadata updates
+Balancing
+```
+
+The Rope has therefore **moved the source of complexity**.
+
+That is not a flaw.
+
+It is the fundamental purpose of choosing a different data structure.
+
+A good data structure does not necessarily eliminate work.
+
+It changes the work into something more appropriate for the workload it is designed to handle.
+
+## Why Balancing Becomes Critical
+
+There is an important consequence of using split and concatenation repeatedly.
+
+Imagine performing many edits:
+
+```text
+Insert
+   ↓
+Split
+   ↓
+Concatenate
+   ↓
+Insert
+   ↓
+Split
+   ↓
+Concatenate
+   ↓
+...
+```
+
+Each operation can change the tree's structure.
+
+If those changes consistently produce nodes on one side, the tree can become increasingly unbalanced:
+
+```text
+Root
+  \
+   Node
+     \
+      Node
+        \
+         Node
+           \
+            ...
+```
+
+At that point, the Rope may require many tree steps to locate a position.
+
+The performance advantage therefore depends not just on using a tree, but on maintaining a **useful tree shape**.
+
+This leads directly to the next major topic: balancing.
+
+## A More Complete Picture
+
+We can now describe the core editing model of a Rope:
+
+```text
+                 Edit
+                  │
+          ┌───────┴───────┐
+          │               │
+       Insert           Delete
+          │               │
+       Split             Split
+          │               │
+          ▼               ▼
+      Add text       Remove region
+          │               │
+          └───────┬───────┘
+                  ▼
+             Reorganize
+              the Rope
+                  │
+                  ▼
+             Maintain tree
+                  │
+                  ▼
+              New Document
+```
+
+This model is deliberately abstract.
+
+A real implementation may optimize these operations, combine multiple steps, reuse nodes, or choose a particular balancing strategy.
+
+But the conceptual model remains useful because it shows what makes the Rope different.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The Rope does not solve editing by making text immutable, nor does it eliminate all copying.
+
+Its key idea is more precise:
+
+> **Keep the document divided into manageable fragments so that structural changes do not automatically require moving the entire suffix of a large contiguous buffer.**
+
+That benefit comes with a requirement:
+
+```text
+Efficient editing
+       ↓
+Efficient navigation
+       ↓
+Reasonable tree height
+       ↓
+Good balancing
+```
+
+Without a well-shaped tree, the Rope can gradually lose the very performance characteristics that motivated its design.
+
+In the next section, we will examine **how Rope implementations maintain that useful tree shape and why balancing is central to their performance**.
+
+</Aside>
+
+## Summary
+
+Insertion and deletion in a Rope are expressed through the structural primitives of splitting and concatenation.
+
+An insertion splits at the target position and joins the new text between the two parts, while a deletion splits around the region and discards the middle.
+
+This moves the source of complexity from moving text to managing tree navigation and restructuring, which keeps the document divided into manageable fragments.
+
+The one place text must still be handled directly is inside an affected leaf, where an insertion can force a fragment to be divided. Repeated split-and-concatenate edits therefore depend on the tree retaining a useful shape; otherwise navigation and restructuring cost grows with the depth of the structure.
+
+The next section examines the requirement that makes all of this worthwhile: **keeping the tree balanced.**

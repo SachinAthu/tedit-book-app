@@ -1,0 +1,578 @@
+---
+title: 28.3 How Text Is Stored
+description: "Describes how Rope nodes store text, structure, and subtree weights, keeping the logical document contiguous while physical storage is fragmented."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Now that we understand the central idea of a Rope, we can look more closely at its physical representation.
+
+A Rope does not simply contain a collection of unrelated strings. Its nodes form a structure that preserves the order of the document while allowing the text to remain divided into smaller fragments.
+
+A useful simplified representation is:
+
+```text
+                         Root
+                        /    \
+                     Node    Node
+                    /  \     /  \
+                   A    B   C    D
+```
+
+where the leaves contain:
+
+```text
+A = "Hello "
+B = "world"
+C = " from "
+D = "Rope"
+```
+
+Reading the leaves from left to right gives:
+
+```text
+Hello world from Rope
+```
+
+The tree therefore provides the **organization**, while the leaves provide the **text**.
+
+## Leaf Nodes
+
+A leaf is a node at the bottom of the Rope that contains an actual fragment of document text.
+
+For example:
+
+```text
++----------------+
+| "Hello world"  |
++----------------+
+```
+
+Another leaf might contain:
+
+```text
++----------------+
+| " from Rope"   |
++----------------+
+```
+
+Together:
+
+```text
+             Root
+            /    \
+           /      \
+ "Hello world"   " from Rope"
+```
+
+represent:
+
+```text
+Hello world from Rope
+```
+
+The important property is that the text does not need to be stored as one contiguous allocation.
+
+Each leaf can own its own text storage.
+
+## Internal Nodes
+
+Internal nodes connect the text fragments.
+
+For example:
+
+```text
+                  Node
+                 /    \
+              Leaf    Leaf
+```
+
+The internal node represents the concatenation of its children:
+
+```text
+left child + right child
+```
+
+If:
+
+```text
+Left  = "Hello "
+Right = "world"
+```
+
+then:
+
+```text
+             Node
+            /    \
+       "Hello "  "world"
+```
+
+represents:
+
+```text
+Hello world
+```
+
+The internal node does not need to contain the characters `"Hello world"` itself.
+
+It represents the relationship between the two pieces.
+
+## A Larger Example
+
+Consider this document:
+
+```text
+The quick brown fox jumps over the lazy dog.
+```
+
+A Rope might divide it into fragments:
+
+```text
+"The quick "
+"brown fox "
+"jumps over "
+"the lazy "
+"dog."
+```
+
+The tree could look conceptually like:
+
+```text
+                         Root
+                        /    \
+                     Node    Node
+                    /  \     /  \
+                   A    B   C    D
+```
+
+with:
+
+```text
+A = "The quick "
+B = "brown fox "
+C = "jumps over "
+D = "the lazy dog."
+```
+
+The logical document is:
+
+```text
+A + B + C + D
+```
+
+or:
+
+```text
+"The quick "
++
+"brown fox "
++
+"jumps over "
++
+"the lazy dog."
+```
+
+Nothing about the logical sequence requires the fragments themselves to be physically adjacent in memory.
+
+## Weights
+
+The tree becomes much more useful when internal nodes know how much text exists in their subtrees.
+
+This information is commonly called a **weight**.
+
+Consider:
+
+```text
+                         [21]
+                        /    \
+                     [11]    [10]
+                    /   \    / \
+                   A     B  C   D
+```
+
+Suppose:
+
+```text
+A = "Hello "       → 6 characters
+B = "world"        → 5 characters
+```
+
+Then the left subtree contains:
+
+```text
+6 + 5 = 11
+```
+
+characters.
+
+If:
+
+```text
+C = " from "       → 6 characters
+D = "Rope"         → 4 characters
+```
+
+then the right subtree contains:
+
+```text
+6 + 4 = 10
+```
+
+characters.
+
+Therefore the entire Rope contains:
+
+```text
+11 + 10 = 21
+```
+
+characters.
+
+The numbers attached to the nodes are not document characters. They are **metadata describing the amount of text represented by the corresponding subtree**.
+
+## Why Store This Metadata?
+
+Suppose we want to find character position `14`.
+
+Without subtree-size information, we could potentially have to walk through the text from the beginning until we reached position `14`.
+
+With weights, the tree can guide the search.
+
+Starting at:
+
+```text
+                         [21]
+                        /    \
+                     [11]    [10]
+```
+
+we know that the first `11` characters belong to the left subtree.
+
+Position `14` therefore cannot be entirely inside those first `11` characters.
+
+We move into the right subtree.
+
+```text
+                         [21]
+                        /    \
+                     [11]    [10]
+                              ↑
+```
+
+The position relative to that subtree becomes:
+
+```text
+14 - 11 = 3
+```
+
+We can continue this process down the tree.
+
+The metadata therefore turns the tree from a simple organizational structure into something that can support efficient position lookup.
+
+We will examine that process more carefully in Section 28.4.
+
+## The Root Represents the Whole Document
+
+The root node represents the complete logical sequence.
+
+For example:
+
+```text
+                       [21]
+                      /    \
+                   [11]    [10]
+```
+
+means:
+
+```text
+Left subtree
+     +
+Right subtree
+     =
+Complete document
+```
+
+This gives us a useful recursive definition:
+
+> A Rope is a tree where each subtree represents a contiguous portion of the logical document.
+
+That property is important.
+
+The left subtree represents an earlier portion of the document.
+
+The right subtree represents the following portion.
+
+Therefore:
+
+```text
+                 Document
+                    │
+             ┌──────┴──────┐
+             │             │
+          first part    second part
+```
+
+can be recursively divided again:
+
+```text
+             first part
+             /        \
+        earlier      later
+```
+
+This recursive organization is what allows the Rope to scale its structure without requiring the entire document to be represented by one object.
+
+## Contiguous Logical Text, Non-Contiguous Physical Storage
+
+One of the easiest mistakes to make is to assume that a Rope means the document itself is no longer contiguous.
+
+That is true physically, but not logically.
+
+Consider:
+
+```text
+Document:
+
+ABCDEFGHIJKL
+```
+
+A Rope might store:
+
+```text
+A B C D
+E F G
+H I J K L
+```
+
+as separate leaves:
+
+```text
+              Root
+             /    \
+           Node    Leaf
+          /   \
+       "ABCD" "EFG"
+                 \
+               conceptually
+```
+
+The actual tree structure can vary, but the logical result remains:
+
+```text
+ABCDEFGHIJKL
+```
+
+From the user's perspective, there is still only one sequence.
+
+This distinction can be expressed as:
+
+```text
+Logical:
+
+ABCDEFGHIJKL
+
+
+Physical:
+
+"ABCD"   "EFG"   "HIJKL"
+   \       |        /
+        Rope Tree
+```
+
+The Rope provides the mapping between those two views.
+
+## Why Fragments Are Usually Larger Than One Character
+
+A Rope could technically make every character a separate leaf:
+
+```text
+[A][B][C][D][E][F][G]
+```
+
+but that would create a large number of nodes.
+
+Each node may require:
+
+- pointers
+- metadata
+- allocation overhead
+- balancing information
+
+For a document containing millions of characters, representing every character with a separate node would be extremely wasteful.
+
+Instead, leaves normally contain **chunks of text**:
+
+```text
+["A reasonable chunk"]
+["Another reasonable chunk"]
+["Another reasonable chunk"]
+```
+
+This gives the Rope two levels of organization:
+
+```text
+Rope
+ │
+ ├── Tree structure
+ │
+ └── Text chunks
+       │
+       ├── characters
+       ├── characters
+       └── characters
+```
+
+The tree handles large-scale organization.
+
+The leaf storage handles the actual characters within each fragment.
+
+This division is important for both memory usage and performance.
+
+## Leaf Size Is a Design Choice
+
+There is no single universally correct leaf size.
+
+Suppose leaves are extremely small:
+
+```text
+["abc"]
+["def"]
+["ghi"]
+["jkl"]
+...
+```
+
+The tree may contain many nodes.
+
+If leaves are extremely large:
+
+```text
+["a very large amount of text........................"]
+```
+
+there are fewer nodes, but operations inside a leaf may require more work.
+
+Therefore:
+
+```text
+Small leaves
+    ↕
+Tree overhead
+    ↕
+Large leaves
+```
+
+creates a trade-off.
+
+We will return to this question in Section 28.9, where leaf granularity is examined directly.
+
+For now, the important point is simply that **the Rope consists of both a tree structure and text-bearing leaves**.
+
+## A Recursive View
+
+The easiest way to understand the representation is recursively.
+
+A Rope can be viewed as either:
+
+```text
+Leaf
+```
+
+or:
+
+```text
+Node
+├── left Rope
+└── right Rope
+```
+
+Conceptually:
+
+```text
+Rope
+│
+├── Leaf
+│     └── text
+│
+└── Internal Node
+      ├── Rope
+      └── Rope
+```
+
+This recursive definition explains why operations such as splitting and concatenating can also be expressed recursively.
+
+A large document is built from smaller Ropes.
+
+Those smaller Ropes are built from even smaller Ropes.
+
+Eventually, the recursion reaches leaves containing actual text.
+
+## What the Rope Stores
+
+At a high level, a Rope therefore needs three kinds of information:
+
+```text
+Rope Node
+│
+├── Structure
+│     ├── left child
+│     └── right child
+│
+├── Metadata
+│     └── subtree text size
+│
+└── Text
+      └── stored only in leaves
+```
+
+Not every Rope implementation will use exactly this layout. Some use additional metadata for balancing, different representations for leaves, or different ways of recording subtree sizes.
+
+The important conceptual separation remains:
+
+```text
+Structure → organizes the document
+Metadata  → helps navigate the structure
+Leaves    → contain the actual text
+```
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The Rope's power comes from **combining hierarchy with sequence**.
+
+A normal sequence gives us:
+
+```text
+A → B → C → D
+```
+
+A Rope adds hierarchy:
+
+```text
+             Root
+            /    \
+          A B    C D
+```
+
+The hierarchy gives the implementation additional information about where text resides without changing the logical ordering of that text.
+
+That is the foundation for the operations we will study next.
+
+In the next section, we will use the subtree weights introduced here to answer a fundamental question:
+
+> **Given a logical character position, how does a Rope find the corresponding text fragment efficiently?**
+
+</Aside>
+
+## Summary
+
+A Rope stores text by combining a tree structure with text-bearing leaves: internal nodes organize the document while leaves hold actual chunks of text.
+
+Subtree weights provide metadata that lets the Rope reason about how much text each part of the tree contains without reading every preceding character.
+
+The result is a representation that is recursively defined, keeps the logical document contiguous, and spreads the physical storage across non-contiguous fragments.
+
+Because a subtree represents a contiguous portion of the logical document, each internal node's weight is the sum of its children and the root's weight is the total document size. Leaf granularity remains a separate design choice: leaves hold chunks so that the node count tracks fragments rather than characters.
+
+The next section uses these subtree weights to answer a fundamental question: **how a Rope finds the text fragment for a given logical position.**
