@@ -1,13 +1,20 @@
 // @ts-check
 import { defineConfig } from "astro/config";
+import { satteri } from "@astrojs/markdown-satteri";
 import starlight from "@astrojs/starlight";
 import starlightThemeRapide from "starlight-theme-rapide";
 import starlightScrollToTop from "starlight-scroll-to-top";
 import starlightPageActions from "starlight-page-actions";
+import { externalLinks } from "./src/plugins/satteri-external-links";
 
 // https://astro.build/config
 export default defineConfig({
   site: "https://tedit-book.vercel.app",
+  markdown: {
+    processor: satteri({
+      hastPlugins: [externalLinks],
+    }),
+  },
   integrations: [
     starlight({
       title: "Tedit",
