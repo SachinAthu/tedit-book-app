@@ -1,0 +1,523 @@
+---
+title: "39.5 Plugin Versioning and Compatibility"
+description: "Explains why plugin and interface versions differ and how the editor validates ABI, capability requirements, and breaking changes before activation."
+---
+
+Once a plugin interface becomes a binary contract, the editor must answer an important question before using a plugin:
+
+> **Is this plugin compatible with the interface provided by this version of the editor?**
+
+A plugin may have been compiled correctly and may even be a valid shared library, yet still be incompatible with the editor's plugin interface.
+
+Compatibility therefore needs to be identified explicitly.
+
+## Why Versioning Is Necessary
+
+Consider an editor released with one plugin interface:
+
+```text
+Editor 1.0
+    |
+    +── Plugin Interface v1
+```
+
+A plugin is compiled against that interface:
+
+```text
+Plugin A
+    |
+    +── requires Interface v1
+```
+
+Later, the editor evolves:
+
+```text
+Editor 2.0
+    |
+    +── Plugin Interface v2
+```
+
+The editor cannot simply assume that Plugin A will continue to work.
+
+The interface may have changed:
+
+```text
+v1
+    register_command()
+    set_message()
+
+v2
+    register_command()
+    set_message()
+    register_event()
+```
+
+Adding a capability can sometimes be compatible, but other changes may not be:
+
+```text
+v1
+    int register_command(const char *name);
+
+v2
+    int register_command(const char *name,
+                         command_callback callback);
+```
+
+The same function name does not imply the same binary contract.
+
+## Plugin Version vs Interface Version
+
+Two different kinds of version need to be distinguished.
+
+A plugin has its own version:
+
+```text
+Plugin version
+    1.4.0
+```
+
+The editor's plugin interface has a separate version:
+
+```text
+Plugin ABI
+    v2
+```
+
+These represent different things.
+
+```text
+Plugin version
+    ↓
+Version of this particular extension
+
+Interface version
+    ↓
+Version of the contract between plugin and editor
+```
+
+For example:
+
+```text
+Editor
+    Plugin ABI: v2
+
+Plugin A
+    Plugin version: 3.1
+    Requires ABI: v2
+```
+
+The plugin can have many releases while continuing to use the same editor interface.
+
+Conversely, the editor can release a new plugin interface while existing plugins retain their own versions.
+
+## Compatibility Should Be Checked Explicitly
+
+The editor should not discover incompatibility by accidentally calling an incompatible function.
+
+Instead, compatibility should be checked before normal plugin operation begins.
+
+Conceptually:
+
+```text
+Load plugin
+    ↓
+Read plugin information
+    ↓
+Check interface version
+    ↓
+Compatible?
+   / \
+ No   Yes
+ |     |
+Reject  Initialize
+```
+
+This creates a clean failure path.
+
+An incompatible plugin should be rejected before it is allowed to participate in normal editor operation.
+
+## A Minimal Compatibility Identifier
+
+A plugin interface could contain an ABI version:
+
+```c
+typedef struct plugin_info {
+    uint32_t abi_version;
+    const char *name;
+} plugin_info;
+```
+
+The editor can then compare the plugin's declared version with the interface it supports.
+
+Conceptually:
+
+```c
+if (plugin->abi_version != EDITOR_PLUGIN_ABI_VERSION)
+{
+    reject_plugin();
+}
+```
+
+The exact mechanism is an implementation detail.
+
+The architectural principle is more important:
+
+> **Compatibility must be an explicit property of the plugin contract.**
+
+## Exact Version Matching
+
+The simplest strategy is exact matching.
+
+```text
+Editor supports ABI 2
+
+Plugin ABI 1 → reject
+Plugin ABI 2 → accept
+Plugin ABI 3 → reject
+```
+
+This strategy is easy to understand and provides strong guarantees.
+
+However, it can be unnecessarily restrictive.
+
+Suppose ABI 3 only adds an optional capability while preserving every ABI 2 operation.
+
+An ABI 2 plugin may still be perfectly usable by an ABI 3 editor.
+
+This leads to more sophisticated compatibility strategies.
+
+## Backward Compatibility
+
+An interface can sometimes evolve while preserving compatibility with older plugins.
+
+For example:
+
+```text
+ABI v1
+
+register_command()
+set_message()
+```
+
+could evolve into:
+
+```text
+ABI v2
+
+register_command()
+set_message()
+register_event()
+```
+
+If the original operations retain exactly the same meaning and binary representation, an editor supporting v2 might continue supporting v1 plugins.
+
+The relationship could then be:
+
+```text
+Editor ABI v2
+      |
+      +── accepts ABI v1
+      +── accepts ABI v2
+```
+
+But this should not be assumed automatically.
+
+Backward compatibility must be deliberately designed.
+
+## Minimum Supported Interface
+
+One useful model is to distinguish between:
+
+```text
+Interface provided by editor
+Minimum interface required by plugin
+```
+
+For example:
+
+```text
+Editor:
+    provides ABI v3
+
+Plugin:
+    requires ABI v2
+```
+
+If ABI v3 guarantees compatibility with ABI v2, the plugin can operate.
+
+Conceptually:
+
+```text
+Plugin requires:
+    ABI >= 2
+
+Editor provides:
+    ABI 3
+
+Result:
+    Compatible
+```
+
+However, numerical ordering alone does not establish compatibility.
+
+ABI version `3` is not automatically compatible with ABI version `2`.
+
+The versioning policy must define what the numbers mean.
+
+## Breaking and Non-Breaking Changes
+
+A useful versioning policy distinguishes between changes that preserve the existing contract and changes that break it.
+
+A non-breaking change might be:
+
+```text
+Add an optional capability
+```
+
+A breaking change might be:
+
+```text
+Change function signature
+Change structure layout
+Change ownership rules
+Change callback semantics
+Remove an existing operation
+Change the meaning of an existing operation
+```
+
+The distinction matters because external plugins may continue to exist long after the editor itself has been updated.
+
+## The Meaning of a Version Number
+
+A version number should therefore communicate a compatibility policy rather than merely indicate that "something changed."
+
+For example:
+
+```text
+Major version
+    → incompatible interface change
+
+Minor version
+    → compatible extension
+
+Patch version
+    → implementation correction without interface change
+```
+
+This is only one possible policy.
+
+The important requirement is that the editor's plugin ABI documentation defines the meaning consistently.
+
+A version number without a compatibility policy provides little protection.
+
+## Versioning the Interface Structure
+
+There is another issue with interfaces represented as structures.
+
+Consider:
+
+```c
+typedef struct editor_api {
+    void (*log)(const char *);
+    int (*set_message)(const char *);
+} editor_api;
+```
+
+Suppose a later release adds:
+
+```c
+int (*register_command)(...);
+```
+
+Now the structure has changed.
+
+A plugin compiled against the old structure and an editor using the new structure must still agree on how the structure is interpreted.
+
+One common architectural technique is to include explicit size and version information:
+
+```c
+typedef struct editor_api {
+    uint32_t version;
+    uint32_t size;
+
+    void (*log)(const char *);
+    int (*set_message)(const char *);
+
+    /* future fields */
+} editor_api;
+```
+
+The `size` field can allow the receiver to determine which portion of the structure is actually present.
+
+This is a technique we may use in a future implementation, but the important lesson here is conceptual:
+
+> **Interface evolution must account for the binary representation of the interface itself.**
+
+## Rejecting Incompatible Plugins
+
+Compatibility checks should fail safely.
+
+For example:
+
+```text
+Plugin discovered
+      ↓
+ABI check
+      ↓
+Incompatible
+      ↓
+Plugin rejected
+      ↓
+Editor continues running
+```
+
+The editor should not partially initialize a plugin and then discover that its interface is incompatible.
+
+A failure message could communicate:
+
+```text
+Plugin "example"
+requires plugin ABI 3
+but this editor supports ABI 2.
+```
+
+The plugin remains outside the active editor environment.
+
+This is preferable to allowing an uncertain binary interaction to continue.
+
+## Compatibility Is More Than ABI Version
+
+The editor may need to validate other properties as well.
+
+For example:
+
+```text
+Plugin compatibility
+    |
+    +-- ABI version
+    +-- Platform
+    +-- Architecture
+    +-- Required capabilities
+    +-- Plugin metadata
+```
+
+Not every plugin needs to explicitly encode all of these.
+
+Some compatibility properties can be guaranteed by the operating system's loader.
+
+Others belong to the editor's own plugin contract.
+
+The important architectural point is that **compatibility is a collection of explicit constraints**, not simply a filename or successful dynamic load.
+
+## Capability Negotiation
+
+A version number alone can become restrictive when the interface grows.
+
+Suppose the editor supports:
+
+```text
+Commands
+Events
+Search
+Configuration
+```
+
+but an older plugin only needs:
+
+```text
+Commands
+```
+
+Rather than requiring every plugin to understand every capability, the host can expose a capability set.
+
+Conceptually:
+
+```text
+Editor capabilities:
+
+[commands]
+[events]
+[search]
+[configuration]
+```
+
+The plugin can use the capabilities it understands.
+
+This becomes especially useful as the system grows.
+
+However, capability negotiation adds complexity, so it should not be introduced unnecessarily into the baseline design.
+
+## Compatibility and the Editor's Evolution
+
+The purpose of compatibility rules is not to prevent the editor from evolving.
+
+It is to make evolution predictable.
+
+Without compatibility rules:
+
+```text
+Editor changes
+      ↓
+Unknown plugin behavior
+      ↓
+Possible crash or corruption
+```
+
+With compatibility rules:
+
+```text
+Editor changes
+      ↓
+Compatibility policy
+      ↓
+Compatible plugins → continue
+Incompatible plugins → rejected
+```
+
+This turns an uncontrolled dependency into an explicit architectural relationship.
+
+## Compatibility Policy for Our Architecture
+
+For the purposes of this book, the important design principle is:
+
+> **A plugin must declare the interface it expects, and the editor must validate that expectation before activating the plugin.**
+
+We do not need to design a complicated multi-generation compatibility framework for the baseline editor.
+
+A simple versioned ABI is sufficient to demonstrate the fundamental architecture.
+
+More sophisticated mechanisms—such as capability negotiation, multiple simultaneously supported ABI generations, or compatibility shims—can be introduced if a future implementation requires them.
+
+## Summary
+
+The key distinction is:
+
+```text
+Plugin version
+    ≠
+Plugin interface version
+```
+
+The plugin's own version describes the extension.
+
+The interface version describes the contract between the extension and the editor.
+
+A robust plugin architecture therefore follows this sequence:
+
+```text
+Discover
+   ↓
+Identify
+   ↓
+Check compatibility
+   ↓
+Accept or reject
+   ↓
+Initialize only if compatible
+```
+
+This gives the editor a safe decision point before external code becomes part of the running system.
+
+Compatibility policy must define whether version numbers permit backward compatibility, capability negotiation, or only exact matching; the editor should validate ABI, platform, and required capabilities before initialization. Rejecting an incompatible plugin cleanly keeps the editor running and avoids partial initialization.
+
+The next question is how the editor actually obtains that external code in the first place. That leads to **39.6 Dynamic Loading**.

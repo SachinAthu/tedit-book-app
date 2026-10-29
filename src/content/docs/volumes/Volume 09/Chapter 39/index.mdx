@@ -1,0 +1,70 @@
+---
+title: "Chapter 39 — Plugin Architecture"
+description: "Traces how independently compiled plugins extend the editor through a stable boundary, ABI, versioning, loading, lifecycle, failure handling, and trust limits."
+---
+
+## Introduction
+
+The editor we have built is modular, but every module is part of the same program—compiled, linked, and released together. A plugin breaks that unity: it is independently developed code that crosses a defined boundary into the running editor. This changes the architectural problem from *how components inside the program communicate* to *how external code can extend the editor safely and predictably*.
+
+This chapter builds that extension model progressively:
+
+```text
+Motivation — why plugins change the architecture
+    ↓
+Boundaries — what may cross between editor and plugin
+    ↓
+Interface — designing a deliberate plugin contract
+    ↓
+ABI — binary compatibility when source is not enough
+    ↓
+Versioning — validating compatibility before activation
+    ↓
+Dynamic Loading — how external code reaches the editor
+    ↓
+Safe Extension — preserving the editor's invariants
+    ↓
+Failure and Isolation — what happens when a plugin fails
+    ↓
+Security — trusting code that shares the editor's process
+    ↓
+Minimal Architecture — a small, versioned plugin boundary
+    ↓
+Alternatives — the trade-offs considered along the way
+    ↓
+Our Editor — what it would need to support plugins
+```
+
+We begin by explaining why a plugin is not merely another module and where its boundary should lie. We then design a plugin interface, examine ABI compatibility, versioning, and dynamic loading, and consider how to extend the editor safely despite plugin failure and security risk. We close by assembling these ideas into a minimal plugin architecture and by identifying exactly what our editor would need to support plugins.
+
+## Learning Objectives
+
+By the end of this chapter, you should be able to:
+
+- Explain why a plugin changes the editor's architecture.
+- Define the plugin boundary and describe what should not cross it.
+- Design a plugin interface as a contract of capabilities.
+- Distinguish API compatibility from ABI compatibility.
+- Explain why plugin and interface versions are different.
+- Describe how the editor loads, validates, and initializes a plugin.
+- Explain how plugins can extend the editor without violating its invariants.
+- Distinguish an extension boundary from a fault-isolation boundary.
+- Describe the security limits of an in-process plugin system.
+- Assemble these principles into a minimal plugin architecture.
+- State what our editor would need to support plugins.
+
+## Sections
+
+- [39.1 Why Plugins Change the Architecture](/volumes/volume-09/chapter-39/01-why-plugins-change-architecture/)
+- [39.2 Plugin Boundaries](/volumes/volume-09/chapter-39/02-plugin-boundaries/)
+- [39.3 Designing a Plugin Interface](/volumes/volume-09/chapter-39/03-designing-a-plugin-interface/)
+- [39.4 ABI - When Source Compatibility Is Not Enough](/volumes/volume-09/chapter-39/04-abi/)
+- [39.5 Plugin Versioning and Compatibility](/volumes/volume-09/chapter-39/05-plugin-versioning-compatibility/)
+- [39.6 Dynamic Loading](/volumes/volume-09/chapter-39/06-dynamic-loading/)
+- [39.7 Extending the Editor Safely](/volumes/volume-09/chapter-39/07-extending-editor-safely/)
+- [39.8 Plugin Failure and Isolation](/volumes/volume-09/chapter-39/08-plugin-failure-and-isolation/)
+- [39.9 Security Considerations](/volumes/volume-09/chapter-39/09-security-considerations/)
+- [39.10 A Minimal Plugin Architecture](/volumes/volume-09/chapter-39/10-a-minimal-plugin-architecture/)
+- [39.11 Design Alternatives and Trade-offs](/volumes/volume-09/chapter-39/11-design-alternatives-trade-offs/)
+- [39.12 What Our Editor Would Need to Support Plugins](/volumes/volume-09/chapter-39/12-what-editor-need-to-support-plugins/)
+- [39.13 Conclusion](/volumes/volume-09/chapter-39/13-conclusion/)

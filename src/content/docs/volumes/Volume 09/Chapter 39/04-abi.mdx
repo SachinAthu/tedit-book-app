@@ -1,0 +1,521 @@
+---
+title: "39.4 ABI - When Source Compatibility Is Not Enough"
+description: "Distinguishes API from ABI compatibility and explains calling conventions, data layout, pointers, fixed-width types, and memory ownership across the boundary."
+---
+
+A plugin is compiled separately from the editor. That single fact introduces a problem that ordinary internal modules do not have.
+
+Two pieces of C source code may agree on an interface and still fail to communicate correctly when their compiled representations do not agree.
+
+This is the role of the **Application Binary Interface (ABI)**.
+
+## API and ABI Are Different
+
+An **API** describes how source code interacts with a component.
+
+For example:
+
+```c
+int editor_register_command(const char *name);
+```
+
+A programmer can read this declaration and understand:
+
+- the function's name,
+- its parameters,
+- its return type.
+
+An **ABI** describes the binary-level rules required for compiled code to communicate correctly.
+
+These include matters such as:
+
+```text
+Function calling convention
+Argument representation
+Return-value representation
+Data layout
+Structure alignment
+Symbol representation
+Binary object format
+Architecture
+```
+
+The distinction can be summarized as:
+
+```text
+API
+    ↓
+Can the source code be compiled against the interface?
+
+ABI
+    ↓
+Can the already-compiled binaries communicate correctly?
+```
+
+For normal internal modules, the compiler and linker usually enforce much of this agreement automatically.
+
+For separately compiled plugins, the problem becomes an explicit architectural concern.
+
+## Why Plugins Make ABI Important
+
+Consider:
+
+```text
+Editor
+   |
+   | compiled separately
+   |
+Plugin
+```
+
+The editor might have been compiled today.
+
+The plugin might have been compiled yesterday.
+
+They must still agree on the binary representation of the interface.
+
+For example:
+
+```text
+Editor expects:
+
+function(...)
+    argument → representation A
+
+
+Plugin provides:
+
+function(...)
+    argument → representation B
+```
+
+If those representations are incompatible, calling the function may produce undefined behavior.
+
+The source declarations alone do not guarantee safety.
+
+## Function Calls Are Binary Contracts
+
+Consider a simple function:
+
+```c
+int add(int a, int b);
+```
+
+At the source level, this looks trivial.
+
+At the binary level, the caller and callee must agree on:
+
+```text
+Where arguments are placed
+How arguments are represented
+Where the return value is placed
+Which registers are preserved
+How the stack is managed
+```
+
+These rules are normally determined by the platform's ABI.
+
+Therefore, a plugin compiled for one ABI cannot necessarily be loaded safely into an editor compiled for an incompatible ABI.
+
+The interface must exist within a compatible execution environment.
+
+## Data Layout Matters
+
+Functions are not the only concern.
+
+Structures also have binary layouts.
+
+Consider:
+
+```c
+struct point {
+    int x;
+    int y;
+};
+```
+
+The compiler gives this structure a particular memory representation.
+
+A plugin compiled with one definition must agree with the host about:
+
+```text
+Field order
+Field size
+Field alignment
+Structure size
+Padding
+```
+
+Even a seemingly harmless change can matter.
+
+For example:
+
+```c
+struct point {
+    int x;
+    int y;
+    int z;
+};
+```
+
+has a different layout from the original structure.
+
+If an externally compiled plugin expects the old representation while the host uses the new one, passing the structure across the boundary can become unsafe.
+
+This is one reason our earlier principle remains important:
+
+> **Do not expose internal structures unnecessarily.**
+
+Opaque handles reduce the amount of internal binary layout that becomes part of the plugin contract.
+
+## Pointers Do Not Solve ABI Problems
+
+It may be tempting to think that passing pointers makes the interface safe.
+
+For example:
+
+```c
+void plugin_run(EditorState *state);
+```
+
+The plugin receives only a pointer, but the pointer itself is not the problem.
+
+The problem is what the pointer refers to.
+
+If the plugin expects:
+
+```text
+EditorState
+├── Document
+├── Cursor
+├── Viewport
+└── Renderer
+```
+
+while the editor has changed the structure to:
+
+```text
+EditorState
+├── Document
+├── Active Buffer
+├── Cursor
+├── Viewport
+└── Renderer
+```
+
+the pointer still points to memory, but the two sides no longer necessarily interpret that memory in the same way.
+
+A pointer provides an address.
+
+It does not provide a compatibility contract.
+
+## ABI and C
+
+C is particularly suitable for defining a small plugin ABI because its language model is relatively close to the underlying machine representation.
+
+A simple interface can use:
+
+```text
+Integers
+Pointers
+Opaque handles
+Function pointers
+Fixed-layout interface structures
+```
+
+However, using C does **not** automatically make an ABI stable.
+
+Compiler, platform, architecture, data-layout, and interface-design decisions still matter.
+
+The language gives us useful low-level control, but the architecture must establish the actual compatibility rules.
+
+## ABI Is More Than the C Language
+
+A plugin ABI depends on the environment in which the editor and plugin execute.
+
+Conceptually:
+
+```text
+                 Plugin ABI
+                     |
+       +-------------+-------------+
+       |             |             |
+   CPU/ABI       Compiler       Platform
+       |             |             |
+ calling         data layout    executable /
+ convention      decisions      library format
+```
+
+For example, a plugin compiled for one processor architecture cannot simply be assumed to work with an executable compiled for another architecture.
+
+Likewise, a binary produced for one operating-system environment may depend on a different executable or shared-library format.
+
+Therefore, plugin compatibility is always compatibility **within a defined binary environment**.
+
+## Shared Structures Increase the Compatibility Surface
+
+Suppose the interface contains many public structures:
+
+```c
+typedef struct plugin_context {
+    int version;
+    Document document;
+    Cursor cursor;
+    Viewport viewport;
+    Renderer renderer;
+} plugin_context;
+```
+
+Every field now becomes part of the binary contract.
+
+A change to any of these structures may affect compatibility.
+
+Compare that with an interface based primarily on opaque handles:
+
+```c
+typedef struct editor_context editor_context;
+typedef struct editor_document editor_document;
+```
+
+The plugin can use the handles through defined functions:
+
+```c
+editor_document_get_line(...);
+editor_set_message(...);
+editor_register_command(...);
+```
+
+The editor can then change its internal structures without necessarily changing the binary representation exposed to the plugin.
+
+This leads to a useful rule:
+
+> **The less internal representation exposed across the boundary, the smaller the ABI compatibility surface.**
+
+## Fixed-Width Types
+
+When binary data is part of a public interface, explicitly sized integer types can reduce ambiguity.
+
+The `editor_position` structure introduced in Section 39.3 used `size_t` fields, whose width depends on the platform. For a public interface, the same structure is better expressed with explicitly sized fields:
+
+```c
+#include <stdint.h>
+
+typedef struct editor_position {
+    uint64_t row;
+    uint64_t column;
+} editor_position;
+```
+
+The important property is that the interface explicitly establishes the intended width of the fields.
+
+This does not solve every ABI problem, but it avoids relying unnecessarily on implementation-dependent sizes.
+
+The same principle applies to other public binary data structures.
+
+## Strings and Memory
+
+Memory ownership is another ABI concern.
+
+Consider:
+
+```c
+char *plugin_get_name(void);
+```
+
+The binary interface alone does not tell us:
+
+```text
+Who allocated the string?
+Who frees it?
+Which allocator should be used?
+How long does it remain valid?
+```
+
+If the editor allocates memory using one mechanism and the plugin attempts to release it using an incompatible mechanism, the result can be undefined behavior.
+
+A plugin ABI should therefore avoid ambiguous memory ownership.
+
+Possible strategies include:
+
+```text
+Editor-owned read-only strings
+Caller-provided buffers
+Explicit allocation/free functions
+Opaque resources with explicit release operations
+```
+
+The important point is that the ownership mechanism must itself be part of the interface contract.
+
+## Function Pointers Are Also ABI Contracts
+
+Our earlier interface used function pointers:
+
+```c
+typedef struct editor_api {
+    void (*log)(const char *message);
+    int (*register_command)(const char *name);
+} editor_api;
+```
+
+The layout of this structure matters.
+
+Both sides must agree on:
+
+```text
+Field order
+Pointer representation
+Function signatures
+Structure alignment
+Structure size
+```
+
+A plugin must interpret the structure exactly as the host intended.
+
+This is another reason to treat an interface structure as a carefully designed ABI object rather than simply a convenient C structure.
+
+## Binary Compatibility and Internal Evolution
+
+The purpose of an ABI is not to freeze the entire editor.
+
+It is to isolate the parts that must remain compatible.
+
+For example:
+
+```text
+                    Editor
+
++-------------------------------------------+
+| Internal implementation                   |
+|                                           |
+| Document representation                  |
+| Cursor implementation                     |
+| Renderer implementation                   |
+| File Manager implementation               |
+|                                           |
++-------------------+-----------------------+
+                    |
+             Stable ABI boundary
+                    |
++-------------------+-----------------------+
+| Plugin contract                           |
+|                                           |
+| Public operations                         |
+| Public data types                         |
+| ABI rules                                 |
++-------------------------------------------+
+                    |
+                  Plugin
+```
+
+The internal implementation remains free to evolve within the constraints imposed by the public interface.
+
+This is one of the main architectural benefits of a well-designed plugin boundary.
+
+## ABI Is a Compatibility Problem, Not a Loading Mechanism
+
+It is important not to confuse ABI with dynamic loading.
+
+Dynamic loading answers:
+
+> **How does the editor obtain code from an external binary at runtime?**
+
+ABI compatibility answers:
+
+> **Can the editor safely communicate with that binary once it has been loaded?**
+
+These are separate problems.
+
+```text
+Dynamic Loading
+      |
+      v
+Can we load the binary?
+      |
+      v
+ABI Compatibility
+      |
+      v
+Can we communicate safely?
+```
+
+A shared library can be successfully loaded while still being incompatible with the editor's plugin interface.
+
+Therefore:
+
+```text
+Loaded successfully
+        ≠
+Compatible successfully
+```
+
+This distinction becomes particularly important when we introduce runtime validation later.
+
+## ABI Scope for Our Editor
+
+We do not need to design a universal ABI for every operating system, compiler, and architecture.
+
+That would be far beyond the scope of this project.
+
+Instead, the architecture should establish a **well-defined plugin ABI for the supported execution environment**, with explicit compatibility rules.
+
+Our existing platform strategy (Chapter 37) already establishes Linux/POSIX as the primary environment and treats portability as a boundary concern rather than allowing platform-specific behavior to spread through the Core.
+
+The plugin ABI should follow the same architectural discipline.
+
+Platform-specific binary concerns should not leak throughout the editor.
+
+## API Compatibility vs ABI Compatibility
+
+The distinction can now be summarized clearly:
+
+```text
+API compatibility
+
+Source-level contract
+        ↓
+Function names
+Types
+Semantics
+Expected behavior
+
+
+ABI compatibility
+
+Binary-level contract
+        ↓
+Calling convention
+Data layout
+Alignment
+Symbol representation
+Binary environment
+```
+
+A plugin may be API-compatible but ABI-incompatible.
+
+For example:
+
+```text
+Same function declaration
+        +
+Different binary conventions
+        =
+Unsafe
+```
+
+Therefore, a plugin system must consider both.
+
+## Summary
+
+The essential lesson is:
+
+> **An API tells independently developed code how to communicate; an ABI ensures that the compiled representations can actually communicate safely.**
+
+Once plugins can survive independently of the editor's source tree, the editor needs a way to determine whether a plugin was built for a compatible interface.
+
+Opaque handles, fixed-width types, and explicit memory ownership shrink the binary surface that plugins can depend on. Dynamic loading and ABI compatibility remain separate questions: a library may load successfully and still be unsafe to call.
+
+That introduces the next problem:
+
+**How does the editor distinguish a compatible plugin from an incompatible one?**
+
+That is the role of **Plugin Versioning and Compatibility**.

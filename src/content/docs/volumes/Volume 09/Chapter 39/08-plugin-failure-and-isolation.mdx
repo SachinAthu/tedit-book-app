@@ -1,0 +1,673 @@
+---
+title: "39.8 Plugin Failure and Isolation"
+description: "Distinguishes an extension boundary from a fault boundary, covering in-process crashes, resource misuse, callback safety, and process isolation."
+---
+
+A plugin is external code running inside the editor's execution environment.
+
+That creates a fundamental reliability problem.
+
+Even when the plugin interface is carefully designed, the editor cannot assume that every plugin will behave correctly.
+
+A plugin can:
+
+- return an invalid result,
+- violate an API contract,
+- consume excessive resources,
+- fail during initialization,
+- retain invalid resources,
+- execute indefinitely,
+- access invalid memory,
+- or crash the process.
+
+The important architectural question is therefore:
+
+> **What happens when a plugin fails?**
+
+## Failure Is Different from Incompatibility
+
+The previous sections established compatibility checks.
+
+An incompatible plugin can be rejected before activation:
+
+```text
+Plugin
+   ↓
+Load
+   ↓
+Compatibility Check
+   ↓
+Incompatible
+   ↓
+Reject
+```
+
+Plugin failure is different.
+
+A compatible plugin may successfully initialize and then fail later:
+
+```text
+Plugin
+   ↓
+Load
+   ↓
+Compatible
+   ↓
+Initialize
+   ↓
+Active
+   ↓
+Failure
+```
+
+Therefore, compatibility protects the editor **before activation**, while failure handling protects it **during operation**.
+
+## The Plugin Is Not Part of the Core
+
+The editor's core remains responsible for maintaining the application's authoritative state.
+
+The architecture defines the Editor State as the single source of truth, while components such as the Command Engine coordinate state changes and the Renderer reads state without modifying it.
+
+A plugin should therefore be treated as an extension around this core:
+
+```text
++--------------------------------------+
+|            Editor Core               |
+|                                      |
+|  Editor State                        |
+|  Document                            |
+|  Cursor                              |
+|  Viewport                            |
+|                                      |
++------------------+-------------------+
+                   |
+             Plugin Boundary
+                   |
++------------------+-------------------+
+|                 Plugin               |
++--------------------------------------+
+```
+
+The plugin can request operations through the boundary, but it does not become an owner of the core.
+
+This distinction is important when something goes wrong.
+
+## What Does Isolation Mean?
+
+Isolation means limiting the consequences of a plugin failure.
+
+There are several possible levels:
+
+```text
+Level 1
+API boundary
+
+Level 2
+Resource boundary
+
+Level 3
+Failure containment
+
+Level 4
+Process isolation
+```
+
+These are not equivalent.
+
+A carefully designed API can prevent a plugin from directly modifying arbitrary internal structures.
+
+It cannot, by itself, prevent a plugin from crashing the process if the plugin executes in the same address space.
+
+## In-Process Plugins
+
+The dynamic-loading model described earlier normally places the plugin inside the editor process:
+
+```text
++-------------------------------------------+
+|              Editor Process               |
+|                                           |
+|  +----------------+   +---------------+   |
+|  |  Editor Core   |   |    Plugin     |   |
+|  +----------------+   +---------------+   |
+|                                           |
++-------------------------------------------+
+```
+
+This provides efficient communication.
+
+Function calls can cross the plugin boundary directly.
+
+Data can be exchanged through normal C interfaces.
+
+But the isolation boundary is weak.
+
+The plugin shares the same:
+
+```text
+Address space
+Process
+Memory
+Operating-system privileges
+```
+
+Consequently:
+
+> **A dynamically loaded plugin is an extension boundary, not a process-isolation boundary.**
+
+## A Plugin Can Still Crash the Editor
+
+Suppose a plugin contains:
+
+```c
+char *ptr = NULL;
+*ptr = 'A';
+```
+
+The operating system does not necessarily understand that the fault originated from an optional plugin.
+
+The fault occurs inside the editor process.
+
+Conceptually:
+
+```text
+Plugin
+   |
+   | invalid memory access
+   v
+Process fault
+   |
+   v
+Editor terminates
+```
+
+The plugin boundary does not automatically protect the editor from memory corruption.
+
+This is a fundamental limitation of in-process extensibility.
+
+## Why Function Boundaries Are Not Isolation
+
+It is tempting to think that this:
+
+```c
+plugin_callback();
+```
+
+creates a safety boundary.
+
+It does not.
+
+It is only a **calling boundary**.
+
+Both sides still execute inside the same process:
+
+```text
+Editor
+   |
+   | function call
+   v
+Plugin
+   |
+   | invalid memory access
+   v
+Shared process
+```
+
+The function call provides structure and abstraction.
+
+It does not provide fault containment.
+
+This distinction is essential when evaluating plugin architectures.
+
+## Resource Misuse
+
+A plugin can also cause problems without crashing immediately.
+
+For example:
+
+```text
+Plugin
+   |
+   +-- Allocates memory repeatedly
+   |
+   +-- Registers thousands of commands
+   |
+   +-- Produces excessive output
+   |
+   +-- Performs an extremely expensive operation
+```
+
+The editor may remain technically correct while becoming unusable.
+
+Therefore, plugin safety also includes **resource behavior**.
+
+Possible resources include:
+
+```text
+Memory
+File descriptors
+Callbacks
+Commands
+Buffers
+Temporary storage
+CPU time
+```
+
+The plugin interface should make ownership and lifetime explicit so that resource usage can be managed where practical.
+
+## Callback Safety
+
+Callbacks deserve particular attention.
+
+Suppose:
+
+```text
+Plugin registers callback
+        ↓
+Editor stores callback
+        ↓
+Plugin is unloaded
+```
+
+If the callback remains registered:
+
+```text
+Editor
+   |
+   +--> callback address
+             |
+             X
+        plugin unloaded
+```
+
+The editor now contains a reference to code that no longer exists.
+
+Later:
+
+```text
+Editor
+   ↓
+Invoke callback
+   ↓
+Invalid address
+```
+
+This can result in a process failure.
+
+Therefore, plugin shutdown must ensure that plugin-owned callbacks and registrations are removed before the plugin is unloaded.
+
+This is one of the reasons the lifecycle rules discussed in the dynamic-loading section are architectural requirements rather than implementation details.
+
+## Failure During Initialization
+
+A plugin can fail before it becomes fully active.
+
+For example:
+
+```text
+Load
+  ↓
+Compatibility check
+  ↓
+Initialize
+  ↓
+Initialization fails
+```
+
+The editor should treat initialization as a transaction-like boundary:
+
+```text
+Before initialization:
+    Plugin is inactive.
+
+After successful initialization:
+    Plugin is active.
+```
+
+If initialization fails, the editor should not leave behind partially registered functionality.
+
+Conceptually:
+
+```text
+Initialize
+    |
+    +---- failure ----> Cleanup partial resources
+    |
+    +---- success ----> Activate
+```
+
+This prevents a half-initialized plugin from becoming part of the normal editor execution path.
+
+## Failure During a Command
+
+Suppose a plugin registers a command:
+
+```text
+User input
+    ↓
+Input Parser
+    ↓
+Input Engine
+    ↓
+Command Engine
+    ↓
+Plugin command
+```
+
+If the plugin command fails, the Command Engine should retain ownership of the overall command-processing model.
+
+The plugin should report failure through the defined interface rather than directly manipulating unrelated editor state.
+
+The conceptual flow becomes:
+
+```text
+Plugin command
+      ↓
+success / failure
+      ↓
+Command Engine
+      ↓
+Editor State
+      ↓
+Renderer
+```
+
+This keeps plugin failure within the existing command architecture instead of creating a second state-management system.
+
+## Failure Should Not Corrupt Core State
+
+The most important safety property is that a plugin should not be able to leave the core in an invalid state simply because an operation failed.
+
+For example:
+
+```text
+Plugin requests operation
+        ↓
+Validate request
+        ↓
+Perform state transition
+        ↓
+Maintain invariants
+```
+
+rather than:
+
+```text
+Plugin
+   ↓
+Directly modify Editor State
+   ↓
+Failure halfway through
+   ↓
+Partially modified state
+```
+
+This is another reason to expose operations rather than internal data structures.
+
+The existing architecture already establishes controlled state transitions through the Command Engine and Editor State.
+
+The plugin architecture should preserve that discipline.
+
+## What Can the Baseline Architecture Guarantee?
+
+Our baseline plugin architecture can reasonably guarantee:
+
+```text
+Explicit interface
+ABI compatibility checks
+Controlled initialization
+Controlled shutdown
+Resource ownership rules
+Plugin registration boundaries
+Safe rejection of incompatible plugins
+```
+
+It cannot guarantee:
+
+```text
+Plugin code cannot crash the process
+Plugin cannot consume excessive CPU
+Plugin cannot intentionally corrupt memory
+Plugin cannot access everything available to the process
+```
+
+Those stronger guarantees require a stronger isolation mechanism.
+
+## Process Isolation
+
+A stronger design places the plugin in a separate process:
+
+```text
++---------------------------+       +---------------------------+
+|       Editor Process      |       |      Plugin Process       |
+|                           |       |                           |
+|       Editor Core        | <---> |          Plugin           |
+|                           | IPC   |                           |
++---------------------------+       +---------------------------+
+```
+
+Now a plugin crash can potentially be contained:
+
+```text
+Plugin Process
+      |
+      X
+    crash
+      |
+      v
+Editor Process
+      |
+      +---- continues
+```
+
+Communication would require an inter-process mechanism rather than ordinary function calls.
+
+This provides substantially stronger isolation, but at a significant cost.
+
+## The Trade-Off
+
+The two approaches can be compared conceptually:
+
+```text
+In-Process Plugin
+-----------------
+
+Editor <---- function calls ----> Plugin
+
+Advantages:
+    Fast communication
+    Simple data exchange
+    Simple API model
+    Low overhead
+
+Limitations:
+    Weak fault isolation
+    Shared address space
+    Plugin crash may crash editor
+```
+
+```text
+Out-of-Process Plugin
+---------------------
+
+Editor <-------- IPC --------> Plugin
+
+Advantages:
+    Stronger fault isolation
+    Separate address spaces
+    Plugin crash can be contained
+
+Limitations:
+    More complex communication
+    Serialization required
+    Higher overhead
+    More complicated lifecycle
+```
+
+Neither approach is universally better.
+
+The correct choice depends on the purpose of the extension system.
+
+## Our Architectural Scope
+
+The editor described by this book is educational and deliberately emphasizes simplicity, modularity, and maintainability rather than feature completeness. The baseline requirements explicitly exclude plugin systems and treat them as later extensions.
+
+Therefore, the plugin architecture discussed here should not introduce a distributed process architecture merely to obtain stronger isolation.
+
+For the conceptual extension model:
+
+```text
+Dynamic loading
+      +
+Stable interface
+      +
+ABI validation
+      +
+Controlled lifecycle
+      +
+Explicit failure handling
+```
+
+is sufficient.
+
+Process-level sandboxing is a possible future architecture, not a requirement of the baseline design.
+
+## Trust Is Still Required
+
+This leads to an important conclusion.
+
+An in-process plugin system assumes a degree of trust.
+
+If the user installs an arbitrary plugin, that plugin executes with essentially the same process-level privileges as the editor.
+
+Therefore:
+
+```text
+Plugin system
+    ≠
+Security sandbox
+```
+
+A plugin interface can constrain **how well-behaved plugins interact with the editor**.
+
+It cannot make untrusted native code safe merely by hiding internal structures.
+
+This distinction is particularly important for native C plugins.
+
+## A Practical Failure Model
+
+The resulting failure model can be summarized as:
+
+```text
+                    Plugin
+
+                       |
+                       v
+                +-------------+
+                | Load        |
+                +-------------+
+                       |
+                       v
+                +-------------+
+                | Validate    |
+                +-------------+
+                       |
+                  incompatible
+                       |
+                       v
+                    Reject
+
+
+                  compatible
+                       |
+                       v
+                +-------------+
+                | Initialize  |
+                +-------------+
+                   |       |
+                fail      success
+                   |       |
+                   v       v
+                Cleanup   Active
+                           |
+                           v
+                       Failure?
+                        /     \
+                      Yes      No
+                       |        |
+                       v        v
+                    Disable   Continue
+```
+
+The key objective is not to pretend that plugin failures cannot happen.
+
+It is to ensure that the architecture has predictable behavior when they do.
+
+## Isolation as a Spectrum
+
+Isolation should therefore be understood as a spectrum rather than a binary property:
+
+```text
+Less Isolation
+      |
+      v
+Direct internal access
+      |
+Plugin API
+      |
+Opaque handles
+      |
+Resource boundaries
+      |
+Process isolation
+      |
+Sandboxed process
+      |
+      v
+More Isolation
+```
+
+Our architecture deliberately stops at an appropriate level for the editor's scope.
+
+The plugin API provides architectural separation.
+
+It does not attempt to become a complete security or sandboxing framework.
+
+## Summary
+
+The central lesson is:
+
+> **A plugin boundary limits coupling, but an in-process plugin boundary does not guarantee fault isolation.**
+
+For our editor, safe plugin behavior therefore depends on:
+
+```text
+Clear API
+    +
+Stable ABI
+    +
+Compatibility validation
+    +
+Explicit ownership
+    +
+Controlled lifecycle
+    +
+Failure handling
+```
+
+If stronger guarantees are required in the future, the architecture can move the plugin into a separate process and communicate through IPC.
+
+For the current design, however, the important distinction is clear:
+
+```text
+Extension boundary
+        ≠
+Fault boundary
+        ≠
+Security boundary
+```
+
+Keeping those three concepts separate prevents the plugin architecture from promising guarantees that its underlying execution model cannot provide.
+
+Compatibility checks protect the editor before activation, while initialization, command, callback, and resource failures must be handled during operation without corrupting core state. The baseline can guarantee controlled registration and rejection, but not that native plugin code will avoid crashing the process.
+
+The next section examines what this trust model means for safety: **39.9 Security Considerations**.

@@ -1,0 +1,535 @@
+---
+title: "39.3 Designing a Plugin Interface"
+description: "Describes a plugin interface as a stable contract covering operations, data, ownership, lifetime, errors, callbacks, and versioning in both directions."
+---
+
+Once the plugin boundary has been established, the next question is:
+
+> **What exactly crosses that boundary?**
+
+The answer should not be a collection of internal editor structures exposed for convenience. It should be a deliberately designed interface that describes the capabilities available to extensions.
+
+The plugin interface becomes the formal contract between independently developed code and the editor.
+
+## Interface as a Contract
+
+An interface defines what one side can expect from the other.
+
+Conceptually:
+
+```text
++-------------------+          +-------------------+
+|       Editor      |          |      Plugin       |
+|                   |          |                   |
+|  implementation   |          |  implementation   |
++---------+---------+          +---------+---------+
+          |                              |
+          +---------- Interface ---------+
+```
+
+The implementation on either side may change internally, but communication must continue to follow the interface contract.
+
+For a plugin system, the contract needs to describe at least:
+
+```text
+Operations
+Data
+Ownership
+Lifetime
+Errors
+Callbacks
+Version
+```
+
+The interface therefore becomes more than a collection of function declarations.
+
+It defines the rules governing communication across the boundary.
+
+## Host and Plugin Roles
+
+It is useful to give the two sides explicit names.
+
+The application that loads and manages plugins is the **host**.
+
+The independently developed extension is the **plugin**.
+
+```text
+Host
+  |
+  | provides services
+  v
+Plugin
+
+Plugin
+  |
+  | provides extensions
+  v
+Host
+```
+
+The host owns the editor itself.
+
+The plugin owns its own implementation.
+
+Neither side should assume ownership of the other's private state.
+
+## A Host-Provided Interface
+
+The host can provide an API containing operations that plugins are allowed to request.
+
+For example:
+
+```c
+typedef struct editor_api {
+    void (*log)(const char *message);
+    void (*set_message)(const char *message);
+    int (*register_command)(const char *name);
+} editor_api;
+```
+
+A plugin could receive this interface during initialization:
+
+```c
+int plugin_init(const editor_api *api);
+```
+
+The important idea is not these particular functions.
+
+The important idea is that the plugin receives **explicit capabilities**.
+
+Instead of:
+
+```text
+Plugin
+   |
+   +--> entire EditorState
+```
+
+we have:
+
+```text
+Plugin
+   |
+   +--> editor_api
+          |
+          +--> log
+          +--> set_message
+          +--> register_command
+```
+
+The host controls what the plugin can do by controlling what appears in the interface.
+
+## Why Function Pointers Are Useful
+
+In C, an interface can be represented naturally using structures containing function pointers.
+
+For example:
+
+```c
+typedef struct editor_api {
+    void (*log)(const char *message);
+    int (*set_message)(const char *message);
+} editor_api;
+```
+
+The structure describes a set of operations without exposing the implementations behind them.
+
+The plugin does not need to know whether `set_message()` internally modifies the Message Bar, updates Editor State, or triggers another mechanism.
+
+It only knows the contract:
+
+```text
+set_message(message)
+        ↓
+Editor displays or handles the message
+```
+
+This preserves implementation freedom.
+
+## Plugin-Provided Interfaces
+
+The relationship can also work in the opposite direction.
+
+The plugin can provide functions that the host invokes.
+
+For example:
+
+```c
+typedef struct plugin_api {
+    const char *(*name)(void);
+    int (*initialize)(void);
+    void (*shutdown)(void);
+} plugin_api;
+```
+
+The host obtains this interface from the plugin.
+
+The overall relationship becomes:
+
+```text
++-------------------+       +-------------------+
+|       Host        |       |      Plugin       |
+|                   |       |                   |
+|   editor_api      | ----> |                   |
+|                   |       |   plugin_api      |
+|                   | <---- |                   |
++-------------------+       +-------------------+
+```
+
+This gives us two distinct directions of communication:
+
+```text
+Host API
+    Host ────────> Plugin
+
+Plugin API
+    Plugin ──────> Host
+```
+
+Keeping these directions conceptually separate makes the architecture easier to reason about.
+
+## Opaque Handles
+
+An interface may need to refer to editor-managed resources.
+
+As discussed in the previous section, the interface should avoid exposing their internal representation.
+
+An opaque type provides a useful mechanism:
+
+```c
+typedef struct editor_context editor_context;
+```
+
+The plugin can receive:
+
+```c
+editor_context *context;
+```
+
+but does not know the fields inside `editor_context`.
+
+The host retains control over the actual representation.
+
+```text
+Plugin
+  |
+  | editor_context *
+  v
++----------------------+
+| Editor Context       |
+|                      |
+| private state        |
+| private structures   |
++----------------------+
+```
+
+This gives the interface a stable conceptual handle without making internal structures part of the plugin contract.
+
+## Interface Data Should Be Deliberate
+
+The same principle applies to structures exchanged through the interface.
+
+Consider:
+
+```c
+typedef struct editor_position {
+    size_t row;
+    size_t column;
+} editor_position;
+```
+
+This may be appropriate because the concept of a position is part of the public contract.
+
+Compare that with exposing:
+
+```c
+typedef struct editor_state {
+    Document document;
+    Cursor cursor;
+    Viewport viewport;
+    ScreenBuffer screen;
+    ...
+} editor_state;
+```
+
+The second structure contains implementation details.
+
+If it becomes part of the plugin interface, changing the internal architecture could become an ABI-breaking operation.
+
+The interface should therefore expose **concepts required by extensions**, not whatever structures happen to exist internally.
+
+## Ownership Rules
+
+Every interface that passes data must establish ownership.
+
+For example, consider a function that returns a string:
+
+```c
+const char *editor_get_filename(...);
+```
+
+Several questions arise:
+
+- Who owns the returned string?
+- May the plugin modify it?
+- How long is it valid?
+- Can another editor operation invalidate it?
+- Does the plugin need to free it?
+
+Without answers, the function is incomplete as an interface contract.
+
+A safer interface might explicitly state:
+
+```text
+Returned string:
+    owned by the editor
+    read-only
+    valid until the next relevant editor operation
+```
+
+Alternatively, the interface could copy data into caller-provided storage.
+
+The particular strategy is a design decision, but the ownership rule must be explicit.
+
+## Lifetime Rules
+
+Ownership and lifetime are closely related but not identical.
+
+A plugin may receive an opaque handle:
+
+```c
+editor_document *document;
+```
+
+The interface must define how long that handle remains valid.
+
+For example:
+
+```text
+Plugin receives document handle
+             ↓
+Handle remains valid
+             ↓
+Document is closed
+             ↓
+Handle becomes invalid
+```
+
+The plugin must not continue using the handle after its lifetime ends.
+
+This becomes especially important when callbacks are involved.
+
+An editor may invoke a plugin callback much later than the operation that created the callback registration.
+
+Therefore, the interface must define the lifetime of registered callbacks, handles, and associated data.
+
+## Error Reporting
+
+Plugin interfaces must also define how failures are communicated.
+
+A simple C interface might use an integer result:
+
+```c
+int editor_register_command(...);
+```
+
+where the return value indicates success or failure.
+
+For example:
+
+```text
+0  → success
+non-zero → failure
+```
+
+The exact convention is less important than consistency.
+
+The interface should distinguish between:
+
+```text
+Successful operation
+Expected failure
+Invalid request
+Unsupported operation
+Internal failure
+```
+
+The plugin should not have to infer an error merely because some unrelated state changed.
+
+## Callbacks
+
+Some extensions require the host to notify the plugin when something happens.
+
+For example:
+
+```text
+Document changed
+Command invoked
+Buffer opened
+Editor shutting down
+```
+
+A callback allows the host to invoke plugin-provided code:
+
+```text
+Editor
+  |
+  | event
+  v
+Plugin callback
+```
+
+A callback interface introduces additional rules.
+
+The architecture must define:
+
+- When callbacks occur
+- What arguments are valid
+- Whether callbacks may modify editor state
+- What happens if a callback fails
+- Whether callbacks may call back into the host
+- When callbacks are removed
+
+These rules prevent the interface from becoming an uncontrolled network of calls between the host and plugin.
+
+## Capabilities Should Be Intentional
+
+The interface should expose only the operations necessary for legitimate extension.
+
+For example, if a plugin only needs to display a message:
+
+```c
+void (*set_message)(const char *message);
+```
+
+there is little reason to give that plugin direct access to the renderer.
+
+Likewise, if a plugin registers a command, it should use the command-registration interface rather than manipulating the Command Engine's internal tables.
+
+The principle is:
+
+> **Expose the smallest capability that satisfies the extension's requirement.**
+
+This is essentially the same architectural discipline used throughout the editor, applied across the external boundary.
+
+## A Conceptual Plugin Interface
+
+Putting these ideas together, a conceptual interface might look like:
+
+```c
+typedef struct editor_api {
+    void (*log)(const char *message);
+
+    int (*set_message)(const char *message);
+
+    int (*register_command)(
+        const char *name,
+        void (*callback)(void)
+    );
+} editor_api;
+```
+
+The plugin might provide:
+
+```c
+typedef struct plugin_api {
+    const char *name;
+    int version;
+
+    int (*initialize)(const editor_api *editor);
+    void (*shutdown)(void);
+} plugin_api;
+```
+
+This is **not yet our implementation design**.
+
+It is a model for understanding the relationship:
+
+```text
+                    Plugin Boundary
+
+        +--------------------------------+
+        |                                |
+        |          Editor Host           |
+        |                                |
+        |       editor_api               |
+        |                                |
+        +---------------+----------------+
+                        |
+                        |
+        +---------------v----------------+
+        |                                |
+        |            Plugin              |
+        |                                |
+        |       plugin_api               |
+        |                                |
+        +--------------------------------+
+```
+
+The concrete interface will eventually need additional decisions about ABI compatibility, versioning, lifecycle, and dynamic loading.
+
+Those are deliberately kept separate rather than being mixed into this initial interface design.
+
+## Interface Stability
+
+A normal internal function can sometimes be changed freely when all callers are updated at the same time.
+
+A plugin interface does not have that luxury.
+
+The editor may be released today:
+
+```text
+Editor 1.0
+    ↓
+Plugin API
+```
+
+and a plugin may be compiled against that interface.
+
+Later:
+
+```text
+Editor 2.0
+    ↓
+Changed internal implementation
+```
+
+The old plugin may still exist.
+
+Therefore:
+
+```text
+Internal API
+    → can evolve with the source tree
+
+Plugin API
+    → must consider independently existing binaries
+```
+
+This is one of the most important consequences of introducing plugins.
+
+It leads directly to the distinction between **API compatibility and ABI compatibility**, which is the subject of the next section.
+
+## Summary
+
+The plugin interface should be treated as a **stable contract of capabilities**, not as a window into the editor's implementation.
+
+Its design must define:
+
+```text
+What can be called
+What data can cross
+Who owns that data
+How long it remains valid
+How errors are reported
+How callbacks behave
+Which capabilities are exposed
+```
+
+Once independently compiled plugins depend on this contract, source-level correctness is no longer sufficient.
+
+The editor must also ensure that the compiled representations on both sides can communicate safely.
+
+The host and plugin each own their own implementation, and the interface must state operations, data, ownership, lifetime, errors, callbacks, and versioning explicitly. Keeping both directions of communication separate—host API and plugin API—prevents the contract from becoming an uncontrolled network of calls.
+
+That is the problem addressed by **ABI — When Source Compatibility Is Not Enough**.

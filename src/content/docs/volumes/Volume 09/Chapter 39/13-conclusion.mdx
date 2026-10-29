@@ -1,0 +1,52 @@
+---
+title: "39.13 Conclusion"
+description: "Summarizes the plugin architecture chapter, its boundary and trust lessons, review exercises, and previews language server protocol as the next topic."
+---
+
+A plugin is not merely another module: it is independently compiled code that crosses a defined boundary into the running editor. The unifying idea of the chapter is that extensibility must be a **deliberately designed boundary** — the plugin sees a controlled interface, never the editor's entire internal implementation.
+
+```text
+Boundary → Interface → ABI → Versioning → Loading → Safety → Failure → Security → Design
+```
+
+The plugin boundary defines what is allowed to cross between editor and extension; the interface expresses that contract as explicit capabilities; ABI makes the compiled representations compatible; versioning lets the editor reject incompatible plugins before activation; dynamic loading is the mechanism that obtains the external code; and safe extension, failure handling, and security determine how much trust an in-process plugin system can offer.
+
+The important lessons are:
+
+- A plugin crosses a compilation boundary; it is independent code, not another internal module.
+- The plugin should receive capabilities, not unrestricted access to editor state.
+- An **API** describes source-level communication; an **ABI** ensures the compiled representations communicate safely.
+- Plugin version and interface version are different concepts; compatibility must be checked before activation.
+- Dynamic loading provides extension, not validation: a successfully loaded library is not yet a valid plugin.
+- Extensions should preserve the editor's invariants by using its state-changing operations.
+- An extension boundary is not a fault boundary: an in-process plugin can still crash the editor.
+- In-process plugins are trusted code; the plugin system is not a security sandbox.
+- A good plugin architecture is the smallest boundary that allows useful extensions without compromising the core.
+- The baseline editor does not require plugins; extensibility is a later extension with real maintenance costs.
+
+For an educational editor that favors simplicity, a **small, versioned plugin boundary** — a Plugin Manager, a versioned ABI, a controlled Host API, a platform-isolated Dynamic Loader, compatibility validation, and explicit lifecycle and failure handling — is the appropriate design.
+
+The plugin strategy — in-process dynamic loading, a small versioned ABI, a capability-based host API, opaque handles, and compatibility validation before activation — is recorded as **ADR-033: Plugin Architecture Strategy**.
+
+## Exercises
+
+### Review Questions
+
+1. Why is a plugin not just another internal module?
+2. What should not cross the plugin boundary?
+3. Distinguish an API from an ABI. Why does source compatibility not imply binary compatibility?
+4. Why must plugin versioning and interface versioning be distinguished?
+5. Why is a successful shared-library load not proof that a plugin is valid?
+6. How can a plugin extend the editor without violating its core invariants?
+7. Why does an in-process plugin boundary fail to provide fault isolation?
+8. What security assumptions does the baseline in-process plugin architecture make?
+
+### Optional Challenge
+
+Design the plugin interface for the editor: define a minimal `editor_api` the host provides to plugins, the `plugin_api` a plugin exposes back to the host, and the ABI-validation step that decides whether a plugin is accepted or rejected before initialization.
+
+## Preview of the Next Chapter
+
+> Plugins open the editor to change without recompilation — but coordinated extensions need more than a boundary; they need a language with which the editor can communicate with external tools.
+
+Plugins give the editor an extension surface, yet a growing editor still relies on its own decisions about parsing, analysis, and editing. The next chapter moves into **Language Server Protocol (LSP)**, where the book examines how an editor delegates language intelligence — diagnostics, completion, hover — to a separate server through a defined protocol, the modern way to make an editor language-aware without embedding every language's knowledge.

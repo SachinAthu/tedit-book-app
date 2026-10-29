@@ -1,0 +1,565 @@
+---
+title: "39.7 Extending the Editor Safely"
+description: "Explains how plugins extend the editor through explicit commands and events while preserving invariants, ownership, ABI stability, and controlled activation."
+---
+
+A plugin system exists to make the editor extensible without making the editor's core unstable.
+
+That distinction is fundamental.
+
+The goal is not simply:
+
+> Allow external code to run inside the editor.
+
+The goal is:
+
+> **Allow new capabilities to be added while preserving the editor's existing architecture, invariants, and compatibility boundaries.**
+
+A safe extension mechanism therefore has to preserve the principles established throughout the book.
+
+## Extension Must Respect the Existing Architecture
+
+The plugin system should not become an alternative architecture layered on top of the editor.
+
+The existing architecture remains responsible for the editor's core behavior:
+
+```text
+Input
+  ↓
+Input Parser
+  ↓
+Command Engine
+  ↓
+Editor State
+  ↓
+Renderer
+```
+
+Plugins interact with this architecture through explicitly defined interfaces:
+
+```text
+                    Plugin
+                       |
+                       v
+                Plugin Interface
+                       |
+                       v
+                 Editor Core
+```
+
+The plugin does not bypass the established boundaries simply because it is external code.
+
+For example, a plugin should not directly manipulate the renderer's internal state merely because it wants to change something on the screen.
+
+Instead, it should use an appropriate capability provided by the plugin interface.
+
+## Do Not Expose Internal State for Convenience
+
+One of the easiest ways to make a plugin system unsafe is to expose internal structures simply because doing so makes the first implementation easier.
+
+For example:
+
+```c
+plugin_run(&editor_state);
+```
+
+may appear convenient.
+
+But it effectively gives the plugin access to the editor's entire internal state.
+
+The consequences are significant:
+
+```text
+Plugin
+  |
+  +-- Document internals
+  +-- Cursor internals
+  +-- Viewport internals
+  +-- Renderer internals
+  +-- File Manager internals
+```
+
+The plugin now depends on implementation details that should remain private.
+
+A safer architecture provides specific operations:
+
+```text
+Plugin
+  |
+  +-- register command
+  +-- query document
+  +-- request editing operation
+  +-- display message
+```
+
+The difference is architectural, not merely stylistic.
+
+## Preserve Core Invariants
+
+The editor already depends on invariants established in earlier chapters (for example, the Document model in Chapter 13, the Cursor Engine in Chapter 14, the Renderer in Chapter 19, and file safety in Chapter 23).
+
+For example:
+
+```text
+Document remains valid.
+
+Cursor remains within valid logical bounds.
+
+Viewport remains consistent with Cursor visibility.
+
+Failed saves do not clear the Dirty Flag.
+
+Renderer does not modify Editor State.
+```
+
+A plugin must not be allowed to bypass these guarantees.
+
+Consider a plugin that wants to move the cursor.
+
+Unsafe:
+
+```text
+Plugin
+   |
+   +--> cursor.row = arbitrary_value;
+```
+
+Safer:
+
+```text
+Plugin
+   |
+   +--> editor_move_cursor(...)
+                 |
+                 v
+          Cursor Engine
+                 |
+                 v
+          validated state
+```
+
+The second design ensures that the same rules used by the rest of the editor continue to apply.
+
+This leads to an important principle:
+
+> **Extensions should use the editor's state-changing operations rather than directly modifying protected state.**
+
+## Keep Plugins Outside the Core's Responsibilities
+
+The plugin architecture should also preserve responsibility boundaries.
+
+The Core should continue to own:
+
+```text
+Editor State
+Document management
+Cursor behavior
+Viewport behavior
+Rendering
+File safety
+Terminal state
+```
+
+A plugin may provide additional behavior, but it should not silently take ownership of these core responsibilities.
+
+For example:
+
+```text
+Plugin:
+    Provides a new command
+
+Command Engine:
+    Executes the command
+
+Editor State:
+    Maintains the resulting state
+
+Renderer:
+    Displays the resulting state
+```
+
+This keeps the architecture understandable.
+
+## Extension Through Commands
+
+Commands provide a particularly natural extension point.
+
+The existing Command Engine already represents user actions as operations rather than allowing the Input Engine to manipulate state directly.
+
+A plugin can therefore conceptually add:
+
+```text
+Plugin
+   |
+   +--> register command
+             |
+             v
+       Command Engine
+```
+
+After registration:
+
+```text
+User Input
+    ↓
+Input Parser
+    ↓
+Command Engine
+    ↓
+Plugin Command
+    ↓
+Editor API
+    ↓
+Editor State
+```
+
+The plugin becomes an additional source of commands rather than a replacement for the Command Engine.
+
+This preserves the architecture already established in the earlier chapters.
+
+## Extension Through Events
+
+The opposite direction is also useful.
+
+The editor may expose selected events to plugins:
+
+```text
+Document opened
+Document changed
+Buffer switched
+Editor shutting down
+```
+
+Conceptually:
+
+```text
+Editor
+   |
+   +--> Event
+          |
+          v
+       Plugin
+```
+
+But event exposure should remain deliberate.
+
+The editor should not expose every internal state transition merely because a callback mechanism exists.
+
+Otherwise the plugin API becomes tightly coupled to internal implementation details.
+
+A useful rule is:
+
+> **Expose events because they represent meaningful extension points, not because they happen to exist internally.**
+
+## Plugins Should Not Control the Main Loop
+
+The Event Loop is a core component of the editor.
+
+A plugin should normally participate in the event-driven architecture rather than replacing or controlling it.
+
+The relationship should remain:
+
+```text
+Event Loop
+    |
+    +--> Input
+    +--> Command processing
+    +--> Plugin callbacks
+    +--> Rendering
+```
+
+rather than:
+
+```text
+Plugin
+   |
+   +--> Main Event Loop
+          |
+          +--> Editor
+```
+
+Giving an extension unrestricted control over the main loop would undermine the architecture's central coordination mechanism.
+
+## Plugin Failure Must Not Redefine Core Failure
+
+A plugin is optional functionality.
+
+The core editor is not.
+
+Therefore, plugin failure should normally remain localized:
+
+```text
+Plugin failure
+      ↓
+Plugin disabled / rejected
+      ↓
+Editor continues
+```
+
+rather than:
+
+```text
+Plugin failure
+      ↓
+Editor process corrupted
+      ↓
+Entire editor fails
+```
+
+Dynamic loading cannot provide complete isolation because plugins normally execute inside the editor process.
+
+Therefore, the architecture should at minimum ensure that predictable plugin failures are detected and handled at the plugin boundary.
+
+This does not make arbitrary plugin code safe.
+
+It establishes a **failure-management boundary**.
+
+## Do Not Make Plugin APIs Too Large
+
+A large interface creates a large compatibility surface.
+
+For example:
+
+```text
+Plugin API
+ ├── Editor State
+ ├── Document internals
+ ├── Cursor internals
+ ├── Viewport internals
+ ├── Renderer
+ ├── Screen Buffer
+ ├── Terminal
+ ├── File Manager
+ ├── Configuration
+ └── Internal utilities
+```
+
+Every exposed component becomes something that future versions may need to preserve.
+
+A smaller interface is easier to maintain:
+
+```text
+Plugin API
+ ├── Commands
+ ├── Selected queries
+ ├── Selected editor operations
+ ├── Messages
+ └── Selected events
+```
+
+The principle is not:
+
+> Make the API as small as possible.
+
+It is:
+
+> **Expose only capabilities that constitute intentional extension points.**
+
+## Preserve ABI Stability
+
+The plugin interface is also a binary contract.
+
+Therefore, changing the internal implementation should not unnecessarily change the plugin ABI.
+
+For example, changing:
+
+```text
+Document
+    vector of lines
+```
+
+to:
+
+```text
+Document
+    gap buffer
+```
+
+should not require every plugin to understand the new representation.
+
+The plugin should continue interacting through the public interface.
+
+```text
+          Plugin
+             |
+        Stable ABI
+             |
+      +------+------+
+      |             |
+  Old internal   New internal
+  representation representation
+```
+
+This is one of the major reasons for keeping implementation details behind the plugin boundary.
+
+## Validate Before Activation
+
+A plugin should pass through the validation sequence before becoming part of the active editor:
+
+```text
+Discover
+   ↓
+Load
+   ↓
+Resolve entry point
+   ↓
+Check ABI
+   ↓
+Check required capabilities
+   ↓
+Initialize
+   ↓
+Activate
+```
+
+This prevents incompatible or malformed extensions from being treated as ordinary editor components.
+
+The editor should prefer:
+
+```text
+Reject safely
+```
+
+over:
+
+```text
+Load and hope
+```
+
+## Extension Should Be Additive
+
+A well-designed plugin system should allow new capabilities to be added without changing unrelated parts of the editor.
+
+For example:
+
+```text
+Add syntax-highlighting plugin
+        ↓
+Plugin API
+        ↓
+Existing Core remains unchanged
+```
+
+The plugin should not require modifications to:
+
+```text
+Terminal Interface
+File Manager
+Viewport
+Screen Buffer
+```
+
+unless those components intentionally provide part of the extension interface.
+
+This is the practical meaning of loose coupling at the plugin boundary.
+
+## Safe Extension Is a Boundary Discipline
+
+The complete model can now be summarized:
+
+```text
++------------------------------------------------+
+|                 Editor Core                    |
+|                                                |
+|  Input → Commands → State → Rendering          |
+|                                                |
++--------------------+---------------------------+
+                     |
+              Stable Extension
+                 Boundary
+                     |
++--------------------+---------------------------+
+|                 Plugin                         |
+|                                                |
+|  Additional commands                           |
+|  Additional behavior                           |
+|  Optional integrations                         |
+|                                                |
++------------------------------------------------+
+```
+
+The plugin gains capabilities through the boundary.
+
+The editor retains ownership of its core state and invariants.
+
+This separation allows the two sides to evolve independently within the limits of their contract.
+
+## The Cost of Extensibility
+
+It is important to recognize that safe extensibility is not free.
+
+The editor now has additional concepts:
+
+```text
+Plugin API
+ABI
+Versioning
+Dynamic loading
+Plugin lifecycle
+Compatibility
+Failure handling
+```
+
+Every one of these adds complexity.
+
+Therefore, the architecture should not introduce plugins merely because plugins are fashionable or because a future feature _could_ be implemented as one.
+
+A feature should become a plugin when independent extension provides a meaningful architectural or product benefit.
+
+Otherwise, an internal module is often the simpler and safer choice.
+
+## A Practical Decision Rule
+
+When adding a new capability, ask:
+
+```text
+Is this part of the editor's core responsibility?
+        |
+       Yes
+        ↓
+   Internal module
+
+        No
+        |
+        v
+Does independent installation or development
+provide a meaningful benefit?
+        |
+       Yes
+        ↓
+      Plugin
+```
+
+This prevents the plugin system from becoming a dumping ground for functionality that belongs in the core.
+
+## Summary
+
+The purpose of plugin architecture is not to make every part of the editor replaceable.
+
+It is to establish **controlled extension points**.
+
+The resulting architecture should preserve:
+
+```text
+Core ownership
+      +
+Explicit interfaces
+      +
+Stable ABI
+      +
+Compatibility checks
+      +
+Controlled lifecycle
+      +
+Failure boundaries
+```
+
+Together, these allow the editor to gain new capabilities without sacrificing the architectural properties established throughout the earlier chapters.
+
+> **A safe extension is one that adds capability without taking ownership of the editor's internal architecture.**
+
+That is the central architectural goal of the plugin system.
+
+Plugins should add commands or observe selected events rather than control the event loop or mutate protected state directly. Because safe extensibility adds API, ABI, loading, lifecycle, compatibility, and failure-handling concepts, an internal module remains the simpler choice unless independent deployment provides a real benefit.
+
+The next section examines what happens when that controlled extension still fails: **39.8 Plugin Failure and Isolation**.

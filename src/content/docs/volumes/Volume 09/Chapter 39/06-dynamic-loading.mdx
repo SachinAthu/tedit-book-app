@@ -1,0 +1,602 @@
+---
+title: "39.6 Dynamic Loading"
+description: "Describes how the editor locates, loads, resolves, validates, initializes, and unloads a shared library while keeping loading separate from compatibility."
+---
+
+A plugin is useful only if the editor can obtain and activate it.
+
+For an internal module, this happens during the normal compilation and linking process:
+
+```text
+Source Files
+     ↓
+Compiler
+     ↓
+Object Files
+     ↓
+Linker
+     ↓
+Editor Executable
+```
+
+The code becomes part of the executable before the editor starts.
+
+A dynamically loaded plugin follows a different path:
+
+```text
+Plugin Source
+     ↓
+Compiler
+     ↓
+Shared Library
+     ↓
+Editor starts
+     ↓
+Editor loads library
+     ↓
+Plugin becomes available
+```
+
+The plugin therefore becomes part of the running system **at runtime rather than at normal link time**.
+
+## Static Linking and Dynamic Loading
+
+It is useful to distinguish three situations.
+
+An internal module can be compiled directly into the executable:
+
+```text
+Editor
+ ├── Input
+ ├── Document
+ ├── Renderer
+ └── Plugin-like code
+```
+
+A statically linked extension can also be compiled into the executable, but selected as an extension at build time.
+
+A dynamically loaded plugin remains outside the executable:
+
+```text
++------------------+       +------------------+
+|     Editor       |       |      Plugin      |
+|                  |       |                  |
+|  executable      |       | shared library  |
++------------------+       +------------------+
+          |                         ^
+          |                         |
+          +------ runtime ----------+
+                   loading
+```
+
+Dynamic loading is what allows the editor to discover and activate independently built extensions after the editor itself has already been compiled.
+
+## Shared Libraries
+
+On POSIX systems, dynamically loadable code is commonly provided through shared libraries.
+
+The exact filename and format depend on the platform, but conceptually:
+
+```text
+editor
+plugin_a.so
+plugin_b.so
+plugin_c.so
+```
+
+The editor executable does not need to contain the implementation of these plugins.
+
+Instead, the operating system's dynamic-loading facilities can map the required library into the editor process.
+
+The important distinction is:
+
+```text
+Normal linking:
+
+Editor executable
+       ↓
+Code already linked
+
+
+Dynamic loading:
+
+Editor executable
+       ↓
+Load external library
+       ↓
+Code becomes available at runtime
+```
+
+## The Basic Loading Sequence
+
+A plugin system can be understood as a sequence of distinct operations:
+
+```text
+Locate plugin
+     ↓
+Load shared library
+     ↓
+Find entry point
+     ↓
+Obtain plugin information
+     ↓
+Check compatibility
+     ↓
+Initialize plugin
+     ↓
+Register extensions
+```
+
+This sequence is important because loading and initialization are not the same operation.
+
+Successfully loading a library does not mean that the editor has a usable plugin.
+
+## Loading the Library
+
+At the lowest level, the editor asks the operating system to load the shared library.
+
+On POSIX systems, the traditional interface includes:
+
+```c
+dlopen()
+```
+
+Conceptually:
+
+```text
+Editor
+   |
+   | dlopen("plugin.so")
+   v
+Operating System
+   |
+   v
+Shared Library
+```
+
+If loading succeeds, the operating system makes the library's symbols available to the process according to the platform's dynamic-linking rules.
+
+If loading fails, the editor should treat that as a plugin-loading failure rather than attempting to continue with an invalid library.
+
+## Resolving the Entry Point
+
+Loading a library does not automatically tell the editor which function represents the plugin interface.
+
+The editor therefore needs a known entry point.
+
+A conceptual plugin might expose:
+
+```c
+plugin_get_api()
+```
+
+The editor can locate that symbol using the dynamic-loading mechanism.
+
+On POSIX systems, the relevant operation is commonly:
+
+```c
+dlsym()
+```
+
+The conceptual sequence becomes:
+
+```text
+dlopen()
+   ↓
+Library loaded
+   ↓
+dlsym()
+   ↓
+Plugin entry point found
+```
+
+The editor can then call the entry point to obtain the plugin's public interface.
+
+## A Known Entry Point
+
+The editor and plugin must agree beforehand on at least one symbol whose meaning is stable.
+
+For example:
+
+```c
+const plugin_api *plugin_get_api(void);
+```
+
+The plugin provides the function.
+
+The editor looks for that function.
+
+```text
+Editor
+   |
+   | find "plugin_get_api"
+   v
+Plugin
+   |
+   +-- plugin_get_api()
+             |
+             v
+       plugin_api
+```
+
+This creates a bootstrap mechanism.
+
+Before the editor can use the plugin's other capabilities, it needs one reliable way to discover those capabilities.
+
+## Loading Is Not Validation
+
+It is important to preserve the distinction established in the previous sections.
+
+Suppose:
+
+```text
+dlopen()
+```
+
+succeeds.
+
+That tells us that the operating system was able to load the library.
+
+It does **not** prove that:
+
+```text
+The library is a valid editor plugin.
+The ABI is compatible.
+The required entry point exists.
+The plugin metadata is valid.
+The plugin can be initialized safely.
+```
+
+Therefore:
+
+```text
+Load
+  ↓
+Discover
+  ↓
+Validate
+  ↓
+Initialize
+```
+
+must remain conceptually separate.
+
+A successful load is only the first step.
+
+## Symbol Resolution
+
+A dynamically loaded library contains symbols.
+
+Some are intended to be used externally; others are internal implementation details.
+
+The plugin architecture should define which symbols constitute its public entry points.
+
+For example:
+
+```text
+Plugin shared library
+
++----------------------------------+
+| Internal plugin functions       |
+| Internal data                    |
+| Helper functions                 |
+|                                  |
+| Public entry point               |
+|   plugin_get_api()               |
++----------------------------------+
+```
+
+The editor should depend only on the documented entry point.
+
+It should not search for arbitrary internal functions.
+
+This preserves the same boundary principle established earlier:
+
+> **The loader discovers the plugin interface, not the plugin's implementation.**
+
+## Why a Single Entry Point Is Useful
+
+A single well-defined entry point provides a controlled bootstrap mechanism.
+
+Instead of requiring the editor to know:
+
+```text
+plugin_init()
+plugin_shutdown()
+plugin_register_command()
+plugin_register_events()
+plugin_get_name()
+...
+```
+
+the editor can initially discover one function:
+
+```text
+plugin_get_api()
+```
+
+which returns the plugin's interface.
+
+Conceptually:
+
+```text
+Editor
+   |
+   +--> plugin_get_api()
+             |
+             v
+        plugin_api
+        ├── initialize
+        ├── shutdown
+        └── ...
+```
+
+The plugin can therefore organize its public operations behind a versioned interface.
+
+This also gives the architecture a natural place to attach ABI information.
+
+## The Complete Loading Pipeline
+
+Combining the previous sections gives us:
+
+```text
+                    Plugin File
+                        |
+                        v
+                 Dynamic Loader
+                        |
+                     dlopen()
+                        |
+                        v
+                 Shared Library
+                        |
+                     dlsym()
+                        |
+                        v
+                Entry Point
+                        |
+                        v
+                 Plugin Metadata
+                        |
+                  ABI Validation
+                        |
+                  +-----+-----+
+                  |           |
+               Reject       Accept
+                              |
+                              v
+                         Initialize
+                              |
+                              v
+                       Active Plugin
+```
+
+Each stage answers a different question.
+
+```text
+Dynamic loader:
+    Can the binary be loaded?
+
+Entry point:
+    Is this a plugin of the expected form?
+
+Compatibility:
+    Can we communicate with it?
+
+Initialization:
+    Can it successfully join the editor?
+```
+
+Separating these stages makes failure handling much clearer.
+
+## Loading Failure
+
+A plugin may fail before initialization.
+
+Possible causes include:
+
+```text
+Library does not exist
+Permission denied
+Invalid shared library
+Unsupported binary format
+Missing dependency
+Entry point not found
+ABI incompatible
+Invalid metadata
+```
+
+The editor should report the failure and continue operating whenever possible.
+
+For example:
+
+```text
+Editor
+   |
+   +-- Plugin A → loaded successfully
+   |
+   +-- Plugin B → incompatible → rejected
+   |
+   +-- Plugin C → missing → skipped
+```
+
+A failed optional extension should not normally prevent the core editor from starting.
+
+## Unloading
+
+Dynamic loading also introduces the opposite operation.
+
+When the editor no longer needs a plugin, the shared library can potentially be unloaded.
+
+On POSIX systems, the corresponding operation is commonly:
+
+```c
+dlclose()
+```
+
+Conceptually:
+
+```text
+Active Plugin
+     ↓
+Shutdown
+     ↓
+Release plugin resources
+     ↓
+dlclose()
+     ↓
+Library unloaded
+```
+
+However, unloading is not simply the reverse of loading.
+
+The editor must ensure that no remaining references point into the plugin.
+
+For example:
+
+```text
+Plugin registers callback
+       ↓
+Editor stores callback
+       ↓
+Plugin unloaded
+       ↓
+Editor invokes callback
+       ↓
+Invalid function address
+```
+
+Therefore, plugin shutdown must remove or invalidate plugin-owned registrations before unloading occurs.
+
+This is one reason plugin lifecycle requires its own architectural treatment.
+
+## Dynamic Loading and Platform Boundaries
+
+Dynamic loading is inherently platform-dependent.
+
+Our portability architecture (Chapter 37) already establishes that platform-specific mechanisms should remain at the platform boundary rather than spreading through the Core.
+
+The same principle applies here.
+
+Conceptually:
+
+```text
++-------------------------------------+
+|             Editor Core             |
+|                                     |
+| Platform-independent plugin model   |
++------------------+------------------+
+                   |
+            Platform Boundary
+                   |
+          +--------+--------+
+          |                 |
+       POSIX loader     Other platform
+       implementation    implementation
+```
+
+The Core should reason about concepts such as:
+
+```text
+load plugin
+find entry point
+unload plugin
+```
+
+rather than embedding platform-specific dynamic-loader calls throughout the editor.
+
+## Dynamic Loading Does Not Provide Isolation
+
+A dynamically loaded plugin normally executes inside the editor's process.
+
+That means:
+
+```text
++--------------------------------------+
+|          Editor Process              |
+|                                      |
+|   Editor Core      Plugin             |
+|       │              │               |
+|       +--------------+               |
+|                                      |
++--------------------------------------+
+```
+
+The plugin shares the process's:
+
+- address space,
+- memory,
+- process privileges,
+- runtime environment.
+
+Therefore, dynamic loading provides **extension**, not strong fault isolation.
+
+If a plugin dereferences invalid memory, it can potentially crash the entire editor.
+
+This distinction becomes important when we discuss plugin failure and isolation later in the chapter.
+
+## Why We Do Not Implement This Here
+
+At this point, it would be tempting to write:
+
+```c
+void *handle = dlopen(...);
+void *symbol = dlsym(...);
+```
+
+and begin implementing the plugin manager.
+
+That would move this chapter into implementation prematurely.
+
+The purpose here is to establish the architecture:
+
+```text
+What gets loaded?
+How is it discovered?
+How is it validated?
+When is it initialized?
+When can it be unloaded?
+Where does platform-specific loading belong?
+```
+
+The actual C implementation belongs in the implementation volume.
+
+This follows the book's theory-first structure: the architecture must be understood before the mechanisms are implemented.
+
+## Summary
+
+Dynamic loading provides the mechanism through which an independently compiled plugin becomes available to the running editor.
+
+The important sequence is:
+
+```text
+Locate
+  ↓
+Load
+  ↓
+Resolve
+  ↓
+Validate
+  ↓
+Initialize
+  ↓
+Use
+  ↓
+Shutdown
+  ↓
+Unload
+```
+
+Each stage has a separate responsibility.
+
+Most importantly:
+
+> **Successfully loading a shared library does not make it a valid plugin.**
+
+The editor still needs to identify the plugin, verify its compatibility, and initialize it according to the plugin contract.
+
+Loading, symbol resolution, compatibility validation, initialization, and unloading must remain distinct stages, and platform-specific calls such as `dlopen()`, `dlsym()`, and `dlclose()` belong behind the platform boundary. Unloading also requires removing every plugin-owned callback and registration before the library leaves the process.
+
+Once a plugin has been loaded and accepted, the next architectural question is how it behaves throughout its lifetime.
+
+That is the subject of **39.7 Extending the Editor Safely**.

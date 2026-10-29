@@ -1,0 +1,299 @@
+---
+title: "39.11 Design Alternatives and Trade-offs"
+description: "Compares in-process and out-of-process plugins, direct and opaque interfaces, single and multiple ABI generations, static extensions, and API size trade-offs."
+---
+
+There is no single correct way to design a plugin architecture.
+
+Different designs optimize for different goals: simplicity, performance, compatibility, isolation, or flexibility.
+
+For our editor, the appropriate choice is the **simplest architecture that provides useful extension without unnecessarily complicating the core**.
+
+## In-Process vs Out-of-Process Plugins
+
+The most important architectural choice is where the plugin executes.
+
+```text
+In-process
+
+Editor Process
++-----------------------------+
+| Core        | Plugin        |
++-----------------------------+
+```
+
+Advantages:
+
+- Simple function-based API
+- Low communication overhead
+- Direct access through C interfaces
+- Easier implementation
+
+Disadvantages:
+
+- Weak fault isolation
+- Plugin shares the editor's address space
+- A serious plugin failure can terminate the editor
+
+An out-of-process design provides stronger isolation:
+
+```text
+Editor Process          Plugin Process
++-------------+         +-------------+
+|    Core     | <─ IPC ─> |   Plugin  |
++-------------+         +-------------+
+```
+
+Advantages:
+
+- Separate address spaces
+- Plugin crashes can potentially be contained
+- Stronger foundation for sandboxing
+
+Disadvantages:
+
+- IPC is more complex
+- Data must cross a process boundary
+- Serialization and lifecycle management become necessary
+- Higher communication overhead
+
+For our editor, **in-process plugins are the appropriate baseline**. Stronger isolation can be considered if untrusted extensions become a requirement.
+
+## Direct API vs Opaque Handles
+
+Another choice concerns how much of the editor's internal representation is exposed.
+
+A direct approach might expose structures:
+
+```c
+typedef struct editor_state {
+    Document document;
+    Cursor cursor;
+    Viewport viewport;
+} editor_state;
+```
+
+This is convenient but creates strong coupling.
+
+An opaque-handle approach hides implementation details:
+
+```c
+typedef struct editor_context editor_context;
+typedef struct editor_document editor_document;
+```
+
+Operations are then provided through functions.
+
+```text
+Plugin
+   |
+   v
+Opaque Handle
+   |
+   v
+Editor Implementation
+```
+
+The opaque approach requires more interface design but provides much better freedom to evolve the implementation.
+
+For our architecture, **opaque handles and explicit operations are preferable where internal state would otherwise become part of the ABI**.
+
+## Single ABI vs Multiple ABI Generations
+
+A simple plugin system can require:
+
+```text
+Plugin ABI == Editor ABI
+```
+
+This is easy to reason about but may require plugins to be rebuilt whenever the ABI changes.
+
+A more sophisticated system can support multiple ABI generations:
+
+```text
+Editor
+ ├── ABI v1
+ ├── ABI v2
+ └── ABI v3
+```
+
+This improves compatibility but increases implementation and testing complexity.
+
+For the baseline architecture, **a clearly versioned ABI with a deliberately small compatibility policy is sufficient**.
+
+Multiple simultaneous ABI generations should be introduced only when there is a real compatibility requirement.
+
+## Static Extensions vs Dynamic Plugins
+
+Not every extension needs dynamic loading.
+
+A feature can be compiled directly into the editor:
+
+```text
+Source
+  ↓
+Compiler
+  ↓
+Editor
+```
+
+This provides:
+
+- Simpler deployment
+- Strong compile-time checking
+- No runtime loading mechanism
+
+Dynamic plugins provide:
+
+- Independent development
+- Independent installation
+- Runtime discovery
+- Optional functionality
+
+Therefore, the architectural question should be:
+
+> **Does this capability actually benefit from being independently deployed and loaded?**
+
+If not, an ordinary internal module is usually simpler.
+
+## Large API vs Small API
+
+A large plugin API provides many capabilities:
+
+```text
+Editor API
+ ├── Document
+ ├── Cursor
+ ├── Viewport
+ ├── Renderer
+ ├── Terminal
+ ├── File Manager
+ ├── Configuration
+ ├── Commands
+ └── Events
+```
+
+But every exposed capability increases the compatibility surface.
+
+A smaller API:
+
+```text
+Editor API
+ ├── Commands
+ ├── Selected queries
+ ├── Selected operations
+ └── Selected events
+```
+
+is easier to maintain and evolve.
+
+The trade-off is straightforward:
+
+```text
+Larger API
+    → More capability
+    → More coupling
+
+Smaller API
+    → Less coupling
+    → Fewer extension possibilities
+```
+
+The design should therefore expose **intentional extension points**, not the editor's entire implementation.
+
+## Versioning vs Compatibility Shims
+
+When an ABI changes, there are two broad strategies.
+
+The editor can simply reject older plugins:
+
+```text
+Old Plugin
+    ↓
+ABI mismatch
+    ↓
+Reject
+```
+
+Or it can provide a compatibility layer:
+
+```text
+Old Plugin
+    ↓
+Compatibility Layer
+    ↓
+Current Editor API
+```
+
+Compatibility layers can preserve older plugins for longer, but they introduce additional code and testing requirements.
+
+For the educational editor, explicit rejection of incompatible plugins is the simpler baseline.
+
+## Trust vs Isolation
+
+Our design also has a fundamental security trade-off:
+
+```text
+Trusted in-process plugin
+    ↓
+Simple + fast
+```
+
+versus:
+
+```text
+Untrusted isolated plugin
+    ↓
+Safer + more complex
+```
+
+An in-process C plugin cannot provide strong security isolation merely through an API boundary.
+
+If the requirements eventually include untrusted third-party plugins, the architecture would need to move toward process isolation and operating-system-level restrictions.
+
+That is a fundamentally different design, not merely an additional API feature.
+
+## Overall Trade-off
+
+The choices can be summarized as:
+
+| Decision          | Simpler Choice         | More Complex Choice           |
+| ----------------- | ---------------------- | ----------------------------- |
+| Execution         | In-process             | Separate process              |
+| Communication     | C function calls       | IPC                           |
+| State exposure    | Explicit API           | Broad direct access           |
+| Compatibility     | Single/current ABI     | Multiple ABI generations      |
+| Loading           | Dynamic shared library | More elaborate plugin runtime |
+| API size          | Small                  | Large                         |
+| Failure isolation | Limited                | Strong                        |
+| Security          | Trusted plugins        | Sandboxed plugins             |
+
+Our baseline architecture deliberately chooses the simpler side where possible.
+
+That gives us:
+
+```text
+Small API
+    +
+Versioned ABI
+    +
+Dynamic loading
+    +
+Controlled lifecycle
+    +
+In-process execution
+```
+
+This provides meaningful extensibility without turning the editor into a plugin framework whose complexity exceeds the editor itself.
+
+## Summary
+
+The central lesson is:
+
+> **Plugin architecture is a trade-off between extensibility and complexity.**
+
+For our editor, the preferred design is therefore not the most powerful plugin system possible, but the **smallest architecture that provides a clean extension boundary while preserving the core editor's simplicity and invariants**.
+
+In-process plugins, opaque handles, a single versioned ABI, dynamic loading, and a small API keep the baseline understandable, while compatibility shims, multiple ABI generations, and process isolation remain available if requirements demand them. Each rejected alternative trades a simpler implementation for stronger isolation, compatibility, or capability.
+
+The final section distills what this design means for the editor itself: **39.12 What Our Editor Would Need to Support Plugins**.

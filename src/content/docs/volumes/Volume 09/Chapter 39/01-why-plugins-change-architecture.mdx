@@ -1,0 +1,299 @@
+---
+title: "39.1 Why Plugins Change the Architecture"
+description: "Explains why independently compiled plugins force a new boundary and why extensibility adds interface, ABI, loading, lifecycle, and security complexity."
+---
+
+The editor we have designed so far is intentionally modular. Its major components have clear responsibilities, and those components communicate through boundaries defined by the architecture.
+
+However, all of those components are still part of the same program.
+
+They are compiled together, linked together, and released together.
+
+A plugin introduces a fundamentally different relationship.
+
+A plugin is an extension that can be developed and compiled separately from the editor itself. The editor must therefore provide a controlled way for externally compiled code to interact with the running application.
+
+This changes the architectural problem.
+
+## From Internal Modules to External Extensions
+
+Consider the architecture developed in the earlier chapters:
+
+```text
++--------------------------------------------------+
+|                    Editor                        |
+|                                                  |
+|  +---------+   +---------+   +---------------+  |
+|  | Input   |-->| Command |-->| Document      |  |
+|  | Engine  |   | Engine  |   | / Cursor      |  |
+|  +---------+   +---------+   +---------------+  |
+|                         |                        |
+|                         v                        |
+|                    Renderer                     |
++--------------------------------------------------+
+```
+
+These components are internal modules.
+
+The compiler can see their definitions, the linker can resolve their symbols, and the program controls their lifetime.
+
+A plugin is different:
+
+```text
++----------------------------------+
+|            Editor                |
+|                                  |
+|       Editor Core                |
+|                                  |
++----------------+-----------------+
+                 |
+          Plugin Boundary
+                 |
++----------------v-----------------+
+|            Plugin               |
+|       separately compiled       |
++----------------------------------+
+```
+
+The plugin may not have been compiled at the same time as the editor. It may even have been developed by someone who does not have access to the editor's internal source code.
+
+The editor therefore cannot simply treat a plugin as another internal module.
+
+A new architectural boundary is required.
+
+## Why an Internal Module Is Not a Plugin
+
+An internal module might expose a header such as:
+
+```c
+void document_insert_character(Document *document,
+                                size_t row,
+                                size_t column,
+                                uint32_t character);
+```
+
+Another module in the editor can call this function because both modules are part of the same controlled build.
+
+The situation is different for a plugin.
+
+Suppose a plugin wants to execute an editor command. It should not automatically receive unrestricted access to:
+
+```c
+EditorState
+```
+
+and then manipulate its fields directly.
+
+Doing so would expose the editor's internal representation to external code.
+
+For example:
+
+```text
+Plugin
+  |
+  +----> EditorState
+          |
+          +----> Document
+          +----> Cursor
+          +----> Viewport
+          +----> Renderer
+          +----> File Manager
+```
+
+This creates a very weak boundary.
+
+If the internal representation changes, the plugin may break. If the plugin modifies state incorrectly, it may violate invariants established by the editor. The plugin would also gain access to components that it may have no legitimate reason to control.
+
+Instead, the plugin should interact through an explicitly defined interface:
+
+```text
+                    Plugin
+                       |
+                       v
+              +----------------+
+              | Plugin API     |
+              +----------------+
+                       |
+                       v
+                Editor Core
+```
+
+The interface becomes the contract between the two independently developed parts.
+
+## The Architectural Meaning of Extensibility
+
+A normal module boundary answers:
+
+> How should components inside the program communicate?
+
+A plugin boundary answers a more demanding question:
+
+> How can code that is outside the program's normal compilation unit communicate with the program safely and predictably?
+
+This introduces several new concerns:
+
+```text
+Plugin Architecture
+        |
+        +-- Interface
+        |
+        +-- ABI compatibility
+        |
+        +-- Loading
+        |
+        +-- Lifecycle
+        |
+        +-- Versioning
+        |
+        +-- Failure
+        |
+        +-- Security
+```
+
+These concerns do not disappear simply because the plugin performs a small task.
+
+In fact, a plugin with a single command may still require a carefully designed boundary.
+
+## Why Add Plugins at All?
+
+Plugins provide a mechanism for extending the editor without modifying the editor's core implementation.
+
+For example, a future plugin could provide:
+
+```text
+Syntax highlighting
+Additional commands
+Specialized search
+File format support
+Custom editing operations
+```
+
+The important architectural property is not the individual feature.
+
+It is **independent extension**.
+
+Without plugins, adding a new capability generally means:
+
+```text
+Modify source
+     ↓
+Recompile
+     ↓
+Relink
+     ↓
+Redistribute editor
+```
+
+With a plugin system, the conceptual model becomes:
+
+```text
+Develop plugin
+      ↓
+Compile plugin
+      ↓
+Install plugin
+      ↓
+Editor loads plugin
+```
+
+The editor itself does not necessarily need to be rebuilt.
+
+This is the fundamental motivation for plugin architecture.
+
+## Extensibility Has a Cost
+
+Plugins are not a free improvement.
+
+The baseline editor deliberately favors simplicity and maintainability. The Software Requirements Specification (Chapter 7) explicitly excludes plugin systems from the initial implementation and identifies them as later extensions.
+
+Adding plugins introduces additional architectural machinery:
+
+```text
+Without plugins:
+
+Editor
+  |
+  +-- Internal modules
+
+
+With plugins:
+
+Editor
+  |
+  +-- Internal modules
+  |
+  +-- Plugin interface
+  |
+  +-- Plugin manager
+  |
+  +-- Dynamic loader
+  |
+  +-- Compatibility rules
+  |
+  +-- Plugin lifecycle
+```
+
+The resulting system is more flexible, but also more difficult to reason about.
+
+This is an important principle:
+
+> **Extensibility is itself a source of complexity.**
+
+A plugin architecture should therefore be introduced only when the benefits of independent extension justify the additional boundaries and rules.
+
+## The Core Architectural Principle
+
+The editor should not expose its entire internal architecture merely because plugins exist.
+
+Instead, the plugin system should define a deliberately small extension surface:
+
+```text
++-----------------------+
+|       Editor Core     |
+|                       |
+|  Document             |
+|  Cursor               |
+|  Viewport             |
+|  Renderer             |
+|  File Manager         |
+|  ...                  |
++-----------+-----------+
+            |
+     Explicit Plugin API
+            |
++-----------v-----------+
+|        Plugins        |
++-----------------------+
+```
+
+The plugin sees the **interface**, not the entire implementation behind it.
+
+This preserves an important property of the architecture developed throughout the book:
+
+```text
+Internal implementation
+          |
+          v
+     clear boundary
+          |
+          v
+   controlled interface
+```
+
+The plugin system therefore does not replace the editor's existing architecture.
+
+It adds **one new architectural boundary around the editor's extensible capabilities**.
+
+That distinction will guide the rest of this chapter.
+
+## Summary
+
+The central idea of this section can be summarized as:
+
+> **A plugin is not merely another module. It is independently compiled code crossing a defined boundary into the running editor.**
+
+Once that boundary exists, the editor must define what plugins are allowed to see, how they communicate with the editor, how their binaries remain compatible, and how their lifetime and failures are managed.
+
+Internal modules remain compiled and released together, while a plugin may be built separately and without access to the editor's source. Extensibility therefore adds interface, ABI, loading, lifecycle, versioning, failure, and security concerns that must be justified by the benefit of independent extension.
+
+Those questions lead directly to the next section: **Plugin Boundaries**.

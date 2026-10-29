@@ -1,0 +1,106 @@
+---
+title: "39.9 Security Considerations"
+description: "Explains why in-process native plugins must be trusted rather than sandboxed and why stronger isolation would require IPC and a separate plugin process."
+---
+
+A plugin system introduces a security boundary that does not exist in the same form for ordinary internal modules.
+
+Plugins are external native code, and an in-process plugin generally executes with the same operating-system privileges as the editor.
+
+Therefore:
+
+> **A plugin must be treated as trusted code, not as untrusted data.**
+
+## Plugin Loading
+
+The editor should avoid blindly loading arbitrary files.
+
+A plugin should at minimum pass the established checks:
+
+```text
+Discover
+   ↓
+Load
+   ↓
+Identify
+   ↓
+Validate ABI
+   ↓
+Initialize
+```
+
+An unknown or incompatible library should be rejected rather than executed.
+
+## File and System Access
+
+A plugin may potentially access resources available to the editor process, including:
+
+```text
+Files
+Environment variables
+Other processes
+Network resources
+User data
+```
+
+The plugin API should therefore expose only the capabilities that plugins actually need.
+
+However, an in-process C plugin cannot be made a true security sandbox merely by restricting its API. Native code can potentially bypass those abstractions and access operating-system facilities directly.
+
+## Plugin Trust
+
+This creates a practical trust model:
+
+```text
+Official / trusted plugin
+        ↓
+Accept
+
+Unknown / untrusted native code
+        ↓
+Do not treat as sandboxed
+```
+
+Users should therefore install plugins only from sources they trust.
+
+## Stronger Isolation
+
+If untrusted extensions must eventually be supported, the architecture would need stronger isolation, such as:
+
+```text
+Editor Process
+      |
+     IPC
+      |
+Plugin Process
+      |
+Sandbox / restricted privileges
+```
+
+That is substantially more complex than the baseline in-process plugin model.
+
+Moving a plugin into a separate process for real fault isolation requires **Inter-Process Communication (IPC)** — a mechanism such as pipes or Unix domain sockets through which the two processes exchange messages instead of calling each other's functions directly.
+
+Section 39.8 established this trade-off: a separate process contains a plugin crash, but at the cost of serialization, communication overhead, and a more complex lifecycle.
+
+```text
+Function calls
+    communicate within a process.
+
+IPC
+    communicates between processes.
+```
+
+For the baseline editor, IPC is **not required**. It is a possible future design if untrusted or strongly isolated plugins ever become a requirement, but it cannot be added incrementally to an in-process plugin model — it is a different architecture, not an additional API feature.
+
+## Summary
+
+The security boundary should be stated clearly:
+
+> **The plugin interface controls architectural coupling; it does not make native plugin code trustworthy or sandboxed.**
+
+For the editor's baseline architecture, the appropriate security strategy is therefore **explicit trust, controlled loading, minimal exposed capabilities, and clear documentation of the limits of in-process plugins**.
+
+Native code can bypass API abstractions and reach operating-system facilities directly, so restricting the interface is not equivalent to sandboxing. Stronger isolation would require a separate process, IPC, and restricted privileges—a different architecture rather than an incremental API change.
+
+The next section brings these principles together into a concrete design: **39.10 A Minimal Plugin Architecture**.

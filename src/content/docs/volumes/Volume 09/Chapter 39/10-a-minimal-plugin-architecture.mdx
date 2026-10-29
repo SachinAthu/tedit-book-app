@@ -1,0 +1,400 @@
+---
+title: "39.10 A Minimal Plugin Architecture"
+description: "Assembles the plugin manager, dynamic loader, versioned ABI, host API, and lifecycle into a small architecture that demonstrates controlled extension."
+---
+
+The previous sections established the principles required for a plugin system:
+
+```text
+Explicit interface
+ABI compatibility
+Dynamic loading
+Controlled lifecycle
+Failure handling
+Limited trust boundary
+```
+
+We can now combine them into a minimal architecture.
+
+The goal is **not** to build a complete plugin framework. It is to show the smallest architecture that demonstrates how these concepts fit together.
+
+## Plugin Components
+
+A minimal plugin architecture can contain four major parts:
+
+```text
++----------------------+
+|    Plugin Manager    |
++----------+-----------+
+           |
+           v
++----------------------+
+|   Dynamic Loader     |
++----------+-----------+
+           |
+           v
++----------------------+
+|    Plugin Interface  |
++----------+-----------+
+           |
+           v
++----------------------+
+|       Plugin         |
++----------------------+
+```
+
+The **Plugin Manager** coordinates the plugin lifecycle.
+
+The **Dynamic Loader** handles platform-specific loading.
+
+The **Plugin Interface** defines the contract.
+
+The **Plugin** provides the extension itself.
+
+## Plugin Manager
+
+The Plugin Manager belongs to the editor rather than to any individual plugin.
+
+Its responsibilities include:
+
+```text
+Discover plugins
+Load plugins
+Resolve entry points
+Validate compatibility
+Initialize plugins
+Track active plugins
+Shutdown plugins
+Unload plugins
+```
+
+Conceptually:
+
+```text
+                Plugin Manager
+                      |
+        +-------------+-------------+
+        |             |             |
+     Plugin A      Plugin B      Plugin C
+```
+
+The manager provides centralized control without requiring the rest of the editor to understand dynamic-loading details.
+
+## Dynamic Loader Boundary
+
+The platform-specific loading mechanism should remain behind a small boundary:
+
+```text
+Plugin Manager
+      |
+      v
+Dynamic Loader
+      |
+      v
+Operating System
+```
+
+On Linux/POSIX, the implementation can use facilities such as `dlopen()`, `dlsym()`, and `dlclose()`.
+
+The rest of the editor should not need to know which system calls implement these operations.
+
+This follows the same platform-boundary principle used elsewhere in the architecture.
+
+## Minimal Plugin Interface
+
+The plugin needs a known entry point through which the editor can obtain its interface.
+
+Conceptually:
+
+```c
+const plugin_api *plugin_get_api(void);
+```
+
+The returned interface can contain the information and operations required by the editor.
+
+A minimal conceptual structure might be:
+
+```c
+typedef struct plugin_api {
+    uint32_t abi_version;
+    uint32_t size;
+
+    const char *name;
+
+    int  (*initialize)(void);
+    void (*shutdown)(void);
+} plugin_api;
+```
+
+This is intentionally small.
+
+The important properties are:
+
+```text
+ABI version
+Interface size
+Plugin identity
+Initialization
+Shutdown
+```
+
+The actual editor implementation can expose additional capabilities as the plugin architecture evolves.
+
+## Host API
+
+The relationship can also work in the opposite direction.
+
+The editor can provide an API that the plugin can use:
+
+```text
+                  Editor
+                    |
+                    | Host API
+                    v
+                 Plugin
+```
+
+For example:
+
+```c
+typedef struct editor_api {
+    uint32_t version;
+
+    void (*log)(const char *message);
+    int  (*register_command)(const char *name,
+                             void (*callback)(void));
+    void (*set_message)(const char *message);
+} editor_api;
+```
+
+The plugin receives this interface during initialization.
+
+The important architectural distinction is:
+
+```text
+Plugin API
+    =
+Interface exposed by the plugin
+
+Host API
+    =
+Interface exposed by the editor to the plugin
+```
+
+These are two sides of the same boundary.
+
+## Minimal Initialization Sequence
+
+The complete process can now be expressed simply:
+
+```text
+Editor starts
+     |
+     v
+Plugin Manager
+     |
+     v
+Locate plugin
+     |
+     v
+Dynamic Loader
+     |
+     v
+Load library
+     |
+     v
+Resolve plugin_get_api()
+     |
+     v
+Obtain plugin_api
+     |
+     v
+Check ABI
+     |
+     v
+Initialize
+     |
+     v
+Plugin active
+```
+
+If any required step fails:
+
+```text
+Failure
+   ↓
+Report
+   ↓
+Cleanup
+   ↓
+Continue editor
+```
+
+The core editor does not need to become dependent on the plugin's successful activation.
+
+## Runtime Interaction
+
+Once active, the plugin participates through defined extension points.
+
+For example:
+
+```text
+User Input
+    ↓
+Input Parser
+    ↓
+Command Engine
+    ↓
+Plugin Command
+    ↓
+Editor API
+    ↓
+Editor State
+    ↓
+Renderer
+```
+
+The plugin does not need direct access to the Renderer or Editor State.
+
+Instead, it requests operations through the host interface.
+
+This preserves the architecture established throughout the earlier volumes.
+
+## Shutdown
+
+When the editor terminates:
+
+```text
+Editor shutdown
+      |
+      v
+Plugin Manager
+      |
+      v
+Plugin shutdown
+      |
+      v
+Remove registrations
+      |
+      v
+Release resources
+      |
+      v
+Unload library
+```
+
+The important ordering is that plugin-owned resources and callbacks must be released before the library itself is unloaded.
+
+## Minimal Architecture Diagram
+
+The entire design can be summarized as:
+
+```text
+                         +----------------------+
+                         |        Editor        |
+                         |                      |
+                         |   +--------------+   |
+                         |   | Plugin       |   |
+                         |   | Manager      |   |
+                         |   +------+-------+   |
+                         |          |           |
+                         |          v           |
+                         |   +--------------+   |
+                         |   | Dynamic      |   |
+                         |   | Loader       |   |
+                         |   +------+-------+   |
+                         +----------|-----------+
+                                    |
+                              Plugin ABI
+                                    |
+                    +---------------+---------------+
+                    |                               |
+                    v                               v
+             +-------------+                 +-------------+
+             |   Plugin A  |                 |   Plugin B  |
+             +-------------+                 +-------------+
+```
+
+The editor controls loading, validation, and lifecycle.
+
+Each plugin implements the agreed interface.
+
+The ABI defines the binary contract.
+
+The host API provides controlled access to editor functionality.
+
+## What This Architecture Does Not Provide
+
+This minimal architecture deliberately does **not** attempt to solve every possible plugin problem.
+
+It does not provide:
+
+```text
+Process isolation
+Security sandboxing
+Automatic crash recovery
+Distributed plugins
+Hot code replacement
+Universal cross-platform ABI compatibility
+```
+
+Those features would substantially increase complexity.
+
+The architecture is instead designed to establish the essential extension boundary.
+
+## The Architectural Boundary
+
+The most important part of the design is not any particular C structure or dynamic-loading function.
+
+It is the boundary:
+
+```text
++-----------------------------+
+|         Editor Core         |
+|                             |
+| Editor State                |
+| Command Engine              |
+| Renderer                    |
+| File Manager                |
++-------------+---------------+
+              |
+         Plugin Interface
+              |
++-------------+---------------+
+|           Plugin            |
+|                             |
+| Extension-specific logic   |
++-----------------------------+
+```
+
+The Core owns the editor.
+
+The plugin owns its extension logic.
+
+The interface defines what can cross between them.
+
+That separation is what allows the editor to remain extensible without exposing its entire internal implementation.
+
+## Summary
+
+A minimal plugin architecture therefore needs only a few fundamental pieces:
+
+```text
+Plugin Manager
+      +
+Dynamic Loader
+      +
+Versioned Plugin ABI
+      +
+Host API
+      +
+Controlled Lifecycle
+```
+
+Everything else can be added later if actual requirements justify it.
+
+> **A good plugin architecture is not the one with the most extension points; it is the smallest boundary that allows useful extensions without compromising the editor's core architecture.**
+
+The Plugin Manager owns discovery, loading, validation, initialization, shutdown, and unloading, while the Dynamic Loader keeps platform-specific calls behind a small boundary. The versioned plugin ABI and host API define the two directions of the contract, and shutdown must remove registrations and release resources before unloading the library.
+
+The next section examines the alternatives we deliberately did not choose: **39.11 Design Alternatives and Trade-offs**.

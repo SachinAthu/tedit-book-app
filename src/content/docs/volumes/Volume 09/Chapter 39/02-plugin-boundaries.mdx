@@ -1,0 +1,429 @@
+---
+title: "39.2 Plugin Boundaries"
+description: "Defines the plugin boundary as a contract of capabilities, opaque handles, and explicit ownership rather than direct access to the editor's internal state."
+---
+
+The most important decision in a plugin architecture is not how plugins are loaded.
+
+It is **where the boundary between the editor and a plugin exists, and what is allowed to cross that boundary**.
+
+A poorly defined boundary can make a plugin system more dangerous and more fragile than the feature it was intended to provide. A well-defined boundary allows the editor to evolve internally while preserving a stable contract for external extensions.
+
+## The Plugin Boundary
+
+The editor already contains several internal boundaries:
+
+```text
+Input Handler
+      ↓
+Input Parser
+      ↓
+Input Engine
+      ↓
+Command Engine
+      ↓
+Editor State
+      ↓
+Renderer
+```
+
+Those boundaries exist between components controlled by the same program.
+
+A plugin boundary is different:
+
+```text
++--------------------------------+
+|          Editor Process        |
+|                                |
+|       Editor Core              |
+|                                |
+|   +------------------------+   |
+|   |    Plugin Interface    |   |
+|   +------------------------+   |
+|              ▲                 |
++--------------|-----------------+
+               |
+         Plugin Boundary
+               |
++--------------|-----------------+
+|              |                 |
+|          External Plugin       |
+|                                |
++--------------------------------+
+```
+
+The interface is the controlled crossing point.
+
+The plugin should not bypass it by reaching directly into the editor's internal objects.
+
+## Why the Boundary Must Be Explicit
+
+Consider exposing the complete `EditorState`:
+
+```c
+plugin_function(&editor_state);
+```
+
+This appears convenient.
+
+The plugin could access the Document, Cursor, Viewport, configuration, messages, and other state directly.
+
+But this creates several problems.
+
+First, the plugin becomes dependent on the editor's internal representation.
+
+Suppose the editor later changes:
+
+```text
+Document
+    ↓
+vector of lines
+```
+
+to:
+
+```text
+Document
+    ↓
+gap buffer
+```
+
+An internal component can be changed together with the rest of the editor.
+
+An external plugin cannot necessarily be changed at the same time.
+
+Second, direct access allows the plugin to violate invariants.
+
+The editor has rules governing objects such as the Cursor and Viewport. Those rules exist precisely so that arbitrary components cannot place the system into an invalid state.
+
+Third, direct access creates excessive coupling:
+
+```text
+Plugin
+ ├── Document internals
+ ├── Cursor internals
+ ├── Viewport internals
+ ├── Renderer internals
+ └── Editor State internals
+```
+
+The plugin has effectively become part of the editor's implementation.
+
+That defeats much of the purpose of having an extension mechanism.
+
+## Expose Capabilities, Not Internals
+
+A better model is to expose specific capabilities.
+
+For example:
+
+```text
+Plugin
+   |
+   +-- execute command
+   +-- register command
+   +-- display message
+   +-- query editor information
+```
+
+rather than:
+
+```text
+Plugin
+   |
+   +-- modify Document directly
+   +-- modify Cursor directly
+   +-- modify Viewport directly
+   +-- modify Editor State directly
+```
+
+The distinction is important.
+
+A capability says:
+
+> **Here is something the plugin is permitted to ask the editor to do.**
+
+An internal object says:
+
+> **Here is part of the editor's implementation. Do whatever you want with it.**
+
+The first preserves the boundary.
+
+The second largely removes it.
+
+## Opaque Objects
+
+Sometimes a plugin needs to refer to an editor-owned object.
+
+That does not mean the plugin must receive the object's internal structure.
+
+Instead, the editor can provide an opaque handle.
+
+Conceptually:
+
+```c
+typedef struct editor_document editor_document;
+```
+
+The plugin can hold:
+
+```c
+editor_document *document;
+```
+
+but does not know the fields inside the structure.
+
+The implementation remains private:
+
+```text
+Plugin
+   |
+   | opaque handle
+   v
++-------------------+
+| Editor Document   |
+|                   |
+| private fields    |
+| private state     |
++-------------------+
+```
+
+The editor remains responsible for maintaining the object's invariants.
+
+This gives the plugin a reference to an editor-managed resource without making the resource's representation part of the plugin contract.
+
+## Ownership Must Be Defined
+
+The boundary must also establish **who owns data**.
+
+Suppose the plugin receives a string.
+
+Several questions immediately arise:
+
+```text
+Who allocated it?
+Who may modify it?
+Who must free it?
+How long does it remain valid?
+```
+
+Without explicit rules, the interface can become unsafe even if its functions look simple.
+
+For example:
+
+```text
+Editor allocates
+       ↓
+Plugin receives
+       ↓
+Plugin stores pointer
+       ↓
+Editor frees
+       ↓
+Plugin uses invalid pointer
+```
+
+A plugin interface therefore needs lifetime and ownership rules for data crossing the boundary.
+
+The same principle applies to handles, buffers, strings, callbacks, and other resources.
+
+## The Boundary Is a Contract
+
+A useful way to think about the plugin boundary is as a contract:
+
+```text
+                    Plugin Contract
+
+        +--------------------------------+
+        | What the plugin may call      |
+        | What arguments mean           |
+        | What results mean             |
+        | Who owns returned resources   |
+        | How long resources are valid  |
+        | How errors are reported       |
+        | Which version is supported    |
+        +--------------------------------+
+```
+
+Everything inside this contract is intentionally exposed.
+
+Everything outside it remains an implementation detail.
+
+This distinction is particularly important because the editor will continue to evolve.
+
+## What Should Not Cross the Boundary
+
+The plugin interface should not expose internal implementation details merely for convenience.
+
+For the architecture developed in this book, that means avoiding direct exposure of things such as:
+
+```text
+EditorState internals
+Document representation
+Cursor representation
+Viewport implementation
+Screen Buffer
+Renderer internals
+Terminal state
+File Manager internals
+```
+
+A plugin might eventually interact with some of these concepts, but it should do so through explicitly designed operations rather than by manipulating their internal structures.
+
+For example:
+
+```text
+Bad:
+
+Plugin → Document.lines[]
+
+
+Better:
+
+Plugin → editor_document_get_line(...)
+```
+
+The second approach allows the implementation behind the operation to change without necessarily changing the plugin interface.
+
+## A Narrow Boundary Is Easier to Maintain
+
+The smaller the public plugin interface, the fewer assumptions external code can make about the editor.
+
+Conceptually:
+
+```text
+Large Interface
+
++--------------------------------------+
+| Document                             |
+| Cursor                               |
+| Viewport                             |
+| Renderer                             |
+| Screen Buffer                        |
+| Terminal                             |
+| File Manager                         |
+| Editor State                         |
+| Configuration                        |
++--------------------------------------+
+                 ↑
+              Plugin
+```
+
+versus:
+
+```text
+Narrow Interface
+
++--------------------------------------+
+| Plugin API                           |
+|                                      |
+| register_command()                   |
+| set_message()                        |
+| query_document()                     |
+| ...                                  |
++--------------------------------------+
+                 ↑
+              Plugin
+```
+
+The narrow interface is easier to document, test, version, and preserve.
+
+This does not mean the interface should be artificially tiny. It means every exposed capability should have a deliberate reason to exist.
+
+## The Direction of Control
+
+The boundary also defines the direction of control.
+
+A plugin may call into the editor:
+
+```text
+Plugin
+   |
+   v
+Plugin API
+   |
+   v
+Editor
+```
+
+The editor may also need to invoke plugin-provided functionality:
+
+```text
+Editor
+   |
+   v
+Plugin callback
+   |
+   v
+Plugin
+```
+
+Therefore, a real plugin interface is usually bidirectional:
+
+```text
+             Plugin Boundary
+
+Editor  <-------------------->  Plugin
+          defined interface
+```
+
+Both directions require explicit contracts.
+
+The editor must know what it may call, what arguments it may provide, and what happens if the plugin fails.
+
+The plugin must know what it may request from the editor and what guarantees the editor provides.
+
+These two directions will become important when we define the actual interface.
+
+## Boundary and Existing Architecture
+
+The plugin boundary should sit **outside the editor's internal architecture**, not replace it.
+
+The resulting conceptual structure is:
+
+```text
++---------------------------------------------------+
+|                    Editor                         |
+|                                                   |
+|  Input → Commands → Core State → Renderer         |
+|                    │                              |
+|                    │                              |
+|              Plugin Interface                    |
+|                    │                              |
++--------------------|------------------------------+
+                     │
+              Plugin Boundary
+                     │
++--------------------|------------------------------+
+|                    ▼                              |
+|                 Plugin                          |
++---------------------------------------------------+
+```
+
+The existing architecture therefore remains responsible for maintaining the editor's state and invariants.
+
+The plugin receives controlled access to selected capabilities.
+
+This preserves the principle established throughout the earlier architecture: **components should not acquire responsibilities or state ownership merely because they need to interact with another component.**
+
+## Summary
+
+The essential rule is:
+
+> **A plugin should depend on the editor's public extension interface, not on the editor's internal representation.**
+
+This gives us an important architectural separation:
+
+```text
+Internal implementation
+        ≠
+Plugin contract
+```
+
+The internal implementation can evolve.
+
+The plugin contract must evolve more carefully because independently compiled plugins may continue to depend on it.
+
+Capabilities, opaque handles, and explicit ownership and lifetime rules keep that contract narrow enough to document, test, and preserve. A bidirectional boundary also requires the host to define what it may call into a plugin and what happens when the plugin fails.
+
+That leads naturally to the next problem: **designing the actual plugin interface**.
