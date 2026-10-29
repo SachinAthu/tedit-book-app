@@ -1,0 +1,302 @@
+---
+title: "42.10 Security and Resource Considerations"
+description: "Examines terminal output as interpreted data, covering untrusted content, graphics attack surface, resource limits, and state restoration."
+---
+
+Advanced terminal capabilities introduce another category of concern: the terminal is not merely a passive display device. The editor writes data to the terminal, and the terminal emulator interprets that data as commands, control sequences, or protocol messages:
+
+```text
+Document / Editor State
+          │
+          ▼
+       Renderer
+          │
+          ▼
+   Terminal Interface
+          │
+          ▼
+    Terminal Emulator
+```
+
+This means that terminal output should not automatically be treated as harmless text. The risk becomes more significant when the editor supports advanced protocols such as graphics.
+
+## Terminal Output Is Interpreted
+
+Ordinary text can be represented conceptually as:
+
+```text
+Editor
+  │
+  ▼
+"Hello"
+  │
+  ▼
+Terminal
+  │
+  ▼
+Displayed text
+```
+
+Terminal control sequences are different:
+
+```text
+Editor
+  │
+  ▼
+Control sequence
+  │
+  ▼
+Terminal Emulator
+  │
+  ▼
+Interpretation
+  │
+  ▼
+Terminal action
+```
+
+The terminal therefore acts as an interpreter for part of the editor's output protocol. If document content can somehow be transformed directly into terminal control sequences, then content that appears to be ordinary text could cause terminal behavior rather than simply being displayed.
+
+## Document Content Is Not Terminal Commands
+
+The editor's architecture provides an important boundary between document data and terminal output. The Document represents editable text. The Renderer converts application state into visual output. The Terminal Interface handles terminal-specific operations:
+
+```text
+Document
+   │
+   │ text data
+   ▼
+Renderer
+   │
+   │ visual representation
+   ▼
+Terminal Interface
+   │
+   │ terminal protocol
+   ▼
+Terminal
+```
+
+Document content should therefore not be allowed to bypass this process. The renderer must decide how document content is represented on the terminal. This becomes especially important when the editor supports control sequences, colors, mouse-related terminal modes, or graphics protocols.
+
+## Control Sequences and Untrusted Content
+
+Suppose a document contains data that resembles a terminal escape sequence. The editor should conceptually treat it as text to display, not as a terminal command:
+
+```text
+Document Data          Document Data
+      │                       │
+      ▼                       ▼
+Text to display        Terminal Command
+```
+
+The distinction protects the separation between **data** and **terminal protocol**. This is particularly important when editing files obtained from unknown or untrusted sources. An editor should not assume that because content exists inside a document, it is safe to emit that content directly as terminal control data.
+
+## Graphics Increase the Attack Surface
+
+Terminal graphics add another category of data to the output path:
+
+```text
+Image Data
+    │
+    ▼
+Graphics Protocol
+    │
+    ▼
+Terminal Emulator
+```
+
+The terminal emulator must interpret the protocol and process the associated data. This creates additional implementation surface compared with ordinary character output. A graphics-capable terminal may need to decode graphical data, allocate memory, maintain graphical resources, manage resource identifiers, process placement information, and update its display. The editor therefore participates in a larger data path even though it does not itself implement the terminal emulator.
+
+## Resource Consumption
+
+Security is not limited to malicious behavior. Large or unusual inputs can consume substantial resources. For graphical data, relevant resources may include:
+
+```text
+Memory
+CPU time
+Terminal output bandwidth
+Terminal-side graphical resources
+```
+
+A small image produces a small payload and limited processing, while a large image produces a large payload and greater processing and memory use. An editor that eventually supports terminal graphics should therefore consider reasonable limits. The exact limits are an implementation decision and are outside the baseline requirements of this book. The architectural principle is simply:
+
+> **Optional graphical features should not allow unbounded resource consumption to compromise the core editor.**
+
+## Large Terminal Payloads
+
+Terminal output itself can become expensive. The baseline renderer already has a predictable rendering cost based on terminal dimensions; the Screen Buffer is bounded by the visible terminal area rather than by the size of the complete document.
+
+Graphical payloads can behave differently. An image may contain substantially more data than the number of terminal cells occupied by its visible representation suggests. A terminal area of 20 columns by 10 rows does not imply that the corresponding graphical payload is only 200 units of data; the graphical resource may have a much larger underlying representation:
+
+```text
+Visible Area
+      ≠
+Payload Size
+```
+
+This is another reason graphics should remain outside the baseline Screen Buffer abstraction.
+
+## Resource Lifetime
+
+Graphical resources may also have a lifetime independent of an individual frame:
+
+```text
+Create Resource
+      │
+      ▼
+Use Resource
+      │
+      ▼
+Keep Resource
+      │
+      ▼
+Update / Replace
+      │
+      ▼
+Delete Resource
+```
+
+If resource cleanup is neglected, terminal-side state may accumulate. This connects directly to the full-redraw discussion (42.8): ordinary screen cells are naturally replaced by subsequent frame output, but graphical resources may require explicit lifecycle management. A future graphics subsystem would therefore need to define ownership and cleanup rules.
+
+## Terminal State Must Be Restored
+
+The editor already modifies terminal state for normal operation. Raw terminal mode is a clear example: the editor enters raw mode, and on exit it restores the terminal. The same principle applies to optional terminal capabilities. If the editor enables a terminal feature, it should know how that feature is disabled or restored when the editor terminates. The terminal must not be left in an unexpected state simply because an optional feature was active when the process ended. This follows the existing terminal-state management principles (ADR-003).
+
+## Failure Must Remain Contained
+
+Advanced terminal features should also fail independently of the editor's core functionality whenever possible:
+
+```text
+Graphics initialization fails
+          │
+          ▼
+Disable graphics
+          │
+          ▼
+Continue text editing
+```
+
+rather than:
+
+```text
+Graphics initialization fails
+          │
+          ▼
+Editor cannot start
+```
+
+The second behavior gives an optional feature control over a required feature. The first keeps the dependency correctly oriented: core text editing is required, while graphics is optional. This is consistent with the portability principle established in the previous section.
+
+## Terminal Emulator Vulnerabilities
+
+The editor does not control the implementation of the terminal emulator. A terminal emulator may contain bugs in its handling of escape sequences, control sequences, graphics protocols, large payloads, or malformed data. An editor should therefore avoid assuming that a terminal protocol is inherently safe simply because the protocol is documented. The architecture can reduce unnecessary exposure by ensuring that terminal-specific output is generated deliberately and through a controlled interface. However, the security of the terminal emulator itself remains outside the editor's direct control.
+
+## Clipboard and Related Protocols
+
+Some terminal environments provide additional mechanisms for transferring data between the application and terminal environment. Clipboard-related protocols are another example where data can cross the boundary between the editor and external software:
+
+```text
+Editor
+   │
+   ▼
+Terminal Protocol
+   │
+   ▼
+External Environment
+```
+
+Whenever data crosses this boundary, the editor should distinguish application data from protocol data and should avoid blindly interpreting externally supplied data as trusted terminal commands. These mechanisms are outside the baseline editor requirements and therefore do not require implementation here.
+
+## Security Versus Complexity
+
+Security considerations can easily become an argument for adding excessive infrastructure. That would be inappropriate for the baseline editor. The correct architectural response is proportionality:
+
+```text
+Required feature
+      │
+      ▼
+Required safeguards
+
+Optional feature
+      │
+      ▼
+Optional complexity
+```
+
+The baseline editor does not need a complete graphics-security subsystem because it does not implement terminal graphics. However, the architecture should make it possible to introduce appropriate safeguards if such capabilities are added later.
+
+## Resource Boundaries
+
+A useful future design principle is to establish explicit boundaries around resource consumption:
+
+```text
+Graphics Request
+      │
+      ▼
+Validate
+      │
+      ▼
+Acceptable?
+   /       \
+ yes        no
+  │          │
+  ▼          ▼
+Process     Reject
+```
+
+Validation might eventually consider payload size, image dimensions, resource count, supported formats, terminal capabilities, and available memory. The exact policy belongs to the future graphics implementation. The important point is that validation should occur before expensive processing or transmission whenever practical.
+
+## The Architectural Boundary
+
+The security and resource model can therefore be summarized as:
+
+```text
+Document
+   │
+   │ untrusted/application data
+   ▼
+Renderer
+   │
+   │ controlled visual representation
+   ▼
+Terminal Interface
+   │
+   │ validated protocol output
+   ▼
+Terminal Emulator
+```
+
+Each boundary has a distinct responsibility. The Document does not generate terminal commands. The Renderer determines how application state is represented visually. The Terminal Interface owns terminal-specific protocol behavior. The terminal emulator interprets the resulting protocol. This separation limits how far terminal-specific complexity can propagate into the Core.
+
+## What This Means for Our Editor
+
+The baseline implementation does not require terminal graphics, image protocols, or mouse support. Therefore, the baseline security model remains comparatively simple:
+
+```text
+Document
+   ↓
+Text Rendering
+   ↓
+ANSI / Terminal Control
+   ↓
+Terminal
+```
+
+Future graphical support would introduce additional concerns—graphics representation, graphics protocol, terminal emulator, and graphical resources—and those concerns should be introduced only together with the feature that requires them.
+
+The important lesson is therefore not that terminal graphics are inherently unsafe. It is that:
+
+> **Advanced terminal capabilities create additional interpreted data paths and resource-management responsibilities, so they should be isolated, validated, and treated as optional platform features rather than allowing them to become implicit dependencies of the editor's Core.**
+
+## Summary
+
+The terminal is an interpreter, not a passive display device, so terminal output should not automatically be treated as harmless text.
+
+Document content must be kept separate from terminal protocol data, and graphical features increase the attack surface and add resource-management responsibilities such as payload size, resource lifetime, and terminal-state restoration.
+
+The architectural response is proportionality: the baseline editor does not need a graphics-security subsystem, but each boundary—Document, Renderer, Terminal Interface—must preserve its distinct responsibility so that future safeguards can be introduced cleanly.
+
+Validation before transmission, bounded payloads, and explicit cleanup are the natural safeguards when such features are eventually added. None of them belong in the baseline, which has no graphics path to protect.
+
+In the next section, we will ask when our editor should actually support terminal graphics at all.

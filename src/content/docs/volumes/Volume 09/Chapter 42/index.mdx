@@ -1,0 +1,47 @@
+---
+title: "Chapter 42 — Terminal Graphics"
+description: "Explores modern terminal capabilities—true color, images, mouse input, and graphics protocols—and why the baseline treats them as optional extensions."
+---
+
+## Introduction
+
+The editor built in this book is deliberately a character-based application: the renderer constructs a screen buffer of cells, and the terminal emulator interprets those cells to build the display. Modern terminals, however, can do far more—true color, mouse events, inline images, and terminal-specific graphics protocols. The central question is:
+
+> **How can an editor distinguish its core, platform-independent behavior from the optional capabilities its terminal happens to provide?**
+
+Terminal capabilities are not editor requirements. A terminal may support images without the editor needing to display them, and a more capable terminal does not justify a more complicated core. This chapter examines the major capabilities a modern terminal can expose, explains where each belongs in the editor's architecture, and shows why the baseline editor treats them as carefully bounded, optional extensions rather than part of its core design.
+
+We begin by establishing the terminal model and its capability surface. We then examine true color, capability detection, images, and the Kitty graphics protocol, turn to mouse input and coordinate mapping, and consider why graphics complicate full redraw. We close by weighing the portability, security, and resource costs of advanced features, then decide whether to support terminal graphics and distill the architectural lessons.
+
+## Learning Objectives
+
+Readers should be able to:
+
+- Describe the traditional character-cell model and explain why a terminal capability is not an editor requirement
+- Explain the terminal graphics model and the difference between cell-oriented and graphics-oriented output
+- Describe true color as an extension of a cell's attributes rather than a new core representation
+- Explain why capability detection is necessary and why it belongs at the platform boundary
+- Explain why images introduce state and concerns beyond the ordinary screen buffer
+- Describe the Kitty graphics protocol as a concrete, terminal-specific extension
+- Explain how mouse input enters the existing input pipeline without changing the command model
+- Translate terminal coordinates through the window, viewport, and document coordinate spaces
+- Explain why graphics complicate full redraw, scrolling, and resizing
+- Evaluate the portability cost of advanced terminal features
+- Identify the security and resource concerns of terminal protocols
+- Evaluate when an advanced terminal capability is justified for our editor
+- Articulate the architectural lessons about keeping optional capabilities behind stable boundaries
+
+## Sections
+
+- [42.1 The Terminal Model and Capability Surface](/volumes/volume-09/chapter-42/01-terminal-model-and-capability-surface/)
+- [42.2 True Color](/volumes/volume-09/chapter-42/02-true-color/)
+- [42.3 Terminal Capability Detection](/volumes/volume-09/chapter-42/03-terminal-capability-detection/)
+- [42.4 Images in Terminals](/volumes/volume-09/chapter-42/04-images-in-terminals/)
+- [42.5 The Kitty Graphics Protocol](/volumes/volume-09/chapter-42/05-kitty-graphics-protocol/)
+- [42.6 Mouse Input](/volumes/volume-09/chapter-42/06-mouse-input/)
+- [42.7 Mouse Coordinates and Editor Coordinates](/volumes/volume-09/chapter-42/07-mouse-and-editor-coordinates/)
+- [42.8 Why Graphics Complicate Full Redraw](/volumes/volume-09/chapter-42/08-why-graphics-complicate-full-redraw/)
+- [42.9 The Portability Cost of Advanced Terminal Features](/volumes/volume-09/chapter-42/09-portability-cost-of-advanced-terminal-features/)
+- [42.10 Security and Resource Considerations](/volumes/volume-09/chapter-42/10-security-and-resource-considerations/)
+- [42.11 Decision and Architectural Lessons](/volumes/volume-09/chapter-42/11-decision-and-architectural-lessons/)
+- [42.12 Conclusion](/volumes/volume-09/chapter-42/12-conclusion/)

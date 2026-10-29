@@ -1,0 +1,239 @@
+---
+title: "42.6 Mouse Input"
+description: "Shows how mouse events enter the existing input pipeline as abstract events, mapping to commands without changing the editor's command model."
+---
+
+Mouse support introduces a different kind of terminal capability. Unlike true color and terminal graphics, which primarily affect what the terminal displays, mouse support allows the terminal to communicate additional input events back to the application.
+
+This does not change the fundamental input architecture established earlier in the book. Instead, it adds another source of events to the existing pipeline:
+
+```text
+Mouse
+  │
+  ▼
+Terminal Emulator
+  │
+  ▼
+PTY
+  │
+  ▼
+Input Handler
+  │
+  ▼
+Input Parser
+  │
+  ▼
+Mouse Event
+  │
+  ▼
+Input Engine
+  │
+  ▼
+Command Engine
+```
+
+The important architectural boundary remains the same: terminal-specific representations are handled before higher-level editor logic receives the event.
+
+## Keyboard and Mouse as Input Sources
+
+The baseline editor is keyboard-driven. A keyboard input eventually becomes an abstract event:
+
+```text
+Raw terminal bytes
+       ↓
+Input Parser
+       ↓
+KEY_ARROW_UP
+       ↓
+Input Engine
+       ↓
+MOVE_CURSOR_UP
+```
+
+Mouse support introduces another possible input source:
+
+```text
+Raw terminal bytes
+       ↓
+Input Parser
+       ↓
+MOUSE_BUTTON_PRESS
+       ↓
+Input Engine
+       ↓
+Editor command
+```
+
+The Input Engine does not need to know how the terminal encoded the mouse event; it should receive an abstract event describing what happened. This preserves the separation established by the input architecture: the Input Handler reads raw bytes, the Input Parser translates terminal-specific sequences into structured events, and the Input Engine maps those events to commands.
+
+## What a Mouse Event Represents
+
+A mouse event can contain several pieces of information:
+
+```text
+Mouse Event
+├── event type
+├── button
+├── terminal row
+├── terminal column
+└── modifiers
+```
+
+The event type may distinguish operations such as button press, button release, movement, and wheel/scroll. The exact set of events depends on the terminal protocol and the editor's requirements. The important point is that the Input Parser converts the terminal representation into a structured event before the event reaches the editor's higher layers.
+
+## Mouse Input Is Still Terminal Input
+
+It is tempting to treat mouse support as a separate graphical subsystem. Architecturally, that would be misleading. The mouse is physically outside the terminal, but the editor does not receive the mouse directly:
+
+```text
+Physical Mouse
+      │
+      ▼
+Operating System
+      │
+      ▼
+Terminal Emulator
+      │
+      ▼
+Terminal Protocol
+      │
+      ▼
+PTY
+      │
+      ▼
+Editor
+```
+
+The terminal emulator converts the physical interaction into a terminal-level representation. The editor therefore remains a terminal application. This is why mouse support belongs naturally within the existing Input Handler and Input Parser architecture.
+
+## Enabling Mouse Reporting
+
+A terminal generally does not have to send mouse events to every application all the time. The application can request a particular mouse-reporting mode through terminal control mechanisms:
+
+```text
+Editor
+  │
+  │ request mouse reporting
+  ▼
+Terminal Emulator
+  │
+  │ mouse events
+  ▼
+Editor
+```
+
+This introduces an important difference from ordinary keyboard input. Keyboard input is fundamental to the terminal editor's operation; mouse input is an **optional negotiated capability**. The editor may enable it when mouse interaction is required and disable it when the application exits or no longer needs it. This follows the same save-modify-restore principle already established for terminal state (ADR-003): temporary terminal configuration should be restored when the editor terminates.
+
+## Mouse Clicks and Editor Commands
+
+Once the editor has determined what the mouse event means, it can translate it into an editor-level operation:
+
+```text
+Mouse Click
+    ↓
+Terminal Coordinate
+    ↓
+Window
+    ↓
+Document Position
+    ↓
+Move Cursor
+```
+
+The Command Engine can then execute the resulting operation. This maintains the same distinction used for keyboard input—input becomes an event, an event becomes a command, and a command becomes a state change:
+
+```text
+Input
+  ↓
+Event
+  ↓
+Command
+  ↓
+State Change
+```
+
+The command does not need to know whether it was triggered by a keyboard shortcut or a mouse action.
+
+## Mouse Scrolling
+
+Mouse wheel events provide another possible input path to existing editor behavior:
+
+```text
+Mouse Wheel
+     ↓
+MOUSE_SCROLL_UP
+     ↓
+Input Engine
+     ↓
+SCROLL_VIEWPORT_UP
+```
+
+The scrolling command remains an editor operation; the mouse is merely another way of triggering it. (`SCROLL_VIEWPORT_UP` is an illustrative command name, not part of the baseline command set.) The same command could potentially be triggered by keyboard, mouse, or a future input method without changing the command's implementation. This follows directly from the input architecture (ADR-015), where input events are mapped to commands separately from command execution.
+
+## Mouse Input Does Not Require a New Editor Core
+
+Mouse support therefore does not require a new document representation or a new command architecture:
+
+```text
+Mouse
+  ↓
+Input Parser
+  ↓
+Input Event
+  ↓
+Input Engine
+  ↓
+Command
+  ↓
+Editor State
+```
+
+The editor's Core continues to own the Document, Cursor, Viewport, and Windows. The mouse provides another mechanism for manipulating those existing concepts, which is preferable to introducing mouse-specific state throughout the Core.
+
+## Mouse Input and the Baseline Editor
+
+The SRS deliberately keeps the baseline editor's interaction model focused on keyboard input; mouse support is explicitly outside the initial scope. Adding mouse support would require additional work in terminal capability handling, input parsing, coordinate conversion, window hit testing, selection behavior, terminal-state management, and testing. None of this is required for the core text-editing architecture.
+
+The existing architecture is therefore sufficient to **accommodate** mouse support later without requiring it in the baseline implementation. As with graphics, mouse support depends on the terminal environment and must degrade gracefully: if mouse reporting is unavailable, the editor should remain usable through its existing keyboard interface.
+
+## The Architectural Lesson
+
+Mouse input demonstrates another important principle:
+
+> **An additional physical input device does not necessarily require a new application architecture.**
+
+The terminal emulator translates the physical mouse interaction into terminal input. The Input Parser translates the terminal representation into an abstract event. The Input Engine maps that event to an editor command. The Command Engine changes the Editor State:
+
+```text
+Physical Input
+      │
+      ▼
+Terminal Protocol
+      │
+      ▼
+Input Parser
+      │
+      ▼
+Abstract Event
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command
+      │
+      ▼
+Editor State
+```
+
+## Summary
+
+Mouse support adds another source of input events to the existing pipeline rather than changing the fundamental input architecture.
+
+The terminal emulator converts physical mouse interaction into terminal-level sequences; the Input Parser converts those into abstract events; the Input Engine maps events to commands; and the Command Engine changes the Editor State.
+
+This preserves the separation between input events and commands, so the same command can be triggered by a keyboard or a mouse without changing its implementation. Mouse support is also an optional negotiated capability that should degrade gracefully when unavailable.
+
+Because the event is abstracted before it reaches the Input Engine, mouse actions reuse the same command path as keyboard shortcuts and require no mouse-specific state in the Core. Enabling and restoring mouse reporting also follows the same terminal-state discipline as raw mode.
+
+In the next section, we will examine the most important problem mouse interaction introduces: converting terminal coordinates into the editor's window, viewport, and document coordinate spaces.

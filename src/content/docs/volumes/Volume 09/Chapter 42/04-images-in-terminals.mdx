@@ -1,0 +1,245 @@
+---
+title: "42.4 Images in Terminals"
+description: "Shows why images exceed the character-cell model, separating image data from placement and treating graphics as presentation outside the Document."
+---
+
+Character cells are an effective representation for text, but they are not a general representation of graphical data.
+
+A character cell can describe something like:
+
+```text
++----------------------+
+| Character            |
+| Foreground Color     |
+| Background Color     |
+| Attributes           |
++----------------------+
+```
+
+An image contains substantially more information:
+
+```text
++----------------------+
+| Pixel | Pixel | ...  |
+| Pixel | Pixel | ...  |
+| Pixel | Pixel | ...  |
+|  ...  |  ...  | ...  |
++----------------------+
+```
+
+A terminal that supports images therefore needs a mechanism for transmitting graphical data in addition to ordinary character output.
+
+## Why Images Are Different
+
+Consider a terminal displaying:
+
+```text
+Hello, world!
+```
+
+The editor can represent this as a sequence of cells:
+
+```text
+H e l l o ,   w o r l d !
+```
+
+Each character occupies a known position in the terminal grid. An image does not have the same representation. A photograph, diagram, or icon may contain thousands or millions of pixels; reducing it to ordinary characters would discard most of its visual information. An image therefore requires a different representation:
+
+```text
+Image Data
+    │
+    ▼
+Graphics Protocol
+    │
+    ▼
+Terminal Emulator
+    │
+    ▼
+Displayed Image
+```
+
+The terminal emulator receives the graphical information and is responsible for displaying it.
+
+## Image Data and Image Placement
+
+A terminal graphics system generally has to communicate at least two different kinds of information:
+
+```text
+Image
+├── Data
+└── Placement
+```
+
+**Image data** describes the graphical content. **Image placement** describes where that content should appear. These concerns are related but should not be confused. The same image data could potentially be displayed at different positions. This distinction becomes important when an editor needs to update or reposition graphical content.
+
+## Images and the Character Grid
+
+Although an image is not itself a character-cell value, terminal graphics can still interact with the terminal's character grid:
+
+```text
+Terminal Grid
+
++---+---+---+---+---+---+---+
+|   |   |   |   |   |   |   |
++---+---+---+---+---+---+---+
+|   |   | +----------------+ |
++---+---+ |                | |
+|   |   | |     IMAGE      | |
++---+---+ |                | |
+|   |   | +----------------+ |
++---+---+---+---+---+---+---+
+```
+
+The image may occupy a region that is described relative to terminal coordinates, while the terminal still maintains its ordinary character grid. This means an advanced renderer may need to reason about two related but different concepts:
+
+```text
+Character-cell geometry
+          │
+          └── rows and columns
+
+Graphics geometry
+          │
+          └── graphical objects and placement
+```
+
+The exact relationship depends on the graphics protocol being used.
+
+## Images Are Not Part of the Document
+
+An important architectural question is where image data should live. The answer should not be that the Document contains both text and images—at least not for the baseline editor described by this book.
+
+The Document represents editable text. The fact that a terminal can display images does not change the fundamental representation of the document. Instead, graphical content should be treated as presentation information or as an optional feature layered around the editor:
+
+```text
+Document
+    │
+    ▼
+Editor State
+    │
+    ▼
+Renderer
+   / \
+  /   \
+Text   Graphics
+ │        │
+ ▼        ▼
+Cells   Graphics Protocol
+  \       /
+   \     /
+    ▼   ▼
+   Terminal
+```
+
+This preserves the separation between document data and terminal presentation.
+
+## Images and the Renderer
+
+The renderer now has potentially two output domains. The first is the ordinary cell-based display:
+
+```text
+Document
+   ↓
+Visible Lines
+   ↓
+Screen Buffer
+   ↓
+Terminal Cells
+```
+
+The second is graphical output:
+
+```text
+Graphical Object
+       ↓
+Graphics Representation
+       ↓
+Graphics Protocol
+       ↓
+Terminal
+```
+
+This does not necessarily mean that the renderer must become two completely independent systems. It means that the renderer must recognize that not every visual element can be represented by a Screen Buffer cell.
+
+## Image Lifetime
+
+Graphical output can also introduce a concept that is less significant in ordinary text rendering: **resource lifetime**. A character printed to a terminal is part of the terminal's current display state. A graphics protocol may instead allow graphical data to be transmitted, stored, identified, positioned, and subsequently manipulated by the terminal:
+
+```text
+Create Image
+     │
+     ▼
+Terminal-side Resource
+     │
+     ├── display
+     ├── reposition
+     ├── update
+     └── remove
+```
+
+The exact behavior depends on the terminal graphics protocol. The architectural lesson is more general:
+
+> **Graphical terminal features can introduce state that exists outside the editor's ordinary Screen Buffer.**
+
+This becomes particularly important for full-screen redraw, as the next rendering section will examine in detail.
+
+## Protocol Dependence
+
+Images are not a universal terminal primitive in the same way that ordinary characters are. Different terminal environments may support different image mechanisms, or no image mechanism at all:
+
+```text
+Image
+  │
+  ▼
+Supported graphics protocol?
+  │
+ ┌┴───────────┐
+yes           no
+ │             │
+ ▼             ▼
+Display      Fallback
+```
+
+The editor should not make ordinary text editing dependent on image support. If graphical rendering is unavailable, the editor should remain usable.
+
+## Appropriate Use in a Text Editor
+
+The existence of terminal image support does not mean that every text editor needs it. Possible uses include:
+
+- displaying image previews,
+- showing diagrams,
+- previewing generated content,
+- displaying documentation assets,
+- presenting graphical diagnostics,
+- or providing richer interface elements.
+
+However, these are optional capabilities. The core operation of the editor remains:
+
+```text
+Edit text
+   ↓
+Navigate text
+   ↓
+Save text
+```
+
+Images should therefore be treated as an extension rather than a fundamental part of the document-editing model.
+
+## Architectural Conclusion
+
+For the architecture established in this book, terminal images should remain outside the baseline implementation. If image support were added later, the Screen Buffer would continue to represent ordinary cell-based output, graphical objects would follow a separate presentation path, and the Terminal Interface would remain responsible for translating those graphical requests into the protocol understood by the target terminal.
+
+This preserves the central architectural principle of the editor:
+
+> **The Core describes the editor's meaning; the platform layer determines how that meaning is presented by the environment.**
+
+## Summary
+
+Images require a mechanism for transmitting graphical data in addition to ordinary character output, because a character cell cannot represent thousands or millions of pixels.
+
+The section separated image data from image placement and showed that images remain outside the Document for the baseline editor. They also introduce resource lifetime—state outside the ordinary Screen Buffer—whose rendering consequences are examined in a later section.
+
+The architectural conclusion is that graphical objects should follow a separate presentation path from the Screen Buffer, with the Terminal Interface translating graphical requests into the target terminal's protocol.
+
+Treating graphics as a separate presentation path also means the editor can omit images entirely without weakening text editing. If image support is added, the Terminal Interface must still own protocol encoding, placement, and cleanup.
+
+In the next section, we will examine Kitty's graphics protocol as a concrete example of how a modern terminal can implement this model.

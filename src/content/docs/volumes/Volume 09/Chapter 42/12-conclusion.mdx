@@ -1,0 +1,36 @@
+---
+title: "42.12 Conclusion"
+description: "Summarizes the chapter's capability model, the deferred graphics decision, review exercises, and previews Chapter 43 on modern editors."
+---
+
+The central idea of this chapter is that a terminal is a **capability surface**, not a fixed character display. A terminal that can render true color, images, and mouse events is more capable than one that cannot—but capability is not requirement. The editor's Core must remain platform-independent, while advanced terminal behavior belongs at the platform boundary, kept optional so that the editor stays correct even when a capability is unavailable.
+
+The chapter surveyed the major capabilities. True color extends the attributes of ordinary cells and fits the existing Screen Buffer model. Images and graphics protocols such as Kitty introduce state that cannot be represented as cell contents—placements, resources, and lifetimes that exist outside the Screen Buffer. Mouse input adds a new source of events to the existing input pipeline and requires translating terminal coordinates through the window, viewport, and document coordinate spaces.
+
+Each capability carries architectural cost. Graphics complicate the deliberately simple full-redraw strategy because graphical resources persist beyond individual frames and must stay synchronized with the editor's view of the screen. Advanced features also expand the portability surface—more terminals, protocols, and testing combinations—and introduce security and resource concerns, since terminal output is interpreted data rather than passive text.
+
+The chapter's decision is deliberately conservative: the baseline editor does **not** implement terminal graphics, mouse input, or protocol-specific extensions. These remain future platform capabilities to be introduced only when a concrete requirement justifies their cost, and always behind the Terminal Interface boundary, preserving the architecture centered on portable, predictable text editing.
+
+## Exercises
+
+### Review Questions
+
+1. Why is a terminal capability not the same as an editor requirement?
+2. Distinguish cell-oriented output from graphics-oriented output.
+3. Why does true color not require a new core model, while images do?
+4. Why is capability detection necessary, and where should it live in the architecture?
+5. Explain how mouse input enters the existing input pipeline without changing the command model.
+6. Why must a mouse position be translated through window, viewport, and document coordinate spaces?
+7. Why do graphical resources complicate the full-redraw strategy?
+8. What portability and security costs do advanced terminal features introduce?
+9. Apply the decision test from 42.11: when would our editor be justified in supporting terminal graphics?
+
+### Optional Challenge
+
+Design a future capability layer for the Terminal Interface: define the capability information it would expose (color, mouse, graphics), the decision procedure for selecting a protocol or a fallback, and the ownership rules for graphical resources whose lifetime exceeds a single frame. Explain how your design keeps this knowledge from leaking into the Core.
+
+## Preview of the Next Chapter
+
+**Chapter 43 — Modern Editors**
+
+Terminal graphics showed what modern terminals can do and which capabilities a baseline editor should deliberately defer. The next chapter steps back from the architecture developed in this book and studies how real editors are built—Nano, Vim, Neovim, Emacs, Helix, VS Code, Sublime Text, and Zed—comparing their design decisions against the principles established throughout this book.

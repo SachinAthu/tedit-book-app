@@ -1,0 +1,214 @@
+---
+title: "42.11 Decision and Architectural Lessons"
+description: "Applies a requirements-driven test to decide which terminal capabilities the baseline adopts, then distills eight architectural lessons."
+---
+
+The preceding sections have shown that modern terminals can provide capabilities far beyond basic character output, and that each capability carries an architectural cost. This final section draws the conclusion: it decides which capabilities belong in our baseline editor, and it distills the general lessons the chapter has surfaced.
+
+## When Is a Capability Justified?
+
+The existence of a capability does not mean that our editor should implement it. The answer should be based on requirements and architectural value rather than on what the terminal happens to make possible:
+
+> **When is an advanced terminal capability justified as part of our editor?**
+
+## The Baseline Editor Has a Different Goal
+
+The editor developed in this book is fundamentally a terminal text editor. Its core responsibilities are:
+
+```text
+Edit Text
+Navigate Text
+Search Text
+Undo / Redo
+Save Files
+Render the Editing Interface
+```
+
+These capabilities do not require terminal graphics. The baseline rendering architecture is intentionally built around Editor State, Renderer, Screen Buffer, Terminal Interface, and Terminal Emulator, where the Screen Buffer represents the cell-based visual frame and the Renderer remains separate from the terminal-specific output mechanism. This architecture is sufficient for the baseline editor.
+
+## Required Versus Optional Capabilities
+
+It is useful to distinguish capabilities by whether the editor depends on them:
+
+| Capability                            | Baseline Editor             |
+| ------------------------------------- | --------------------------- |
+| Text rendering                        | **Required**                |
+| ANSI terminal control                 | **Required**                |
+| Terminal input                        | **Required**                |
+| Terminal dimensions                   | **Required**                |
+| 24-bit color                          | Optional future enhancement |
+| Mouse input                           | Deferred                    |
+| Images                                | Deferred                    |
+| Kitty graphics                        | Deferred                    |
+| General graphics capability detection | Future platform feature     |
+
+A required capability belongs to the environment the baseline editor is designed to operate within. An optional capability should enhance the editor without becoming necessary for its fundamental operation.
+
+## What Is Deferred and Why
+
+**Images** provide little value to the fundamental editing model. A text editor must be able to represent logical, editable text; an image does not naturally belong in that representation and would introduce resource, placement, visibility, lifecycle, protocol, and capability concerns. Images are therefore better treated as a future presentation capability.
+
+**Kitty graphics** provide a concrete terminal graphics protocol, but they also introduce a terminal-specific dependency that increases both implementation complexity and portability cost. Unless the editor has a concrete requirement for displaying graphical content, this additional complexity is not justified.
+
+**Mouse input** is somewhat different because it can improve usability without changing the underlying text model. Nevertheless, the baseline editor can perform all fundamental editing operations through keyboard input, and the SRS explicitly keeps mouse support outside the initial scope.
+
+**True color** deserves a different classification. Color is still part of the terminal's ordinary cell-based presentation model, so it fits naturally into the existing Screen Buffer without requiring a second graphical resource system. Supporting 24-bit color in the future would therefore be substantially less disruptive than introducing arbitrary images, though it remains optional.
+
+## Requirements Should Drive Complexity
+
+The architectural decisions throughout this book follow a consistent principle:
+
+```text
+Requirement
+     ↓
+Architecture
+     ↓
+Implementation
+```
+
+The process should not be reversed. The fact that a terminal supports a capability is not sufficient justification for adding it to the editor; the feature should answer a concrete user or product requirement. Capability detection is likewise not automatically required merely because optional features exist—a future feature can introduce the capability detection it actually needs.
+
+## A Useful Decision Test
+
+For a future terminal capability, we can ask:
+
+```text
+1. Does the editor require this capability?
+        │
+        ├── No → Defer
+        │
+        └── Yes
+             ↓
+2. Can the existing architecture support it?
+             │
+             ├── Yes → Extend existing boundary
+             │
+             └── No
+                  ↓
+3. Is the additional complexity justified?
+                  │
+                  ├── No → Defer
+                  │
+                  └── Yes → Design extension
+```
+
+This prevents optional terminal features from driving unnecessary architectural changes.
+
+## The Baseline Decision
+
+For the editor developed in this book, text rendering and ANSI terminal control are required; advanced terminal features are optional or deferred:
+
+```text
+24-bit Color       → Optional future enhancement
+Mouse              → Deferred
+Images             → Deferred
+Kitty Graphics     → Deferred
+Capability System  → Future platform feature
+```
+
+The important engineering decision is therefore not "can our terminal do this?" but "does our editor need this badly enough to justify the additional complexity?" For the baseline editor, terminal graphics do not meet that threshold.
+
+## What Would Change This Decision?
+
+The decision is not permanent. A future version could legitimately introduce terminal graphics if a new requirement made them valuable—for example, "the editor must display image previews inside the terminal editing environment." That new requirement would justify investigating graphics abstraction, capability detection, resource management, terminal protocols, fallback behavior, security limits, and testing across terminals. The architecture would then evolve because the **requirements changed**, not because the technology existed.
+
+Even if graphics are eventually added, the Core should remain focused on the concepts that belong to the editor itself:
+
+```text
+Core
+├── Document
+├── Cursor
+├── Viewport
+├── Editor State
+└── Commands
+
+Platform / Presentation
+├── Terminal Interface
+├── Cell Rendering
+└── Optional Graphics
+```
+
+Terminal graphics should therefore remain outside the Document model and outside the fundamental editing logic, preserving the platform-independent Core.
+
+## Architectural Lessons
+
+These conclusions rest on broader principles that apply to any terminal application, not just this editor.
+
+### 1. A Terminal Is a Protocol Endpoint, Not a Framebuffer
+
+The editor does not directly manipulate a physical display. Its output passes through a protocol boundary, and the terminal emulator interprets the protocols and determines how the resulting output is presented. The editor communicates **what should be represented**, while the terminal emulator performs the actual display operation.
+
+### 2. Terminal Capabilities Are Not Universal
+
+A feature may be supported, unsupported, partially supported, or implemented through another protocol. Therefore:
+
+> **Optional terminal capabilities must be treated as environmental capabilities, not assumptions of the application.**
+
+### 3. Graphics Introduce Resources Beyond Screen Cells
+
+The Screen Buffer provides a bounded representation of ordinary cell-based output. Graphics introduce another category—resources with their own identity, data, placement, lifetime, and cleanup requirements. This does not invalidate the Screen Buffer design; it establishes its boundary:
+
+> **The Screen Buffer represents cell-based presentation; it is not a general representation of every possible terminal visual resource.**
+
+### 4. Input and Rendering Protocols Must Remain Separate from Editor Logic
+
+Mouse input and terminal graphics both demonstrate the same principle: protocol-specific representations are translated at architectural boundaries. The Core should not need to know whether an input event originated from a particular terminal encoding or whether graphical output uses a particular vendor protocol.
+
+### 5. Optional Capabilities Require Explicit Handling
+
+Advanced features should not silently become dependencies:
+
+```text
+Optional Feature
+      │
+      ▼
+Capability Available?
+     / \
+   yes  no
+    │    │
+    ▼    ▼
+ enable fallback
+```
+
+The fallback does not necessarily need to reproduce the complete feature; its purpose is to preserve the editor's essential functionality.
+
+### 6. Vendor-Specific Protocols Belong Behind Platform Boundaries
+
+Kitty graphics demonstrate the cost of depending on a vendor-specific protocol. The preferred architecture keeps protocol-specific decisions near the platform boundary:
+
+```text
+Core
+  │
+  ▼
+Renderer
+  │
+  ▼
+Terminal Interface
+  │
+  ▼
+Vendor-specific protocol
+```
+
+A future protocol can then be added without requiring the Core to understand its details.
+
+### 7. The Core Should Remain Independent of Terminal Graphics
+
+The Core represents the editor's fundamental concepts—Document, Cursor, Viewport, Editor State, Commands—none of which fundamentally requires terminal graphics. An image displayed by a terminal does not change what a document is; a Kitty graphics sequence does not change what a cursor is. Therefore:
+
+> **Terminal graphics should remain a presentation and platform concern rather than becoming a Core concern.**
+
+### 8. Do Not Complicate the Architecture for Optional Features
+
+The most important lesson is perhaps the simplest. A terminal may provide capabilities that our editor does not need. Adding every available capability would increase coupling and make the Core harder to reason about. Complexity should be introduced when requirements justify it, not merely because the underlying technology permits it.
+
+## Summary
+
+The existence of a terminal capability does not justify implementing it. For the baseline editor, text rendering and ANSI control are required, while 24-bit color is an optional future enhancement and mouse, images, and Kitty graphics are deferred.
+
+The decision follows a simple test—does the editor require the capability, can the existing architecture support it, and is the additional complexity justified—and terminal graphics do not currently meet that threshold.
+
+The chapter's lessons generalize that decision: a good architecture models the capabilities the application requires and isolates optional environmental features behind stable boundaries, keeping the Core independent of terminal-specific protocols.
+
+The same test applies to any future capability: a concrete requirement must justify the additional architecture, and the Core should continue to model only the concepts the editor itself owns. This keeps the decision reversible without letting optional technology reshape the baseline.
+
+In the next and final section, we will summarize the chapter, review the exercises, and preview the next chapter.

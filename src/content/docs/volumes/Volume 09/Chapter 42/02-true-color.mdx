@@ -1,0 +1,257 @@
+---
+title: "42.2 True Color"
+description: "Explains true color as an extension of a cell's RGB attributes, separating semantic styling from terminal-specific color encoding and fallback."
+---
+
+Traditional terminals commonly represented colors using a limited palette. An application could request a predefined color, but the number of available colors was constrained by the terminal's color model.
+
+Modern terminal emulators can support **true color**, also called **24-bit color**. Instead of selecting a color from a small predefined palette, the application can specify a color using separate red, green, and blue components:
+
+```text
+Red   ──┐
+Green ──┼──► RGB Color
+Blue  ──┘
+```
+
+Each component can represent a value from 0 through 255:
+
+```text
+RGB = (R, G, B)
+```
+
+This provides 256 × 256 × 256 possible RGB combinations, or approximately 16.7 million colors.
+
+The important architectural point is that true color **extends the attributes of a terminal cell**. It does not turn the cell into a graphical object.
+
+## Color in the Screen Buffer
+
+The baseline Screen Buffer can conceptually represent a cell as:
+
+```text
++----------------------+
+| Character            |
+| Foreground           |
+| Background           |
+| Attributes           |
++----------------------+
+```
+
+With true color, the foreground and background values can contain RGB colors rather than merely references to a small fixed palette:
+
+```text
+Cell
+├── character = 'A'
+├── foreground = RGB(255, 120, 40)
+└── background = RGB(20, 20, 20)
+```
+
+The renderer can then translate these attributes into the appropriate terminal output. This is fundamentally different from terminal images: the cell remains a cell; only the precision of its visual attributes has increased.
+
+## Indexed Color and True Color
+
+It is useful to distinguish several common color models. A simplified progression is:
+
+```text
+Basic colors
+     ↓
+Indexed colors
+     ↓
+True color
+```
+
+In a basic color model, the application selects from a small predefined set. An indexed-color model provides a larger palette, where a numeric value identifies a palette entry. True color instead specifies the RGB components directly:
+
+```text
+Indexed:
+
+Color ID
+   │
+   ▼
+Palette Entry
+   │
+   ▼
+RGB Color
+
+
+True Color:
+
+Red ──┐
+Green ┼──► RGB Color
+Blue ─┘
+```
+
+True color therefore removes the need for the application to select a nearby color from a fixed palette.
+
+## Why True Color Matters to an Editor
+
+A text editor can use color for many presentation purposes:
+
+```text
+Syntax highlighting
+Status indicators
+Selection
+Search matches
+Diagnostics
+UI elements
+```
+
+A limited palette may be sufficient for a simple editor, but richer color makes it possible to represent more distinct visual roles:
+
+```text
+keyword       → one color
+string        → another
+comment       → another
+number        → another
+diagnostic    → another
+selection     → another
+```
+
+The important distinction is between **semantic styling** and **terminal color encoding**. The syntax-highlighting system should not need to know how a particular terminal represents RGB values:
+
+```text
+Syntax Information
+        ↓
+Semantic Style
+        ↓
+Theme
+        ↓
+Visual Style
+        ↓
+Screen Cell
+        ↓
+Terminal Output
+```
+
+The terminal-specific representation remains at the presentation boundary.
+
+## True Color Does Not Change the Document Model
+
+A document containing:
+
+```c
+int main(void)
+{
+    return 0;
+}
+```
+
+does not need to store RGB values simply because the renderer displays the text using colors. The Document still represents the text; the color is derived presentation information:
+
+```text
+Document
+   │
+   ▼
+Syntax / Presentation Analysis
+   │
+   ▼
+Style
+   │
+   ▼
+Renderer
+   │
+   ▼
+Colored Screen Cells
+```
+
+This distinction prevents presentation concerns from leaking into the core document representation.
+
+## True Color and the Renderer
+
+The renderer ultimately needs to convert the visual style of each cell into terminal output:
+
+```text
+Cell
+├── character
+├── foreground RGB
+├── background RGB
+└── attributes
+       │
+       ▼
+Terminal Output
+```
+
+The Terminal Interface can then encode those values using the terminal's supported color protocol. The renderer therefore works with **visual properties**, while the Terminal Interface handles their **terminal-specific encoding**—the same separation established in the previous section. The Core does not need to know whether the terminal supports 24-bit RGB; the Renderer can work with visual styles; the Terminal Interface handles the terminal-specific representation and any required fallback.
+
+## Color Is Still Capability-Dependent
+
+True color should not automatically be treated as universally available. A terminal environment may support basic colors, indexed colors, true color, or some other level of color capability. Therefore, an editor that wants to use true color must consider what happens when the capability is unavailable:
+
+```text
+Desired Color
+     │
+     ▼
+True Color Available?
+   /           \
+ yes            no
+  │              │
+ RGB          Fallback
+ output       color model
+```
+
+The fallback does not change the semantic meaning of the style. For example, the editor might decide that a particular piece of text represents a keyword; the terminal's capabilities determine how closely that semantic style can be represented visually.
+
+## Semantic Style Versus Exact Color
+
+This distinction becomes particularly important for themes. An editor should conceptually think in terms of semantic roles:
+
+```text
+keyword
+comment
+string
+error
+selection
+```
+
+rather than scattering literal RGB values throughout the rendering code. A theme can map those roles to visual styles:
+
+```text
+Keyword → RGB(...)
+Comment → RGB(...)
+String  → RGB(...)
+Error   → RGB(...)
+```
+
+The renderer consumes those styles, which allows the theme system and terminal capability handling to remain separate.
+
+## True Color and Portability
+
+True color also illustrates a broader principle of terminal portability. The editor may have a preferred visual representation:
+
+```text
+Preferred:
+RGB(220, 180, 80)
+```
+
+But the actual terminal may not be able to reproduce that exact color:
+
+```text
+Semantic Intent
+      ↓
+Preferred Visual Style
+      ↓
+Terminal Capability
+      ↓
+Representable Visual Style
+```
+
+The goal is not necessarily to guarantee identical pixels on every terminal. The goal is to preserve the **meaning and hierarchy of the interface** while using the best representation available.
+
+## The Broader Lesson
+
+True color demonstrates an important property of terminal graphics:
+
+> **A richer terminal capability does not necessarily require a richer application model.**
+
+The editor can continue to reason about text and semantic presentation while the platform layer determines how those concepts are encoded for a particular terminal.
+
+## Summary
+
+True color extends the attributes of a terminal cell by allowing foreground and background colors to be specified directly as RGB values. It does not turn the cell into a graphical object.
+
+The important separation is between semantic styling and terminal color encoding: syntax information flows through a theme into visual styles, and the renderer works with visual properties while the Terminal Interface handles their terminal-specific encoding.
+
+Because true color is not universally available, it must be treated as a capability with a fallback—but a richer color capability does not require a richer application model.
+
+Because the semantic role is fixed before encoding, a theme can request a precise RGB value while the platform layer substitutes the closest available representation. This keeps color a presentation detail rather than a property of the document or the editing model.
+
+In the next section, we will look at terminal capability detection, the mechanism that decides whether an optional feature such as true color can be used safely.

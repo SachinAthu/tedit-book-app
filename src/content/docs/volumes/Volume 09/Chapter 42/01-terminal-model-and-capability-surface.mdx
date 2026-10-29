@@ -1,0 +1,357 @@
+---
+title: "42.1 The Terminal Model and Capability Surface"
+description: "Establishes the character-cell terminal model and the broader capability surface, distinguishing cell-oriented from graphics-oriented output."
+---
+
+The terminal interface developed throughout this book is primarily a character-based display. The editor produces text, positioning commands, and visual attributes, and the terminal emulator interprets those bytes to construct a screen from rows and columns of character cells.
+
+That model is powerful enough to build a complete text editor. The editor can display document text, draw a status bar, position the cursor, apply colors, and update the visible screen without ever manipulating pixels directly.
+
+However, modern terminal emulators can provide capabilities that go beyond the traditional character-cell model. Some terminals support true-color output, mouse events, inline images, and terminal-specific graphics protocols. These capabilities allow terminal applications to create interfaces that are visually richer than a sequence of ordinary characters.
+
+This changes the range of what a terminal application can represent.
+
+## The Traditional Terminal Model
+
+The basic rendering model can be represented as:
+
+```text
+Editor State
+     │
+     ▼
+Renderer
+     │
+     ▼
+Screen Buffer
+     │
+     ▼
+Terminal Interface
+     │
+     ▼
+Terminal Emulator
+     │
+     ▼
+Screen
+```
+
+The Screen Buffer describes the visible screen cells. Each cell corresponds to a position on the terminal grid and can contain information such as a character and its visual attributes.
+
+Conceptually:
+
+```text
++-----+-----+-----+-----+-----+
+|  H  |  e  |  l  |  l  |  o  |
++-----+-----+-----+-----+-----+
+|  W  |  o  |  r  |  l  |  d  |
++-----+-----+-----+-----+-----+
+```
+
+The renderer therefore works primarily in terms of **screen coordinates and cells**.
+
+This model is deliberately simple. It gives the editor a predictable relationship between its logical state and its visible representation. The editor does not need to know how individual pixels are produced; it only needs to determine what should appear at each visible position.
+
+## The Terminal as a Protocol Endpoint
+
+The editor does not directly manipulate a physical display. Its output passes through a protocol boundary:
+
+```text
+Editor
+   │
+   │ terminal protocol
+   ▼
+PTY
+   │
+   ▼
+Terminal Emulator
+   │
+   │ interpretation
+   ▼
+Display
+```
+
+The terminal emulator remains responsible for interpreting the protocol and producing the visible result.
+
+This is an important distinction from graphical applications that communicate directly with a windowing system or graphics API. A terminal editor does not normally receive a framebuffer and draw pixels into it. Instead, it sends information to another program that owns the display surface.
+
+## Beyond Characters: A Capability Surface
+
+A modern terminal can expose additional capabilities:
+
+```text
+                         ┌── Character Cells
+                         │
+Editor ──► Renderer ─────┼── Colors / Attributes
+                         │
+                         ├── Mouse Interaction
+                         │
+                         └── Graphics / Images
+```
+
+These capabilities do not all have the same nature. Color still operates naturally within the character-cell model; a character can have a foreground and background color. Mouse input is an **input capability** that allows the terminal to send additional events back to the application. Images are different again: an image is not naturally represented by one character cell and may occupy an area corresponding to many cells while carrying information that cannot be represented by those cells alone.
+
+It is therefore useful to think of a modern terminal as a **capability surface** rather than a single fixed display mechanism.
+
+At the simplest level, the terminal provides:
+
+```text
+Text
+Cursor
+Attributes
+```
+
+More capable terminals may additionally provide:
+
+```text
+True Color
+Mouse Events
+Images
+Graphics Protocols
+```
+
+These capabilities are not equally standardized or universally available.
+
+## Cell-Oriented and Graphics-Oriented Output
+
+For the purposes of this chapter, terminal output can be divided into two broad categories.
+
+The first is **cell-oriented output**:
+
+```text
+Character
+Foreground color
+Background color
+Attributes
+Cursor movement
+```
+
+This output operates on the terminal's character grid. The Screen Buffer describes that grid, and each visible position corresponds to a screen cell:
+
+```text
+Screen Buffer
++----+----+----+----+----+
+| H  | e  | l  | l  | o  |
++----+----+----+----+----+
+| W  | o  | r  | l  | d  |
++----+----+----+----+----+
+```
+
+The renderer transforms editor state into this representation and then emits the necessary terminal output. The terminal subsequently interprets that output and updates its own internal screen representation. The important ownership boundary is:
+
+```text
+Editor owns:
+    Screen Buffer
+
+Terminal owns:
+    Terminal display state
+```
+
+The editor describes what should be displayed. The terminal decides how that description becomes an actual display.
+
+The second category is **graphics-oriented output**:
+
+```text
+Image data
+Image placement
+Graphics-specific commands
+Graphics resources
+```
+
+A graphical image contains substantially more information than can be represented by a sequence of ordinary characters:
+
+```text
++-----------------------+
+|                       |
+|       IMAGE           |
+|                       |
++-----------------------+
+```
+
+Its visual content cannot be represented simply as one character plus one color. Even if the image occupies a rectangular region of the terminal, the image itself has its own dimensions and graphical data:
+
+```text
+Image
+  │
+  ├── graphical data
+  ├── dimensions
+  └── placement
+          │
+          ▼
+   Graphics Protocol
+          │
+          ▼
+   Terminal Emulator
+```
+
+The terminal emulator may then associate that graphical object with a region of the visible display. Graphics-oriented protocols may maintain information that does not fit naturally into the ordinary screen-cell model.
+
+## Display Coordinates Still Matter
+
+Graphics do not eliminate the terminal's character grid. In many terminal graphics systems, graphical content is positioned relative to the terminal's existing coordinate system:
+
+```text
+Terminal
++--------------------------------+
+|                                |
+|   +----------------------+     |
+|   |                      |     |
+|   |       Image          |     |
+|   |                      |     |
+|   +----------------------+     |
+|                                |
++--------------------------------+
+```
+
+The terminal still has rows and columns, but a graphical object can occupy an area associated with those coordinates. This creates an important relationship between two concepts:
+
+```text
+Character-cell geometry
+          +
+Graphical-object geometry
+```
+
+An advanced terminal application therefore needs to reason about both when it uses graphical capabilities.
+
+## Capability Is Not the Same as Requirement
+
+A terminal may support a feature without the editor being required to use it. Suppose a terminal supports inline images; that does not mean that the editor must support inline images:
+
+```text
+Terminal supports feature
+            ≠
+Editor requires feature
+```
+
+The baseline editor can remain a text editor even when executed inside a much more capable terminal. This allows the architecture to remain stable while optional presentation features are introduced later.
+
+## Terminal Graphics Are Not a New Core Representation
+
+It would be tempting to conclude that the editor now needs a completely different internal representation:
+
+```text
+Document
+├── Text
+├── Colors
+├── Images
+└── Graphics
+```
+
+That would be inappropriate for the baseline editor. The Document represents editable text. The Cursor represents a logical editing position. The Viewport determines which part of that document is visible. These concepts remain meaningful regardless of whether the terminal happens to support additional visual capabilities.
+
+A better separation is:
+
+```text
+                    Editor Core
+                        │
+                 Document State
+                        │
+                        ▼
+                    Renderer
+                   /        \
+                  /          \
+          Cell Rendering   Graphics Rendering
+                │                 │
+                ▼                 ▼
+        Terminal Interface   Graphics Protocol
+                  \             /
+                   \           /
+                    ▼         ▼
+                   Terminal
+```
+
+The exact implementation may vary in a future editor, but the architectural principle remains:
+
+> **A terminal capability should not become part of the core model merely because the terminal can display it.**
+
+## Protocol-Specific Behavior
+
+Another important property is that terminal graphics are generally **protocol-dependent**. The editor cannot assume that every terminal understands every graphics command:
+
+```text
+Application
+     │
+     ├── Standard terminal features
+     │
+     └── Optional graphics protocol
+                 │
+                 ▼
+           Capability-dependent
+                 │
+           ┌──────┴──────┐
+           ▼             ▼
+       Supported      Unsupported
+           │             │
+        Render        Fallback
+```
+
+This is different from ordinary text output, where the basic terminal model is comparatively consistent. Consequently, advanced graphical features require the editor to know not only **what it wants to display**, but also **whether the current terminal environment can represent that display**. Capability detection therefore becomes an essential part of the design.
+
+## The Architectural Boundary
+
+The existing architecture already provides a natural location for this responsibility. The Terminal Interface is responsible for terminal-specific operations such as terminal dimensions, raw mode, ANSI output, cursor visibility, and terminal restoration. Terminal graphics extend this same platform boundary rather than requiring the Core Layer to understand terminal protocols:
+
+```text
++-----------------------------+
+|         Editor Core         |
+|                             |
+| Document / Cursor / Viewport|
++--------------+--------------+
+               |
+               ▼
++-----------------------------+
+|          Renderer           |
++--------------+--------------+
+               |
+               ▼
++-----------------------------+
+|      Terminal Interface     |
+|                             |
+| Text / Colors / Graphics    |
++--------------+--------------+
+               |
+               ▼
++-----------------------------+
+|       Terminal Emulator     |
++-----------------------------+
+```
+
+This keeps terminal-specific knowledge at the system boundary. The Core Layer contains the application's essential state—Document, Cursor, Viewport, Current File, Dirty Flag, Screen Size, Status Message, and Configuration—while the platform-facing components deal with terminal-specific behavior.
+
+## Why the Model Matters
+
+Terminal graphics are therefore not simply a collection of additional escape sequences. They introduce a broader engineering problem:
+
+```text
+What should the editor display?
+            │
+            ▼
+How can the renderer represent it?
+            │
+            ▼
+Does the terminal support it?
+            │
+            ▼
+Which protocol should be used?
+            │
+            ▼
+What happens if it is unavailable?
+```
+
+The first question belongs primarily to the editor's presentation logic. The middle questions belong to the platform and terminal interface. The final question belongs to the capability and fallback strategy.
+
+This leads to an important architectural requirement for advanced terminal applications:
+
+> **The editor must distinguish its core behavior from capabilities provided by the terminal environment.**
+
+Keeping these concerns separate allows advanced terminal features to be added without weakening the architecture established for the baseline editor.
+
+## Summary
+
+The traditional terminal model gives the editor a predictable relationship between its logical state and its visible representation: the renderer builds a screen buffer of screen cells, and the terminal emulator interprets those cells to construct the display. The terminal is a protocol endpoint, not a framebuffer the editor owns.
+
+Modern terminals extend this model with true color, mouse events, images, and graphics protocols. These capabilities do not all belong to the core model—color still operates within the cell, mouse input is an input capability, and images carry graphical data that cells alone cannot represent. Terminal output therefore divides into cell-oriented and graphics-oriented forms.
+
+The key principle is that a terminal capability is not the same as an editor requirement, and terminal graphics belong on the presentation and platform side of the architecture.
+
+This capability surface is what makes optional features possible, but it also means the editor must know both what it wants to display and whether the current environment can represent it. Keeping that knowledge at the Terminal Interface preserves the Core's independence from any particular terminal protocol.
+
+In the next section, we will examine true color, the first capability that extends ordinary character cells without requiring a fundamentally different rendering model.
