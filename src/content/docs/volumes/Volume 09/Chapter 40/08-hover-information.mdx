@@ -1,0 +1,563 @@
+---
+title: "40.8 Hover Information"
+description: "Explains hover as a purely informational query about the symbol under the cursor, producing temporary derived state that never edits the document."
+---
+
+**Hover** is a language service that provides contextual information about the symbol or expression at a particular position in the document.
+
+Unlike completion, which asks:
+
+> "What could be inserted here?"
+
+hover asks:
+
+> "What does this existing text mean?"
+
+For example, given:
+
+```c
+int result = calculate_total(items);
+                 ^
+```
+
+the language server may be able to provide information about `calculate_total`, such as its declaration, signature, type, or documentation.
+
+The architectural flow is:
+
+```text
+User places cursor on symbol
+           │
+           ▼
+        Editor
+           │
+           ▼
+       LSP Client
+           │
+           │ hover request
+           ▼
+    Language Server
+           │
+           │ analyze position
+           ▼
+     Hover Information
+           │
+           ▼
+       LSP Client
+           │
+           ▼
+        Editor
+           │
+           ▼
+        Renderer
+```
+
+## Hover Is Contextual Information
+
+Hover depends on both the document and the cursor position.
+
+Consider:
+
+```c
+int calculate_total(Item *items);
+
+int main(void)
+{
+    int total = calculate_total(items);
+                     ^
+}
+```
+
+The editor knows the cursor position.
+
+The language server can use that position together with its understanding of the document to determine what symbol is located there.
+
+The result might conceptually contain:
+
+```text
+calculate_total
+
+int calculate_total(Item *items)
+```
+
+The editor does not need to determine the meaning of the identifier itself.
+
+It asks the language server.
+
+## Hover Is Different From Completion
+
+Completion and hover both depend on the cursor position, but they answer different questions.
+
+| Service    | Question                           |
+| ---------- | ---------------------------------- |
+| Completion | What could be entered here?        |
+| Hover      | What does this existing text mean? |
+
+For example:
+
+```text
+calculate_to|
+```
+
+might produce completion candidates:
+
+```text
+calculate_total
+calculate_average
+calculate_count
+```
+
+But when the cursor is positioned over:
+
+```text
+calculate_total
+        ^
+```
+
+hover might provide:
+
+```text
+int calculate_total(Item *items)
+```
+
+The two services therefore complement each other without being the same operation.
+
+## Hover Is a Query, Not an Editing Operation
+
+A hover request does not modify the document.
+
+The flow is:
+
+```text
+Document
+   │
+   │ position
+   ▼
+Hover Request
+   │
+   ▼
+Language Server
+   │
+   ▼
+Hover Information
+   │
+   ▼
+Editor UI
+```
+
+There is no document mutation at the end of the operation.
+
+This is different from accepting a completion:
+
+```text
+Completion
+    │
+    ▼
+User selection
+    │
+    ▼
+Document mutation
+```
+
+The distinction is important because hover belongs entirely to the information side of the editor architecture.
+
+## Possible Hover Information
+
+The exact information depends on the language server and language being analyzed.
+
+Conceptually, hover information can include:
+
+- symbol information;
+- type information;
+- function signatures;
+- documentation;
+- other contextual language information.
+
+For example:
+
+```text
++----------------------------------+
+| calculate_total                  |
+|                                  |
+| int calculate_total(Item *items) |
+|                                  |
+| Calculates the total value of    |
+| the supplied items.              |
++----------------------------------+
+```
+
+The language server provides the information.
+
+The editor decides how much of it to display and how to present it.
+
+## Hover and the Renderer
+
+The Renderer should not need to understand C, Rust, Python, or any other language.
+
+Its responsibility is to render the information supplied by the editor.
+
+The architecture therefore remains:
+
+```text
+Language Server
+       │
+       │ Hover information
+       ▼
+    LSP Client
+       │
+       ▼
+   Editor State
+       │
+       ▼
+    Renderer
+       │
+       ▼
+    Terminal
+```
+
+For a terminal editor, the hover information could be displayed in a temporary region such as:
+
+```text
++------------------------------------------+
+| int main(void)                            |
+| {                                        |
+|     int total = calculate_total(items); |
+|                       ^                  |
+|                                          |
+| +--------------------------------------+ |
+| | int calculate_total(Item *items)     | |
+| | Calculates the total value.          | |
+| +--------------------------------------+ |
++------------------------------------------+
+```
+
+The exact interface is an implementation concern.
+
+The protocol layer should remain independent of it.
+
+## Hover Does Not Mean "Show Documentation Only"
+
+Although documentation is a common use of hover, hover is broader than documentation.
+
+The language server may provide semantic information about the entity at the cursor.
+
+For example:
+
+```text
+value
+int
+```
+
+or:
+
+```text
+calculate_total
+int (Item *items)
+```
+
+The important concept is **contextual information about the language element at a position**.
+
+Documentation is one possible component of that information.
+
+## Hover and Language Analysis
+
+To provide useful hover information, the language server may need to understand more than the immediate text around the cursor.
+
+Consider:
+
+```c
+int calculate_total(Item *items);
+
+int main(void)
+{
+    Item *items;
+    int total = calculate_total(items);
+}
+```
+
+A simple text search can find the name `calculate_total`.
+
+However, determining its actual declaration, type, and relevant documentation requires language knowledge.
+
+The language server may therefore need to use information such as:
+
+```text
+Symbol
+  │
+  ├── Declaration
+  ├── Scope
+  ├── Type
+  └── Documentation
+```
+
+This illustrates why language intelligence is separated from the editor itself.
+
+## Hover and Document Synchronization
+
+As with diagnostics and completion, hover depends on the language server having a sufficiently current representation of the document.
+
+Suppose the user changes:
+
+```c
+calculate_total(items);
+```
+
+to:
+
+```c
+calculate_average(items);
+```
+
+The meaning of the identifier under the cursor may have changed.
+
+Therefore:
+
+```text
+Document Change
+      │
+      ▼
+Synchronization
+      │
+      ▼
+Language Server
+      │
+      ▼
+Updated Analysis
+      │
+      ▼
+Hover Request
+```
+
+The server should answer the request using an appropriate document state.
+
+This connects hover directly to the synchronization model established earlier.
+
+## Hover and Asynchronous Communication
+
+Hover also follows the asynchronous communication model.
+
+The simplified sequence is:
+
+```text
+User requests hover
+        │
+        ▼
+Editor creates request
+        │
+        ▼
+LSP Client sends request
+        │
+        ▼
+Language Server processes
+        │
+        ▼
+Response received
+        │
+        ▼
+Editor updates temporary UI state
+        │
+        ▼
+Renderer displays result
+```
+
+The editor should remain responsive while this process occurs.
+
+A slow language server should not prevent the user from continuing ordinary editing operations.
+
+This follows the same event-driven principle established for other LSP services.
+
+## Hover Results Are Temporary Derived State
+
+Hover information is normally associated with a particular cursor position and document state.
+
+It should therefore be treated as **derived, temporary information**, rather than as part of the Document.
+
+Conceptually:
+
+```text
+Editor State
+ │
+ ├── Document             ← authoritative
+ │
+ ├── Cursor               ← authoritative
+ │
+ └── Hover Information    ← derived / temporary
+```
+
+Moving the cursor can invalidate the current hover result.
+
+Changing the document can also invalidate it.
+
+The editor should therefore be able to discard and regenerate hover information whenever the relevant context changes.
+
+This follows the same derived-state principle already established for diagnostics and syntax highlighting.
+
+## Hover and Buffer Context
+
+In a multi-buffer editor, hover information must be associated with the correct buffer.
+
+For example:
+
+```text
+Buffer A
+  │
+  └── Cursor
+       └── Hover Result A
+
+Buffer B
+  │
+  └── Cursor
+       └── Hover Result B
+```
+
+Switching buffers should not cause information from one buffer to appear as though it belongs to another.
+
+The LSP Client therefore needs enough context to associate a request and its result with the relevant document.
+
+This is another application of the state-ownership and context-association principles established earlier.
+
+## Hover Does Not Change Undo History
+
+Because hover is purely informational:
+
+```text
+Hover request
+     │
+     ▼
+Information returned
+     │
+     ▼
+Displayed to user
+```
+
+there is no Document mutation.
+
+Therefore:
+
+```text
+Hover
+  └── does not create an undo record
+```
+
+This is consistent with the Undo/Redo architecture: only document-changing operations belong in editing history.
+
+The language server itself has no ownership of the editor's undo stack.
+
+## Hover as a General Pattern
+
+Hover illustrates a broader pattern that applies to many LSP services:
+
+```text
+             Editor Context
+                    │
+                    ▼
+              LSP Request
+                    │
+                    ▼
+           Language Analysis
+                    │
+                    ▼
+          Structured Information
+                    │
+                    ▼
+               Editor UI
+```
+
+The same architectural boundary can support many kinds of language information without embedding language-specific knowledge inside the editor.
+
+This is one of the major benefits of the LSP approach.
+
+## The Three Core Services
+
+The three services examined in this chapter can now be compared:
+
+```text
++-------------+------------------------------+
+| Service     | Purpose                      |
++-------------+------------------------------+
+| Diagnostics | Report problems              |
+| Completion  | Suggest possible input      |
+| Hover       | Explain existing context   |
++-------------+------------------------------+
+```
+
+Their interaction with the editor follows the same basic architecture:
+
+```text
+                    +----------------+
+                    |     Editor     |
+                    +-------+--------+
+                            |
+                        LSP Client
+                            |
+                            v
+                    +----------------+
+                    |    Language    |
+                    |     Server     |
+                    +-------+--------+
+                            |
+                 Language-specific analysis
+                            |
+          +-----------------+-----------------+
+          |                 |                 |
+          v                 v                 v
+     Diagnostics       Completion          Hover
+          |                 |                 |
+          +-----------------+-----------------+
+                            |
+                            v
+                         Editor
+```
+
+The services differ in purpose, but the architectural boundary remains the same.
+
+## What LSP Provides — and What It Does Not
+
+At this point, it is useful to separate the responsibilities clearly.
+
+LSP provides a standardized way for the editor to communicate language-related requests and information.
+
+It does **not** provide:
+
+- the programming-language parser itself;
+- the type system;
+- the compiler;
+- the language database;
+- the terminal UI;
+- the editor's document model;
+- the editor's undo system.
+
+Those remain responsibilities of their respective components.
+
+The architecture is therefore:
+
+```text
++-----------------------+
+|       Editor          |
+|                       |
+| Editing               |
+| State                 |
+| Rendering             |
+| LSP Client            |
++-----------+-----------+
+            |
+            | LSP
+            |
++-----------v-----------+
+|   Language Server     |
+|                       |
+| Language-specific     |
+| intelligence          |
++-----------------------+
+```
+
+This boundary is the main architectural lesson of the chapter.
+
+## Summary
+
+Hover provides contextual information about the symbol or expression at the cursor position. Unlike completion, which looks forward to what could be entered, hover looks at what already exists and asks what it means. The language server may return type information, function signatures, documentation, or other semantic details.
+
+Hover is a purely informational query — it does not modify the document, create undo records, or change editing state. Its results are temporary derived state that should be invalidated when the cursor moves or the document changes. As with other language services, the Renderer receives hover information through the normal rendering pipeline without needing to understand the language that produced it. Hover, completion, and diagnostics together form three core services that follow the same architectural pattern while answering fundamentally different questions.
+
+Because hover changes nothing, it can be refreshed or discarded freely as the cursor and document evolve, without touching undo history or the Dirty Flag. The same request-and-present pattern scales to further services, which is why the protocol boundary matters more than any single feature.
+
+In the next section, we will step back from individual services and examine the communication model itself: how requests, notifications, and asynchronous results enable these services to coexist with the editor's event-driven runtime.

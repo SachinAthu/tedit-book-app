@@ -1,0 +1,434 @@
+---
+title: "40.4 Starting and Managing a Language Server"
+description: "Covers how the editor discovers, starts, initializes, negotiates capabilities with, monitors, and shuts down an external language server."
+---
+
+A language server is normally an external process. Unlike the editor's own components, it has its own lifetime, resources, communication channel, and failure modes.
+
+This introduces a new responsibility for the editor:
+
+> **The editor must manage the relationship with the language server without making the language server part of the editor's core state.**
+
+The lifecycle can be viewed as:
+
+```text
+Start Editor
+     │
+     ▼
+Determine Language Support
+     │
+     ▼
+Start / Connect Language Server
+     │
+     ▼
+Initialize Protocol
+     │
+     ▼
+Exchange Capabilities
+     │
+     ▼
+Synchronize Documents
+     │
+     ▼
+Use Language Services
+     │
+     ▼
+Shutdown Language Server
+```
+
+The important point is that the language server is not simply "started and forgotten." The editor must manage it throughout the editing session.
+
+## Discovering the Appropriate Language Server
+
+Before the editor can communicate with a language server, it must determine which server should handle the document.
+
+A document might belong to a particular language based on information such as:
+
+- file name;
+- file extension;
+- detected language;
+- user configuration;
+- project configuration.
+
+Conceptually:
+
+```text
+Document
+   │
+   ▼
+Determine Language
+   │
+   ▼
+Select Language Server
+   │
+   ▼
+Start / Connect
+```
+
+For example, a C source file might be associated with a C language server, while a Python source file might be associated with a Python language server.
+
+The exact discovery mechanism is outside the core LSP protocol discussion. What matters architecturally is that the editor must establish which language service is appropriate.
+
+This is another reason why LSP should remain outside the core Document model.
+
+The Document represents text.
+
+The language-service selection determines which external system should analyze that text.
+
+## Starting the Language Server
+
+Once a suitable server has been selected, the editor may need to start it as a separate process.
+
+Conceptually:
+
+```text
+Editor
+  │
+  │ launch
+  ▼
+Language Server Process
+  │
+  │ communication channel
+  ▼
+LSP Client
+```
+
+The exact process-management mechanism depends on the platform and server configuration.
+
+The important architectural principle is that the server is an **external component**.
+
+It therefore has its own:
+
+- process identity;
+- input/output streams or communication channel;
+- memory;
+- execution state;
+- lifetime.
+
+The editor must not assume that the server is simply another function call inside the editor.
+
+## Initialization
+
+Starting the process is not sufficient.
+
+The client and server must establish an LSP session.
+
+Conceptually:
+
+```text
+Client                         Server
+  │                              │
+  │──── Initialize ─────────────►│
+  │                              │
+  │◄─── Initialization Result ───│
+  │                              │
+  │──── Initialized ─────────────►│
+  │                              │
+```
+
+The initialization phase establishes the context in which the two systems will communicate.
+
+The client can provide information about its environment and capabilities, while the server can describe the capabilities it provides.
+
+This creates an explicit contract before ordinary language-service operations begin.
+
+## Capability Negotiation
+
+Different language servers provide different sets of features.
+
+The editor therefore should not assume that every server supports every possible operation.
+
+Instead, the initialization process establishes supported capabilities.
+
+Conceptually:
+
+```text
+Client Capabilities
+        │
+        ▼
++----------------------+
+|     Initialize       |
++----------------------+
+        │
+        ▼
+Server Capabilities
+        │
+        ├── Diagnostics
+        ├── Completion
+        ├── Hover
+        └── Other Services
+```
+
+The editor can then determine which language features it can safely request.
+
+This is an important example of **capability-based design**.
+
+Instead of asking:
+
+> "Does every language server support this?"
+
+the editor asks:
+
+> "Does this particular server advertise this capability?"
+
+## Opening a Document
+
+After initialization, the editor needs to inform the language server about documents that the server should understand.
+
+Conceptually:
+
+```text
+Editor
+  │
+  │ Open document
+  ▼
+LSP Client
+  │
+  │ Document information
+  ▼
+Language Server
+```
+
+The server can then create or update its internal representation of the document.
+
+This does not transfer ownership of the document.
+
+The relationship remains:
+
+```text
+Editor                     Language Server
+------                     ---------------
+Owns Document       ───►   Maintains analysis state
+```
+
+The editor remains the authoritative source for editing operations.
+
+## Keeping the Server Synchronized
+
+Once the document is open, the editor must keep the server informed when the document changes.
+
+For example:
+
+```text
+User edits document
+       │
+       ▼
+Editor Document changes
+       │
+       ▼
+LSP Client
+       │
+       │ document change
+       ▼
+Language Server
+       │
+       ▼
+Update analysis state
+```
+
+This means the language server does not independently observe every keystroke in the terminal.
+
+The editor explicitly communicates relevant document changes.
+
+This synchronization problem is important enough to receive its own treatment in the next section.
+
+For now, the key idea is:
+
+> **Language analysis is useful only when the server's representation is sufficiently synchronized with the editor's document.**
+
+## Multiple Documents
+
+A language server may need to know about more than one document.
+
+For example, analyzing one source file may require information from:
+
+```text
+main.c
+  │
+  ├── header.h
+  ├── library.h
+  └── another.c
+```
+
+The editor may therefore have several open documents associated with the same language server.
+
+Conceptually:
+
+```text
+                 +----------------+
+                 | Language       |
+                 | Server         |
+                 +-------+--------+
+                         |
+             +-----------+-----------+
+             |           |           |
+             v           v           v
+          main.c      header.h    other.c
+```
+
+The precise workspace and project semantics can become considerably more complex than this simplified diagram suggests.
+
+The important architectural point is that the LSP relationship is not necessarily:
+
+```text
+one editor = one document = one server
+```
+
+A more realistic relationship can involve a language server working with multiple documents belonging to a workspace.
+
+## Server Failure
+
+Because the language server is an external process, it can fail independently of the editor.
+
+Possible situations include:
+
+- the process terminates;
+- startup fails;
+- communication becomes unavailable;
+- the server becomes unresponsive;
+- the server encounters an internal error.
+
+The editor must therefore distinguish between:
+
+```text
+Core Editor Failure
+```
+
+and:
+
+```text
+Language Service Failure
+```
+
+For example:
+
+```text
+Language Server crashes
+          │
+          ▼
++-----------------------+
+| Editor continues      |
+|                       |
+| Editing      ✓        |
+| Cursor       ✓        |
+| Saving       ✓        |
+| Rendering    ✓        |
+| LSP features ✗        |
++-----------------------+
+```
+
+This reinforces the architectural decision established earlier:
+
+> **Language intelligence should enhance the editor rather than become a prerequisite for basic editing.**
+
+## Shutdown
+
+The language-server lifecycle also has a defined ending.
+
+When the editor no longer needs a server, the client should terminate the LSP session appropriately rather than simply abandoning the process.
+
+Conceptually:
+
+```text
+Editor
+  │
+  │ Shutdown
+  ▼
+Language Server
+  │
+  │ Exit
+  ▼
+Process Terminates
+```
+
+This matters because an external process consumes resources.
+
+A well-behaved editor should not leave unnecessary language-server processes running after the corresponding editing context has disappeared.
+
+## The Complete Lifecycle
+
+The lifecycle can now be summarized:
+
+```text
+             +------------------+
+             |  Select Server   |
+             +--------+---------+
+                      |
+                      v
+             +------------------+
+             | Start / Connect  |
+             +--------+---------+
+                      |
+                      v
+             +------------------+
+             |   Initialize     |
+             +--------+---------+
+                      |
+                      v
+             +------------------+
+             |    Capabilities  |
+             +--------+---------+
+                      |
+                      v
+             +------------------+
+             | Open Documents   |
+             +--------+---------+
+                      |
+                      v
+             +------------------+
+             | Synchronization  |
+             +--------+---------+
+                      |
+                      v
+             +------------------+
+             | Language Service |
+             |    Requests      |
+             +--------+---------+
+                      |
+                      v
+             +------------------+
+             |     Shutdown     |
+             +------------------+
+```
+
+This lifecycle introduces an important architectural distinction.
+
+The LSP Client is **long-lived communication state**, while individual LSP operations such as completion or hover are **short-lived interactions** within that session.
+
+That distinction will become increasingly important as we examine document synchronization.
+
+## Lifecycle Ownership
+
+The editor should have a clear owner for the LSP Client and its associated lifecycle state.
+
+Conceptually:
+
+```text
+Editor
+  │
+  └── LSP Manager / LSP Client
+          │
+          ├── Server Process
+          ├── Connection
+          ├── Capabilities
+          └── Synchronization State
+```
+
+The exact module name is an implementation decision for Volume X. The architectural responsibility, however, should remain clear:
+
+- the editor controls the language-server relationship;
+- the LSP Client controls protocol communication;
+- the language server controls language analysis;
+- the Document remains owned by the editor.
+
+This separation prevents lifecycle management from leaking into unrelated components such as the Renderer or Document implementation.
+
+## Summary
+
+The language server is an external process with its own identity, memory, execution state, and failure modes. The editor must manage the server throughout its lifecycle: selecting the appropriate server for a document's language, starting or connecting to it, initializing the protocol session, exchanging capabilities, and eventually shutting it down cleanly.
+
+A critical architectural property is that the server can fail without taking the editor down with it. The editor must distinguish language-service failure from core editor failure, ensuring that basic operations such as cursor movement, text editing, and file saving remain available even when LSP features are temporarily unavailable. The LSP Client is a long-lived communication state, while individual operations such as completion and hover are short-lived interactions within that session.
+
+Discovery, startup, initialization, capability negotiation, and shutdown each answer a distinct question, so a failure at one stage need not corrupt the others. The editor can therefore treat the server as a manageable external service whose absence or crash degrades only language features.
+
+In the next section, we will examine the most operationally important aspect of the client-server relationship: how document changes are communicated to the language server through document synchronization.

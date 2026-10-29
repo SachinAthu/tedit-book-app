@@ -1,0 +1,43 @@
+---
+title: "Chapter 40 — Language Server Protocol (LSP)"
+description: "Traces how an editor delegates language intelligence to an external server through LSP, from client–server architecture to diagnostics, completion, and hover."
+---
+
+## Introduction
+
+Chapter 39 examined how plugins extend an editor through a defined interface. The Language Server Protocol (LSP) solves a related problem from a different direction: instead of adding language-specific code to the editor, it places language intelligence in a separate process and standardizes the boundary across which the editor communicates with that process.
+
+The editor acts as the **LSP Client** and the external program acts as the **language server**. The protocol defines how the client requests language services — such as diagnostics, completion, and hover — and how the server provides them. The central question is:
+
+> **How can an editor obtain language intelligence from an external process while keeping its core architecture independent of any particular programming language?**
+
+We begin by examining why language intelligence belongs outside the editor, then define the protocol and the client–server architecture. We follow the language-server lifecycle and document synchronization, study diagnostics, completion, and hover as services built on the protocol, and examine how requests, notifications, and asynchronous results integrate with the event loop. We close by weighing the trade-offs that determine where LSP belongs in our editor.
+
+## Learning Objectives
+
+Readers should be able to:
+
+- Explain why language intelligence belongs outside the editor
+- Describe LSP as a protocol and distinguish the LSP Client from the language server
+- Describe the LSP Client as an adapter and explain why the editor keeps ownership of the Document
+- Explain how a language server is selected, started, initialized, and eventually shut down
+- Explain why the language server must be kept synchronized with the editor's in-memory document
+- Describe diagnostics as derived, asynchronous information that the editor presents but does not produce
+- Explain how completion turns language-server candidates into ordinary editing operations
+- Explain how hover provides contextual information without modifying the document
+- Contrast requests, notifications, and asynchronous results and explain why the event loop must not block
+- Evaluate the trade-offs that make LSP an optional advanced subsystem rather than a dependency of the core editor
+
+## Sections
+
+- [40.1 Why Language Intelligence Matters](/volumes/volume-09/chapter-40/01-why-language-intelligence-matters/)
+- [40.2 What Is the Language Server Protocol?](/volumes/volume-09/chapter-40/02-what-is-lsp/)
+- [40.3 LSP Client and Language Server Architecture](/volumes/volume-09/chapter-40/03-lsp-client-language-server-architecture/)
+- [40.4 Starting and Managing a Language Server](/volumes/volume-09/chapter-40/04-starting-managing-language-server/)
+- [40.5 Document Synchronization](/volumes/volume-09/chapter-40/05-document-synchronization/)
+- [40.6 Diagnostics](/volumes/volume-09/chapter-40/06-diagnostics/)
+- [40.7 Completion](/volumes/volume-09/chapter-40/07-completion/)
+- [40.8 Hover Information](/volumes/volume-09/chapter-40/08-hover-information/)
+- [40.9 Requests, Notifications, and Asynchronous Results](/volumes/volume-09/chapter-40/09-requests-notifications-async-results/)
+- [40.10 LSP Integration Trade-offs and Boundary for Our Editor](/volumes/volume-09/chapter-40/10-lsp-integration-trade-offs/)
+- [40.11 Conclusion](/volumes/volume-09/chapter-40/11-conclusion/)

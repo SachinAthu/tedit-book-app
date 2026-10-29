@@ -1,0 +1,355 @@
+---
+title: "40.2 What Is the Language Server Protocol?"
+description: "Defines LSP as a protocol rather than an analyzer, distinguishing client, server, requests, notifications, responses, and declared capabilities."
+---
+
+The **Language Server Protocol (LSP)** is a communication protocol that defines how an editor or development environment communicates with a separate program that provides language-specific intelligence.
+
+The important idea is not that LSP makes an editor understand a programming language. Instead, LSP defines a standardized boundary between two systems:
+
+```text
++------------------------+
+|         Editor         |
+|                        |
+|       LSP Client       |
++-----------+------------+
+            |
+            | LSP
+            |
++-----------v------------+
+|     Language Server    |
+|                        |
+| Language-specific      |
+| analysis and services  |
++-------------------------+
+```
+
+The editor acts as the **LSP Client**. The external program acts as the **language server**.
+
+This distinction gives each component a clearly defined responsibility.
+
+## The LSP Client
+
+The **LSP Client** is the part of the editor responsible for communicating using the Language Server Protocol.
+
+It does not need to understand the internal implementation of the language server.
+
+Its responsibilities include:
+
+- starting or connecting to a language server;
+- initializing the protocol connection;
+- informing the server about relevant document changes;
+- sending requests;
+- receiving responses;
+- receiving notifications;
+- interpreting language-server results;
+- making those results available to the editor's user interface.
+
+Conceptually:
+
+```text
+User
+ │
+ ▼
+Editor
+ │
+ ▼
+LSP Client
+ │
+ │ LSP messages
+ ▼
+Language Server
+```
+
+The LSP Client therefore acts as an adapter between the editor's internal architecture and the standardized protocol.
+
+It translates editor state and user actions into protocol messages and translates protocol results back into information the editor can use.
+
+## The Language Server
+
+A **language server** is a separate program that provides language-specific intelligence.
+
+Its implementation depends on the language and tooling ecosystem it supports.
+
+For example, a language server may understand:
+
+- syntax;
+- declarations;
+- symbols;
+- types;
+- scopes;
+- references;
+- project structure;
+- compiler or analyzer diagnostics.
+
+The language server can then expose some of this knowledge through LSP operations.
+
+Conceptually:
+
+```text
+                    Language Server
+                          |
+             +------------+------------+
+             |            |            |
+             v            v            v
+        Diagnostics  Completion     Hover
+```
+
+The server does not need to know whether the client is our terminal editor, another editor, or a different development environment.
+
+It communicates through the protocol boundary.
+
+## LSP Is a Protocol, Not a Language Analyzer
+
+This distinction is essential.
+
+LSP does **not** define how a programming language is parsed or analyzed.
+
+It defines how information about that analysis can be exchanged.
+
+For example, consider completion.
+
+LSP can define the structure of a completion request and the information returned by the server. It does not dictate how the server determines which completions are valid.
+
+The server might use:
+
+- a compiler front end;
+- a parser;
+- a syntax tree;
+- a type checker;
+- a symbol database;
+- a language-specific analysis engine.
+
+Those implementation details belong to the language server.
+
+```text
+                 LSP
+                  │
+        Defines communication
+                  │
+       ┌──────────┴──────────┐
+       │                     │
+       ▼                     ▼
+     Client               Server
+       │                     │
+       │                     ├── Parser
+       │                     ├── Analyzer
+       │                     ├── Type system
+       │                     └── Symbol database
+```
+
+This distinction will become particularly important in Chapter 41, where we examine Tree-sitter and incremental parsing.
+
+## Messages Between Client and Server
+
+Communication through LSP consists primarily of messages.
+
+At a conceptual level, there are three important categories:
+
+1. **Requests**
+2. **Responses**
+3. **Notifications**
+
+A request expects a response:
+
+```text
+Client                         Server
+  │                              │
+  │──── Request ────────────────►│
+  │                              │
+  │◄─── Response ────────────────│
+  │                              │
+```
+
+A notification communicates an event without requiring a response:
+
+```text
+Client                         Server
+  │                              │
+  │──── Notification ───────────►│
+  │                              │
+  │        no response           │
+```
+
+This distinction becomes important when we examine document synchronization and asynchronous operations later in the chapter.
+
+## Requests and Notifications Represent Different Intentions
+
+A request generally means:
+
+> "I need information or an operation performed, and I expect a result."
+
+For example:
+
+```text
+Client ──► "What information is available at this position?"
+Server ──► "Here is the information."
+```
+
+A notification generally means:
+
+> "Something happened; you should know about it."
+
+For example:
+
+```text
+Client ──► "This document has changed."
+```
+
+The server can update its internal representation without sending a corresponding result to the client.
+
+This distinction allows LSP communication to represent both **queries** and **state changes**.
+
+## Capabilities
+
+An editor cannot assume that every language server supports every possible LSP feature.
+
+Different servers may provide different capabilities.
+
+For example:
+
+```text
+Language Server
+       │
+       ├── Diagnostics       ✓
+       ├── Completion        ✓
+       ├── Hover             ✓
+       ├── Rename            ✗
+       └── Formatting        ✓
+```
+
+During initialization, the client and server can communicate information about the capabilities they support.
+
+This allows the editor to adapt to the actual language server rather than assuming that every feature exists.
+
+The principle is similar to designing against an explicit interface:
+
+> **The client should depend on declared capabilities, not assumptions.**
+
+## LSP as an Architectural Boundary
+
+The most important consequence of LSP is the boundary it creates.
+
+Without such a boundary, the editor might contain language-specific code:
+
+```text
++--------------------------------+
+|             Editor             |
+|                                |
+| Editing                        |
+| Rendering                      |
+| Terminal                       |
+| C parser                       |
+| C analyzer                     |
+| C completion                   |
+| C diagnostics                  |
+| Rust parser                    |
+| Rust analyzer                  |
+| Rust completion                |
+| ...                            |
++--------------------------------+
+```
+
+With LSP:
+
+```text
++----------------------+
+|        Editor        |
+|                      |
+| Editing              |
+| Rendering            |
+| Terminal             |
+| LSP Client           |
++----------+-----------+
+           |
+           | Standard Protocol
+           |
++----------v-----------+
+|   Language Server    |
+|                      |
+| Language-specific    |
+| implementation       |
++----------------------+
+```
+
+The editor therefore depends primarily on the **protocol contract**, rather than on the internal implementation of a particular language.
+
+This is a classic example of separating **interface from implementation**.
+
+## What LSP Does Not Mean
+
+Several misconceptions should be avoided.
+
+**LSP does not mean that the editor contains a language server.**
+
+The server is normally a separate component.
+
+**LSP does not mean that the editor delegates document ownership to the server.**
+
+The editor remains responsible for its own document model.
+
+**LSP does not define a programming language.**
+
+It defines communication between clients and language servers.
+
+**LSP does not replace the editor architecture.**
+
+The editor still requires its own document, cursor, viewport, rendering, input, command, and file-management systems.
+
+**LSP does not automatically provide every language feature.**
+
+A feature is available only when the relevant server supports it and the client knows how to use it.
+
+## A Complete Conceptual Model
+
+We can now extend the architecture introduced in Section 40.1:
+
+```text
+                         User
+                           |
+                           v
+                  +----------------+
+                  |     Editor     |
+                  |                |
+                  | Editor State   |
+                  | Document       |
+                  | Input          |
+                  | Commands       |
+                  | Renderer       |
+                  +-------+--------+
+                          |
+                          v
+                  +----------------+
+                  |   LSP Client   |
+                  +-------+--------+
+                          |
+                          | LSP
+                          |
+                  +-------v--------+
+                  | Language       |
+                  | Server         |
+                  |                |
+                  | Language       |
+                  | Analysis       |
+                  +----------------+
+```
+
+The editor owns the editing experience.
+
+The LSP Client owns the protocol interaction.
+
+The language server owns language-specific analysis.
+
+The protocol defines the communication boundary between them.
+
+That separation is the foundation on which the rest of this chapter will build.
+
+## Summary
+
+The Language Server Protocol is a communication protocol, not a language analyzer. It defines how an editor (the LSP Client) communicates with a separate program (the language server) that provides language-specific intelligence. The client typically sends requests and notifications; the server responds with language information, and either side can send messages that the other does not directly answer.
+
+During initialization, client and server exchange capabilities so the editor can adapt to the actual features a server supports. LSP creates an architectural boundary that separates the editor's editing and rendering responsibilities from language-specific parsing and analysis. This boundary means the editor depends on the protocol contract rather than on any particular language implementation.
+
+Because the protocol mediates between them, a server can be replaced or upgraded without changing the editor's internal components, and the editor can connect to any conforming server. The editor therefore depends on declared capabilities and message shapes rather than on the identity or implementation of a particular server.
+
+In the next section, we will examine the detailed architecture of the editor and language server, exploring how responsibilities are distributed between them and why the LSP Client acts as an adapter between two different models.

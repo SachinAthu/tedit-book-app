@@ -1,0 +1,794 @@
+---
+title: "40.9 Requests, Notifications, and Asynchronous Results"
+description: "Explains request identity, notifications, later-arriving responses, outstanding-request tracking, stale results, cancellation, and non-blocking event handling."
+---
+
+The language-server interaction model becomes more precise when we distinguish between **requests**, **notifications**, and **responses**.
+
+These are not three different language features. They are three different communication patterns used between the LSP Client and the Language Server.
+
+This distinction is important because our editor is event-driven and must remain responsive while communicating with an external process.
+
+The basic model is:
+
+```text
+Request:
+    Client ───────────────► Server
+    Client ◄─────────────── Server
+
+Notification:
+    Client ───────────────► Server
+
+Asynchronous result:
+    Request ──► processing ──► response later
+```
+
+A response is a message returned to the client; an asynchronous result is that same response arriving later rather than inside the request call. The three message categories are therefore requests, responses, and notifications — this section emphasizes the timing of responses because that timing is what forces our editor to remain event-driven.
+
+The LSP Client therefore cannot be designed as though every operation were an ordinary synchronous function call.
+
+## Requests
+
+A **request** asks the language server to perform an operation and return a result.
+
+Conceptually:
+
+```text
+LSP Client                         Language Server
+    │                                    │
+    │────── Request ────────────────────►│
+    │                                    │
+    │                              process request
+    │                                    │
+    │◄────── Response ───────────────────│
+    │                                    │
+```
+
+Examples include operations such as:
+
+- requesting completion;
+- requesting hover information;
+- requesting another language-service result that produces a value.
+
+A request therefore has two directions:
+
+```text
+Request
+    │
+    ├── Client → Server
+    │
+    └── Server → Client
+             response
+```
+
+The response is associated with the original request.
+
+## Request Identity
+
+Because multiple requests may be active at the same time, the client must be able to determine which response belongs to which request.
+
+Conceptually:
+
+```text
+Request 101 ─────────────► Server
+Request 102 ─────────────► Server
+Request 103 ─────────────► Server
+
+Response 102 ◄──────────── Server
+Response 101 ◄──────────── Server
+Response 103 ◄──────────── Server
+```
+
+The responses do not necessarily need to arrive in the same order as the requests.
+
+The request identifier provides the association:
+
+```text
+Request ID
+    │
+    ├── identifies request
+    │
+    └── identifies corresponding response
+```
+
+This becomes particularly important when the editor has several outstanding language-service operations.
+
+## Notifications
+
+A **notification** is different from a request.
+
+The sender communicates an event or state change but does not expect a response corresponding to that message.
+
+Conceptually:
+
+```text
+LSP Client                         Language Server
+    │                                    │
+    │────── Notification ───────────────►│
+    │                                    │
+    │                                    │
+```
+
+For example, document synchronization can conceptually involve a notification:
+
+```text
+Editor Document changes
+        │
+        ▼
+LSP Client
+        │
+        │ document changed
+        ▼
+Language Server
+```
+
+The client is informing the server:
+
+> "The document has changed."
+
+It is not asking:
+
+> "What is the result of this operation?"
+
+This makes notifications appropriate for events where no direct result is required.
+
+## Request Versus Notification
+
+The distinction can be summarized:
+
+| Communication | Response expected? | Example         |
+| ------------- | -----------------: | --------------- |
+| Request       |                Yes | Completion      |
+| Notification  |                 No | Document change |
+
+Conceptually:
+
+```text
+Request:
+
+Client ───────► Server
+Client ◄─────── Server
+
+
+Notification:
+
+Client ───────► Server
+```
+
+This distinction simplifies the mental model of the protocol.
+
+A request represents an operation whose result matters.
+
+A notification represents information being communicated without a corresponding result.
+
+## Responses Can Arrive Later
+
+A request should not be thought of as:
+
+```c
+result = language_server(request);
+```
+
+where execution simply stops until the server returns.
+
+The external language server may need time to:
+
+- inspect the document;
+- perform analysis;
+- resolve symbols;
+- calculate completion candidates;
+- communicate with other internal components.
+
+The editor therefore needs to treat the response as something that may arrive later.
+
+Conceptually:
+
+```text
+Time ─────────────────────────────────────────►
+
+Client
+  │
+  │ Request
+  ▼
+Server
+  │
+  │       processing
+  │       processing
+  │       processing
+  ▼
+Response
+  │
+  ▼
+Client
+```
+
+During this interval, the editor should continue operating.
+
+## The Event Loop Must Not Block
+
+This is particularly important for our architecture because the editor already uses an event-driven model.
+
+A problematic design would be:
+
+```text
+Event Loop
+    │
+    ▼
+Completion Request
+    │
+    ▼
+WAIT
+    │
+    │ language server processing
+    │
+    ▼
+Response
+    │
+    ▼
+Continue Event Loop
+```
+
+During `WAIT`, the editor could become unable to process:
+
+- keyboard input;
+- cursor movement;
+- rendering;
+- other events.
+
+That would make the editor feel frozen.
+
+A better conceptual model is:
+
+```text
+Event Loop
+    │
+    ├── Keyboard Event
+    │
+    ├── LSP Response
+    │
+    ├── Terminal Event
+    │
+    └── Other Event
+```
+
+The language server becomes another source of events that the editor must process.
+
+This is consistent with the event-driven architecture established earlier rather than introducing a separate blocking execution model.
+
+## Outstanding Requests
+
+Because requests can complete later, the LSP Client may have several requests in progress.
+
+For example:
+
+```text
++----------------------+
+|     LSP Client       |
++----------+-----------+
+           |
+           +── Request 41 ─────► Server
+           |
+           +── Request 42 ─────► Server
+           |
+           +── Request 43 ─────► Server
+```
+
+The client therefore needs some way to track requests that have been sent but whose results have not yet been processed.
+
+Conceptually:
+
+```text
+Outstanding Requests
+    │
+    ├── Request 41
+    ├── Request 42
+    └── Request 43
+```
+
+When a response arrives:
+
+```text
+Response 42
+    │
+    ▼
+Find Request 42
+    │
+    ▼
+Process result
+    │
+    ▼
+Remove from outstanding requests
+```
+
+The exact data structure is an implementation detail.
+
+The architectural requirement is that the client maintain enough state to associate asynchronous responses with their originating requests.
+
+## Stale Results
+
+Asynchronous communication creates an especially important problem for interactive features.
+
+Suppose the user requests completion:
+
+```text
+Document Version 20
+       │
+       ▼
+Completion Request A
+```
+
+Before the server responds, the user continues typing:
+
+```text
+Document Version 21
+       │
+       ▼
+Document Version 22
+```
+
+The response for Request A may now describe an earlier context.
+
+```text
+Request A
+   │
+   └── based on Version 20
+               │
+               ▼
+        Response arrives
+               │
+               ▼
+       Current version = 22
+```
+
+Displaying the result blindly could produce an incorrect user experience.
+
+The editor therefore needs to consider whether a result is still relevant when it arrives.
+
+This is the same state-freshness problem encountered earlier with diagnostics, but it becomes particularly visible with interactive requests such as completion and hover.
+
+## Request Context
+
+A useful conceptual model is to associate a request with the context in which it was created.
+
+For example:
+
+```text
+Request
++---------------------------+
+| Request ID                |
+| Document                  |
+| Document Version          |
+| Position                  |
+| Operation Type            |
++---------------------------+
+```
+
+When the result arrives, the editor can determine whether that context is still relevant.
+
+For example:
+
+```text
+Response
+   │
+   ▼
+Was the request for the
+current editing context?
+   │
+   ├── Yes ──► use result
+   │
+   └── No  ──► discard / ignore
+```
+
+The precise policy can differ by operation.
+
+The architectural principle is more general:
+
+> **Asynchronous results must be associated with the context that produced them.**
+
+## Cancellation
+
+Some requests may become unnecessary before their results are available.
+
+For example:
+
+```text
+User requests completion
+        │
+        ▼
+Request A
+        │
+        │ user continues typing
+        ▼
+New context
+        │
+        ▼
+Request A no longer useful
+```
+
+If the protocol and server support cancellation for the operation, the client can communicate that the earlier request is no longer needed.
+
+Conceptually:
+
+```text
+Request A ───────────────► Server
+       │
+       │ no longer needed
+       ▼
+Cancel Request A ────────► Server
+```
+
+Cancellation is therefore an optimization and coordination mechanism for asynchronous work.
+
+However, cancellation should not be confused with correctness.
+
+Even if a request cannot be cancelled or a response arrives after cancellation, the editor still needs to protect itself against stale results.
+
+The editor should therefore not rely exclusively on cancellation to maintain correct state.
+
+## Notifications and Document Synchronization
+
+Notifications fit particularly naturally into the document-synchronization model.
+
+The editor changes its authoritative Document:
+
+```text
+Editor
+  │
+  │ Document changed
+  ▼
+LSP Client
+  │
+  │ Notification
+  ▼
+Language Server
+```
+
+No immediate result is required.
+
+The language server receives the information and updates its own analysis state.
+
+Later, that analysis may generate diagnostics or make other information available.
+
+The complete flow can therefore span multiple communication patterns:
+
+```text
+Document Change
+      │
+      │ notification
+      ▼
+Language Server
+      │
+      │ analysis
+      ▼
+Diagnostic Result
+      │
+      │ notification/result
+      ▼
+LSP Client
+      │
+      ▼
+Editor State
+```
+
+This illustrates why a language server should not be modeled as a simple request/response function library.
+
+It is an independently running participant in the editor's event-driven system.
+
+## Requests and Notifications Can Interleave
+
+Messages may occur in different orders.
+
+For example:
+
+```text
+Client                         Server
+  │                              │
+  │── document change ──────────►│
+  │                              │
+  │── completion request ───────►│
+  │                              │
+  │── document change ──────────►│
+  │                              │
+  │◄── completion response ──────│
+  │                              │
+  │◄── diagnostics ──────────────│
+```
+
+The editor therefore cannot assume that communication happens in a single simple sequence such as:
+
+```text
+edit
+→ wait
+→ completion
+→ wait
+→ diagnostics
+```
+
+Instead, communication forms part of the asynchronous runtime.
+
+The client must process incoming messages while continuing to handle ordinary editor events.
+
+## A Unified Event Model
+
+At the architectural level, the Event Loop can therefore be viewed as handling several categories of events:
+
+```text
+                    +----------------+
+                    |   Event Loop   |
+                    +-------+--------+
+                            |
+             +--------------+--------------+
+             |              |              |
+             v              v              v
+        User Input     LSP Messages   Terminal Events
+             |              |              |
+             v              v              v
+        Commands       LSP Client       Editor State
+             |              |              |
+             +--------------+--------------+
+                            |
+                            v
+                       Render State
+```
+
+This is a natural extension of the event-driven model established earlier.
+
+LSP does not require a second independent event architecture.
+
+It adds another source of asynchronous events to the existing one.
+
+## Error Responses
+
+Not every request succeeds.
+
+A request may result in an error rather than the expected language information.
+
+Conceptually:
+
+```text
+Request
+   │
+   ▼
+Language Server
+   │
+   ├────────► Success
+   │
+   └────────► Error
+```
+
+The LSP Client therefore needs to distinguish between:
+
+```text
+Successful Result
+```
+
+and:
+
+```text
+Error Result
+```
+
+An error in an LSP request should not normally imply that the editor itself has failed.
+
+For example:
+
+```text
+Completion request fails
+        │
+        ▼
+Completion unavailable
+        │
+        ▼
+Editor continues operating
+```
+
+This follows the same fault-isolation principle established in the language-server lifecycle.
+
+## Transport Failure
+
+There is also a distinction between an individual request failure and failure of the communication channel itself.
+
+```text
+Individual operation
+    │
+    └── request error
+
+
+Communication system
+    │
+    └── connection / process failure
+```
+
+The second is more serious because subsequent requests may also be affected.
+
+Conceptually:
+
+```text
+LSP Client
+    │
+    │ communication channel
+    X
+Language Server
+```
+
+The editor must then decide whether to:
+
+- report the language-service failure;
+- attempt recovery;
+- restart the server;
+- temporarily disable language features.
+
+The core editing functionality should remain independent of this failure.
+
+## Rendering Asynchronous Results
+
+When an asynchronous result arrives, it may change information displayed by the editor.
+
+For example:
+
+```text
+LSP Response
+     │
+     ▼
+Update Editor State
+     │
+     ▼
+Event Loop continues
+     │
+     ▼
+Renderer observes new state
+     │
+     ▼
+New frame
+```
+
+The LSP Client should therefore update the appropriate editor-owned or feature-owned state rather than attempting to directly manipulate the terminal.
+
+This preserves the established rendering pipeline:
+
+```text
+State
+  │
+  ▼
+Renderer
+  │
+  ▼
+Terminal Interface
+  │
+  ▼
+Terminal
+```
+
+The language server never bypasses this architecture.
+
+## Requests, Notifications, and State Ownership
+
+The existing state-ownership rule remains important here.
+
+The project architecture establishes that each piece of state has one owner, with other components acting as readers rather than independently modifying that state.
+
+LSP communication should follow the same principle.
+
+For example:
+
+```text
+Language Server
+       │
+       │ result
+       ▼
+LSP Client
+       │
+       │ update through appropriate owner
+       ▼
+Editor State
+```
+
+The LSP Client should not create a parallel, competing source of truth for the Document.
+
+Likewise, the Renderer should not directly modify LSP state.
+
+This keeps the new subsystem compatible with the architecture already established in the book.
+
+## The Complete Asynchronous Flow
+
+The complete model can now be represented as:
+
+```text
+                         +----------------+
+                         |    Event Loop  |
+                         +-------+--------+
+                                 |
+             +-------------------+-------------------+
+             |                                       |
+             v                                       v
+       User Input                              LSP Message
+             |                                       |
+             v                                       v
+        Command Engine                           LSP Client
+             |                                       |
+             v                           +-----------+-----------+
+       Editor State                      |                       |
+             |                           v                       v
+             |                      Request                 Notification
+             |                           |                       |
+             |                           v                       v
+             |                    Language Server          Language Server
+             |                           |                       |
+             |                           v                       |
+             |                       Response                  |
+             |                           |                       |
+             +---------------------------+-----------------------+
+                                         |
+                                         v
+                                  Editor State
+                                         |
+                                         v
+                                     Renderer
+```
+
+The important point is that the language server participates in the editor's runtime without becoming part of the editor's core execution path.
+
+## Architectural Rules
+
+The communication model gives us several useful rules:
+
+1. **Requests expect results.**
+2. **Notifications do not require responses.**
+3. **Responses may arrive later.**
+4. **The Event Loop must remain responsive while requests are outstanding.**
+5. **Responses must be associated with their requests.**
+6. **Stale results must not corrupt the current editing context.**
+7. **Language-server failures must not destroy the editor's core state.**
+8. **LSP communication must remain behind the LSP Client boundary.**
+9. **Asynchronous results update editor state; the Renderer remains responsible for presentation.**
+
+These rules fit naturally with the existing architecture rather than introducing a separate execution model.
+
+## The Resulting Mental Model
+
+The most useful mental model is therefore not:
+
+```text
+Editor calls Language Server
+            │
+            ▼
+       waits for result
+```
+
+but:
+
+```text
+                  +----------------+
+                  |    Event Loop  |
+                  +-------+--------+
+                          |
+          +---------------+---------------+
+          |                               |
+          v                               v
+     User Events                     LSP Events
+          |                               |
+          v                               v
+     Editor State                    LSP Client
+                                          |
+                                          v
+                                   Language Server
+                                          |
+                                          v
+                                  Future Result/Event
+                                          |
+                                          +──────────────►
+```
+
+The language server is an asynchronous participant in the runtime.
+
+That is the key architectural consequence of introducing LSP into our terminal editor.
+
+## Summary
+
+LSP communication is built on three patterns: requests (which expect a response), notifications (which communicate events without requiring a response), and asynchronous results (responses that arrive later). Requests and notifications can interleave, and responses may not arrive in the order they were sent. The LSP Client must track outstanding requests and associate each response with its originating context.
+
+The most important rule is that the event loop must not block while waiting for language-server responses. The language server is an asynchronous participant in the editor's runtime, adding another source of events alongside user input and terminal events. Stale results — responses that arrive after the editing context has changed — must be detected and discarded rather than applied blindly. The editor must also distinguish individual request failures from transport failures and handle each appropriately without corrupting core editor state.
+
+Tracking request identity and context is what makes concurrency safe, because without it the client could not tell which response belongs to which document state. Cancellation reduces wasted work but never substitutes for rejecting stale or out-of-context results.
+
+In the next section, we will bring together everything discussed in this chapter and make the architectural decision about where LSP fits in our terminal editor, what it should own, and what boundaries it must respect.

@@ -1,0 +1,561 @@
+---
+title: "40.6 Diagnostics"
+description: "Explains diagnostics as derived, asynchronous, range- and severity-bearing information that the editor stores and presents but does not produce."
+---
+
+One of the most immediately useful language services is **diagnostics**.
+
+A diagnostic is information produced by a language-analysis system about a particular region of a document. It can indicate that something may be wrong, such as a syntax error, type error, warning, or other language-specific issue.
+
+The important architectural distinction is:
+
+> **The language server determines the diagnostic; the editor presents it.**
+
+The editor does not need to implement the language rules that produced the diagnostic.
+
+## What Is a Diagnostic?
+
+At a conceptual level, a diagnostic describes an issue associated with a particular location in a document.
+
+For example:
+
+```text
+Line:       8
+Column:    12
+Severity:  Error
+Message:   Undefined identifier
+```
+
+A diagnostic therefore contains more than a message.
+
+It normally identifies:
+
+- the affected document;
+- a range within that document;
+- a severity;
+- a human-readable message;
+- potentially additional information about its source.
+
+Conceptually:
+
+```text
++---------------------------+
+| Diagnostic                |
++---------------------------+
+| Document                  |
+| Range                     |
+| Severity                  |
+| Message                   |
+| Source / metadata         |
++---------------------------+
+```
+
+The range is particularly important because it allows the editor to associate the diagnostic with the relevant text.
+
+## Diagnostics Are Produced Outside the Editor
+
+Consider:
+
+```c
+int main(void)
+{
+    printf("Hello\n")
+    return 0;
+}
+```
+
+A language-aware system may recognize that the statement is incomplete.
+
+The architecture is:
+
+```text
+Document
+    │
+    ▼
+Language Server
+    │
+    │ language analysis
+    ▼
+Diagnostic
+    │
+    ▼
+LSP Client
+    │
+    ▼
+Editor
+```
+
+The editor does not need to know why the statement is invalid.
+
+It only needs to understand the diagnostic information returned by the language server.
+
+This is another direct consequence of the separation established earlier in the chapter.
+
+## Diagnostic Ranges
+
+A diagnostic should identify the portion of the document to which it applies.
+
+For example:
+
+```text
+ 1 | #include <stdio.h>
+ 2 |
+ 3 | int main(void)
+ 4 | {
+ 5 |     printf("Hello\n")
+ 6 |     return 0;
+ 7 | }
+```
+
+A language server might associate the problem with a range near line 5.
+
+Conceptually:
+
+```text
+Line 5
+      │
+      └────── affected range ──────┐
+                                   ▼
+    printf("Hello\n")
+```
+
+The editor can use this location to associate the diagnostic with the document.
+
+This allows the presentation layer to decide whether to:
+
+- display an indicator;
+- show a message;
+- highlight a range;
+- place information in a status or message area;
+- provide another user-interface representation.
+
+The diagnostic itself should remain independent of the terminal presentation.
+
+## Diagnostic Severity
+
+Diagnostics can have different levels of importance.
+
+A conceptual model is:
+
+```text
+Error
+  │
+  ├── Serious problem
+  │
+Warning
+  │
+  ├── Potential problem
+  │
+Information
+  │
+  └── Additional information
+```
+
+The exact presentation is an editor concern.
+
+For example, the editor might choose to represent different severities using different visual indicators:
+
+```text
+Error      →  strong visual indication
+Warning    →  warning indication
+Information → informational indication
+```
+
+The LSP Client should preserve the semantic severity rather than turning it directly into terminal-specific formatting.
+
+That allows the Renderer to remain independent of the source of the information.
+
+## Diagnostics Can Change as the Document Changes
+
+Diagnostics are not permanent properties of a document.
+
+Consider:
+
+```text
+Document Version 1
+        │
+        ▼
+Diagnostic: error
+        │
+        │ user fixes code
+        ▼
+Document Version 2
+        │
+        ▼
+Diagnostic: none
+```
+
+A diagnostic that was valid for one document state may become invalid after an edit.
+
+For example:
+
+```c
+printf("Hello\n")
+```
+
+might initially produce an error.
+
+After the user adds the missing syntax:
+
+```c
+printf("Hello\n");
+```
+
+the previous diagnostic should no longer remain visible as though it still applied.
+
+This is why diagnostics are closely connected to the document-synchronization model established in Section 40.5.
+
+## Diagnostics and Document Versions
+
+The asynchronous nature of language analysis creates an important problem.
+
+Suppose the editor has reached version 20:
+
+```text
+Editor
+  │
+  └── Document Version 20
+```
+
+The language server may still be processing information associated with an earlier version:
+
+```text
+Language Server
+  │
+  └── Analyzing Version 18
+```
+
+The server then produces diagnostics based on that older state.
+
+If those diagnostics are blindly displayed, the editor could show errors that no longer correspond to the current document.
+
+Conceptually:
+
+```text
+Version 18
+    │
+    ▼
+Language Analysis
+    │
+    ├───────────────► Diagnostic
+    │
+    │ meanwhile
+    ▼
+Version 19
+    │
+    ▼
+Version 20
+```
+
+The editor therefore needs to reason about the relationship between language-service results and the document state they describe.
+
+This is one of the reasons asynchronous language services require more careful state management than simple synchronous editor operations.
+
+## Diagnostics Are Asynchronous
+
+A diagnostic does not necessarily appear immediately after a user makes an edit.
+
+The sequence may be:
+
+```text
+User edits
+    │
+    ▼
+Editor updates Document
+    │
+    ▼
+LSP Client sends change
+    │
+    ▼
+Language Server analyzes
+    │
+    ▼
+Diagnostic information
+    │
+    ▼
+LSP Client receives result
+    │
+    ▼
+Editor updates diagnostic state
+    │
+    ▼
+Renderer presents result
+```
+
+Several stages occur between the user's edit and the appearance of the diagnostic.
+
+The editor must therefore remain usable during this process.
+
+It should not freeze while waiting for the language server to complete its analysis.
+
+## Diagnostic State Is Derived State
+
+The editor's Document is authoritative.
+
+Diagnostics are different.
+
+They are **derived information** produced from analysis of a document state.
+
+Conceptually:
+
+```text
+Authoritative State
+       │
+       ▼
+   Document
+       │
+       │ analyzed by
+       ▼
+Derived Information
+       │
+       ▼
+ Diagnostics
+```
+
+This distinction is important for state ownership.
+
+The editor should not treat diagnostics as part of the text itself.
+
+For example, if a document contains:
+
+```text
+int value;
+```
+
+the diagnostic:
+
+```text
+"unused variable"
+```
+
+is not part of the document's textual contents.
+
+It is additional information derived from those contents.
+
+## Diagnostics and the Renderer
+
+The Renderer should not communicate directly with the language server.
+
+A clean architecture is:
+
+```text
+Language Server
+       │
+       ▼
+    LSP Client
+       │
+       ▼
+Diagnostic State
+       │
+       ▼
+    Renderer
+       │
+       ▼
+    Terminal
+```
+
+This maintains the separation already established in the rendering architecture.
+
+The Renderer is concerned with:
+
+> **How should the current editor state be displayed?**
+
+It is not concerned with:
+
+> **Why did the language server produce this diagnostic?**
+
+This prevents language-specific logic from leaking into the presentation layer.
+
+## Diagnostics and the Message Bar
+
+Our editor already has a **Message Bar** as part of its rendering model.
+
+A diagnostic could potentially be presented there, but the Message Bar should not become the diagnostic system itself.
+
+For example:
+
+```text
++------------------------------------------+
+| Document Area                            |
+|                                          |
+| int main(void)                           |
+| {                                        |
+|     printf("Hello\n")                    |
+| }                                        |
+|                                          |
++------------------------------------------+
+| Error: expected ';'                      |
++------------------------------------------+
+```
+
+The Message Bar is simply one possible presentation mechanism.
+
+The underlying diagnostic should remain structured editor state so that other presentation mechanisms can use it as well.
+
+## Diagnostics and Rendering Separation
+
+This gives us a useful three-stage pipeline:
+
+```text
+Language Analysis
+       │
+       ▼
+Diagnostic Data
+       │
+       ▼
+Presentation Decision
+       │
+       ▼
+Terminal Rendering
+```
+
+Each stage has a different responsibility.
+
+| Stage              | Responsibility                        |
+| ------------------ | ------------------------------------- |
+| Language Server    | Determine the problem                 |
+| LSP Client         | Receive and interpret protocol data   |
+| Editor State       | Maintain diagnostic information       |
+| Renderer           | Decide how current state is displayed |
+| Terminal Interface | Produce terminal output               |
+
+This is consistent with the layered architecture established earlier in the book.
+
+## Multiple Diagnostics
+
+A document can contain multiple diagnostics simultaneously.
+
+For example:
+
+```text
+main.c
+
+Line 4   Warning: unused variable
+Line 7   Error: undeclared identifier
+Line 12  Warning: unreachable code
+```
+
+The editor therefore should conceptually maintain a collection:
+
+```text
+Diagnostics
+    │
+    ├── Diagnostic 1
+    ├── Diagnostic 2
+    └── Diagnostic 3
+```
+
+These diagnostics may cover different ranges and have different severities.
+
+The Renderer can then determine how much of this information can be displayed within the current viewport and interface.
+
+## Diagnostics Across Multiple Documents
+
+Because a language server can work with multiple documents, diagnostic information is not necessarily limited to the currently visible file.
+
+For example:
+
+```text
+Workspace
+  │
+  ├── main.c
+  ├── parser.c
+  └── parser.h
+```
+
+A language server may produce diagnostics for more than one document.
+
+The editor therefore needs to associate diagnostics with their corresponding documents.
+
+Conceptually:
+
+```text
+Diagnostic State
+      │
+      ├── main.c
+      │     ├── Diagnostic
+      │     └── Diagnostic
+      │
+      ├── parser.c
+      │     └── Diagnostic
+      │
+      └── parser.h
+            └── Diagnostic
+```
+
+This fits naturally with the multi-document architecture discussed earlier.
+
+## Diagnostics Do Not Modify the Document
+
+A diagnostic identifies a problem, but reporting that problem does not itself change the document.
+
+This distinction is important:
+
+```text
+Language Server
+      │
+      │ diagnostic
+      ▼
+Editor
+      │
+      ├── update diagnostic state
+      │
+      └── document unchanged
+```
+
+If a later language feature proposes a correction, that is a separate operation.
+
+The diagnostic itself is informational.
+
+This keeps the basic data flow simple:
+
+> **Analysis produces information; information does not automatically become an editing operation.**
+
+## The Diagnostic Lifecycle
+
+We can now summarize the complete flow:
+
+```text
+User edits document
+        │
+        ▼
+Editor Document changes
+        │
+        ▼
+LSP synchronization
+        │
+        ▼
+Language Server analyzes
+        │
+        ▼
+Diagnostics generated
+        │
+        ▼
+LSP Client receives results
+        │
+        ▼
+Diagnostic state updated
+        │
+        ▼
+Renderer presents information
+```
+
+The key architectural property is that the process is **asynchronous and derived**.
+
+The editor owns the document.
+
+The language server analyzes it.
+
+The LSP Client transports the result.
+
+The Renderer presents it.
+
+## Summary
+
+Diagnostics are language-derived information about problems in a document, identified by range, severity, and message. The language server produces diagnostics through its analysis; the editor only needs to receive, store, and present them. The editor does not implement the language rules that generated the diagnostic.
+
+Because diagnostics are asynchronous and derived, the editor must handle stale results — diagnostics that arrived for an older document version than what the user currently sees. Diagnostics are not part of the document text; they are additional metadata that can be displayed through the Message Bar, inline indicators, or other presentation mechanisms. Multiple diagnostics may exist across multiple documents, and they must remain associated with their originating document contexts.
+
+Keeping diagnostics as structured, document-associated state rather than terminal output lets the same information drive inline markers, message-bar text, or other presentations. Because a diagnostic describes a particular document version, the editor must decide on arrival whether the result still applies before making it visible.
+
+In the next section, we will examine completion — the interactive language service that suggests possible continuations at the cursor position and how it differs fundamentally from the passive reporting of diagnostics.

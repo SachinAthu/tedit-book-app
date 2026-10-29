@@ -1,0 +1,528 @@
+---
+title: "40.5 Document Synchronization"
+description: "Explains how the editor keeps the server's analysis copy aligned with the in-memory document using full or incremental changes and versions."
+---
+
+A language server can provide useful information only when it has an accurate representation of the document being edited.
+
+This creates an important relationship between the editor and the language server:
+
+```text
++--------------------+          +----------------------+
+|      Editor        |          |   Language Server     |
+|                    |          |                      |
+| Authoritative      |          | Analysis             |
+| Document           |          | Representation       |
++---------+----------+          +----------+-----------+
+          |                                |
+          |       Synchronization          |
+          +------------------------------->|
+```
+
+The editor remains the authoritative owner of the document. The language server maintains a separate representation that is synchronized with it.
+
+This is different from ordinary file saving. A language server needs information about the **current in-memory document**, including changes that may not yet have been saved to disk.
+
+## Why File-Based Synchronization Is Not Enough
+
+Consider a source file that has already been opened:
+
+```text
+main.c
+```
+
+The contents on disk might be:
+
+```c
+int main(void)
+{
+    return 0;
+}
+```
+
+The user then changes the document in the editor:
+
+```c
+int main(void)
+{
+    printf("Hello\n");
+    return 0;
+}
+```
+
+Suppose the user has not saved the file yet.
+
+The editor therefore has:
+
+```text
+Disk
+  │
+  └── Older version
+
+Editor
+  │
+  └── Current unsaved version
+```
+
+If the language server analyzed only the file on disk, it would be analyzing stale information.
+
+The editor must instead communicate the current document state:
+
+```text
+Editor Document
+      │
+      │ current contents
+      ▼
+LSP Client
+      │
+      ▼
+Language Server
+```
+
+This is one of the fundamental differences between LSP document synchronization and simply asking an external program to read a file.
+
+## Opening a Document
+
+When the editor opens a document for language analysis, the LSP Client informs the language server that the document is available.
+
+Conceptually:
+
+```text
+Editor
+  │
+  │ Open document
+  │
+  ▼
+LSP Client
+  │
+  │ Document information
+  ▼
+Language Server
+```
+
+The information must identify the document and provide enough information for the server to begin maintaining its representation.
+
+The server can then perform whatever analysis is necessary for its supported language features.
+
+The important point is that opening the document establishes a synchronization relationship.
+
+## Document Changes
+
+Once a document is open, editing operations can change it repeatedly.
+
+For example:
+
+```text
+Initial document
+      │
+      ▼
+User types character
+      │
+      ▼
+Document changes
+      │
+      ▼
+Synchronize
+      │
+      ▼
+User types another character
+      │
+      ▼
+Document changes again
+      │
+      ▼
+Synchronize again
+```
+
+Conceptually:
+
+```text
+Editor Document
+      │
+      ├── Change 1 ───────────────► Server
+      │
+      ├── Change 2 ───────────────► Server
+      │
+      ├── Change 3 ───────────────► Server
+      │
+      └── Change 4 ───────────────► Server
+```
+
+The server must process these changes in the correct order so that its representation remains consistent with the editor's document.
+
+## Full Document Synchronization
+
+One possible strategy is to send the complete document whenever it changes.
+
+For example:
+
+```text
+Editor
+  │
+  │ Entire document
+  ▼
+Language Server
+```
+
+If the document contains:
+
+```text
+line 1
+line 2
+line 3
+line 4
+```
+
+and the user modifies `line 3`, the client could send the entire document again:
+
+```text
+line 1
+line 2
+modified line 3
+line 4
+```
+
+The advantage is conceptual simplicity.
+
+The language server always receives a complete representation.
+
+The disadvantage is that the amount of data transmitted can grow with the size of the document.
+
+For a small file, this may be perfectly acceptable.
+
+For a large document with frequent changes, repeatedly transmitting the entire contents can become unnecessarily expensive.
+
+## Incremental Document Synchronization
+
+Another strategy is to communicate only the changes.
+
+Suppose the document contains:
+
+```text
+line 1
+line 2
+line 3
+```
+
+and the user changes:
+
+```text
+line 2
+```
+
+Instead of sending the entire document, the editor can describe the affected range and the replacement text.
+
+Conceptually:
+
+```text
+Document
+    │
+    │ changed range
+    ▼
++----------------------+
+| Start position       |
+| End position         |
+| Replacement text     |
++----------------------+
+```
+
+The language server applies the change to its own representation.
+
+This can substantially reduce the amount of data exchanged for small edits.
+
+The trade-off is that both sides now have to maintain consistent document state.
+
+## Full Versus Incremental Synchronization
+
+The two approaches can be compared:
+
+| Strategy                    | Advantage                   | Cost                        |
+| --------------------------- | --------------------------- | --------------------------- |
+| Full synchronization        | Simple conceptual model     | More data transferred       |
+| Incremental synchronization | Efficient for small changes | More state and coordination |
+
+The choice therefore involves a trade-off between simplicity and efficiency.
+
+The important architectural point is that the editor and language server must agree on the synchronization model.
+
+The client cannot arbitrarily assume that the server will interpret document changes in a particular way.
+
+## Document Versions
+
+Rapid editing introduces another problem.
+
+Suppose the editor performs several changes:
+
+```text
+Version 1
+   │
+   ▼
+Version 2
+   │
+   ▼
+Version 3
+   │
+   ▼
+Version 4
+```
+
+Language analysis may not complete at the same speed.
+
+A server could still be processing information associated with an earlier version when the editor has already moved to a newer one.
+
+For example:
+
+```text
+Editor                         Server
+  │                              │
+  │──── Version 10 ─────────────►│
+  │                              │
+  │──── Version 11 ─────────────►│
+  │                              │
+  │──── Version 12 ─────────────►│
+  │                              │
+  │◄── Result for Version 10 ────│
+```
+
+The result may no longer accurately describe the current document.
+
+This is why document versioning and result freshness become important in an asynchronous language-service architecture.
+
+The editor must be able to reason about **which document state a result belongs to**.
+
+## Synchronization and Unsaved Changes
+
+The language server must work with the editor's in-memory document, not merely the saved file.
+
+This means:
+
+```text
+                 Editor
+                   │
+             In-memory state
+                   │
+          +--------+--------+
+          |                 |
+          v                 v
+      Language            File
+       Server             System
+          │                 │
+          │                 │
+     Current state       Saved state
+```
+
+These states can temporarily differ.
+
+For example:
+
+```text
+Editor document:   modified
+Disk file:         previous version
+Language server:   current synchronized version
+```
+
+This is normal.
+
+The editor's Dirty Flag therefore has no direct meaning for whether the language server should know about a change.
+
+A document can be dirty while the language server is already fully synchronized with the latest in-memory contents.
+
+This distinction is important because **persistence state and language-analysis state are separate concerns**.
+
+## Synchronization Is Not File Saving
+
+It is tempting to think of synchronization as:
+
+```text
+Edit
+  │
+  ▼
+Save
+  │
+  ▼
+Language Server Reads File
+```
+
+That model is incorrect for an interactive editor.
+
+The actual relationship is closer to:
+
+```text
+                  +----------------+
+                  | Editor Document|
+                  +-------+--------+
+                          |
+              +-----------+-----------+
+              |                       |
+              v                       v
+        LSP Synchronization       File Saving
+              |                       |
+              v                       v
+      Language Server               Disk
+```
+
+These are two independent flows.
+
+**Synchronization** keeps language analysis aligned with the editor's current state.
+
+**Saving** persists the document to storage.
+
+The two operations may happen at different times.
+
+## Rapid Editing
+
+Interactive editing can produce changes much faster than language analysis can process them.
+
+Consider a user typing continuously:
+
+```text
+User
+ │
+ ├── keystroke
+ ├── keystroke
+ ├── keystroke
+ ├── keystroke
+ ├── keystroke
+ └── keystroke
+       │
+       ▼
+Editor Document
+       │
+       ▼
+LSP Client
+       │
+       ▼
+Language Server
+```
+
+The language server may still be analyzing an earlier state while the editor has already advanced several versions.
+
+The architecture must therefore tolerate temporary differences between:
+
+```text
+Editor version
+```
+
+and:
+
+```text
+Server analysis version
+```
+
+This is one reason language-server communication must be treated as asynchronous rather than as a synchronous function call performed inside the editing operation.
+
+## Synchronization and the Event Loop
+
+The synchronization process must coexist with the editor's event-driven architecture.
+
+A simplified flow is:
+
+```text
+                +----------------+
+                |   Event Loop   |
+                +-------+--------+
+                        |
+          +-------------+-------------+
+          |                           |
+          v                           v
+    Keyboard Event              LSP Message
+          |                           |
+          v                           v
+   Update Document              Process Result
+          |                           |
+          v                           |
+   Synchronize Change              |
+          |                           |
+          +-------------+-------------+
+                        |
+                        v
+                   Render State
+```
+
+The important principle is that document synchronization should not make ordinary editing wait for language analysis to finish.
+
+A user should be able to continue typing even if the language server is temporarily busy.
+
+## When Synchronization Fails
+
+Synchronization itself can fail.
+
+Possible causes include:
+
+- the language server terminates;
+- communication is interrupted;
+- a document change cannot be processed;
+- the server becomes unavailable;
+- the client and server lose consistent state.
+
+The editor should not interpret such a failure as corruption of its own authoritative Document.
+
+Instead, the states should be treated separately:
+
+```text
+Editor Document
+      │
+      │ authoritative
+      ▼
+ remains valid
+
+Language Server
+      │
+      │ synchronization failure
+      ▼
+ may need recovery
+```
+
+A possible recovery strategy is to re-establish the language-server session and synchronize the current document again.
+
+The precise recovery mechanism belongs to the implementation design, but the architectural principle is clear:
+
+> **Failure of language-service synchronization must not invalidate the editor's authoritative document.**
+
+## The Synchronization Model
+
+We can now summarize the relationship:
+
+```text
+                  Editor
+                    │
+                    │ owns
+                    ▼
+              +-----------+
+              | Document  |
+              +-----+-----+
+                    |
+                    | changes
+                    v
+              +-----------+
+              | LSP Client|
+              +-----+-----+
+                    |
+                    | synchronize
+                    v
+            +---------------+
+            | Language      |
+            | Server        |
+            +-------+-------+
+                    |
+                    v
+             Analysis State
+```
+
+The editor remains the source of truth.
+
+The LSP Client communicates changes.
+
+The language server maintains an analysis-oriented representation.
+
+The synchronization relationship keeps those representations sufficiently aligned for language services to remain useful.
+
+## Summary
+
+Document synchronization is the mechanism by which the editor's authoritative Document and the language server's analysis representation remain aligned. The editor communicates document changes — either as full document replacements or incremental edits — so the server can maintain an accurate basis for language analysis.
+
+Document synchronization is distinct from file saving. The server must work with the editor's in-memory state, including unsaved changes, because file-based analysis would use stale data. Rapid editing introduces version-staleness problems: a server may still be analyzing an older version while the editor has already advanced. The architecture must therefore tolerate temporary differences and treat synchronization as an asynchronous activity that does not block ordinary editing.
+
+The two synchronization strategies differ mainly in where the coordination cost lives: full synchronization spends bandwidth to keep the model simple, while incremental synchronization spends state-tracking effort to transmit less. In both cases the server's representation is a derived copy, so a broken synchronization channel calls for recovery of that copy rather than repair of the authoritative Document.
+
+In the next section, we will examine the first concrete language service built on top of synchronization: diagnostics — how the editor presents errors, warnings, and information produced by the language server.

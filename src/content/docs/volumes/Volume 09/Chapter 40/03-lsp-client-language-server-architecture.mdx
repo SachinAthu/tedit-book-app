@@ -1,0 +1,445 @@
+---
+title: "40.3 LSP Client and Language Server Architecture"
+description: "Describes the client–server split, the LSP Client as an adapter, document ownership, and why language results must not leak into rendering."
+---
+
+The Language Server Protocol becomes useful because it establishes a clear architectural boundary between the editor and language-specific analysis.
+
+The editor does not need to know how a language server performs its analysis. Likewise, the language server does not need to know how the editor stores its state, renders its screen, or processes keyboard input.
+
+The relationship can therefore be viewed as two cooperating systems:
+
+```text
++---------------------------+          +---------------------------+
+|           Editor          |          |      Language Server      |
+|                           |          |                           |
+| Editor State              |          | Language Analysis         |
+| Document                  |          | Syntax / Semantics        |
+| Cursor                    |          | Symbols                   |
+| Viewport                  |          | Diagnostics               |
+| Input                     |          | Completion                |
+| Commands                  |          | Hover                     |
+| Renderer                  |          |                           |
+|                           |          |                           |
+|       LSP Client          |          |                           |
++-------------+-------------+          +-------------+-------------+
+              |                                      |
+              +------------- LSP --------------------+
+```
+
+The protocol forms the boundary between these two responsibilities.
+
+## Responsibilities of the Editor
+
+The editor remains responsible for the fundamental editing experience.
+
+Its existing architecture already provides components such as:
+
+- Editor State;
+- Document;
+- Cursor;
+- Viewport;
+- Input Handler;
+- Input Parser;
+- Input Engine;
+- Command Engine;
+- Renderer;
+- File Manager.
+
+LSP does not replace these components.
+
+Instead, an **LSP Client** becomes another subsystem that communicates with the language server.
+
+Conceptually:
+
+```text
+                    +----------------+
+                    |  Editor State  |
+                    +-------+--------+
+                            |
+          +-----------------+-----------------+
+          |                 |                 |
+          v                 v                 v
+      Document          Renderer         LSP Client
+                                              |
+                                              |
+                                              v
+                                      Language Server
+```
+
+The editor therefore remains the owner of the editing state.
+
+The LSP Client provides a communication mechanism for obtaining additional language-related information.
+
+## Responsibilities of the Language Server
+
+The language server has a different responsibility.
+
+It provides language-specific intelligence without becoming part of the editor's internal architecture.
+
+Depending on the language server, this may involve:
+
+- parsing source code;
+- understanding declarations;
+- resolving symbols;
+- analyzing types;
+- identifying diagnostics;
+- generating completion candidates;
+- producing hover information.
+
+The exact implementation is intentionally outside the editor.
+
+For example:
+
+```text
++--------------------------+
+|     Language Server      |
++------------+-------------+
+             |
+      +------+------+
+      |             |
+      v             v
+   Analysis      Language
+    Engine       Knowledge
+      |
+      +------------------+
+      |        |         |
+      v        v         v
+ Diagnostics Completion Hover
+```
+
+The important architectural principle is that these responsibilities belong to the language server rather than to the editor's core.
+
+## The LSP Client as an Adapter
+
+The LSP Client sits between the editor's internal concepts and the protocol.
+
+For example, the editor may internally know:
+
+```text
+Document:
+    current contents
+
+Cursor:
+    row = 12
+    column = 8
+```
+
+The language server does not need to understand the editor's internal `Document` or `Cursor` structures.
+
+Instead, the LSP Client converts the relevant information into protocol messages.
+
+```text
+Editor State
+     |
+     v
+LSP Client
+     |
+     | Convert internal state
+     | into protocol messages
+     v
+LSP Message
+     |
+     v
+Language Server
+```
+
+The reverse operation also occurs.
+
+A language server returns protocol data, and the LSP Client converts that information into representations the editor can use.
+
+```text
+Language Server
+      |
+      v
+ LSP Response
+      |
+      v
+ LSP Client
+      |
+      | Convert protocol result
+      | into editor information
+      v
+ Editor State / UI
+```
+
+This makes the LSP Client an **adapter between two different models**.
+
+## The Document Ownership Boundary
+
+One of the most important architectural rules is document ownership.
+
+The editor owns its authoritative Document.
+
+The language server receives information about that document, but it does not replace the editor's Document.
+
+```text
++--------------------+
+| Editor             |
+|                    |
+| Authoritative      |
+| Document           |
++---------+----------+
+          |
+          | Synchronization
+          v
++--------------------+
+| Language Server    |
+|                    |
+| Server-side        |
+| representation     |
++--------------------+
+```
+
+The language server may maintain its own internal representation for analysis.
+
+That is necessary because language analysis usually requires more than the raw characters themselves.
+
+However, this representation is a **server-side analysis state**, not the editor's authoritative document.
+
+This distinction prevents an important form of architectural coupling.
+
+## Two Representations of the Same Document
+
+Once language analysis is introduced, the same source document may therefore exist in two conceptual forms.
+
+On the editor side:
+
+```text
+Editor
+  │
+  └── Document
+       │
+       ├── Text
+       ├── Lines
+       └── Editing State
+```
+
+On the language-server side:
+
+```text
+Language Server
+  │
+  └── Analysis Representation
+       │
+       ├── Syntax
+       ├── Symbols
+       ├── Types
+       └── Diagnostics
+```
+
+These representations must remain synchronized.
+
+They do **not**, however, need to be identical.
+
+The editor's representation is optimized for editing.
+
+The server's representation is optimized for language analysis.
+
+This distinction becomes especially important when we later discuss document synchronization.
+
+## The Communication Boundary
+
+The protocol boundary should also prevent implementation details from leaking across the system.
+
+The editor should not need to know:
+
+- which parser the server uses;
+- how the server stores syntax trees;
+- how type checking is implemented;
+- how symbols are indexed;
+- how diagnostics are calculated.
+
+Likewise, the language server should not need to know:
+
+- how the editor renders the terminal;
+- how the editor stores its viewport;
+- which keyboard shortcuts the editor uses;
+- how the screen buffer is constructed.
+
+The boundary can therefore be expressed as:
+
+```text
+Editor                         Language Server
+------                         ---------------
+Document --------------------> Document information
+Position --------------------> Position
+Request ---------------------> Operation
+
+Result <---------------------- Language information
+Diagnostics <----------------- Diagnostic data
+Completion <------------------ Completion data
+Hover <----------------------- Hover information
+```
+
+Only information defined by the protocol crosses the boundary.
+
+## Why This Separation Matters
+
+Without this separation, language-specific functionality could gradually leak into the editor.
+
+For example:
+
+```text
+Renderer
+   │
+   └── understands C diagnostics
+           │
+           └── understands C parser
+```
+
+This would make the Renderer dependent on a particular language.
+
+A better design is:
+
+```text
+Language Server
+       │
+       ▼
+   LSP Client
+       │
+       ▼
+ Language-neutral
+ editor information
+       │
+       ▼
+    Renderer
+```
+
+The Renderer only needs to know how to present the information supplied to it.
+
+It does not need to know where that information originated.
+
+This follows the same separation-of-responsibility principle used throughout the editor architecture.
+
+## LSP Is Not Another Rendering Layer
+
+It is also important not to confuse language-server results with rendered output.
+
+For example, a diagnostic might conceptually be:
+
+```text
+Line:     15
+Column:    8
+Severity: error
+Message:   undefined identifier
+```
+
+The language server provides the information.
+
+The Renderer decides how the editor presents that information to the user.
+
+The relationship is therefore:
+
+```text
+Language Server
+       |
+       | Diagnostic information
+       v
+    LSP Client
+       |
+       v
+   Editor State
+       |
+       v
+    Renderer
+       |
+       v
+    Terminal
+```
+
+The language server should not generate terminal escape sequences for our editor.
+
+Doing so would violate the architectural separation between **language intelligence** and **presentation**.
+
+## LSP and the Event Loop
+
+The LSP Client also fits into the event-driven architecture established earlier in the book.
+
+An editor may have several things happening at once:
+
+```text
+Keyboard Input
+      │
+      ├──────────────► Command Processing
+      │
+      └──────────────► Editor State
+
+Language Server
+      │
+      ├──────────────► Diagnostics
+      ├──────────────► Completion Results
+      └──────────────► Other Results
+```
+
+These activities must coexist without allowing language-server communication to make ordinary editing unresponsive.
+
+This is particularly important because communication with an external process introduces latency that the editor cannot completely control.
+
+The detailed handling of requests, responses, notifications, and asynchronous results will be examined later in this chapter.
+
+For now, the architectural rule is simple:
+
+> **Language-server communication is an external service interaction and must not become a blocking dependency of the core editing loop.**
+
+## The Resulting Architecture
+
+We can now place the major responsibilities together:
+
+```text
+                           +-------------+
+                           |    User     |
+                           +------+------+
+                                  |
+                                  v
+                       +---------------------+
+                       |       Editor        |
+                       |                     |
+                       |   Editor State      |
+                       |   Document          |
+                       |   Cursor            |
+                       |   Viewport          |
+                       |   Input             |
+                       |   Commands          |
+                       |   Renderer          |
+                       +----------+----------+
+                                  |
+                                  v
+                           +-------------+
+                           |  LSP Client |
+                           +------+------+
+                                  |
+                                  | LSP
+                                  |
+                           +------v------+
+                           |   Language  |
+                           |   Server    |
+                           +-------------+
+                                  |
+                           +------+------+
+                           |             |
+                           v             v
+                      Language       Analysis
+                      Knowledge       State
+```
+
+This architecture gives us a clean separation:
+
+- **Editor** — owns the editing experience.
+- **LSP Client** — communicates using LSP.
+- **Language Server** — provides language-specific intelligence.
+- **Protocol** — defines the communication boundary.
+
+The next architectural problem is therefore not how the components are separated, but **how the language server is brought into existence and maintained during the editor's lifetime**.
+
+That leads to the language-server lifecycle.
+
+## Summary
+
+The editor and the language server are two cooperating but independent systems separated by the LSP boundary. The editor owns the authoritative Document, cursor, viewport, input handling, command execution, and rendering. The language server owns language-specific analysis, including parsing, symbol resolution, type checking, and diagnostics.
+
+The LSP Client sits between these two systems, acting as an adapter that converts editor state into protocol messages and protocol results back into editor-consumable information. The document therefore exists in two representations — an editing-optimized one in the editor and an analysis-optimized one in the server — that must remain synchronized but need not be identical. This separation prevents language-specific knowledge from leaking into the Renderer or other editor components.
+
+Because the LSP Client is the only component that speaks the protocol, protocol types and message handling do not spread into the Document, Renderer, or Command Engine. The Document remains authoritative even while the server holds a separate analysis representation, so synchronization updates the server's copy without transferring ownership.
+
+In the next section, we will examine the language-server lifecycle: how a server is selected, started, initialized, managed through failure, and eventually shut down.

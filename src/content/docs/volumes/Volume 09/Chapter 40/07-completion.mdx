@@ -1,0 +1,600 @@
+---
+title: "40.7 Completion"
+description: "Shows how completion queries the server at the cursor, returns structured items, and becomes an ordinary document-changing edit when accepted."
+---
+
+**Completion** is a language service that helps the user construct text by suggesting possible continuations at the current cursor position.
+
+Unlike diagnostics, which primarily report information about an existing document, completion is interactive. The user is actively editing, and the editor asks the language server what symbols, keywords, functions, types, or other language constructs may be appropriate at a particular position.
+
+The basic flow is:
+
+```text
+User
+  │
+  │ requests completion
+  ▼
+Editor
+  │
+  ▼
+LSP Client
+  │
+  │ completion request
+  ▼
+Language Server
+  │
+  │ analyze context
+  ▼
+Completion Items
+  │
+  ▼
+LSP Client
+  │
+  ▼
+Editor
+  │
+  ▼
+User selects an item
+```
+
+The important architectural point is that **the language server determines what is relevant; the editor determines how the suggestions are presented and applied**.
+
+## Why Completion Requires Language Knowledge
+
+A simple text editor can provide character-based completion.
+
+For example, if the document contains:
+
+```text
+print
+```
+
+the editor could search previously typed words and suggest:
+
+```text
+printf
+println
+print_error
+```
+
+But this is not necessarily language-aware completion.
+
+Consider:
+
+```c
+result = cal
+```
+
+A language-aware system may determine that:
+
+- `cal` is being typed in an expression;
+- a function named `calculate_total` is visible;
+- another function with a similar name is not visible;
+- the expected type of the expression affects which symbols are useful.
+
+This requires knowledge beyond the characters immediately surrounding the cursor.
+
+Conceptually:
+
+```text
+Text
+ │
+ ▼
+Language Context
+ │
+ ├── Scope
+ ├── Symbols
+ ├── Types
+ └── Syntax
+      │
+      ▼
+Completion Candidates
+```
+
+This is why completion belongs naturally on the language-intelligence side of the architecture.
+
+## The Cursor Position Matters
+
+Completion is inherently contextual.
+
+The same text can produce different suggestions depending on where the cursor is located.
+
+For example:
+
+```c
+object.
+```
+
+may cause a language server to suggest members of `object`.
+
+Whereas:
+
+```c
+int va
+```
+
+may cause it to suggest variables, types, or keywords appropriate to that location.
+
+The request therefore needs to identify a position in the document.
+
+Conceptually:
+
+```text
+Document
+   │
+   └── Cursor Position
+            │
+            ▼
+      Completion Request
+```
+
+The editor already maintains cursor state as part of its core architecture. The LSP Client can use that information when constructing the protocol request.
+
+The language server then interprets that position according to the language's rules.
+
+## Completion Is a Query
+
+Completion can be understood as a query:
+
+> **"Given this document and this position, what language constructs could reasonably appear here?"**
+
+The editor provides the context.
+
+```text
++----------------------+
+| Document             |
+|                      |
+| result = cal|        |
+|            ^
+|            Cursor    |
++----------+-----------+
+           |
+           v
+     Completion Query
+```
+
+The language server processes the query using its language knowledge.
+
+```text
+Completion Query
+       │
+       ▼
++---------------------+
+| Language Analysis   |
++----------+----------+
+           |
+           ▼
++---------------------+
+| Candidate Items     |
++---------------------+
+```
+
+The result is then returned to the editor.
+
+## Completion Items
+
+A completion result is more useful when it contains structured information rather than just strings.
+
+Conceptually, a completion item might contain:
+
+```text
++----------------------------+
+| Completion Item            |
++----------------------------+
+| Label                      |
+| Kind                       |
+| Detail                     |
+| Documentation              |
+| Inserted Text              |
++----------------------------+
+```
+
+For example:
+
+```text
+calculate_total
+function
+int calculate_total(...)
+```
+
+The editor can use this information to construct its completion interface.
+
+The language server provides semantic information; the editor remains responsible for presentation.
+
+## Completion and the Renderer
+
+Completion introduces a temporary user-interface element that differs from ordinary document rendering.
+
+For example:
+
+```text
++------------------------------------------+
+| result = cal                             |
+|                                          |
+|        +----------------------------+    |
+|        | calculate_total             |   |
+|        | calculate_average            |   |
+|        | calculate_count              |   |
+|        +----------------------------+   |
+|                                          |
++------------------------------------------+
+```
+
+The language server should not know how this popup is drawn in the terminal.
+
+A clean separation is:
+
+```text
+Language Server
+       │
+       │ candidates
+       ▼
+    LSP Client
+       │
+       │ completion state
+       ▼
+   Editor State
+       │
+       ▼
+    Renderer
+       │
+       ▼
+    Terminal
+```
+
+This is consistent with the architecture established earlier:
+
+> **Language services provide information; the Renderer decides how that information appears.**
+
+## Completion Does Not Modify the Document Automatically
+
+Receiving completion candidates should not itself modify the Document.
+
+The process is:
+
+```text
+Request
+   │
+   ▼
+Candidates
+   │
+   ▼
+User chooses candidate
+   │
+   ▼
+Editor applies insertion
+   │
+   ▼
+Document changes
+```
+
+This distinction is important.
+
+The language server provides possible choices.
+
+The editor remains responsible for the actual editing operation.
+
+Therefore:
+
+```text
+Language Server
+       │
+       │ "Here are possible completions."
+       ▼
+     Editor
+       │
+       │ "The user selected this one."
+       ▼
+    Document
+```
+
+The selected completion becomes an ordinary document-changing operation from the editor's perspective.
+
+That means it must interact correctly with existing mechanisms such as:
+
+- Cursor movement;
+- Document mutation;
+- Dirty Flag;
+- Undo/Redo;
+- Rendering;
+- LSP synchronization.
+
+## Completion and Undo/Redo
+
+Because accepting a completion changes the Document, it belongs to the same category of user-visible editing operations already addressed by the Undo/Redo architecture.
+
+For example:
+
+```text
+User requests completion
+        │
+        ▼
+Language Server returns candidates
+        │
+        ▼
+User selects candidate
+        │
+        ▼
+Editor inserts text
+        │
+        ▼
+Document-changing operation
+        │
+        ▼
+Undo history
+```
+
+The language server does not own the editor's undo history.
+
+The insertion is performed by the editor's editing machinery.
+
+This preserves the state-ownership rule established earlier: each subsystem contributes information or requests, but the Document remains owned by the editor.
+
+## Completion and Document Synchronization
+
+Completion also demonstrates why document synchronization must be current.
+
+Suppose the editor contains:
+
+```text
+result = calculate_
+```
+
+The user requests completion.
+
+The language server must analyze a sufficiently current version of the document to produce meaningful candidates.
+
+The flow is therefore:
+
+```text
+Current Document
+       │
+       ▼
+Synchronization
+       │
+       ▼
+Language Server
+       │
+       ▼
+Context Analysis
+       │
+       ▼
+Completion Candidates
+```
+
+If the server is analyzing an older document version, its suggestions may no longer match the current editing context.
+
+This is the same asynchronous-state problem encountered with diagnostics.
+
+The difference is that completion is usually initiated explicitly by the user and therefore has a more immediate interaction requirement.
+
+## Completion Is Latency-Sensitive
+
+Diagnostics can often tolerate some delay.
+
+A warning appearing a short time after an edit may still be useful.
+
+Completion is different.
+
+The user is usually waiting for the suggestions while actively editing:
+
+```text
+User
+  │
+  │ type / request completion
+  ▼
+Editor
+  │
+  │ request
+  ▼
+Language Server
+  │
+  │ analysis
+  ▼
+Result
+```
+
+If the response takes too long, the feature becomes disruptive.
+
+This creates an important engineering constraint:
+
+> **Interactive language services must be designed with responsiveness in mind.**
+
+The editor therefore should not block its entire event loop while waiting for completion.
+
+The language-server interaction should coexist with normal editor operation.
+
+## Completion and Multiple Buffers
+
+Chapter 34 established that an editor can contain multiple buffers.
+
+Completion must therefore be associated with the correct editing context.
+
+Conceptually:
+
+```text
+Editor
+ │
+ ├── Buffer A
+ │     └── LSP context
+ │
+ ├── Buffer B
+ │     └── LSP context
+ │
+ └── Buffer C
+       └── LSP context
+```
+
+A completion request must identify the document and position to which it applies.
+
+This prevents a result associated with one buffer from being displayed as though it belonged to another.
+
+The broader principle is the same as with diagnostics:
+
+> **Derived language information must remain associated with the document context from which it was produced.**
+
+## Completion Versus Simple Word Completion
+
+It is useful to distinguish language-aware completion from a much simpler feature: completing words already present in the document.
+
+A text-based completion system might operate like this:
+
+```text
+Document
+   │
+   ▼
+Find words
+   │
+   ▼
+Suggest matching words
+```
+
+A language-aware completion system instead uses language context:
+
+```text
+Document
+   │
+   ▼
+Language Analysis
+   │
+   ├── Syntax
+   ├── Scope
+   ├── Symbols
+   ├── Types
+   └── Context
+        │
+        ▼
+   Completion Candidates
+```
+
+Both can be useful.
+
+They simply solve different problems.
+
+The first is primarily a text-processing feature.
+
+The second is a language-intelligence feature.
+
+This distinction prevents the editor from conflating ordinary text operations with semantic language services.
+
+## Completion Is a Client-Server Conversation
+
+The overall interaction can be summarized as:
+
+```text
+                    User
+                     |
+                     | Request completion
+                     v
+                 +--------+
+                 | Editor |
+                 +---+----+
+                     |
+                     v
+                +---------+
+                | LSP     |
+                | Client  |
+                +----+----+
+                     |
+                     | Request
+                     v
+             +---------------+
+             | Language      |
+             | Server        |
+             +-------+-------+
+                     |
+                     | Candidates
+                     v
+                +---------+
+                | LSP     |
+                | Client  |
+                +----+----+
+                     |
+                     v
+                  Editor
+                     |
+                     | User selects
+                     v
+                 Document
+```
+
+The protocol connects the two systems, but the editing operation remains entirely under the editor's control.
+
+## The Architectural Pattern
+
+Completion reinforces a general pattern that applies to language services:
+
+```text
+                  +----------------+
+                  |    Document    |
+                  +-------+--------+
+                          |
+                          v
+                  +----------------+
+                  | Language       |
+                  | Analysis       |
+                  +-------+--------+
+                          |
+                          v
+                  +----------------+
+                  | Language       |
+                  | Information    |
+                  +-------+--------+
+                          |
+                          v
+                  +----------------+
+                  |     Editor     |
+                  | Presentation   |
+                  +----------------+
+```
+
+The editor provides the document context.
+
+The language system derives information.
+
+The editor presents that information and, where appropriate, converts user choices into ordinary editing operations.
+
+This keeps language-specific knowledge outside the core editor.
+
+## What We Have Not Designed
+
+This section deliberately does **not** define:
+
+- a completion popup implementation;
+- terminal positioning for the popup;
+- fuzzy matching algorithms;
+- ranking algorithms;
+- language-specific completion logic;
+- parser implementation;
+- semantic analysis implementation.
+
+Those are separate engineering concerns.
+
+At the architectural level, the important decision is the boundary:
+
+```text
+Language Server
+       │
+       │ completion information
+       ▼
+LSP Client
+       │
+       ▼
+Editor
+       │
+       │ user action
+       ▼
+Document
+```
+
+This keeps the LSP chapter focused on the role of the protocol rather than turning it into a terminal UI implementation chapter.
+
+## Summary
+
+Completion is an interactive language service that asks: "What constructs could reasonably appear at this cursor position?" The language server uses its semantic understanding of scope, types, symbols, and syntax to produce structured completion items. The editor presents these items and applies the user's selection as an ordinary document-changing operation.
+
+Unlike diagnostics, which tolerate some delay, completion is latency-sensitive. The user is actively editing and waiting for suggestions, so the editor must not block the event loop while the server processes the request. Completion results are derived information that must remain associated with the correct buffer and document version. Accepting a completion becomes a standard editor operation that interacts correctly with undo/redo, document synchronization, and the Dirty Flag.
+
+Completion therefore exercises nearly every boundary in the system at once: it depends on current synchronization, returns derived data, respects buffer context, and ends in an ordinary editing command. Treating the accepted item as a normal document mutation keeps undo, the Dirty Flag, and rendering consistent with typing.
+
+In the next section, we will examine hover information — the language service that answers "What does this existing text mean?" and how it complements completion by providing contextual insights about symbols under the cursor.
