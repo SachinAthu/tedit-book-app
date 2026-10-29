@@ -1,0 +1,73 @@
+---
+title: "30.14 Conclusion"
+description: "Consolidates the chapter's search model and architecture, then lists review questions, thought experiments, and a preview of Chapter 31's undo and redo."
+---
+
+The chapter leaves the reader with a clear progression of search capability:
+
+```text
+Search
+  │
+  ├── Literal matching
+  │       │
+  │       └── Linear search
+  │
+  ├── Interactive matching
+  │       │
+  │       └── Incremental search
+  │
+  └── Pattern matching
+          │
+          └── Regular expressions
+```
+
+Literal search is the simplest approach: a direct linear scan of the Document that reports matches as logical positions with a start position and length. Incremental search keeps the same algorithm but changes the interaction, re-searching as the query changes so the result updates while the user types. Regular expressions keep the same result format but make matching expressive, turning the query into a pattern that describes a set of possible sequences. None of these steps changes the Document model or the result the rest of the editor consumes.
+
+The architectural lesson is that search does not become a second editor:
+
+```text
+Search does not become a second editor.
+
+It is a feature built on top of
+the existing editor architecture.
+```
+
+Search introduces a small amount of temporary search state and reuses the existing Document, Cursor, Viewport, Renderer, and Message Bar. It finds text and reports a logical match; the editor decides what to do with the result. The baseline design keeps search simple with a direct search of the Document, and deliberately leaves search indexes, fuzzy matching, a full regex engine, replace, and persistent highlighting out of scope.
+
+The baseline search strategy — direct linear search with no index, with incremental search and optional regex matching layered on top — is recorded as **ADR-023: Search Strategy**.
+
+## Exercises
+
+### Review Questions
+
+1. What is the difference between search as a string-matching algorithm and search as an editor feature?
+2. What information does a match contain, and why is a match more than the matched text itself?
+3. Why is search directional and position-dependent, and where should a search normally begin?
+4. Why does the baseline editor use linear search instead of a search index?
+5. What is the difference between the search position and the Cursor?
+6. Why does incremental search not require a new search algorithm?
+7. How does regex change what counts as a match without changing the Document model?
+8. Why must the editor distinguish a valid pattern with no match from an invalid pattern?
+9. Why should a failed search not modify the Document?
+
+### Thought Experiments
+
+1. The user types `f`, then `fo`, then `fox`, and each change moves the Cursor to a new match. What search state must the editor retain so that a subsequent "next match" command behaves correctly?
+2. A forward search reaches the end of the Document and wraps to the beginning. How must the implementation distinguish "another match found" from "a full search cycle has completed without a new match"?
+3. The user edits the Document while a search is active, so a previously stored match position may no longer describe the same text. How should the baseline editor define its behavior in this situation?
+
+### Design Exercise
+
+1. Design the search state for the baseline editor. What fields must it contain, and how does each field relate to an existing component such as the Cursor or the Document?
+
+### Optional Challenge
+
+1. Investigate how a real editor, such as Vim or Emacs, implements incremental or regex search, and compare its design decisions with the ones made in this chapter.
+
+## Preview of the Next Chapter
+
+Chapter 31 turns to **Undo / Redo**.
+
+Search observes the Document without modifying it, so it never needs to be undone. Undo and redo must record and reverse modifications, which raises new questions: what information must be retained for an edit to be reversed, how much history the editor keeps, and how an operation's effect is applied in reverse.
+
+The chapter examines the **Command Pattern**, **snapshots**, and **operation stacks**, building directly on the command abstraction and state-driven architecture established earlier in the book.

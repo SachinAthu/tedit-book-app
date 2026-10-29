@@ -1,0 +1,352 @@
+---
+title: "30.5 Search State"
+description: "Describes the temporary state an active search needs—query, current match, direction, and active status—and why it stays separate from the Cursor."
+---
+
+A search operation can be described as a function that receives a query and returns a match. That description is sufficient for a simple text-processing program.
+
+An editor needs more.
+
+When a user starts searching, types additional characters, presses a key to find the next match, changes direction, or cancels the search, the editor must remember what is happening. Search therefore introduces a small amount of **search state**.
+
+The important design question is not simply:
+
+> How do we find text?
+
+It is:
+
+> What information must the editor remember while a search is active?
+
+## The Search Query
+
+The most obvious piece of state is the query itself.
+
+For example, if the user searches for:
+
+```text
+editor
+```
+
+the search system must retain that query while the search interface remains active.
+
+This becomes particularly important during incremental search, where the query changes as the user types:
+
+```text
+e
+ed
+edi
+edit
+edito
+editor
+```
+
+The search operation is therefore repeatedly performed using the current query.
+
+The query is not part of the Document. It is temporary information associated with the current search operation.
+
+---
+
+## The Current Match
+
+A search may find more than one occurrence.
+
+Suppose the document contains:
+
+```text
+one two one three one
+```
+
+and the query is:
+
+```text
+one
+```
+
+There are three matches.
+
+After the first match is found, the editor needs to know which match is currently selected. Otherwise, pressing the command for "next match" would have no reliable reference point.
+
+Conceptually, search state therefore contains information such as:
+
+```text
+query
+current match
+direction
+active/inactive
+```
+
+The exact representation is an implementation detail. The important point is that these concepts must exist somewhere in the editor's state.
+
+---
+
+## Search Position and the Cursor
+
+Search is closely related to the Cursor, but they are not the same thing.
+
+The Cursor represents the user's current logical position in the Document.
+
+Search uses a position to determine where searching should begin, and a successful search produces another logical position representing the match.
+
+For example:
+
+```text
+Cursor
+   |
+   v
+... text before search position ...
+                 |
+                 v
+             [match]
+```
+
+Once a match is found, the editor may move the Cursor to that location.
+
+This distinction matters because the search mechanism should not become a second cursor system.
+
+The Document already has a coordinate model, and the Cursor already represents logical document position. Search should use those existing concepts rather than introduce its own incompatible coordinates.
+
+This follows the same architectural principle used elsewhere in the editor: **a feature should reuse existing state models instead of creating parallel representations of the same state.**
+
+---
+
+## Search Direction
+
+Search state also needs to know which direction the user is searching.
+
+A forward search might look like:
+
+```text
+current position  ------>
+                    match
+```
+
+A backward search reverses the direction:
+
+```text
+match
+  |
+  v
+<------ current position
+```
+
+Direction becomes especially important when the user repeatedly asks for the next match.
+
+For example:
+
+```text
+Search: "error"
+Direction: forward
+Current match: row 12, column 8
+```
+
+The next search begins after that match and continues forward.
+
+If the direction changes, the search must instead move backward from the current position.
+
+Direction is therefore part of the search operation's state rather than merely a property of the search algorithm.
+
+---
+
+## Active and Inactive Search
+
+The editor also needs to distinguish between having a search operation in progress and simply having no active search.
+
+Conceptually:
+
+```text
+Search inactive
+    |
+    | user starts search
+    v
+Search active
+    |
+    | query changes / next match
+    v
+Search active
+    |
+    | cancel / finish
+    v
+Search inactive
+```
+
+When search is inactive, normal editing commands operate without search-specific behavior.
+
+When search is active, input may instead modify the search query or control the search operation.
+
+This distinction becomes important when we reach the Input Engine. The same keyboard input can have different meanings depending on the current editor mode.
+
+Search therefore participates in the editor's interaction state without becoming responsible for input parsing itself.
+
+---
+
+## What Happens When There Is No Match?
+
+Search state must also represent failure.
+
+Suppose the user searches for:
+
+```text
+banana
+```
+
+but the Document does not contain that sequence.
+
+The search operation should not modify the Document merely because the search failed.
+
+Instead, the editor can retain information that no match was found and communicate that result through the existing user-interface mechanisms.
+
+For example:
+
+```text
+Search: "banana"
+Result: no match
+```
+
+The exact presentation belongs to the editor's UI and Message Bar behavior. The search subsystem's responsibility is to determine the result.
+
+This keeps the responsibilities separate:
+
+```text
+Search
+  |
+  | find match
+  v
+Search Result
+  |
+  +---- match found
+  |
+  +---- no match
+```
+
+The Renderer does not need to know how the match was found. It only needs the resulting editor state.
+
+---
+
+## Search State Is Temporary
+
+Search state has a different lifetime from Document state.
+
+The Document represents the text being edited and persists for as long as that document is open.
+
+Search state exists only while the search interaction is relevant.
+
+For example:
+
+```text
+Editor State
+├── Document
+├── Cursor
+├── Viewport
+├── ...
+└── Search State
+      ├── Query
+      ├── Direction
+      ├── Current Match
+      └── Active/Inactive
+```
+
+This does not mean every field must literally be placed in one structure at this stage. The diagram describes the conceptual relationship.
+
+The important distinction is ownership.
+
+The Document owns document content.
+
+The Cursor owns the current logical editing position.
+
+The Viewport owns the visible document region.
+
+Search owns information specific to the current search operation.
+
+This avoids allowing search-specific information to leak into unrelated components.
+
+---
+
+## Search State and Incremental Search
+
+The value of explicit search state becomes clearer with incremental search.
+
+Consider the user entering:
+
+```text
+app
+```
+
+The editor may perform:
+
+```text
+query = "a"
+    ↓
+find match
+
+query = "ap"
+    ↓
+find match
+
+query = "app"
+    ↓
+find match
+```
+
+Each change requires a new search operation, but the interaction itself remains one continuous search session.
+
+The editor therefore needs to remember more than the current query. It needs to know that the search is active and how the current query relates to the current search position.
+
+This is the foundation for the next section.
+
+Incremental search is not simply "run linear search several times." It is an interaction model in which **the search result changes as the query changes**.
+
+That distinction is what makes search state important.
+
+---
+
+## A Useful Mental Model
+
+A useful conceptual model is:
+
+```text
+Search State
+     |
+     +── Query
+     |
+     +── Direction
+     |
+     +── Current Match
+     |
+     +── Active/Inactive
+     |
+     v
+Search Operation
+     |
+     v
+Document
+     |
+     v
+Match
+     |
+     v
+Cursor / Viewport / Renderer
+```
+
+The search state describes **what the user is currently searching for and how the search is progressing**.
+
+The search operation performs the actual lookup.
+
+The Document supplies the text.
+
+The Cursor, Viewport, and Renderer make the result meaningful to the user.
+
+Keeping these responsibilities separate will become increasingly important as search becomes interactive.
+
+The next section builds directly on this model by examining **incremental search**, where the query itself changes while the user is searching.
+
+## Summary
+
+An interactive search requires small but explicit search state: the query, the current match, the direction, the original position, and whether a search is active. This state is temporary, owned by the search feature, and distinct from the Document, Cursor, and Viewport.
+
+Keeping search state separate prevents search-specific information from leaking into unrelated components and provides the foundation incremental search depends on.
+
+Representing failure as part of the search result, rather than as a Document change, keeps error reporting in the UI layer. This explicit lifetime is what allows a next-match command to continue the same session instead of silently starting a new one.
+
+Now that search state is defined, the next section examines what changes when the query is updated while the user is still typing.
+
+Continue to **Section 30.6, Incremental Search**.

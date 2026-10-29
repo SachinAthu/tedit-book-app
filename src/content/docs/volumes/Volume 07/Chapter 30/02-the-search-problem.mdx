@@ -1,0 +1,397 @@
+---
+title: "30.2 The Search Problem"
+description: "Defines search as a directional, position-dependent operation that returns a start position and length, and frames boundary and wrapping policies."
+---
+
+Before choosing a search algorithm, we need to define precisely what the editor is trying to find.
+
+At its simplest, search takes two things:
+
+```text
+Document
+    +
+Search Query
+    │
+    ▼
+Match
+```
+
+For example, given:
+
+```text
+The quick brown fox
+The fox jumped over the wall
+A small animal crossed the road
+```
+
+and the query:
+
+```text
+fox
+```
+
+the editor should be able to identify both occurrences:
+
+```text
+The quick brown fox
+              ^^^
+
+The fox jumped over the wall
+    ^^^
+```
+
+The search problem therefore consists of locating a sequence of characters within the Document and reporting where that sequence occurs.
+
+But an editor needs a more precise definition of a **match**.
+
+## What Is a Match?
+
+A match is not simply the text itself.
+
+It also has a position.
+
+Conceptually:
+
+```text
+Match
+
+├── Start position
+└── Length
+```
+
+For example:
+
+```text
+The quick brown fox
+              ^^^
+```
+
+The match can be represented as:
+
+```text
+row    = 0
+column = 16
+length = 3
+```
+
+The exact representation will depend on the implementation, but the important idea is that search produces a **location within the Document**.
+
+That location is expressed using the Document's logical coordinate system.
+
+It is not a terminal screen coordinate.
+
+This distinction matters because the Renderer and Viewport may later transform that logical position into a visual position. The search algorithm should not need to know how the terminal displays the text.
+
+## One Query Can Have Many Matches
+
+A document will usually contain more than one occurrence of a search query.
+
+Consider:
+
+```text
+apple
+banana
+apple
+orange
+apple
+```
+
+Searching for:
+
+```text
+apple
+```
+
+produces three matches:
+
+```text
+1. line 1
+2. line 3
+3. line 5
+```
+
+The search feature therefore needs to distinguish between:
+
+```text
+Find a match
+```
+
+and:
+
+```text
+Find the next match
+```
+
+These are related but different operations.
+
+The first search might locate:
+
+```text
+apple
+^^^^^
+```
+
+A subsequent search should continue from an appropriate position rather than simply returning the same result again.
+
+Conceptually:
+
+```text
+Start
+  │
+  ▼
+Match 1
+  │
+  │ next
+  ▼
+Match 2
+  │
+  │ next
+  ▼
+Match 3
+```
+
+This introduces the idea of a **search position**.
+
+## Where Does Searching Begin?
+
+The starting position is important.
+
+Suppose the cursor is here:
+
+```text
+The quick brown fox
+The fox jumped over
+       ^
+```
+
+and the user searches forward for:
+
+```text
+fox
+```
+
+Should the editor search from the beginning of the document?
+
+Usually, that would be surprising.
+
+The search should normally begin relative to the current cursor position.
+
+Conceptually:
+
+```text
+Document
+──────────────────────────────
+The quick brown fox
+The fox jumped over
+       ^
+       │
+       └── Search starts here
+```
+
+The exact boundary behavior—whether text beginning exactly at the cursor is considered—is a policy decision that the editor must define consistently.
+
+The important point is that **search is directional and position-dependent**.
+
+## Forward and Backward Search
+
+Search does not have to move only toward the end of the Document.
+
+A useful editor normally supports both directions:
+
+```text
+Forward
+
+cursor ───────────────►
+```
+
+and:
+
+```text
+Backward
+
+cursor ◄───────────────
+```
+
+For example:
+
+```text
+1  apple
+2  banana
+3  apple
+4  orange
+5  apple
+```
+
+A forward search from line 2 might produce:
+
+```text
+2 → 3 → 5
+```
+
+while a backward search might produce:
+
+```text
+2 → 1
+```
+
+The matching mechanism can remain fundamentally the same. What changes is the direction in which candidate positions are examined.
+
+## What Happens at the End?
+
+Eventually, a search reaches a document boundary.
+
+Suppose the cursor is near the end:
+
+```text
+1  apple
+2  banana
+3  orange
+4  apple
+       ^
+```
+
+There may be no more matches after the current position.
+
+The editor now has to choose a policy.
+
+One possibility is to stop:
+
+```text
+No more matches
+```
+
+Another is to **wrap around**:
+
+```text
+1  apple
+2  banana
+3  orange
+4  apple
+       ^
+       │
+       └── search reaches end
+               │
+               ▼
+          continue at top
+               │
+               ▼
+            line 1
+```
+
+Wrap-around is particularly useful for an interactive editor because it allows the user to repeatedly request the next match without manually returning to the beginning of the document.
+
+However, wrapping introduces another requirement: the editor must avoid treating the original match as a newly discovered match indefinitely.
+
+For example:
+
+```text
+1  apple
+2  banana
+3  apple
+```
+
+Searching forward repeatedly might produce:
+
+```text
+1 → 3 → 1 → 3 → ...
+```
+
+That is useful behavior.
+
+But within a **single search operation**, the editor must recognize when it has completed a full cycle.
+
+## Search and the Document
+
+Our editor's Document is organized as logical lines.
+
+That means a search can naturally inspect the Document one line at a time:
+
+```text
+Document
+    │
+    ├── Line 0
+    ├── Line 1
+    ├── Line 2
+    ├── Line 3
+    └── ...
+```
+
+This does not mean that search is a separate line-oriented feature.
+
+The Document remains the complete logical text being searched.
+
+The line structure simply gives the search operation a convenient way to locate positions.
+
+For a basic search, we can therefore think of the process as:
+
+```text
+Start position
+      │
+      ▼
+Inspect text
+      │
+      ▼
+Compare query
+      │
+   ┌──┴──┐
+   │     │
+ match  no match
+   │     │
+   ▼     ▼
+return  continue
+```
+
+The details of how that comparison is performed are the subject of the next section.
+
+## The Search Result Is Not the Final Visual Result
+
+Once a match is found, several other components may become involved:
+
+```text
+Search
+   │
+   ▼
+Match position
+   │
+   ▼
+Cursor
+   │
+   ▼
+Viewport
+   │
+   ▼
+Renderer
+   │
+   ▼
+Terminal
+```
+
+Search should not calculate terminal escape sequences or directly move the terminal cursor.
+
+It should identify the logical location of the match. The existing editor architecture then handles navigation and presentation.
+
+This separation keeps the search feature independent of terminal details, consistent with the architecture's separation between the Core and Platform layers.
+
+The search problem can therefore be stated precisely:
+
+> **Given a Document, a search query, a starting position, and a direction, locate the next matching sequence and report its logical position.**
+
+Everything else—moving the cursor, adjusting the Viewport, displaying the result, and interacting with the user—builds on that fundamental operation.
+
+That gives us a well-defined problem to solve.
+
+The simplest solution is to examine the text directly.
+
+That is **linear search**.
+
+## Summary
+
+The search problem can be stated precisely: given a Document, a search query, a starting position, and a direction, locate the next matching sequence and report its logical position. A match consists of a start position and a length, a query can match in many places, and searching is both directional and position-dependent.
+
+The editor must also define policies for boundaries, wrapping, and how the search result relates to the Cursor and Viewport.
+
+Reporting that result in logical Document coordinates keeps search independent of terminal rendering, while boundary and wrapping policies must be decided explicitly so next and previous navigation behave consistently.
+
+Now that the problem is well defined, the next section examines the simplest solution to it.
+
+Continue to **Section 30.3, Linear Search**.

@@ -1,0 +1,225 @@
+---
+title: "31.4 The Command Pattern"
+description: "Explains operation-based history through the Command Pattern, showing what records must retain to reverse insertions, deletions, and line splits."
+---
+
+The snapshot approach gives us a straightforward way to preserve history, but it has an important limitation: each history entry contains a copy of the document rather than a description of **what changed**.
+
+A different approach is to record the editing operation itself. Instead of remembering the entire document before an insertion, the editor can remember something like:
+
+> Insert `"hello"` at position `(4, 12)`.
+
+That record contains enough information to perform the operation again or reverse it later.
+
+## Commands as Descriptions of Changes
+
+In our editor, a command already represents an abstract user action. For example:
+
+```text
+INSERT_TEXT
+DELETE_TEXT
+SPLIT_LINE
+MERGE_LINE
+```
+
+The Command Pattern extends this idea by treating an editing action as a piece of data that can describe both **what happened** and **what is required to reverse it**.
+
+Conceptually:
+
+```text
+User Action
+     │
+     ▼
+  Command
+     │
+     ├── operation type
+     ├── position
+     ├── affected data
+     └── other required information
+     │
+     ▼
+Command Execution
+     │
+     ▼
+Document State Changes
+```
+
+For example, an insertion might produce a history record containing:
+
+```text
+Command:
+    type: INSERT_TEXT
+    row: 4
+    column: 12
+    text: "hello"
+```
+
+To undo it, the editor does not need a copy of the entire document. It knows that `"hello"` was inserted at `(4, 12)`, so it can remove that text.
+
+A deletion requires slightly different information:
+
+```text
+Command:
+    type: DELETE_TEXT
+    row: 4
+    column: 12
+    text: "hello"
+```
+
+The deleted text must be retained because the editor needs it to reconstruct the previous state.
+
+## Forward and Reverse Operations
+
+An operation record therefore has two conceptual directions:
+
+```text
+              execute
+        ┌─────────────────┐
+        │                 ▼
+State A ───── Operation ─────► State B
+        ◄───── Inverse ──────
+```
+
+For an insertion:
+
+```text
+execute:  insert "hello"
+undo:     delete "hello"
+```
+
+For a deletion:
+
+```text
+execute:  delete "hello"
+undo:     insert "hello"
+```
+
+The important point is that **undo does not require storing the complete previous document**. It requires storing enough information to reconstruct the previous state.
+
+## The Central Rule
+
+Operation-based history is memory-efficient, but it comes with additional responsibility: a command record must contain **all information required for reversal**.
+
+If the editor deletes text but records only:
+
+```text
+DELETE_TEXT
+position = (4, 12)
+length = 5
+```
+
+it may know how much text was deleted, but not what the text actually was. The original content has been lost.
+
+A correct history record must preserve enough information:
+
+```text
+DELETE_TEXT
+position = (4, 12)
+text = "hello"
+```
+
+This leads to one of the central design rules of operation-based undo:
+
+> **An undo record must preserve every piece of information that cannot be reconstructed from the current state but is required to reverse the operation.**
+
+This rule governs the shape of every history record. The following examples illustrate how it applies to the editor's concrete operations.
+
+## Concrete Record Shapes
+
+The exact information a record carries depends on the operation.
+
+**Insertion.** To undo an insertion, the editor removes the inserted text. The inserted text is still present in the Document, so the record may need only its position and length:
+
+```text
+Insert Character
+
+Operation: INSERT
+Position: 5
+Character: 'A'
+```
+
+**Deletion.** To undo a deletion, the editor must reinsert the removed text, which the Document no longer contains. The record must retain that text:
+
+```text
+Delete Text
+
+Operation: DELETE
+Position: 10
+Text: "hello"
+```
+
+**Line split.** Our editor represents the document as lines, so editing can change line boundaries. A line split must be reversed by merging the two resulting lines, so the record needs to know where the split occurred:
+
+```text
+Split Line
+
+Operation: SPLIT_LINE
+Row: 4
+Column: 8
+```
+
+The same principle applies to the reverse operation—a line merge must retain enough information to reconstruct the original boundary and content.
+
+These records are not necessarily the final structures we will implement. They are a conceptual model for understanding what history must contain.
+
+## Commands and the Existing Command Engine
+
+This fits naturally with the editor architecture established earlier.
+
+The Input Engine converts input into an editor command. The Command Engine then executes that command against the Editor State. With undo/redo, the flow becomes:
+
+```text
+Input
+  │
+  ▼
+Input Engine
+  │
+  ▼
+Command
+  │
+  ▼
+Command Engine
+  │
+  ├── execute command
+  │
+  └── record history
+          │
+          ▼
+      Undo History
+```
+
+The Command Engine therefore becomes the natural boundary for determining which document-changing commands should enter the undo history.
+
+This does **not** mean that every command needs to become a complex object with its own methods, inheritance hierarchy, or function-pointer interface. The editor can continue using simple command values and associated data, as established by the architecture. The Command Pattern here is primarily a **history representation**, not a reason to redesign the entire command-dispatch system.
+
+## Why This Helps Undo/Redo
+
+Operation-based history has an important advantage over snapshots: a small edit to a large document does not require another complete copy of the document.
+
+Consider a 10 MB document where the user inserts a single character. A snapshot-based approach may need to preserve approximately 10 MB of document state for that edit, while an operation-based approach might need only:
+
+```text
+position + inserted character
+```
+
+The difference becomes significant when the user performs thousands of small edits. Section 31.11 examines these costs in detail and compares the two strategies side by side.
+
+For now, the key point is that commands preserve **transitions** while snapshots preserve **states**:
+
+```text
+Snapshots:
+"What did the document look like?"
+
+Commands:
+"What changed the document?"
+```
+
+## Summary
+
+The Command Pattern treats an editing action as a record that describes both what happened and what is required to reverse it. Operation-based history stores changes rather than complete states, which is memory-efficient for small edits, but every record must contain all information that cannot be reconstructed from the current document.
+
+Now that commands can carry history information, the next section examines how those operation records are organized as an editing history.
+
+The record shapes also show why the rule is operation-specific: an insertion can often be reversed from the document itself, while a deletion or line merge must carry data that the result no longer contains. Making the Command Engine the recording boundary keeps these records aligned with the commands that actually changed the document.
+
+Continue to **Section 31.5, Operation History**.

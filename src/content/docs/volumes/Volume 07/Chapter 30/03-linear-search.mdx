@@ -1,0 +1,451 @@
+---
+title: "30.3 Linear Search"
+description: "Describes linear search over the Document, including next-match navigation, direction, wrapping, empty queries, and case sensitivity."
+---
+
+The simplest way to search a document is to examine its text from one position to the next until the query is found.
+
+This is **linear search**.
+
+It requires no index, no preprocessing, and no additional representation of the Document. The search works directly with the text already stored in memory.
+
+## The Basic Idea
+
+Suppose the document contains:
+
+```text
+The quick brown fox
+The fox jumped over the wall
+A small animal crossed the road
+```
+
+and the query is:
+
+```text
+fox
+```
+
+A simple search begins at the selected starting position and examines possible matches in order:
+
+```text
+The quick brown fox
+              ^^^
+              match
+```
+
+If the first occurrence is not the desired one, the search continues:
+
+```text
+The quick brown fox
+              ^^^
+
+The fox jumped over the wall
+    ^^^
+    next match
+```
+
+The essential algorithm is therefore:
+
+```text
+Start at a position
+        │
+        ▼
+Examine the text
+        │
+        ▼
+Does the query match here?
+     │          │
+    yes         no
+     │          │
+     ▼          ▼
+  return      continue
+               │
+               ▼
+          next position
+```
+
+There is no special data structure involved.
+
+The algorithm simply walks through the available text.
+
+## Comparing a Query
+
+Suppose the query is:
+
+```text
+fox
+```
+
+At a candidate position, the search compares:
+
+```text
+f → f
+o → o
+x → x
+```
+
+If every character matches, the search has found an occurrence.
+
+If one character differs:
+
+```text
+f → f
+o → a   ← mismatch
+x → ?
+```
+
+that position is not a match, so the search moves to the next candidate position.
+
+For a basic editor, this direct approach is attractive because it is easy to understand and easy to verify.
+
+## Searching a Document Made of Lines
+
+Our Document stores text as a collection of logical lines.
+
+A simple forward search can therefore proceed through the lines in order:
+
+```text
+Line 0
+   ↓
+Line 1
+   ↓
+Line 2
+   ↓
+Line 3
+   ↓
+...
+```
+
+Within each line, candidate positions are examined from left to right.
+
+Conceptually:
+
+```text
+for each relevant line
+    for each candidate position
+        compare the query
+        if it matches
+            return the match
+```
+
+This is a useful starting point because the search works directly with the Document representation chosen earlier in the book.
+
+It does not require the Document to be converted into another representation merely to perform a search.
+
+## Finding the Next Match
+
+Finding the first match is only part of what an editor needs.
+
+After a match is found, the user may request the next one.
+
+The search must therefore continue **after the previous match** rather than starting from the beginning every time.
+
+For example:
+
+```text
+1  apple
+2  banana
+3  apple
+4  orange
+5  apple
+```
+
+The first search finds:
+
+```text
+1  apple
+   ^^^^^
+```
+
+The next search begins after that match:
+
+```text
+1  apple
+   ^^^^^
+        │
+        ▼
+2  banana
+3  apple
+   ^^^^^
+```
+
+The result is the occurrence on line 3.
+
+This gives the search operation a natural progression:
+
+```text
+Search
+  │
+  ▼
+Match 1
+  │
+  ▼
+Match 2
+  │
+  ▼
+Match 3
+```
+
+The search position and the Cursor are related, but they are not necessarily the same concept.
+
+The Cursor represents the user's logical editing position. Search needs to know where to begin looking for its next result. The editor can then move the Cursor to the resulting match.
+
+## Forward Search
+
+Forward search moves toward the end of the Document.
+
+For example:
+
+```text
+1  apple
+2  banana
+3  apple
+4  orange
+5  apple
+```
+
+Starting near the beginning:
+
+```text
+1 → 3 → 5
+```
+
+After reaching the final occurrence, there are no further matches in the forward direction.
+
+At that point the editor must apply its chosen boundary policy.
+
+## Backward Search
+
+The same idea works in the opposite direction.
+
+Starting near the end:
+
+```text
+1  apple
+2  banana
+3  apple
+4  orange
+5  apple
+        ^
+```
+
+a backward search might produce:
+
+```text
+5 → 3 → 1
+```
+
+The matching logic is unchanged in principle. Only the order in which candidate positions are examined changes.
+
+This is an important design property:
+
+> **Search direction should be a property of the search operation, not a completely separate search system.**
+
+## Wrapping Around
+
+When the search reaches a document boundary, the editor can either stop or wrap around.
+
+With wrapping enabled, a forward search behaves conceptually like:
+
+```text
+1 → 3 → 5 → 1 → 3 → 5 → ...
+```
+
+and a backward search behaves like:
+
+```text
+5 → 3 → 1 → 5 → 3 → 1 → ...
+```
+
+Wrapping is useful in an interactive editor because the user can repeatedly request the next match without manually returning to the beginning of the Document.
+
+However, the implementation must distinguish between:
+
+```text
+Continue searching
+```
+
+and:
+
+```text
+A complete search cycle has been completed
+```
+
+Otherwise, the search could continue indefinitely while looking for a result that does not exist.
+
+## Empty Queries
+
+An empty query deserves explicit handling.
+
+Consider:
+
+```text
+Search:
+```
+
+There is no meaningful text pattern to locate.
+
+A search implementation should therefore define a clear policy rather than treating an empty query as an ordinary search.
+
+For the baseline editor, the simplest policy is to treat an empty query as **no active search**.
+
+This avoids surprising behavior and keeps the search state well defined.
+
+## Case Sensitivity
+
+Another policy decision is whether:
+
+```text
+Fox
+```
+
+matches:
+
+```text
+fox
+```
+
+A case-sensitive search treats them as different.
+
+A case-insensitive search treats them as equivalent.
+
+These are two different search semantics:
+
+```text
+Case-sensitive
+
+"Fox" ≠ "fox"
+```
+
+```text
+Case-insensitive
+
+"Fox" = "fox"
+```
+
+The search algorithm itself can support either policy, but the editor must decide which behavior it exposes.
+
+The important point is that **matching rules are part of search semantics**. They should not be hidden inside unrelated components.
+
+## Why Linear Search Is a Good Starting Point
+
+A more sophisticated search system could preprocess the Document or maintain additional indexing structures.
+
+That could make repeated searches faster.
+
+But it would also introduce additional state:
+
+```text
+Document
+   │
+   ├── Text
+   │
+   └── Search Index
+```
+
+The index would then have to remain consistent whenever the Document changes.
+
+Our editor already maintains an in-memory Document that changes frequently during editing. Adding another representation purely to accelerate search would increase complexity.
+
+Linear search has an important advantage:
+
+```text
+Document
+   │
+   ▼
+Search directly
+```
+
+There is no index to build.
+
+There is no index to update.
+
+There is no synchronization problem.
+
+This is particularly appropriate for the baseline editor because the project deliberately prioritizes simplicity and educational value over advanced optimization.
+
+## Complexity
+
+Linear search has a cost that grows with the amount of text examined.
+
+If the search must inspect a large portion of the Document, more text means more comparisons.
+
+The exact cost also depends on the length of the query and how frequently potential matches occur.
+
+The important engineering question is not simply:
+
+> "Can we make search theoretically faster?"
+
+It is:
+
+> **"Is linear search fast enough for the workload our editor is designed to handle?"**
+
+For the baseline editor, the answer is generally yes.
+
+The editor does not need a sophisticated search index merely because one could be built.
+
+## The Important Trade-off
+
+Linear search gives us:
+
+**Advantages**
+
+- Simple implementation
+- No preprocessing
+- No additional index
+- No synchronization with the Document
+- Easy to reason about
+- Works naturally with the existing Document
+
+**Limitations**
+
+- Repeated searches may scan the same text repeatedly
+- Large documents can require substantial work
+- Incremental search may perform many searches as the query changes
+- It does not exploit information from previous searches beyond the current position
+
+These limitations become more interesting when search becomes interactive.
+
+A traditional search might run once:
+
+```text
+Enter query
+    ↓
+Search
+    ↓
+Result
+```
+
+Incremental search may run repeatedly:
+
+```text
+f
+ ↓
+search
+
+fo
+ ↓
+search again
+
+fox
+ ↓
+search again
+```
+
+That changes the performance problem.
+
+It also changes the state the editor needs to maintain.
+
+That is where search stops being merely a scanning algorithm and becomes an interactive feature.
+
+## Summary
+
+Linear search is the simplest search strategy: it walks directly through the Document's text, comparing the query at each candidate position until it finds a match or exhausts the relevant text. It supports next-match navigation, forward and backward direction, wrapping, and explicit policies for empty queries and case sensitivity.
+
+Its main advantage is simplicity—no index, no preprocessing, and no synchronization with the Document. Its cost is that repeated or interactive searches may rescan the same text.
+
+Because direction, wrapping, empty-query, and case-sensitivity rules are explicit policies rather than incidental behavior, the same scanning operation can support interactive navigation without becoming a separate search system.
+
+Now that linear search as a scanning strategy is clear, the next section examines how searching works across the Document's logical lines.
+
+Continue to **Section 30.4, Searching Across Lines**.

@@ -1,0 +1,291 @@
+---
+title: "30.11 Design Alternatives and Trade-offs"
+description: "Compares direct search, regex, indexes, cached results, and compiled patterns by their costs, then explains why the simple design fits this editor."
+---
+
+There is no single search design that is best for every editor.
+
+A small terminal editor can search the Document directly every time. A larger editor may use indexes, cached results, or specialized search engines.
+
+The important engineering question is not which design is theoretically superior. It is which design fits the editor's requirements and workload.
+
+For our editor, several approaches are worth comparing.
+
+## Direct Linear Search
+
+The simplest approach is to search the Document directly whenever a search is requested.
+
+```text
+Document
+    |
+    v
+Linear Search
+    |
+    v
+Match
+```
+
+No additional search structure is maintained.
+
+### Advantages
+
+- Simple implementation
+- Low memory overhead
+- No index to maintain
+- No synchronization between the Document and search data
+- Works naturally with the existing Document representation
+
+### Limitations
+
+- Repeated searches repeat work
+- Incremental search can perform many scans
+- Large documents may take longer to search
+
+For our baseline editor, these trade-offs are acceptable.
+
+## Regex-Based Search
+
+Regex search changes the matching mechanism rather than the Document representation.
+
+```text
+Document
+    |
+    v
+Regex Matcher
+    |
+    v
+Match
+```
+
+The main benefit is expressiveness.
+
+A user can search for a pattern rather than one exact sequence of characters.
+
+### Advantages
+
+- More expressive queries
+- Can describe classes and repetitions of text
+- Useful for more advanced search tasks
+
+### Limitations
+
+- More complex matching
+- Pattern interpretation or compilation
+- More opportunities for invalid queries
+- Potentially greater cost during incremental search
+
+Regex is therefore best viewed as an additional matching capability, not as a replacement for simple literal search.
+
+## Search Index
+
+A search index stores additional information about the Document to make future searches faster.
+
+Conceptually:
+
+```text
+Document
+    |
+    v
+Search Index
+    |
+    v
+Search
+    |
+    v
+Match
+```
+
+The exact structure of such an index can vary considerably.
+
+The important trade-off is that the editor maintains additional searchable information.
+
+### Advantages
+
+- Can reduce repeated scanning
+- Can make certain searches faster
+- Potentially useful for very large Documents
+
+### Limitations
+
+- Additional memory usage
+- Index construction cost
+- Index maintenance after edits
+- More complicated implementation
+- Possibility of the index becoming inconsistent with the Document
+
+This is a significant cost for an editor where text can change frequently.
+
+Every modification can potentially invalidate some portion of the search information.
+
+## Cached Search Results
+
+Another approach is to retain results from previous searches.
+
+For example:
+
+```text
+Query
+  |
+  v
+Cached results
+  |
+  v
+next match
+```
+
+This can reduce repeated work when the same query is used repeatedly.
+
+However, cached results become difficult to maintain when the Document changes.
+
+Suppose a match was previously located at:
+
+```text
+row 20, column 8
+```
+
+and the user inserts several lines above it.
+
+The old position may no longer be valid.
+
+The cache must either be updated or discarded.
+
+This illustrates a general trade-off:
+
+> Reusing computed information can improve performance, but the information must remain valid as the underlying state changes.
+
+For an editor, frequent modification makes this particularly important.
+
+## Reusing Compiled Regex Patterns
+
+Regex introduces a more focused optimization.
+
+Instead of interpreting or compiling the same pattern repeatedly, the editor could retain a compiled representation while the query remains unchanged.
+
+Conceptually:
+
+```text
+Query
+  |
+  v
+Compiled Pattern
+  |
+  v
+Repeated searches
+```
+
+This can be useful during next-match navigation because the query does not change between searches.
+
+However, it introduces additional state and resource-management requirements.
+
+When the query changes:
+
+```text
+old query
+    ↓
+discard / replace pattern
+    ↓
+new query
+```
+
+The compiled representation must be updated appropriately.
+
+This is a smaller optimization than maintaining a complete Document-wide search index because it focuses on avoiding repeated pattern preparation.
+
+## Comparing the Alternatives
+
+At a high level:
+
+| Approach              | Search Cost                        |  Extra Memory | Update Complexity | Simplicity |
+| --------------------- | ---------------------------------- | ------------: | ----------------: | ---------: |
+| Direct linear search  | Higher for large/repeated searches |           Low |               Low |       High |
+| Regex search          | Depends on pattern                 |  Low–moderate |      Low–moderate |   Moderate |
+| Search index          | Potentially lower                  |        Higher |            Higher |        Low |
+| Cached results        | Potentially lower                  | Moderate–high |            Higher |        Low |
+| Cached compiled regex | Reduces pattern preparation        |      Moderate |          Moderate |   Moderate |
+
+These are broad engineering characteristics rather than exact performance guarantees.
+
+The actual behavior depends on the Document size, search frequency, query, matcher, and implementation.
+
+## Why the Simple Design Wins Here
+
+Our editor is intentionally designed around simplicity and educational value.
+
+The baseline search requirements do not justify maintaining a second representation of the Document solely for search.
+
+The direct approach therefore has an important property:
+
+```text
+One Document
+      |
+      v
+Search when needed
+```
+
+There is no separate search database that must remain synchronized with every insertion, deletion, line split, or line merge.
+
+This fits particularly well with the Document model chosen earlier in the book.
+
+The editor can remain simple while still providing:
+
+- literal search,
+- incremental search,
+- next and previous navigation,
+- wrapping,
+- and optional regex matching.
+
+## Optimization Can Be Added Later
+
+Choosing linear search now does not prevent a more sophisticated implementation later.
+
+The important requirement is to keep the search interface separate from its internal matching strategy.
+
+Conceptually:
+
+```text
+Search Interface
+      |
+      +── Linear Matcher
+      |
+      +── Regex Matcher
+      |
+      +── Future Optimized Matcher
+```
+
+A future implementation can therefore replace or supplement the matcher without requiring the rest of the editor to understand its internal algorithm.
+
+This is a useful example of designing for change without implementing unnecessary complexity today.
+
+## The Main Trade-off
+
+The alternatives can ultimately be reduced to a familiar engineering choice:
+
+```text
+Less complexity
+      ↕
+Less repeated work
+```
+
+Direct search chooses simplicity and accepts repeated work.
+
+Indexes and caches choose additional complexity and memory in exchange for potentially faster repeated searches.
+
+For a small or moderately sized terminal editor, the simpler option is often the better engineering choice.
+
+The correct design is determined by the requirements and observed workload, not by the sophistication of the underlying technique.
+
+For this project, we therefore retain direct search as the baseline design and treat more advanced search structures as possible future optimizations.
+
+The next section examines the kinds of bugs that can arise when these search rules are implemented incorrectly, especially around boundaries, repeated matches, cursor positions, and changing documents.
+
+## Summary
+
+Search design comes down to a familiar engineering trade-off: less complexity versus less repeated work. Direct search keeps the editor simple and avoids a second representation of the Document, while indexes and caches reduce repeated scanning at the cost of memory, maintenance, and synchronization.
+
+For a small terminal editor, the simpler option is usually the better engineering choice, and better alternatives remain available behind the search interface if workloads change.
+
+Cached results and compiled patterns illustrate why reuse must be weighed against validity: any stored search information can go stale when the Document changes. Keeping the matcher behind a stable interface preserves the option to add such optimizations later without disturbing the rest of the editor.
+
+Now that the alternatives are compared, the next section examines the kinds of bugs that arise when search is implemented incorrectly.
+
+Continue to **Section 30.12, Common Search Bugs**.

@@ -1,0 +1,391 @@
+---
+title: "30.12 Common Search Bugs"
+description: "Surveys common search bugs around repeated matches, off-by-one positions, line boundaries, wrapping, state lifetime, and invalid patterns."
+---
+
+Search is deceptively easy to get almost right.
+
+A basic test may successfully find a word in the middle of a document, while less common cases expose problems in position handling, boundaries, repeated matches, or changing search state.
+
+Understanding these failure modes before implementation makes the eventual design much easier to reason about.
+
+## Finding the Same Match Repeatedly
+
+One of the most common navigation bugs is returning the current match again when the user asks for the next match.
+
+Suppose:
+
+```text
+one [error] two error three
+```
+
+If the next search starts at the beginning of the current match, it may find the same occurrence:
+
+```text
+one [error] two error three
+     ^
+     found again
+```
+
+Instead, next-match navigation must advance beyond the current match before searching again.
+
+The corresponding rule applies to backward navigation.
+
+This is why the relationship between **current match** and **next search position** must be explicitly defined.
+
+## Off-by-One Errors
+
+Search positions are especially vulnerable to off-by-one errors.
+
+For example, a query may begin:
+
+```text
+0123456789
+   ^
+
+position = 3
+```
+
+If the implementation incorrectly advances by one position too many, it can skip a valid match.
+
+Similar errors can occur when:
+
+- starting a search,
+- continuing after a match,
+- searching backward,
+- checking the final candidate position,
+- or wrapping around the Document.
+
+Boundary conditions should therefore be treated as part of the search design rather than left to implementation intuition.
+
+## Missing Matches at the End of a Line
+
+Suppose a line contains:
+
+```text
+hello
+```
+
+and the query is:
+
+```text
+lo
+```
+
+The match begins near the end of the line.
+
+A search implementation that incorrectly limits candidate positions may fail to check the final valid starting position.
+
+The general rule is simple:
+
+> Every position at which the complete query can fit must be considered a possible match.
+
+This sounds obvious, but boundary calculations are a common source of bugs.
+
+## Empty Queries
+
+An empty search query creates another boundary case.
+
+Conceptually:
+
+```text
+query = ""
+```
+
+does not provide meaningful search information for our baseline editor.
+
+The search should therefore treat an empty query as no active search rather than attempting to report a match at every position.
+
+This also simplifies incremental search when the user deletes the entire query.
+
+## Searching an Empty Line
+
+The Document may contain empty logical lines:
+
+```text
+line 1: hello
+line 2:
+line 3: world
+```
+
+Search must handle these lines without assuming that every line contains at least one character.
+
+An empty line is still a valid part of the Document.
+
+The search should simply determine that a non-empty literal query cannot match inside it.
+
+## Searching an Empty Document
+
+The same principle applies when the entire Document contains no text.
+
+A search should produce a normal "no match" result rather than attempting to access nonexistent text.
+
+This is a useful reminder that search operates on the Document abstraction, not on assumptions about a minimum document size.
+
+## Crossing Line Boundaries
+
+Our Document is organized into logical lines.
+
+A search implementation must therefore be careful when moving from the end of one line to the beginning of the next.
+
+Conceptually:
+
+```text
+line 1: abc
+line 2: def
+          ^
+```
+
+After reaching the final candidate position on line 1, the search must continue correctly at line 2.
+
+Incorrect line-transition logic can cause:
+
+- skipped matches,
+- repeated matches,
+- invalid positions,
+- or searches that stop too early.
+
+The logical line structure should therefore be treated as part of the traversal rules.
+
+## Incorrect Wrapping
+
+Wrapping introduces another common failure.
+
+Suppose the search reaches the end of the Document:
+
+```text
+start ────────────────> end
+                         |
+                         v
+                       wrap
+```
+
+If wrapping is enabled, the search continues from the beginning.
+
+But it must eventually stop when it reaches the original search boundary again.
+
+Otherwise:
+
+```text
+search → end → start → end → start → ...
+```
+
+can continue indefinitely.
+
+The implementation must therefore distinguish between:
+
+- finding another match,
+- and completing a full search cycle without finding a new match.
+
+## Backward Search Bugs
+
+Backward search introduces its own boundary problems.
+
+At the beginning of the Document:
+
+```text
+start <---------------- search
+```
+
+there may be no earlier match.
+
+If wrapping is enabled, the search can continue from the end.
+
+The transition between:
+
+```text
+beginning → end
+```
+
+must be handled without producing an invalid row or column.
+
+Backward traversal is therefore not simply forward traversal with a negative increment. The boundaries and starting positions must be defined carefully.
+
+## Cursor and Search Coordinates Getting Mixed
+
+Another class of bugs occurs when search coordinates are confused with screen coordinates.
+
+The search result should use logical Document coordinates:
+
+```text
+row
+column
+```
+
+The Renderer, through the existing Cursor and Viewport mechanisms, handles visual positioning.
+
+A search implementation should not assume that:
+
+```text
+document column == terminal column
+```
+
+because visual representation can differ from logical text position.
+
+Keeping these coordinate systems separate prevents search from becoming coupled to rendering details.
+
+## Losing Search State
+
+Interactive search can fail if important state is accidentally reset between operations.
+
+For example:
+
+```text
+query
+direction
+current match
+original position
+```
+
+may be established when search begins.
+
+If a next-match command accidentally creates a fresh search state, the editor may lose the current match and restart from the wrong location.
+
+This can produce behavior such as:
+
+```text
+next → first match
+next → first match
+next → first match
+```
+
+instead of progressing through the Document.
+
+Search state must therefore have a clearly defined lifetime.
+
+## Editing While Search Is Active
+
+The Document can change while search-related state exists.
+
+Suppose a match was found at:
+
+```text
+row 20, column 5
+```
+
+and text is inserted earlier in the Document.
+
+That old position may no longer refer to the same text.
+
+This does not mean search needs a sophisticated index.
+
+It means the implementation must avoid assuming that a previously stored position remains valid after arbitrary Document modifications.
+
+For the baseline design, search behavior during editing can be deliberately constrained rather than attempting to maintain complicated persistent match information.
+
+The important thing is to define the behavior rather than accidentally inherit it.
+
+## Invalid Regex Patterns
+
+Regex adds another obvious failure case.
+
+The user can provide a syntactically invalid pattern.
+
+The editor must not treat this as an ordinary "no match" result.
+
+The distinction should remain:
+
+```text
+invalid pattern
+      ≠
+valid pattern with no match
+```
+
+The first is a search error.
+
+The second is a successful search operation whose result is empty.
+
+Keeping these states separate makes user feedback clearer and simplifies error handling.
+
+## Forgetting Match Length
+
+A match is not just a position.
+
+Consider:
+
+```text
+abcdef
+  ^^^
+```
+
+Knowing that the match begins at column 2 is not sufficient to describe the complete result.
+
+The search system also needs to know how much text matched.
+
+Conceptually:
+
+```text
+Match
+├── start position
+└── length
+```
+
+This becomes especially important for regex because different matches may have different lengths.
+
+It also provides a clear boundary for deciding where subsequent forward searches should begin.
+
+## Changing the Document Without Considering Search State
+
+A related bug occurs when search state and Document state are treated as completely independent even though the Document can change.
+
+For example:
+
+```text
+Search result
+     ↓
+Document modified
+     ↓
+old result reused
+```
+
+The old result may no longer describe the current Document.
+
+This is one reason cached search results introduce additional complexity, as discussed earlier.
+
+The simpler design is to avoid maintaining unnecessary persistent results and recompute search results when needed.
+
+## The General Lesson
+
+Most search bugs are not caused by the basic act of comparing characters.
+
+They occur at the boundaries between concepts:
+
+```text
+Search position
+      ↕
+Match position
+
+Match
+      ↕
+Cursor
+
+Logical position
+      ↕
+Viewport position
+
+Search state
+      ↕
+Document state
+
+End of Document
+      ↕
+Wrapping
+```
+
+Making these boundaries explicit is therefore more valuable than trying to make the search function clever.
+
+A robust search design is one where starting positions, match boundaries, direction, wrapping, empty queries, errors, and state lifetime are all defined before implementation begins.
+
+The next section defines the deliberate scope of our implementation—what this chapter establishes and what more advanced search features we intentionally leave for later.
+
+## Summary
+
+Most search bugs occur not in character comparison but at the boundaries between concepts: search position and match position, match and Cursor, logical and viewport coordinates, search state and Document state, and the end of the Document with wrapping. Making these boundaries explicit is more valuable than making the search function clever.
+
+A robust search design defines starting positions, match boundaries, direction, wrapping, empty queries, errors, and state lifetime before implementation begins.
+
+Each failure mode corresponds to an underspecified rule—advancing past a match, fitting a query at the end of a line, completing a wrap cycle, or preserving state between commands. Treating those rules as explicit design decisions makes the implementation easier to test and reason about.
+
+Now that the common failure modes are understood, the next section defines the deliberate scope of the search feature.
+
+Continue to **Section 30.13, What We Are Not Building**.

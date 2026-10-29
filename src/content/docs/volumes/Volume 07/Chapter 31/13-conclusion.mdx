@@ -1,0 +1,62 @@
+---
+title: "31.13 Conclusion"
+description: "Consolidates the chapter's undo/redo model, then lists review questions, thought experiments, a design exercise, and a preview of syntax highlighting."
+---
+
+Undo and redo turn the editor into a system that can safely reverse its own changes. The mental model unifies the entire chapter:
+
+```text
+User Action
+     │
+     ▼
+Command
+     │
+     ▼
+Document Change
+     │
+     ▼
+History Record
+     │
+ ┌───┴────┐
+ ▼        ▼
+Undo     Redo
+Stack    Stack
+```
+
+The chapter leaves the reader with a clear mental model: an undoable user action becomes a command, the command changes the Document, and a history record captures what changed and how to reverse it. The undo stack holds operations that can be reversed, the redo stack holds operations that were undone and can be reapplied, and a new edit after an undo discards the redo path so history stays linear.
+
+The important lessons are:
+
+- Undo requires history; the editor can only reverse a change it retained enough information to reconstruct.
+- Redo requires a second history path, and stacks naturally model the linear order of editing.
+- New edits invalidate redo history, and not every command belongs in history at all.
+- Undo may need to restore cursor state, and the Dirty Flag is related to history but describes a different question.
+- Snapshots trade simplicity for memory; operation-based history trades simplicity for efficiency.
+
+The baseline history model — operation-based records in a two-stack state machine, with grouped history entries, cursor restoration, and the Dirty Flag kept independent of history — is recorded as **ADR-024: Undo / Redo History Model**.
+
+## Exercises
+
+### Review Questions
+
+1. Why does undo require historical information?
+2. Why are stacks a natural structure for undo?
+3. Why must the redo stack be cleared after a new edit?
+4. Why shouldn't cursor movement normally enter document history?
+5. What information is required to undo a deletion?
+
+### Thought Experiments
+
+1. Start with a document that reaches the states `A`, `AB`, `ABC`, `ABCD` through four operations. Perform `Undo`, `Undo`, `Redo`, then create a new edit, then press `Redo` again. Draw both stacks after each step and explain the final Document state and why the last redo has no effect.
+2. A user types a word, moves the cursor away, crosses back, and deletes a character in the middle of that word. Which of these actions become history entries, and how does grouping shape what a single undo reverses?
+3. An operation-based history entry for a paste stores the inserted text. Suppose the user later performs a new edit after an undo. What happens to that stored text, and why is discarding it the correct behavior?
+
+### Design Exercise
+
+1. Compare a snapshot-based system with an operation-based system for a 10 MB document and 10,000 small edits. Estimate the memory each approach requires, the cost of creating a history entry, and how the two systems behave when the user undoes back to the beginning of the session.
+
+## Preview of the Next Chapter
+
+An editor that can remember how its document changed is ready to understand how other systems can interpret those changes. Once the editor records text and its structure, it can analyze that content rather than only modifying it.
+
+The next chapter turns to **Chapter 32 — Syntax Highlighting**, where the focus moves from **changing the document** to **understanding and presenting its contents**. The editor will examine the text it holds, recognize its structure, and use that understanding to shape how the Renderer presents each frame.

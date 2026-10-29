@@ -1,0 +1,319 @@
+---
+title: "31.10 Grouping and Coalescing Operations"
+description: "Explains grouping and coalescing, showing how low-level insertions and deletions become user-meaningful undo entries with cursor positions."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+An undo system must decide not only **what** to record, but also **where one user action ends and another begins**.
+
+The Command Engine may execute relatively small operations, while the user may perceive several of those operations as one action.
+
+Consider typing a word:
+
+```text
+Low-level operations:
+
+INSERT h
+INSERT e
+INSERT l
+INSERT l
+INSERT o
+```
+
+From the editor's internal perspective, these are five insertion operations. From the user's perspective, however, the action was:
+
+```text
+Type "hello"
+```
+
+A useful undo system should generally make the history match the user's perception of the action:
+
+```text
+UNDO → removes "hello"
+```
+
+This is the purpose of **grouping** and **coalescing**.
+
+## Grouping Operations
+
+Grouping combines several operations into one logical history entry.
+
+Conceptually:
+
+```text
+INSERT h
+INSERT e
+INSERT l
+INSERT l
+INSERT o
+      │
+      ▼
++------------------+
+| INSERT "hello"   |
++------------------+
+```
+
+The individual operations may still occur independently inside the Command Engine. The history system simply treats them as one undoable unit.
+
+This distinction is important:
+
+> Grouping changes the granularity of history without requiring the underlying editing operations to become one operation.
+
+The same principle applies to a paste operation. A paste may internally require several document modifications, but the user normally expects:
+
+```text
+Paste
+  ↓
+UNDO
+  ↓
+Entire pasted text removed
+```
+
+rather than having to undo each internal modification separately.
+
+## Coalescing Adjacent Operations
+
+**Coalescing** is a more specific form of grouping in which compatible adjacent operations are merged automatically.
+
+For example:
+
+```text
+INSERT h
+INSERT e
+INSERT l
+INSERT l
+INSERT o
+```
+
+can be coalesced into:
+
+```text
+INSERT "hello"
+```
+
+The history therefore stores fewer entries while preserving the user's expected undo behavior.
+
+Coalescing is particularly useful for repeated character insertion and deletion. Typing `the` can be stored as one history entry—`INSERT "the"`—so that Undo removes the entire word in one operation.
+
+## Repeated Backspaces
+
+Deletion presents a similar opportunity.
+
+Suppose the document contains:
+
+```text
+hello world|
+```
+
+and the user presses Backspace repeatedly:
+
+```text
+hello worl|
+hello wor|
+hello wo|
+hello w|
+hello |
+```
+
+At the low level, these are separate deletion operations. A user may nevertheless perceive them as one continuous deletion, so a history system can coalesce them:
+
+```text
+DELETE d
+DELETE l
+DELETE r
+DELETE o
+DELETE w
+      │
+      ▼
+DELETE "world"
+```
+
+The direction of deletion matters because the deleted characters must retain their correct order. Undo must restore:
+
+```text
+hello world|
+```
+
+not:
+
+```text
+hello dlrow|
+```
+
+Coalescing therefore affects not only history size, but also the information required for correct reversal.
+
+## When Operations Should Not Be Coalesced
+
+Not every adjacent operation belongs to the same user action.
+
+Consider:
+
+```text
+INSERT h
+INSERT i
+MOVE_LEFT
+INSERT !
+```
+
+The cursor movement separates the editing context. Automatically merging all three insertions would produce a history entry whose meaning no longer matches the user's actions.
+
+Likewise:
+
+```text
+INSERT "hello"
+PASTE "world"
+```
+
+should generally remain two distinct actions:
+
+```text
+UNDO → removes "world"
+
+UNDO → removes "hello"
+```
+
+The important question is not simply:
+
+> Are these operations adjacent?
+
+Instead:
+
+> Are these operations part of the same meaningful user action?
+
+This requires the history system to understand certain boundaries between operations.
+
+## Explicit Group Boundaries
+
+Some operations naturally define their own history boundaries.
+
+For example:
+
+```text
+Begin Group
+    INSERT h
+    INSERT e
+    INSERT l
+    INSERT l
+    INSERT o
+End Group
+```
+
+The result is one logical action:
+
+```text
+INSERT "hello"
+```
+
+A paste operation can similarly establish an explicit boundary. This is useful when a high-level command produces several lower-level Document changes:
+
+```text
+User Action
+     │
+     ▼
++-----------------------+
+| Operation Group       |
+|                       |
+|  Operation            |
+|  Operation            |
+|  Operation            |
++-----------------------+
+     │
+     ▼
+One History Entry
+```
+
+The history system therefore records **user-visible actions**, while the Command Engine remains responsible for executing the underlying state changes.
+
+## Grouping and Cursor State
+
+Grouping also affects cursor restoration.
+
+Suppose typing produces:
+
+```text
+INSERT h
+INSERT e
+INSERT l
+INSERT l
+INSERT o
+```
+
+The first operation begins at column 5 and the final operation ends at column 10. If these operations form one group, undo should restore the cursor to the beginning of the group:
+
+```text
+Before group:
+hello|
+
+After group:
+hellohello|
+
+Undo:
+hello|
+```
+
+Similarly, redo should restore the cursor to the position at the end of the grouped action. A grouped history entry can therefore conceptually contain:
+
+```text
++--------------------------+
+| Group of operations      |
+| Cursor before            |
+| Cursor after             |
++--------------------------+
+```
+
+This connects grouping directly with the cursor-history rules discussed in Section 31.8.
+
+## The Design Trade-off
+
+Without grouping or coalescing, history is simple:
+
+```text
+One command
+    ↓
+One history entry
+```
+
+But the user's experience can become unnecessarily granular.
+
+With grouping:
+
+```text
+Several commands
+       ↓
+One logical action
+       ↓
+One history entry
+```
+
+The history becomes more useful, but the editor must define rules for determining which operations are compatible, when coalescing starts and stops, which operations establish boundaries, how cursor positions are preserved, and how grouped operations are reversed and reapplied.
+
+This is therefore a **history-granularity problem**, not merely a storage optimization.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A good undo system should reflect the user's mental model of editing. The lowest-level operation performed by the editor is not necessarily the right unit of undo:
+
+```text
+Internal representation       User-visible history
+
+INSERT h ─┐
+INSERT e  │
+INSERT l  ├──► Type "hello"
+INSERT l  │
+INSERT o ─┘
+```
+
+Grouping and coalescing provide the boundary between those two levels. They allow the Command Engine to remain precise about individual Document changes while allowing undo and redo to operate at a meaningful user-action granularity.
+
+</Aside>
+
+## Summary
+
+Grouping combines several low-level operations into one logical history entry, and coalescing automatically merges compatible adjacent operations such as repeated insertions or deletions. The undo system must choose boundaries based on the user's mental model of a single action, while grouping also determines how cursor position is restored.
+
+Now that history granularity is defined, the next section examines the costs of undo history, how to limit it, and the overall trade-offs between strategies.
+
+The rules that start, extend, and stop a group are therefore part of the undo design, because they decide where one user action ends and the next begins. Preserving cursor before- and after-positions per group keeps the restored editing context consistent with the action the user actually performed.
+
+Continue to **Section 31.11, Memory, Limits, and Trade-offs**.

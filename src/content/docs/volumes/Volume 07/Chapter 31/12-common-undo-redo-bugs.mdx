@@ -1,0 +1,118 @@
+---
+title: "31.12 Common Undo / Redo Bugs"
+description: "Surveys consistency bugs in undo and redo implementations, covering redo clearing, lost text, ordering, cursor restoration, and memory ownership."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Undo and redo are deceptively easy to describe and surprisingly easy to implement incorrectly. The basic model may be simple, but small inconsistencies between the Document, history, Cursor, and Dirty Flag can produce difficult-to-diagnose failures.
+
+Most of these bugs are not failures of the two-stack idea itself. They are failures of **consistency between history and the rest of the editor**. This section collects the common ones as a checklist, each with the invariant it violates and a pointer to the section that established the correct rule.
+
+## Forgetting to Clear Redo After a New Edit
+
+After an undo, the redo stack holds the discarded future path. A new edit must clear it, or the editor will be able to reapply an operation that belongs to a branch the user abandoned.
+
+> Invariant: a new edit pushes onto Undo and clears Redo.
+
+See Section 31.6.
+
+## Recording Undo as a New Edit
+
+Undo changes the Document, so a naive implementation may record it as an ordinary history entry. That makes history grow while undoing—each undo creates another operation that itself must be undone.
+
+> Invariant: undo and redo move existing records; they never create new user-edit entries.
+
+See Section 31.6.
+
+## Losing Deleted Text
+
+Deletion is especially vulnerable to incomplete records. If the editor records only the position and length of a deletion, the original content is lost and undo cannot reconstruct the previous Document.
+
+> Invariant: a record preserves every piece of information that cannot be reconstructed from the current state.
+
+See Section 31.4.
+
+## Incorrect Operation Ordering
+
+Operations must be reversed in the opposite order from execution. Reversing them out of order—including inside a grouped action—can produce an invalid Document.
+
+> Invariant: history is ordered, and undo reverses it last-in-first-out.
+
+See Section 31.5.
+
+## Incorrect Cursor Restoration
+
+An operation can restore the Document correctly while leaving the Cursor in the wrong position. The record must retain enough cursor information to restore the meaningful editing position.
+
+> Invariant: a record preserves the cursor positions associated with the edit.
+
+See Section 31.8.
+
+## Incorrect Grouping or Coalescing
+
+If character insertions intended as one typing action are split into two groups, or unrelated operations are merged, undo will not match the user's intent.
+
+> Invariant: group boundaries correspond to the intended user-visible action.
+
+See Section 31.10.
+
+## Dirty Flag Inconsistencies
+
+The Dirty Flag can drift from the Document. Leaving it set after undoing back to the saved state reports phantom unsaved changes; clearing it after undoing to a different state wrongly claims the document is saved.
+
+> Invariant: the Dirty Flag reflects the current Document's relationship to the saved version, not the direction of history movement.
+
+See Section 31.9.
+
+## History Entry Does Not Match the Actual Change
+
+A subtle failure occurs when the recorded operation differs from what actually happened. Undo will then reverse the wrong content. History is reliable only when the recorded transition and the actual transition agree.
+
+> Invariant: a record is created from the actual information associated with the successful operation, not from assumptions about what it was supposed to do.
+
+See Section 31.4.
+
+## Undo After a Failed Operation
+
+A failed editing operation should not create a history entry. If one is recorded anyway, the history no longer represents actual Document changes, and Undo will attempt to reverse a transition that never occurred.
+
+> Invariant: only successful document-changing operations enter history.
+
+See Section 31.4.
+
+## C Memory Ownership Errors
+
+In C, history introduces additional ownership responsibilities. Operation records may contain dynamically allocated data such as deleted text, and the implementation must define who owns it, when ownership is transferred, when it is freed, and what happens when a record is discarded.
+
+A failure to define ownership can cause memory leaks, double frees, dangling pointers, use-after-free, or corrupted history—often surfacing long after the original edit.
+
+> Invariant: every history record has clearly defined, consistent memory ownership for the duration of its lifetime.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A useful summary invariant ties these together:
+
+```text
+History record
+      │
+      ▼
+must accurately describe
+the corresponding Document change
+      │
+      ├── Cursor state must remain consistent
+      ├── Dirty Flag must remain consistent
+      └── Memory ownership must remain valid
+```
+
+The history system is not an isolated feature. It participates in the Command Engine's state transitions and must preserve the same architectural boundaries and ownership rules as the rest of the editor.
+
+</Aside>
+
+## Summary
+
+Most undo/redo bugs are failures of consistency between history and the rest of the editor. A history record must accurately describe the corresponding Document change, and the Cursor, Dirty Flag, and memory ownership must all remain consistent with the actual editing state.
+
+Treating these invariants as explicit checks—rather than hoping the implementation happens to respect them—turns many subtle, delayed failures into problems that can be caught at the point where a record is created. Clear ownership rules for stored data matter especially in C, where leaks and use-after-free often appear long after the edit that caused them.
+
+Continue to the **Chapter Summary**, which consolidates the undo/redo design, followed by exercises and a preview of the next chapter.

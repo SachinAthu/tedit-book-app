@@ -1,0 +1,394 @@
+---
+title: "30.10 Search Performance"
+description: "Analyzes the cost of repeated linear and regex searches, argues against an index for the baseline editor, and sets a measure-before-optimizing rule."
+---
+
+Search is one of the features where a simple implementation can remain useful for a long time.
+
+Our editor uses a linear search over the Document. That means the amount of work can grow with the amount of text that must be examined. For a small document, this is usually not noticeable. As documents become larger, or as searches are performed repeatedly, the cost becomes more relevant.
+
+The important question is therefore not:
+
+> What is the fastest possible search algorithm?
+
+It is:
+
+> When does the simple search design become expensive enough that optimization is justified?
+
+## The Cost of Linear Search
+
+A linear search examines candidate text until it finds a match or determines that no match exists.
+
+The amount of work therefore depends on how much of the Document must be examined.
+
+A match near the beginning may require little work:
+
+```text
+[match]
+   |
+   v
+stop
+```
+
+A match near the end requires more:
+
+```text
+text → text → text → text → ... → [match]
+```
+
+A search with no match may need to examine the entire relevant Document.
+
+This means search performance is naturally affected by:
+
+- Document size,
+- query length,
+- match position,
+- and whether a match exists at all.
+
+For the baseline editor, this behavior is acceptable because it keeps the implementation simple and predictable.
+
+## Repeated Searches
+
+The cost becomes more interesting during interactive use.
+
+With ordinary search, the user might perform one search:
+
+```text
+query
+  ↓
+search Document
+  ↓
+match
+```
+
+With incremental search, the editor may perform several searches as the query changes:
+
+```text
+e
+↓
+search
+
+ed
+↓
+search
+
+edi
+↓
+search
+
+edit
+↓
+search
+
+editor
+↓
+search
+```
+
+Each search can examine part of the Document again.
+
+The same text may therefore be inspected multiple times.
+
+This is a natural consequence of the simple design. Incremental search provides a responsive interaction model, but it can increase the amount of work performed.
+
+## Match Navigation Also Repeats Work
+
+Next-match navigation can introduce additional searches.
+
+Consider a document containing many occurrences of the same query:
+
+```text
+match 1
+   ↓
+match 2
+   ↓
+match 3
+   ↓
+match 4
+```
+
+Each next operation must search from the current position toward the next possible match.
+
+A simple implementation performs another traversal rather than maintaining a complete list of every match.
+
+This has an important advantage: the editor does not need to maintain a potentially large collection of search results.
+
+Instead, it computes the next result when the user asks for it.
+
+The trade-off is additional search work.
+
+## Large Documents
+
+For small source files, repeated linear scans are generally straightforward.
+
+For very large documents, the amount of text examined can become significant.
+
+The effect depends not only on file size but also on how often search is performed.
+
+A single search through a large document may be acceptable.
+
+Thousands of searches through the same document may not be.
+
+This distinction is important when evaluating performance:
+
+```text
+Document size
+      ×
+Search frequency
+      ↓
+Total search work
+```
+
+An interactive editor must consider both.
+
+## Incremental Search and Responsiveness
+
+Performance in an interactive editor is not only about total computation.
+
+It is also about **when the computation happens**.
+
+With incremental search, the user expects the result to update while typing:
+
+```text
+user types
+    ↓
+search
+    ↓
+display result
+```
+
+If each search becomes expensive enough to introduce a noticeable delay, the editor can feel unresponsive even if the final result is correct.
+
+This makes responsiveness an important practical performance requirement.
+
+The search operation should therefore remain simple enough that ordinary documents can be searched without disrupting normal interaction.
+
+For the baseline editor, this is another reason to avoid premature optimization.
+
+## Regex Adds More Work
+
+Regular expressions can make search more expensive than literal matching.
+
+Literal search has a relatively direct comparison process.
+
+Regex search may require:
+
+```text
+pattern
+   ↓
+interpret / compile
+   ↓
+match against Document
+```
+
+The complexity depends on the pattern and the regex engine.
+
+Incremental regex search can amplify this cost because the pattern may change repeatedly:
+
+```text
+e
+↓
+compile / search
+
+er
+↓
+compile / search
+
+err
+↓
+compile / search
+
+erro
+↓
+compile / search
+
+error
+↓
+compile / search
+```
+
+A more sophisticated implementation could reuse compiled information where appropriate.
+
+However, that optimization should be introduced only when there is a demonstrated need.
+
+## Why We Do Not Build a Search Index
+
+One obvious way to reduce repeated search work is to maintain an index of searchable text.
+
+Conceptually:
+
+```text
+Document
+   |
+   v
+Search Index
+   |
+   v
+fast lookup
+```
+
+An index can make some searches faster because the editor does not need to scan the entire Document each time.
+
+But an index introduces another responsibility.
+
+Whenever the Document changes:
+
+```text
+insert
+delete
+split
+merge
+```
+
+the index may also need to change.
+
+The editor would then have to keep two representations synchronized:
+
+```text
+Document
+   ↕
+Search Index
+```
+
+That creates additional memory usage, update costs, implementation complexity, and opportunities for inconsistency.
+
+For the baseline editor, the trade-off does not justify this additional machinery.
+
+The simple design is:
+
+```text
+Document
+   |
+   v
+Search directly
+```
+
+This also follows the architectural principle of avoiding duplicated representations of state unless they provide a clear benefit.
+
+## Cache Locality
+
+The Document representation can also affect practical search performance.
+
+The Document is stored as a contiguous vector of lines, and each line holds its characters in a contiguous dynamic array. Searching within a line therefore walks contiguous memory, and the line vector gives direct indexed access to whichever line is next. The practical locality benefit is strongest inside a line: its character array is traversed sequentially and fits comfortably in the processor's cache for typical line lengths. Moving from one line to the next does require following a separate allocation, so the Document is not one fully contiguous text region; each line is nevertheless contiguous and array-indexed, giving better cache behavior than representations that scatter characters across many small allocations or require pointer traversal for every step.
+
+This does not change the fundamental complexity of linear search.
+
+It is simply an example of why two algorithms with similar theoretical complexity can behave differently in practice.
+
+For this editor, the important point is that the chosen Document representation provides a straightforward traversal path without requiring a separate search index.
+
+## When Should Search Be Optimized?
+
+Optimization becomes worthwhile when the existing design no longer provides acceptable behavior.
+
+Possible warning signs include:
+
+- searches becoming noticeably slow on large Documents,
+- incremental search causing visible delays,
+- regex searches becoming expensive,
+- repeated navigation becoming costly,
+- or profiling showing search as a significant part of execution time.
+
+At that point, several strategies could be considered:
+
+```text
+Simple linear search
+        ↓
+measure
+        ↓
+identify bottleneck
+        ↓
+optimize the actual problem
+```
+
+Possible improvements include reusing search information, improving the matching implementation, caching compiled regex patterns, or introducing an index.
+
+The important step is measurement.
+
+An optimization should solve an observed problem rather than being added simply because a more sophisticated algorithm exists.
+
+## Simplicity Versus Performance
+
+The baseline search design deliberately favors simplicity.
+
+```text
+Simple design
+├── no search index
+├── no duplicated Document representation
+├── straightforward traversal
+├── predictable memory usage
+└── easy to reason about
+```
+
+The cost is that some searches may examine the same text repeatedly.
+
+This is an acceptable trade-off for the scope of our editor.
+
+The goal is not to build the most sophisticated search engine possible. The goal is to build an editor whose design is understandable, maintainable, and capable of handling its baseline workload.
+
+## Performance Should Not Leak Across the Architecture
+
+Search optimization should also respect the existing architecture.
+
+If search becomes slow, the solution should primarily remain within the search subsystem.
+
+We should not make the Renderer responsible for accelerating searches, or make the Document maintain search-specific UI state simply because search needs better performance.
+
+The architectural boundary remains:
+
+```text
+Search
+   |
+   v
+Document
+   |
+   v
+Match
+   |
+   v
+Editor State
+```
+
+Optimization can change what happens inside Search without changing the responsibilities of unrelated components.
+
+This gives the editor room to evolve.
+
+A future implementation could replace the simple matcher with a faster strategy without requiring the Renderer or Viewport to understand how that strategy works.
+
+## The Right Performance Goal
+
+For this project, the appropriate performance goal is not maximum theoretical speed.
+
+It is **sufficient responsiveness with a simple design**.
+
+We begin with:
+
+```text
+direct search
++
+incremental interaction
++
+predictable state
+```
+
+Then we measure actual behavior.
+
+If the editor eventually needs more sophisticated search techniques, they can be introduced behind the same conceptual interface.
+
+That gives us a useful engineering rule:
+
+> **Start with the simplest search implementation that provides acceptable interactive performance, and optimize only when real workloads justify the added complexity.**
+
+The next section compares the major search design alternatives and makes the trade-offs explicit.
+
+## Summary
+
+Linear search keeps the baseline implementation simple, but its cost grows with the amount of text examined, and incremental search plus next-match navigation can inspect the same text repeatedly. Regex adds pattern interpretation to that cost. The editor deliberately avoids a search index to prevent a second representation that must stay synchronized with the Document.
+
+Search should therefore be optimized only when a measured workload justifies it.
+
+Cache locality helps because each line is a contiguous character array, even though the line vector is not one fully contiguous region. The architectural boundary matters as much as the algorithm: any optimization should stay inside search rather than shifting work into the Document or Renderer.
+
+Now that the performance picture is clear, the next section compares the major search design alternatives and their trade-offs.
+
+Continue to **Section 30.11, Design Alternatives and Trade-offs**.

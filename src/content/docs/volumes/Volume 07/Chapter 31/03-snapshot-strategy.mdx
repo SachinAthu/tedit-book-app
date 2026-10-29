@@ -1,0 +1,270 @@
+---
+title: "31.3 The Snapshot Strategy"
+description: "Describes snapshot-based undo, covering owned copies, LIFO stacks, redo support, granularity, and the memory cost of preserving whole states."
+---
+
+The simplest way to implement undo is to save a copy of the document before each change.
+
+Instead of recording how to reverse an operation, we record the **state of the document itself**.
+
+Consider:
+
+```text
+Initial document
+
+Hello
+```
+
+Before an edit, the editor creates a snapshot:
+
+```text
+Snapshot
+─────────────
+Hello
+```
+
+The user then inserts ` world`:
+
+```text
+Current document
+
+Hello world
+```
+
+If the user presses Undo, the editor simply restores the snapshot:
+
+```text
+Snapshot
+─────────────
+Hello
+
+        ↓ restore
+
+Current document
+─────────────
+Hello
+```
+
+This makes snapshots an attractive first approach because the undo operation is conceptually straightforward.
+
+## The Basic Idea
+
+A snapshot is a saved representation of the document at a particular point in time.
+
+Conceptually:
+
+```text
+Document State
+      │
+      │ copy
+      ▼
++-------------+
+|  Snapshot   |
++-------------+
+```
+
+The snapshot is not the active Document. It is a historical copy that can be restored later.
+
+## A Snapshot Must Own Its Copy
+
+The snapshot needs to be independent from the active Document.
+
+Suppose the active Document and the snapshot both referenced the same line storage:
+
+```text
+Document ─────┐
+              ├──► "Hello"
+Snapshot ─────┘
+```
+
+If the Document modifies that memory, the supposed historical snapshot would change as well. The result would no longer be a snapshot.
+
+Therefore:
+
+> **A snapshot must preserve its own copy of the state it represents.**
+
+Conceptually:
+
+```text
+Document
+   │
+   │ deep copy
+   ▼
+Snapshot
+
+Document ───► its own data
+Snapshot ───► its own data
+```
+
+The two representations can then evolve independently.
+
+## A Sequence of Snapshots
+
+Suppose the user performs several edits:
+
+```text
+Initial:
+Hello
+
+Edit 1:
+Hello!
+
+Edit 2:
+Hello! World
+
+Edit 3:
+Hello! World.
+```
+
+A snapshot-based history could contain:
+
+```text
+Snapshot 0
+─────────────
+Hello
+
+Snapshot 1
+─────────────
+Hello!
+
+Snapshot 2
+─────────────
+Hello! World
+```
+
+The current document is `Hello! World.`. If the user presses Undo, the editor restores Snapshot 2; another Undo restores Snapshot 1; another restores Snapshot 0. The editor is effectively moving backward through previously recorded states.
+
+This follows the **Last In, First Out (LIFO)** behavior of a stack: the most recent snapshot is the first one needed by Undo.
+
+```text
+          Top
+           │
+           ▼
+     +-----------+
+     | Snapshot 2|
+     +-----------+
+     | Snapshot 1|
+     +-----------+
+     | Snapshot 0|
+     +-----------+
+```
+
+## Snapshot-Based Redo
+
+Snapshots can also support Redo.
+
+Continuing the example above, the undo stack holds Snapshot 0, Snapshot 1, and Snapshot 2, while the current document is `Hello! World.`—the live state after Edit 3.
+
+If the user presses Undo, the editor restores Snapshot 2. It must preserve the state it just left so that it can move forward again:
+
+```text
+Before Undo:
+
+Undo Stack (top first)   Redo Stack
+
+Snapshot 2               (empty)
+Snapshot 1
+Snapshot 0
+
+After Undo:
+
+Undo Stack (top first)   Redo Stack
+
+Snapshot 1               Hello! World.
+Snapshot 0
+```
+
+A Redo operation reverses that movement, restoring the most recent state from the redo history. The exact mechanics of maintaining the two histories are developed in Section 31.6; the important idea here is that **snapshots can provide the historical states required in both directions**.
+
+The user experiences undo and redo as movement through editing history, while the implementation achieves that behavior by restoring saved states.
+
+## Snapshot Granularity
+
+Once we decide to use snapshots, a design question appears:
+
+> **How much state should each snapshot preserve, and how often should one be taken?**
+
+This decision is called **snapshot granularity**.
+
+The simplest approach is to snapshot the entire Document before every editing operation. Typing:
+
+```text
+Hello
+```
+
+could produce one snapshot per character:
+
+```text
+Snapshot 0 → ""
+Snapshot 1 → "H"
+Snapshot 2 → "He"
+Snapshot 3 → "Hel"
+Snapshot 4 → "Hell"
+Snapshot 5 → "Hello"
+```
+
+This provides extremely fine-grained undo—the user can undo one character at a time—but it also demonstrates the memory problem very clearly: a tiny sequence of edits can create many complete document copies.
+
+The opposite approach is to create snapshots less frequently, grouping several related edits into one historical state. Typing `Hello` would produce a single history entry, so Undo removes the whole action rather than each keystroke.
+
+| Granularity           | Undo Precision | Memory Usage | Complexity |
+| --------------------- | -------------- | -----------: | ---------: |
+| Every low-level edit  | Very fine      |         High |        Low |
+| Grouped edits         | Coarser        |        Lower |   Moderate |
+| Large state intervals | Coarse         |       Lowest |   Moderate |
+
+The trade-off is clear: fine-grained history gives more precise undo at a higher memory cost, while coarse-grained history uses less memory at the cost of precision. Snapshot granularity is therefore both a memory decision and a user-experience decision.
+
+> **History granularity is a user-experience policy backed by a storage strategy.**
+
+## What Belongs in a Snapshot
+
+There is another dimension to granularity: the editor contains more than the Document.
+
+Our Editor State includes concepts such as the Document, Cursor, Viewport, Current File, Dirty Flag, Screen Size, Status Message, and Configuration. Should all of these be copied?
+
+Generally, **no**. Many of these values describe the current editing environment rather than the historical document state. The terminal's screen size should not become part of undo history, and a status message such as:
+
+```text
+File saved successfully
+```
+
+has no meaningful relationship to an undoable document edit.
+
+Undo primarily concerns the **Document State**. However, some editing operations also require related editor information—most clearly the Cursor—to provide a natural user experience. The full boundary between Document State and Editor State, and which parts of that state actually belong to editing history, is defined in Section 31.7.
+
+The important principle is:
+
+> **Do not snapshot the entire Editor State simply because it is convenient. Define which state actually belongs to editing history.**
+
+## The Trade-off
+
+The strength of snapshots is **conceptual simplicity**. A snapshot-based system does not need every editing operation to define an inverse. Whether the user inserts, deletes, splits, or merges, the mechanism treats them all the same way:
+
+```text
+Save state
+   ↓
+Perform operation
+   ↓
+State changes
+```
+
+The weakness is equally clear:
+
+> **Snapshots preserve complete states even when only a tiny part of the document changed.**
+
+A snapshot-based history may preserve an entire 10 MB document for a one-character edit, while an operation-based history might need only the character itself. Snapshots also require copying the document each time a history entry is created, which can make a tiny edit expensive on a large document.
+
+Snapshots are attractive when documents are small, history is short, implementation simplicity matters, or predictable restoration is more valuable than memory efficiency. For a small educational editor, these properties make snapshots a reasonable strategy to study—but as documents and histories grow, the cost becomes harder to justify. Section 31.11 quantifies these costs.
+
+> **The simplest correct design is often the best place to begin, even when it is not the final optimized design.**
+
+## Summary
+
+Snapshots make undo conceptually simple by preserving a complete copy of the document state before each change. Undo restores the previous snapshot, and the same preserved states can support redo, but the approach exchanges memory efficiency and copying cost for implementation simplicity, and its granularity is a policy decision that must keep history focused on document state.
+
+The limitation of snapshots gives us a reason to investigate another approach: preserving the **operations** that produced the states. This is where the Command Pattern becomes useful.
+
+Because each snapshot is a complete owned copy, the cost is paid up front at every history entry rather than at undo time, and the penalty grows with document size. That trade-off is acceptable only while documents are small or history is short and simplicity outweighs memory savings.
+
+Continue to **Section 31.4, The Command Pattern**.

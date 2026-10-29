@@ -1,0 +1,187 @@
+---
+title: "31.11 Memory, Limits, and Trade-offs"
+description: "Compares snapshot, operation, and hybrid history strategies, then examines memory costs and policies for limiting retained history."
+---
+
+Undo and redo introduce additional memory and processing costs because the editor must retain information about previous editing operations. For a small document these costs may be negligible, but as documents and histories grow the choice of strategy becomes significant, and the editor needs a policy for how much history to retain.
+
+This section ties those three concerns together: the strategies available, their costs, and how those costs are bounded.
+
+## Three Strategies
+
+Undo history can be designed using several strategies. The important distinction is between preserving complete Document states and preserving the operations that transform one state into another.
+
+| Strategy          | Strength  | Weakness          |
+| ----------------- | --------- | ----------------- |
+| Snapshots         | Simple    | High memory usage |
+| Operation history | Efficient | More complex      |
+| Hybrid            | Flexible  | More complexity   |
+
+**Snapshots** preserve a complete Document state at each history point. Undo selects an earlier state rather than reconstructing it. The major advantage is simplicity: the history mechanism does not need to understand how an operation is reversed. The cost is memory.
+
+**Operation history** records changes rather than complete states. Each operation contains the information required to reverse and reapply the change. Its advantage is efficiency: a small edit to a large Document does not require another complete copy. The cost is complexity: every undoable operation must carry sufficient information for both directions.
+
+**Hybrid history** combines the two, periodically establishing a snapshot and recording operations between snapshots:
+
+```text
+Snapshot
+   │
+   ├── Operation
+   ├── Operation
+   ├── Operation
+   │
+Snapshot
+   │
+   ├── Operation
+   ├── Operation
+   └── Operation
+```
+
+This can balance memory usage against the complexity of reconstructing older states, but it also introduces additional decisions: when to create snapshots, how many operations to retain between them, and how memory should be divided between the two.
+
+## Memory and Performance
+
+The three strategies have very different cost profiles.
+
+With **snapshots**, a document of size `N` produces a snapshot of approximately `O(N)` per stored state, so a history containing `H` snapshots can approach `O(H × N)` memory. This is the primary weakness of snapshots: a small editing action can cause a large amount of information to be retained.
+
+With **operation history**, memory is related more closely to the amount of changed data than to the total size of the Document:
+
+```text
+Snapshot:
+
+Document size
+████████████████████
+
+Operation:
+
+Changed region
+████
+```
+
+For small edits to large documents this can provide a substantial reduction. However, operation history does **not** guarantee tiny entries: a single paste might insert several megabytes of text, and a deletion must retain the deleted text so that it can be restored. Operation history should therefore be thought of as **change-sized**, not necessarily **constant-sized**:
+
+```text
+History memory
+≈
+operation metadata
++
+stored inserted/deleted data
+```
+
+**Copying costs** also differ. Snapshots copy the document each time a history entry is created, which can make each snapshot operation expensive on a large document. Operation history generally avoids copying unrelated content. This matters because history recording occurs during user interaction, so extra copying can increase the latency of an editing command.
+
+**Allocation patterns** differ too: snapshots produce large, document-oriented allocations, while operation history produces many smaller, operation-oriented allocations. Neither is universally faster—frequent small allocations can introduce allocator overhead and fragmentation, while large snapshot copies consume substantial memory bandwidth.
+
+There is no single number that describes the cost of undo/redo. The relevant quantities are:
+
+```text
+Document size
+      +
+Changed-data size
+      +
+Number of history entries
+      +
+Allocation overhead
+      +
+Copying work
+```
+
+Snapshots make history cost strongly dependent on **Document size**; operation history makes it more dependent on **editing activity and changed-data size**. That difference is the fundamental performance trade-off between the two approaches.
+
+## Limiting Undo History
+
+Undo history can grow for as long as the editor remains open. If every operation is retained indefinitely, a long editing session can eventually consume substantial memory. The editor therefore needs a **history policy**.
+
+**Unlimited history** retains every undoable operation until the session ends. The advantage is predictable behavior; the disadvantage is that memory usage has no fixed upper bound.
+
+**Maximum number of operations** limits history by entry count:
+
+```text
+Maximum history = 1000 operations
+```
+
+Once the limit is reached, adding a new operation removes the oldest retained entry. This provides a simple, predictable bound on the number of records, but it does **not** provide a predictable memory bound: 1000 small edits and 1000 large paste operations contain the same number of entries but require dramatically different amounts of memory.
+
+**Maximum memory budget** limits history by memory usage:
+
+```text
+Maximum history memory = 64 MB
+```
+
+The history system removes the oldest entries when adding a new operation would exceed the permitted budget. This gives the editor a meaningful upper bound on memory consumed by undo/redo, at the cost of greater bookkeeping: the system must know how much memory each retained entry occupies.
+
+The three policies represent different priorities:
+
+| Policy             | Strength                | Weakness          |
+| ------------------ | ----------------------- | ----------------- |
+| Unlimited          | Maximum history         | Unbounded memory  |
+| Maximum operations | Simple and predictable  | Poor memory bound |
+| Maximum memory     | Controls resource usage | More bookkeeping  |
+
+## Removing the Oldest History
+
+When history must be reduced, the natural policy is to discard the oldest entries first:
+
+```text
+A B C D E
+↓
+B C D E
+```
+
+This creates a **history boundary**: the editor has not lost the current Document, only the ability to navigate beyond the retained portion of editing history.
+
+> History truncation limits how far backward the user can travel; it does not alter the current Document.
+
+History limits also interact with the Redo Stack. If the policy requires old entries to be discarded, it must apply consistently to whichever history contains the entries being retained. However, the rule established in Section 31.6 is unchanged: creating a new edit after undo still invalidates the redo history. History limits only determine how much history can remain available.
+
+Undo history is a resource. Like any other resource, it needs a defined lifetime and, when necessary, a defined limit:
+
+```text
+Record operation
+      │
+      ▼
+Would history exceed its limit?
+      │
+   ┌──┴──┐
+  No     Yes
+   │      │
+   │      ▼
+   │   Remove oldest
+   │   entries
+   │      │
+   └──┬───┘
+      ▼
+Continue editing
+```
+
+## The Architectural Choice
+
+The three strategies can be viewed as points on a design spectrum:
+
+```text
+Simpler                                      More flexible
+
+Snapshots ───────── Operation History ───────── Hybrid
+    │                     │                      │
+    │                     │                      │
+More memory          More logic             More machinery
+```
+
+The project prioritizes simplicity and educational value while still requiring a useful undo/redo system. Operation history provides a practical balance: it avoids copying the entire Document for ordinary edits while keeping history conceptually tied to the operations executed by the Command Engine.
+
+The important conclusion is not that one strategy is universally superior:
+
+> The appropriate undo strategy depends on the editor's workload, memory constraints, and desired implementation complexity.
+
+For this project, the architecture should preserve the separation between the **Document**, **Command Engine**, and **History** regardless of the underlying history strategy. That keeps the history mechanism replaceable without requiring unrelated components to understand its internal representation.
+
+## Summary
+
+Undo history can be built from snapshots, operation records, or a hybrid of the two. Snapshots are simplest but memory-hungry, operation history is efficient but requires each command to carry reversal information, and a hybrid balances the two at the cost of extra machinery. The costs of each approach, combined with an explicit policy for limiting how much history to retain, determine how the editor keeps undo/redo predictable.
+
+For this editor, operation history provides the practical balance. Now that the strategies and their costs have been compared, the next section examines the common bugs that undo/redo implementations tend to introduce.
+
+A history limit bounds how far back the user can travel without changing the current Document, and discarding the oldest entries is the natural policy for both count- and memory-based limits. The key architectural point is that the Document, Command Engine, and History stay separate, so the strategy can be replaced without touching unrelated components.
+
+Continue to **Section 31.12, Common Undo / Redo Bugs**.

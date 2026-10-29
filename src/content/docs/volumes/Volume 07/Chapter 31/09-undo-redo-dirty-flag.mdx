@@ -1,0 +1,327 @@
+---
+title: "31.9 Undo, Redo, and the Dirty Flag"
+description: "Shows that the Dirty Flag tracks the current document's relationship to the saved version rather than whether an edit or undo occurred."
+---
+
+Undo and redo interact closely with the Dirty Flag because both affect the relationship between the current Document and the version stored on disk.
+
+The important distinction is:
+
+> The Dirty Flag describes whether the current Document differs from the saved version. It does not describe whether the user has performed an edit.
+
+This distinction becomes especially important when undoing changes.
+
+## Editing Makes the Document Dirty
+
+When the user performs a document-changing operation, the in-memory Document can differ from the version that was last saved.
+
+For example:
+
+```text
+Saved:
+
+hello
+
+Edit:
+
+hello world
+```
+
+The Document now differs from the saved file, so the Dirty Flag becomes set:
+
+```text
+Dirty = true
+```
+
+This corresponds to the existing Editor State model, where the Dirty Flag represents the document's modified state.
+
+Conceptually:
+
+```text
+Edit
+  │
+  ▼
+Document changes
+  │
+  ▼
+Compare with saved state
+  │
+  ▼
+Different
+  │
+  ▼
+Dirty = true
+```
+
+## Undo Can Return to the Saved State
+
+Now consider a document that was saved as:
+
+```text
+hello
+```
+
+The user edits it:
+
+```text
+hello world
+```
+
+The Document is dirty.
+
+If the user then performs undo:
+
+```text
+hello world
+      │
+     undo
+      ▼
+hello
+```
+
+the current Document once again matches the saved version. The Dirty Flag should therefore become:
+
+```text
+Dirty = false
+```
+
+The important point is that **undo did not inherently make the document clean**. Rather, the resulting Document happens to match the saved state.
+
+This distinction matters because undo can also stop at a state that is still different from the saved version:
+
+```text
+Saved:
+hello
+
+Edit 1:
+hello world
+
+Edit 2:
+hello world!
+
+Undo Edit 2:
+hello world
+```
+
+The document remains different from the saved version:
+
+```text
+Current: hello world
+Saved:   hello
+
+Dirty = true
+```
+
+Undo has reversed an edit, but the document is still modified.
+
+## Redo Can Make the Document Dirty Again
+
+Redo follows the same principle.
+
+Suppose:
+
+```text
+Saved:
+hello
+
+Current:
+hello world
+
+Undo:
+hello
+```
+
+At this point:
+
+```text
+Dirty = false
+```
+
+If the user performs redo:
+
+```text
+hello
+  │
+ redo
+  ▼
+hello world
+```
+
+the current Document once again differs from the saved version:
+
+```text
+Dirty = true
+```
+
+The important relationship is therefore:
+
+```text
+                    ┌── matches saved state ──► Dirty = false
+Current Document ───┤
+                    └── differs from saved ──► Dirty = true
+```
+
+Undo and redo merely move the Document between different states. The Dirty Flag reflects the relationship of the resulting state to the saved version.
+
+## Why "An Edit Happened" Is Not Enough
+
+A tempting implementation is to treat the Dirty Flag as a simple event indicator:
+
+```text
+Any edit → Dirty = true
+```
+
+That works for ordinary editing but fails with undo.
+
+Consider:
+
+```text
+Saved
+  │
+  ▼
+Edit
+  │
+  ▼
+Dirty
+  │
+  ▼
+Undo
+  │
+  ▼
+Original saved content
+```
+
+If undo simply left the flag set, the editor would report unsaved changes even though the Document had returned exactly to the saved content.
+
+The opposite mistake is also possible: automatically clearing the flag after every undo would incorrectly claim that the document was saved even when it still differs.
+
+Therefore neither of these rules is sufficient:
+
+```text
+Undo → clean
+```
+
+or:
+
+```text
+Edit ever occurred → dirty
+```
+
+The correct concept is based on the resulting document state.
+
+## The Saved State as a Reference Point
+
+Undo history can contain many document states:
+
+```text
+Saved
+  │
+  ▼
+State A
+  │
+  ▼
+State B
+  │
+  ▼
+State C
+```
+
+The user may move backward through them. The Dirty Flag is determined by whether the current state corresponds to the saved version:
+
+```text
+                  Saved State
+                       │
+                       │ compare
+                       ▼
+Current Document ───────────────► Dirty?
+```
+
+This means the history itself is not the definition of cleanliness. A document can have a non-empty undo history while still being clean:
+
+```text
+Saved
+  │
+  ▼
+Edit
+  │
+  ▼
+Undo
+  │
+  ▼
+Saved state again
+
+Undo history may exist,
+but Dirty = false.
+```
+
+This is an important architectural distinction:
+
+> History answers "what editing states can I navigate through?" The Dirty Flag answers "does the current Document differ from the saved version?"
+
+These are related concepts, but they answer different questions.
+
+## Save Establishes a New Reference Point
+
+Saving changes the reference point against which future modifications are considered unsaved.
+
+For example:
+
+```text
+Initial saved state
+        │
+        ▼
+     Edit A
+        │
+        ▼
+   Dirty = true
+        │
+        ▼
+      Save
+        │
+        ▼
+New saved state
+        │
+        ▼
+   Dirty = false
+```
+
+After the save, subsequent undo operations are evaluated relative to the newly saved content.
+
+This is why the Dirty Flag cannot simply be tied to the existence or size of the undo history. The history describes editing activity, while the saved state establishes the persistence boundary.
+
+## A Useful Mental Model
+
+Think of the editing history as a path:
+
+```text
+State 0 ──► State 1 ──► State 2 ──► State 3
+  ▲
+  │
+Saved
+```
+
+If the user saves at State 2:
+
+```text
+State 0 ──► State 1 ──► State 2 ──► State 3
+                         ▲             ▲
+                       Saved         Current
+```
+
+State 2 is clean; State 3 is dirty. If the user undoes back to State 2, the document becomes clean again.
+
+The essential rule is:
+
+> **The Dirty Flag describes the current Document's relationship to the saved version, not the direction or amount of movement through history.**
+
+This keeps persistence state separate from undo/redo history while allowing the two systems to cooperate correctly.
+
+## Summary
+
+The Dirty Flag describes whether the current Document differs from the saved version, not whether an edit occurred or which direction the user moved through history. Undo and redo merely relocate the Document, so the flag must be evaluated against the saved reference point, and saving establishes a new reference point.
+
+Now that the Dirty Flag is understood, the next section examines how low-level operations are grouped into user-meaningful undo actions.
+
+This separation lets the editor keep an undo history while still reporting a clean document, and lets a save silently move the reference point without disturbing the recorded operations. The flag is therefore computed from the current content against the last saved version, never from the presence or size of history.
+
+Continue to **Section 31.10, Grouping and Coalescing Operations**.

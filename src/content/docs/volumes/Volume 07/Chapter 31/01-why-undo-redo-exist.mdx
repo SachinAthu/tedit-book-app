@@ -1,0 +1,175 @@
+---
+title: "31.1 Why Undo and Redo Exist"
+description: "Explains why editors need undo and redo, showing editing history as movement through past states and separating snapshots from operations."
+---
+
+A text editor changes the document every time the user inserts or deletes text. Those changes are usually easy to perform, but they create an important problem:
+
+**What happens when the user makes a mistake?**
+
+Consider a simple document:
+
+```text
+Hello world
+```
+
+The user accidentally deletes `world`:
+
+```text
+Hello
+```
+
+The editor now has the new document state, but the previous state is no longer directly available.
+
+Undo exists to solve this problem.
+
+```text
+Before edit
+    │
+    │ delete " world"
+    ▼
+After edit
+    │
+    │ Undo
+    ▼
+Before edit
+```
+
+Redo solves the opposite problem. If the user undoes an operation and then decides they actually wanted it, the editor should be able to apply that change again.
+
+```text
+Original
+   │
+   │ Edit
+   ▼
+Modified
+   │
+   │ Undo
+   ▼
+Original
+   │
+   │ Redo
+   ▼
+Modified
+```
+
+The important observation is that **undo and redo are not ordinary editing operations**. They are mechanisms for navigating through the history of editing operations.
+
+## A Simple Editing History
+
+Suppose the user starts with:
+
+```text
+Hello
+```
+
+They then perform three edits:
+
+```text
+1. Insert "!"
+2. Insert " World"
+3. Delete "H"
+```
+
+The document passes through several states:
+
+```text
+Hello
+  │
+  │ insert "!"
+  ▼
+Hello!
+  │
+  │ insert " World"
+  ▼
+Hello! World
+  │
+  │ delete "H"
+  ▼
+ello! World
+```
+
+The editor could think of this as a sequence of changes:
+
+```text
+Edit 1 → Edit 2 → Edit 3
+```
+
+If the user presses Undo, the most recent change is reversed:
+
+```text
+ello! World
+      │
+      │ Undo
+      ▼
+Hello! World
+```
+
+Another Undo reverses the previous change, and another before that. Undo therefore works backward through editing history.
+
+## Redo Moves Forward
+
+After undoing an operation, the editor has a second problem.
+
+Suppose the user has reached:
+
+```text
+Hello!
+```
+
+after undoing the insertion of `" World"`.
+
+If they press Redo, the editor should restore that change:
+
+```text
+Hello!
+   │
+   │ Redo
+   ▼
+Hello! World
+```
+
+The history can therefore be viewed as two directions:
+
+```text
+Earlier states                         Later states
+
+   Hello ──────► Hello! ──────► Hello! World ──────► ello! World
+                    ▲                 ▲
+                    │                 │
+                  Undo              Redo
+```
+
+Undo moves toward earlier editing states; Redo moves toward later editing states.
+
+## The Central Requirement
+
+This leads to the central idea of the chapter:
+
+> **An editor cannot undo a change unless it has retained enough information to reconstruct what existed before that change.**
+
+Undo and redo are therefore a **system feature**, not a single data structure. The editor must keep a record of its editing past—a **history**—and then navigate through that history rather than merely applying new changes.
+
+How should that history be represented? There are two broad answers, and they shape the rest of the chapter:
+
+```text
+             Undo History
+                  │
+        ┌─────────┴─────────┐
+        ▼                   ▼
+    Snapshots           Operations
+        │                   │
+   Store states        Store changes
+```
+
+Both can produce the same user-visible behavior, but they differ in memory use, implementation complexity, and performance. These trade-offs are examined in depth in Section 31.11; the chapter begins with the simpler of the two strategies.
+
+The exact information history must retain depends on the operation, and the first step is to be precise about what an undo operation actually means.
+
+## Summary
+
+Undo and redo solve the problem of mistaken edits by navigating through editing history rather than by performing ordinary editing operations. The central requirement is that the editor must retain enough information to reconstruct what existed before each change, which leads to two broad strategies: preserving complete states (snapshots) or preserving the changes themselves (operations).
+
+The history is therefore a deliberately shaped record of what the editor must be able to reverse, not a passive log of every document state. Whether that record stores states or transitions determines its memory profile and the work required to navigate it.
+
+Continue to **Section 31.2, What Does an Undo Operation Mean?**.

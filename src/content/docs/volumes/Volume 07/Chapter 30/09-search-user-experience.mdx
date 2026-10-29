@@ -1,0 +1,308 @@
+---
+title: "30.9 Search User Experience"
+description: "Frames search as a user interaction, covering query display, match visibility, failure feedback, predictable navigation, wrapping, and cancellation."
+---
+
+A search feature can be technically correct and still feel difficult to use.
+
+Finding a match is only one part of the problem. The editor must also make it clear what the user is doing, what query is active, whether a match was found, and how to continue or cancel the operation.
+
+Search is therefore both a **text-processing feature** and a **user interaction**.
+
+## Showing the Search Query
+
+When search is active, the user needs a clear place to enter and see the current query.
+
+Conceptually, the editor might display:
+
+```text
+Search: editor
+```
+
+As the user types, the displayed query changes:
+
+```text
+Search: e
+Search: ed
+Search: edi
+Search: edit
+```
+
+This is particularly important for incremental search because the query is constantly changing.
+
+The user should not have to guess what the editor is currently searching for.
+
+The search interface therefore acts as a visible representation of Search State.
+
+## Showing the Current Match
+
+Finding a match is useful only if the user can identify where it is.
+
+The simplest behavior is to move the Cursor to the match:
+
+```text
+The editor provides search.
+        ^
+```
+
+If the match is outside the current viewport, the Viewport must adjust so that the match becomes visible.
+
+The user should therefore experience search as:
+
+```text
+Search
+   ↓
+Match found
+   ↓
+Editor moves to match
+   ↓
+Match becomes visible
+```
+
+The search system does not need to render the match itself. The existing Cursor, Viewport, and Renderer mechanisms already provide the necessary path from logical position to visible output.
+
+## What Happens When There Is No Match?
+
+A search that produces no result should give the user clear feedback.
+
+For example:
+
+```text
+Search: banana
+No match
+```
+
+The important point is that a failed search should not silently do nothing.
+
+Without feedback, the user cannot distinguish between:
+
+- no match existing,
+- search not being active,
+- search input not being accepted,
+- or a search operation failing for another reason.
+
+The editor should therefore communicate the result through its existing message mechanism.
+
+A failed search also should not modify the Document.
+
+## Invalid Regular Expressions
+
+Regex introduces another user-visible failure case.
+
+A query may be syntactically invalid.
+
+For example:
+
+```text
+Search: [abc
+Invalid pattern
+```
+
+This is different from a valid pattern that simply has no match.
+
+The editor should distinguish the two cases:
+
+```text
+Valid pattern
+    |
+    +── match found
+    |
+    +── no match
+
+Invalid pattern
+    |
+    +── search error
+```
+
+The Document remains unchanged in either case.
+
+The error is part of the search interaction, not an editing operation.
+
+## Next and Previous Should Be Predictable
+
+Once a match has been found, users should be able to move through matches without having to understand the search algorithm.
+
+For example:
+
+```text
+first match
+    ↓
+next
+    ↓
+second match
+    ↓
+next
+    ↓
+third match
+```
+
+Backward navigation works in the opposite direction:
+
+```text
+third match
+    ↓
+previous
+    ↓
+second match
+    ↓
+previous
+    ↓
+first match
+```
+
+The important user-facing behavior is consistency.
+
+"Next" should always move in the selected search direction, while "previous" should move in the opposite direction.
+
+The underlying traversal through the Document remains an implementation concern.
+
+## Wrapping Should Be Understandable
+
+If search wraps around the end of the Document, the user should not be left wondering why the cursor suddenly moved to an earlier location.
+
+Conceptually:
+
+```text
+match 1
+   ↓
+match 2
+   ↓
+match 3
+   ↓
+end of document
+   ↓
+wrap
+   ↓
+match 1
+```
+
+An editor may choose to communicate that wrapping occurred, for example through a temporary message.
+
+The exact presentation is a UI decision.
+
+The important principle is that behavior at document boundaries should be predictable rather than surprising.
+
+## Cancelling Search
+
+Search is a temporary interaction.
+
+The user should be able to leave it without changing the Document.
+
+Conceptually:
+
+```text
+Normal editing
+      |
+      v
+Search active
+      |
+      | cancel
+      v
+Normal editing
+```
+
+Cancelling search should terminate the search interaction and return control to normal editing.
+
+Whether the Cursor remains at the current match or returns to the position where the search began is a separate behavioral decision.
+
+What matters architecturally is that cancellation ends the search session without turning search itself into a text-editing operation.
+
+## Search and the Message Bar
+
+The existing Message Bar provides a natural place for transient search feedback.
+
+For example:
+
+```text
+Search: error
+```
+
+could be displayed while search is active, while messages such as:
+
+```text
+No match
+```
+
+or:
+
+```text
+Invalid pattern
+```
+
+can communicate search results or errors.
+
+This keeps search feedback within the editor's existing presentation model rather than requiring a separate notification mechanism.
+
+Search therefore contributes information to the Editor State, while the existing rendering system determines how that information is displayed.
+
+## Search Should Not Disrupt Normal Editing
+
+Search is a temporary mode of interaction, but it should not require the editor to become a fundamentally different program.
+
+The user experience can be understood as a transition:
+
+```text
+Normal editing
+      |
+      v
+Search
+      |
+      v
+Find / navigate matches
+      |
+      v
+Cancel or finish
+      |
+      v
+Normal editing
+```
+
+The same event loop, Editor State, Document, Cursor, Viewport, and Renderer continue to exist throughout the interaction.
+
+Search simply changes which operations are currently being performed.
+
+This is important for keeping the feature understandable both to the user and to the implementation.
+
+## A Good Search Experience Is Predictable
+
+A useful search feature should answer the user's questions without requiring them to think about its internals:
+
+- **What am I searching for?**
+  The current query is visible.
+
+- **Did the editor find anything?**
+  The current match is shown, or a clear message indicates failure.
+
+- **Where is the match?**
+  The Cursor and Viewport make it visible.
+
+- **What happens when I search again?**
+  The editor moves to the next or previous match according to the search direction.
+
+- **What happens at the end?**
+  The editor follows its defined boundary or wrapping policy.
+
+- **How do I stop searching?**
+  A clear cancellation action returns the editor to normal operation.
+
+These behaviors are more important to the user than the internal search algorithm.
+
+A linear scan, regex engine, or future optimized search mechanism can all provide the same user-facing experience if they respect the same search contract.
+
+That gives us an important design principle:
+
+> **The implementation of search may change, but its user-facing behavior should remain predictable.**
+
+The next section examines the performance implications of this design, particularly the repeated work caused by incremental search and the additional cost introduced by regular expressions.
+
+## Summary
+
+Search is as much a user interaction as it is a text-processing feature. The editor should show the active query, reveal the current match through the Cursor and Viewport, give clear feedback when there is no match or an invalid pattern, and make next, previous, wrapping, and cancellation predictable.
+
+These behaviors keep search non-disruptive and allow the user-facing experience to remain stable even if the internal search implementation changes.
+
+Feedback for no match, invalid patterns, and wrapping keeps the interaction legible without turning search into an editing operation. Because the same contract can sit atop a linear scan or a future matcher, user-visible behavior need not change when the implementation does.
+
+Now that the search user experience is defined, the next section examines the performance implications of the chosen design.
+
+Continue to **Section 30.10, Search Performance**.

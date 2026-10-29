@@ -1,0 +1,230 @@
+---
+title: "30.13 What We Are Not Building"
+description: "Defines the deliberate scope of the search feature, listing the indexes, fuzzy matching, full regex engine, replace, and other features left out."
+---
+
+A search feature can grow surprisingly large.
+
+Once literal search works, it is tempting to add every capability associated with modern editors: search indexes, fuzzy matching, complex regular-expression engines, multi-line patterns, search history, replace operations, highlighting, and persistent search results.
+
+Those features may be useful, but adding all of them would make the editor harder to understand and would blur the boundaries between chapters.
+
+This chapter therefore establishes a deliberate scope.
+
+## We Are Not Building a Search Index
+
+The baseline editor searches the Document directly.
+
+We are not introducing a separate index that must be maintained as the Document changes.
+
+That means the editor does not need to synchronize:
+
+```text
+Document
+   ↕
+Search Index
+```
+
+after every insertion, deletion, line split, or line merge.
+
+A search index remains a possible future optimization if real workloads justify it.
+
+## We Are Not Building Fuzzy Search
+
+Literal search requires the query to match the relevant text according to the selected matching rules.
+
+We are not implementing fuzzy matching where a query can match approximately related text.
+
+For example, a fuzzy-search system might allow a query to find text that differs by missing characters, extra characters, or other similarity rules.
+
+That introduces a different definition of what constitutes a match.
+
+Our search model remains deliberately predictable:
+
+```text
+Literal
+   ↓
+exact matching
+
+Regex
+   ↓
+pattern matching
+```
+
+Fuzzy matching is outside the scope of this chapter.
+
+## We Are Not Building a Full Regex Engine
+
+Regex is discussed as a search capability, but this chapter does not teach how to implement a regular-expression engine.
+
+We are not designing:
+
+- a regex parser,
+- an automaton implementation,
+- a complete regex compiler,
+- or a custom regex execution engine.
+
+The important architectural point is that regex provides a more expressive matching strategy while still producing a logical match result.
+
+The internal implementation of the regex engine is a separate subject.
+
+## We Are Not Defining Unlimited Multi-Line Search
+
+The Document is organized as logical lines.
+
+Search can naturally traverse from one line to another, but this does not mean that the baseline editor must support every possible pattern spanning arbitrary numbers of lines.
+
+In particular, we are not designing a general multi-line regex system.
+
+That would introduce additional questions about:
+
+- line boundaries,
+- newline semantics,
+- match coordinates,
+- and potentially very large matching regions.
+
+Those complexities are unnecessary for the baseline search feature.
+
+## We Are Not Building Replace
+
+Search and replacement are related, but they are not the same operation.
+
+Search observes the Document and identifies matching text.
+
+Replacement modifies the Document.
+
+For example:
+
+```text
+Search
+   ↓
+Match
+```
+
+versus:
+
+```text
+Search
+   ↓
+Match
+   ↓
+Modify Document
+```
+
+Once replacement is introduced, editing semantics, cursor behavior, modified state, and eventually undo/redo become important.
+
+Keeping replacement separate allows this chapter to focus on finding and navigating matches.
+
+## We Are Not Building Persistent Match Highlighting
+
+The search system identifies the current match and allows the editor to navigate between matches.
+
+We are not introducing a separate rendering system that permanently highlights every occurrence throughout the Document.
+
+That would create additional interaction and rendering considerations.
+
+For the baseline editor, the important result is the current match and its logical position.
+
+The existing Cursor, Viewport, and Renderer mechanisms remain responsible for presenting the current state.
+
+## We Are Not Building Search History
+
+A production editor may remember previous search queries:
+
+```text
+error
+warning
+TODO
+function
+```
+
+and allow the user to cycle through them.
+
+That is useful, but it introduces another persistent piece of UI state.
+
+Search history is not required for the baseline search model.
+
+The current search query is sufficient for this chapter.
+
+## We Are Not Building Search Across Multiple Documents
+
+The search described here operates on the current Document.
+
+It does not search:
+
+```text
+Document A
+Document B
+Document C
+```
+
+as one combined search space.
+
+Multiple Documents and their relationships belong to the later architecture surrounding multiple buffers.
+
+Keeping search focused on the current Document also matches the current scope of the editor.
+
+## We Are Not Optimizing Before Measurement
+
+Finally, we are not introducing sophisticated search optimizations simply because they exist.
+
+The baseline design uses direct search because it is:
+
+- simple,
+- understandable,
+- easy to maintain,
+- and sufficient for the intended editor.
+
+If profiling later demonstrates that search is a significant performance problem, the implementation can evolve.
+
+The important principle is:
+
+> **Performance optimization should respond to measured problems rather than theoretical possibilities.**
+
+This leaves room for future improvements without making the baseline architecture unnecessarily complicated.
+
+## A Deliberate Boundary
+
+The resulting search scope is intentionally modest:
+
+```text
+Search
+├── Literal search
+├── Incremental search
+├── Next / previous match
+├── Search direction
+├── Optional wrapping
+└── Regex matching
+```
+
+Outside that boundary are:
+
+```text
+Search index
+Fuzzy search
+Full regex-engine implementation
+Unlimited multi-line matching
+Replace
+Persistent match highlighting
+Search history
+Multi-document search
+Premature optimization
+```
+
+These exclusions are not statements that such features are unimportant.
+
+They are architectural boundaries.
+
+A well-designed system is not defined only by what it does. It is also defined by what it deliberately does **not** do.
+
+With those boundaries established, the chapter has covered the search problem, its interaction model, matching strategies, navigation, user experience, performance, and design trade-offs without allowing the feature to expand beyond the scope of the editor.
+
+## Summary
+
+This section established the deliberate boundaries of the search feature. The baseline editor provides literal search, incremental search, next and previous navigation, search direction, optional wrapping, and regex matching, while leaving search indexes, fuzzy search, a full regex engine, unlimited multi-line matching, replace, persistent highlighting, search history, and multi-document search for later or out of scope.
+
+A well-designed system is defined as much by what it deliberately does not do as by what it does.
+
+Each exclusion protects a boundary: replace would pull in editing semantics, highlighting would pull in rendering, and history or indexes would add persistent state the baseline does not need. Naming them keeps the chapter's scope stable and leaves room for later chapters to take them up deliberately.
+
+Continue to the **Chapter Summary**, which consolidates the search design, followed by exercises and a preview of the next chapter.

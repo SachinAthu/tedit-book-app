@@ -1,0 +1,305 @@
+---
+title: "30.4 Searching Across Lines"
+description: "Explains how search traverses the Document's logical lines, why flattening into one string is unnecessary, and how match coordinates stay logical."
+---
+
+Our Document is organized as a collection of logical lines. That makes many editing operations straightforward, but it raises an important question for search:
+
+> **Does a search operate on individual lines, or on the Document as a continuous sequence of text?**
+
+The answer matters because a query can occur entirely within one line, while other kinds of searches may conceptually span a line boundary.
+
+## The Simple Case
+
+Consider:
+
+```text
+The quick brown fox
+The fox jumped over the wall
+```
+
+Searching for:
+
+```text
+fox
+```
+
+is straightforward.
+
+The match exists entirely within a single logical line:
+
+```text
+The quick brown fox
+              ^^^
+```
+
+A simple search can inspect each line independently:
+
+```text
+Line 0 → search
+Line 1 → search
+Line 2 → search
+...
+```
+
+This works well for ordinary literal searches.
+
+## The Line Boundary Problem
+
+Now consider:
+
+```text
+hello
+world
+```
+
+Suppose the query is conceptually:
+
+```text
+hello
+world
+```
+
+The characters occur across two logical lines.
+
+There is no single line containing the complete query:
+
+```text
+Line 0: "hello"
+Line 1: "world"
+```
+
+The search therefore has to define what a line boundary means.
+
+One possibility is to treat each line as an independent search unit:
+
+```text
+Line 0
+──────
+hello
+
+Line 1
+──────
+world
+```
+
+Under this model, a query cannot cross from one line into another.
+
+Another possibility is to treat the entire Document as a continuous sequence containing explicit line boundaries:
+
+```text
+hello\nworld
+```
+
+Under this model, a search pattern can potentially include the boundary itself.
+
+These are different search semantics.
+
+## Why Our Document Representation Matters
+
+Our Document stores logical lines rather than one enormous string.
+
+Conceptually:
+
+```text
+Document
+│
+├── Line 0
+├── Line 1
+├── Line 2
+└── Line 3
+```
+
+This means a search implementation cannot simply assume that the Document is already one contiguous character array.
+
+It must navigate the line structure.
+
+However, that does **not** mean search has to expose the internal representation to the rest of the editor.
+
+The search feature can provide a document-level abstraction:
+
+```text
+Search
+   │
+   ▼
+Document
+   │
+   ├── line
+   ├── line
+   └── line
+```
+
+The Document remains responsible for representing the text, while Search is responsible for locating a query within that text.
+
+## Literal Search in the Baseline Editor
+
+For the baseline editor, we can keep literal search simple.
+
+A query is matched within the logical text of the Document, while the search traverses the Document line by line.
+
+For example:
+
+```text
+1  The quick brown fox
+2  The fox jumped over
+3  Another fox appears
+```
+
+Searching forward for:
+
+```text
+fox
+```
+
+produces:
+
+```text
+1 → 2 → 3
+```
+
+Each result has a logical location:
+
+```text
+(row, column)
+```
+
+The search does not need to know how that position will eventually appear on the terminal.
+
+The Renderer remains responsible for converting logical positions into visual positions, as established by the architecture and the earlier coordinate-system design.
+
+## Why Not Flatten the Document?
+
+One tempting solution would be to create a temporary representation:
+
+```text
+Document
+   │
+   ▼
+Flatten into one string
+   │
+   ▼
+Search string
+```
+
+This would make searching conceptually similar to searching an ordinary string.
+
+But it introduces unnecessary work.
+
+Every search could require:
+
+1. Traversing the Document.
+2. Constructing the flattened representation.
+3. Performing the search.
+4. Converting the resulting position back into a row and column.
+
+For a simple editor, this additional representation provides little benefit.
+
+It also creates another mapping:
+
+```text
+Document coordinates
+        ↕
+Flattened string offsets
+```
+
+The simpler approach is to search the Document using the representation it already provides.
+
+## A Practical Boundary
+
+There is an important distinction between **supporting a search across lines** and **supporting every possible multi-line search pattern**.
+
+The first is an architectural concern.
+
+The second can become a substantial feature.
+
+Regular expressions, for example, can introduce patterns whose behavior depends on line boundaries. Supporting unrestricted multi-line patterns requires considerably more sophisticated matching logic.
+
+That complexity is not necessary for our baseline literal search.
+
+Therefore, we should keep the initial search model deliberately constrained:
+
+```text
+Literal Search
+     │
+     ▼
+Document
+     │
+     ├── Line 0
+     ├── Line 1
+     ├── Line 2
+     └── ...
+```
+
+Search can move between lines while looking for successive matches, but we do not need to build a general-purpose multi-line pattern engine at this stage.
+
+## The Important Design Boundary
+
+This gives us a useful separation of responsibilities:
+
+```text
+Document
+    │
+    │ owns text
+    ▼
+Search
+    │
+    │ finds logical match
+    ▼
+Cursor
+    │
+    │ moves to match
+    ▼
+Viewport
+    │
+    │ makes match visible
+    ▼
+Renderer
+    │
+    │ displays result
+    ▼
+Terminal
+```
+
+Search does not modify the Document merely because it is examining it.
+
+It does not calculate terminal coordinates.
+
+It does not directly scroll the terminal.
+
+It identifies where the requested text occurs and lets the existing editor architecture handle the consequences.
+
+## Why This Matters
+
+Search is one of the first professional features where several previously independent concepts come together.
+
+The Document provides the text.
+
+The Cursor provides a logical position.
+
+The Viewport makes that position visible.
+
+The Renderer presents the result.
+
+The input and command systems determine how the user invokes the operation.
+
+Search sits between these components without taking ownership of their responsibilities.
+
+That is the architectural pattern we want to preserve as the editor gains more features.
+
+For now, the matching problem remains deliberately simple: **walk through the Document and locate the requested text**.
+
+The next question is what happens when the user does not want to wait until the entire query has been entered.
+
+That leads to **incremental search**.
+
+## Summary
+
+Because the Document is organized as logical lines, search must navigate that structure rather than assume one contiguous string. For the baseline editor, literal search traverses the Document line by line while still reporting matches in logical row and column coordinates. Flattening the Document into a temporary string would add unnecessary work and an extra coordinate mapping.
+
+Search therefore sits between the Document and the editor's presentation components without taking ownership of their responsibilities.
+
+That separation matters because the Document owns text while Search owns locating it, so neither the Viewport nor the Renderer needs to know how a match was found. Supporting traversal across lines is therefore distinct from supporting unrestricted multi-line patterns.
+
+Now that searching across lines is understood, the next section examines the state the editor must maintain while a search is active.
+
+Continue to **Section 30.5, Search State**.

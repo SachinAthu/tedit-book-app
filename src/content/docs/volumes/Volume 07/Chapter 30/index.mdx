@@ -1,0 +1,55 @@
+---
+title: "Chapter 30 — Search"
+description: "Presents search as a system feature, building from linear search through incremental interaction and regex while covering state, performance, and scope."
+---
+
+## Introduction
+
+A text editor that cannot search feels incomplete. Search appears simple—the user enters a query and the editor finds it—but a real editor must answer many more questions. Where does searching begin? What happens when there are many matches? How does the user move from one match to the next? What happens at the end of the Document?
+
+Search is therefore a **system feature**, not a string-matching algorithm. It builds on the architecture established earlier in the book: the Document supplies the text, Search locates a match, the Cursor moves to it, the Viewport makes it visible, and the Renderer presents the result. Search works **with** these existing components without replacing them.
+
+This chapter builds our understanding of search progressively:
+
+```text
+Literal — linear search
+    ↓
+Interactive — incremental search
+    ↓
+Expressive — regular expressions
+```
+
+We define the search problem precisely, examine the state an active search requires, and see how incremental search turns finding text into an interaction. We then compare regular expressions with literal matching, look at search from the user's point of view, and analyze its performance. Finally, we weigh design alternatives, study the bugs that commonly occur, and establish the deliberate scope of what we are not building.
+
+## Learning Objectives
+
+By the end of this chapter, you should be able to:
+
+- Explain why search in an editor is a system feature rather than a single algorithm.
+- Define the search problem: a directional, position-dependent operation that produces a logical match.
+- Describe linear search and why it suits the baseline editor.
+- Explain how searching works with a Document organized as logical lines.
+- Identify the search state an active search requires and how it differs from the Cursor.
+- Describe incremental search as an interaction model.
+- Distinguish literal matching from regular-expression matching, and explain how regex changes the search problem.
+- Identify the behaviors a predictable search user experience requires.
+- Evaluate the performance trade-offs of the baseline search design.
+- Compare search design alternatives and recognize common search bugs.
+- State what the search feature deliberately does not build.
+
+## Sections
+
+- [30.1 Why Search Is More Than Finding Text](/volumes/volume-07/chapter-30/01-search-more-finding-text/)
+- [30.2 The Search Problem](/volumes/volume-07/chapter-30/02-the-search-problem/)
+- [30.3 Linear Search](/volumes/volume-07/chapter-30/03-linear-search/)
+- [30.4 Searching Across Lines](/volumes/volume-07/chapter-30/04-searching-across-lines/)
+- [30.5 Search State](/volumes/volume-07/chapter-30/05-search-state/)
+- [30.6 Incremental Search](/volumes/volume-07/chapter-30/06-incremental-search/)
+- [30.7 Regular Expressions](/volumes/volume-07/chapter-30/07-regular-expressions/)
+- [30.8 Regex Changes the Problem](/volumes/volume-07/chapter-30/08-regex-changes-the-problem/)
+- [30.9 Search User Experience](/volumes/volume-07/chapter-30/09-search-user-experience/)
+- [30.10 Search Performance](/volumes/volume-07/chapter-30/10-search-performance/)
+- [30.11 Design Alternatives and Trade-offs](/volumes/volume-07/chapter-30/11-design-alternatives-trade-offs/)
+- [30.12 Common Search Bugs](/volumes/volume-07/chapter-30/12-common-search-bugs/)
+- [30.13 What We Are Not Building](/volumes/volume-07/chapter-30/13-what-we-are-not-building/)
+- [30.14 Conclusion](/volumes/volume-07/chapter-30/14-conclusion/)

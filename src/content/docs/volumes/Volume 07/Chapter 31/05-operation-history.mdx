@@ -1,0 +1,128 @@
+---
+title: "31.5 Operation History"
+description: "Defines operation history as an ordered stack of undoable commands and explains why reversal must run in last-in-first-out order."
+---
+
+With the Command Pattern established, we can now define how editing operations are actually retained as history.
+
+An **operation history** is an ordered collection of undoable commands that represents the document's editing past.
+
+For example, if the user performs:
+
+```text
+Insert "Hello"
+Insert " world"
+Delete "world"
+```
+
+the history can be represented as:
+
+```text
+History
+┌─────────────────────────┐
+│ Insert "Hello"          │
+│ Insert " world"         │
+│ Delete "world"          │
+└─────────────────────────┘
+              ▲
+          most recent
+```
+
+The most recent operation is the first candidate for Undo.
+
+## History as a Sequence of Operations
+
+Each history entry describes one meaningful editing action. A conceptual record might contain the operation type, its position, its affected data, and any additional information required for reversal, as established in Section 31.4.
+
+The history therefore does not need to contain complete document states. It contains the information necessary to understand and reverse the changes that produced the current state.
+
+## Ordering Matters
+
+Operation history is inherently ordered.
+
+Suppose the document begins as:
+
+```text
+abc
+```
+
+The user performs:
+
+```text
+1. Insert "X" at position 1
+2. Insert "Y" at position 2
+```
+
+The resulting document depends on both operations and their order. Undo must therefore reverse operations in the opposite order:
+
+```text
+Execute:
+
+A → B → C
+
+Undo:
+
+C → B → A
+```
+
+This is why a stack is a natural representation for the undo history: the most recent operation is always the first operation that should be reversed.
+
+## The Undo Stack
+
+The undo history can be represented as:
+
+```text
+┌───────────────┐
+│ Operation C   │ ← next undo
+├───────────────┤
+│ Operation B   │
+├───────────────┤
+│ Operation A   │
+└───────────────┘
+```
+
+When `Operation C` is undone, it is removed from the undo stack and becomes available for redo:
+
+```text
+Before:
+
+Undo: [A, B, C]
+Redo: []
+
+After undo:
+
+Undo: [A, B]
+Redo: [C]
+```
+
+The stack therefore represents **what can currently be undone**, rather than merely storing an archival list of everything that has ever happened. The redo side of this model—and the three transitions that move operations between the two stacks—is the subject of Section 31.6.
+
+## History Is Separate from the Document
+
+The operation history should not become part of the Document itself.
+
+Conceptually:
+
+```text
+Editor State
+├── Document
+│   └── Current text
+│
+└── History
+    ├── Undo operations
+    └── Redo operations
+```
+
+The Document represents the **current content**. History represents the **operations that produced or can restore that content**.
+
+Keeping these responsibilities separate makes the architecture easier to reason about. The Document does not need to know whether a change was caused by a normal command, an Undo, or a Redo.
+
+## Summary
+
+Operation history is an ordered collection of undoable commands representing the document's editing past. Order matters because operations must be reversed in the opposite order from which they were executed, which is why a stack is the natural representation.
+
+Now that the undo stack is established, the next section presents undo and redo together as a two-stack state machine and examines how operations move between the two histories.
+
+Keeping history outside the Document preserves a clean separation of responsibilities, so the Document exposes the same interface whether a change came from an ordinary command, Undo, or Redo. The stack also defines what is currently reversible rather than archiving every event, which is why records removed by undo remain available only through the redo side.
+
+Continue to **Section 31.6, The Two-Stack State Machine**.

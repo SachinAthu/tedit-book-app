@@ -1,0 +1,355 @@
+---
+title: "30.1 Why Search Is More Than Finding Text"
+description: "Explains why editor search is a system feature requiring state, navigation, and coordination with existing components rather than a string-matching function."
+---
+
+At first glance, search seems like one of the simplest features a text editor can provide.
+
+The user enters some text:
+
+```text
+fox
+```
+
+The editor looks through the document and finds it.
+
+That sounds like a straightforward algorithm:
+
+```text
+Document
+    ↓
+Search for "fox"
+    ↓
+Match found
+```
+
+But a real editor has to answer many more questions.
+
+Where should the search begin? What happens when there are multiple matches? What should happen when the search reaches the end of the document? Should searching be case-sensitive? Can the user search backward? What happens while the search query is still being typed? How should the editor respond when there is no match?
+
+These questions are not primarily about finding characters. They are about **how searching behaves as part of an interactive application**.
+
+## The Difference Between an Algorithm and a Feature
+
+Consider a simple document:
+
+```text
+The quick brown fox
+The fox jumped over the wall
+A small animal crossed the road
+```
+
+Suppose the user searches for:
+
+```text
+fox
+```
+
+There are two matches:
+
+```text
+The quick brown fox
+              ^^^
+
+The fox jumped over the wall
+    ^^^
+```
+
+A search algorithm can determine that those matches exist.
+
+But the editor still needs to decide what happens next.
+
+For example, after finding the first match:
+
+```text
+The quick brown fox
+              ^^^
+```
+
+the user might press a key to find the next occurrence:
+
+```text
+The fox jumped over the wall
+    ^^^
+```
+
+The editor therefore needs to maintain a notion of **search position**.
+
+It also needs to coordinate that result with the rest of the editor:
+
+```text
+Search
+   │
+   ▼
+Find match
+   │
+   ▼
+Move Cursor
+   │
+   ▼
+Adjust Viewport
+   │
+   ▼
+Render
+```
+
+The search operation itself does not render anything. It finds a location in the Document and asks the existing editor mechanisms to make that location visible.
+
+This distinction is important.
+
+> **Search finds text. The editor decides what to do with the result.**
+
+## Search Has State
+
+A simple string-matching function might look conceptually like this:
+
+```text
+search(document, query)
+```
+
+It receives a Document and a query and returns a result.
+
+An interactive editor needs more information.
+
+For example:
+
+```text
+Search State
+
+Query
+Direction
+Current Match
+Active / Inactive
+```
+
+The search session may also need to remember where the user was before searching.
+
+Consider:
+
+```text
+Before search:
+
+Cursor
+  ↓
+line 10
+```
+
+The user starts a search and the first match is found on line 80:
+
+```text
+Search result
+      ↓
+line 80
+```
+
+If the user cancels the search, the editor may need to restore the original position:
+
+```text
+Search cancelled
+
+Cursor
+  ↓
+line 10
+```
+
+This is an editor-behavior decision, not a string-search algorithm.
+
+## Search Must Work With Existing Components
+
+Search should not create its own versions of the Document, Cursor, or Viewport.
+
+The architecture already gives each of these components a responsibility.
+
+The Document owns the editable text.
+
+The Cursor owns the logical editing position.
+
+The Viewport determines which part of the Document is visible.
+
+The Renderer turns the current state into a visual frame.
+
+Search should work with these existing components:
+
+```text
+                Search Query
+                     │
+                     ▼
+                  Search
+                     │
+                     ▼
+                 Document
+                     │
+                     ▼
+                   Match
+                     │
+              ┌──────┴──────┐
+              ▼             ▼
+           Cursor        Viewport
+              │             │
+              └──────┬──────┘
+                     ▼
+                  Renderer
+```
+
+This follows the broader architecture established earlier in the book: components should have clear responsibilities rather than accumulating unrelated behavior.
+
+Search does not become a replacement for those components.
+
+It is a feature that **uses** them.
+
+## Search Is Also a User Interface
+
+The search experience itself requires design decisions.
+
+A traditional search interface might behave like this:
+
+```text
+Search: fox
+```
+
+The user enters the complete query and confirms it.
+
+The editor then searches and reports:
+
+```text
+Match found
+```
+
+An incremental search behaves differently:
+
+```text
+Search: f
+```
+
+The editor immediately finds a result.
+
+Then:
+
+```text
+Search: fo
+```
+
+The result may change.
+
+Then:
+
+```text
+Search: fox
+```
+
+The editor displays the appropriate match.
+
+The search operation has now become an interactive process rather than a single function call.
+
+This introduces additional questions:
+
+- Should the search begin immediately?
+- What happens when the query produces no match?
+- How does the user move to the next match?
+- How does the user move to the previous match?
+- How is the search cancelled?
+- Should the original cursor position be restored?
+- Should the current match be visually indicated?
+
+These decisions are part of the feature's design.
+
+## Search Is Not Replace
+
+It is also important to establish a boundary between searching and editing.
+
+Search answers:
+
+> **Where does this text occur?**
+
+Replace answers:
+
+> **What should happen to the matching text?**
+
+For example:
+
+```text
+Search:
+
+Find "colour"
+```
+
+might produce:
+
+```text
+line 15, column 8
+```
+
+Replacing it with:
+
+```text
+color
+```
+
+is a separate editing operation.
+
+That distinction matters architecturally. Search can locate a match without modifying the Document. A replacement operation would require an editing command and would therefore interact with the Document's mutation rules.
+
+For the baseline feature discussed in this chapter, we will focus on **finding and navigating between matches**.
+
+Replacement is outside the scope of this chapter.
+
+## From Text Matching to Editor Search
+
+We can therefore think about search at several levels:
+
+```text
+Level 1
+────────────────────
+Find a sequence of characters
+
+
+Level 2
+────────────────────
+Find the next or previous match
+
+
+Level 3
+────────────────────
+Provide an interactive search interface
+
+
+Level 4
+────────────────────
+Support expressive patterns such as regex
+```
+
+Each level adds capability, but also introduces additional design considerations.
+
+The goal of this chapter is not to immediately build the most sophisticated search engine possible.
+
+Instead, we will build our understanding progressively:
+
+```text
+Simple
+  ↓
+Linear search
+  ↓
+Interactive
+  ↓
+Incremental search
+  ↓
+Expressive
+  ↓
+Regular expressions
+```
+
+The important lesson is that **search in an editor is a system feature, not merely a string-processing function**.
+
+The matching algorithm is only one part of the problem. The rest involves state, navigation, user interaction, and integration with the existing editor architecture.
+
+## Summary
+
+Search in an editor is a system feature rather than a single string-matching function. It requires search state, navigation between matches, coordination with the existing Document, Cursor, Viewport, and Renderer, a user interface, and a clear boundary between finding text and editing it.
+
+This chapter builds search progressively: linear search first, then incremental search, and finally regular expressions.
+
+The matching algorithm is only one component; the surrounding behavior—state, navigation, error handling, and presentation—determines whether search feels like an editor feature rather than a utility call. Keeping search separate from replacement also preserves a clear architectural boundary between observing the Document and modifying it.
+
+Now that the scope of editor search is established, the next section defines the search problem precisely.
+
+Continue to **Section 30.2, The Search Problem**.

@@ -1,0 +1,460 @@
+---
+title: "30.6 Incremental Search"
+description: "Shows how incremental search changes the interaction rather than the algorithm, updating matches as the query grows or shrinks through the editor cycle."
+---
+
+A basic search can wait until the user has entered the entire query:
+
+```text
+Search: editor
+        ↓
+      Enter
+        ↓
+   find "editor"
+```
+
+This is simple, but it introduces an unnecessary step. A real editor can begin searching as soon as the user starts typing.
+
+For example, as the user enters:
+
+```text
+e
+ed
+edi
+edit
+edito
+editor
+```
+
+the editor can update the current match after each change.
+
+This is called **incremental search**.
+
+The important change is not the search algorithm. The underlying search may still be the same linear search introduced earlier. What changes is the interaction between the search system and the user.
+
+## Search While the Query Is Being Typed
+
+With incremental search, the query is continuously changing.
+
+Consider a document containing:
+
+```text
+The editor opens a file.
+The editing process begins.
+The editor can search text.
+```
+
+The user begins entering:
+
+```text
+edi
+```
+
+The search system can process the query progressively:
+
+```text
+e
+↓
+ed
+↓
+edi
+```
+
+After each change, the editor searches for the current query and updates the selected match.
+
+Conceptually:
+
+```text
+User input
+    |
+    v
+Update search query
+    |
+    v
+Search Document
+    |
+    v
+Update current match
+    |
+    v
+Update Editor State
+    |
+    v
+Render
+```
+
+The search result therefore becomes part of the normal editor update cycle.
+
+## Incremental Search Does Not Require a New Search Algorithm
+
+It is tempting to think that incremental search requires a specialized search algorithm.
+
+It does not.
+
+The simplest implementation can repeatedly invoke the existing literal-search operation:
+
+```text
+query = "e"
+search(query)
+
+query = "ed"
+search(query)
+
+query = "edi"
+search(query)
+```
+
+The difference is that the search operation is now being triggered repeatedly as part of an interactive session.
+
+This separation is useful.
+
+The **search algorithm** answers:
+
+> Does this query occur in the Document, and where?
+
+The **search feature** answers:
+
+> When should that search be performed, and what should happen when the query changes?
+
+These are different responsibilities.
+
+## What Position Should Incremental Search Use?
+
+Incremental search introduces an important question.
+
+Suppose the first character produces a match:
+
+```text
+editor
+^^^^^^
+```
+
+The user then types another character.
+
+Should the search continue from the current match?
+
+Or should it restart from the original search position?
+
+For a predictable interactive search, the editor should conceptually maintain the position from which the search session began.
+
+For example:
+
+```text
+Search started here
+       |
+       v
+... text ...
+       |
+       +---- match for "e"
+       |
+       +---- match for "ed"
+       |
+       +---- match for "edi"
+```
+
+As the query becomes more specific, the editor can search relative to the search session's starting context rather than treating every new query as an unrelated search.
+
+This is one reason search state needs more than just a query string.
+
+A complete interactive search session may need information about:
+
+```text
+original search position
+current query
+current match
+direction
+```
+
+The exact representation is an implementation decision, but the concepts must be accounted for.
+
+## Shrinking the Query
+
+Incremental search must work in both directions.
+
+Suppose the current query is:
+
+```text
+editor
+```
+
+and the user deletes the final character:
+
+```text
+edito
+```
+
+The search result should update again.
+
+The sequence may therefore look like:
+
+```text
+e
+ed
+edi
+edit
+edito
+editor
+edito
+edit
+edi
+```
+
+Every query change can produce a different match.
+
+This is another reason not to think of search as a single function call. An interactive search is a small state machine whose state changes in response to user input.
+
+## When No Match Exists
+
+Incremental search also makes the no-match case more visible.
+
+Suppose the document contains no occurrence of:
+
+```text
+xyz
+```
+
+The user types:
+
+```text
+x
+```
+
+and finds a match.
+
+Then:
+
+```text
+xy
+```
+
+still finds one.
+
+But after entering:
+
+```text
+xyz
+```
+
+there may be no match.
+
+The editor should be able to communicate this state without corrupting the previous document state.
+
+Conceptually:
+
+```text
+query: "xy"
+match: found
+
+query: "xyz"
+match: not found
+```
+
+The search interaction remains active even though the current query has no match.
+
+The user can continue typing, delete characters, change direction, or cancel the search.
+
+This distinction is important:
+
+**"No match for the current query" does not necessarily mean "search has ended."**
+
+## Updating the Cursor
+
+When a new match is found, the editor may move the Cursor to that match.
+
+For example:
+
+```text
+Document:
+
+The editor provides search.
+        ^
+        Cursor
+```
+
+If the next query produces a match farther down:
+
+```text
+The editor provides search.
+...
+The search feature is interactive.
+    ^
+    Cursor
+```
+
+the Cursor can move to the new logical position.
+
+However, search should not directly manipulate terminal coordinates.
+
+The search system produces a logical Document position. The existing Cursor and Viewport mechanisms determine how that position becomes visible.
+
+This preserves the architecture established earlier:
+
+```text
+Search
+   |
+   v
+logical match position
+   |
+   v
+Cursor
+   |
+   v
+Viewport
+   |
+   v
+Renderer
+```
+
+Search finds the text.
+
+The existing editor components decide how that text is presented.
+
+## Incremental Search and the Event Loop
+
+Incremental search fits naturally into the editor's existing event-driven architecture.
+
+A simplified interaction might look like:
+
+```text
+User presses search key
+        |
+        v
+Input Handler
+        |
+        v
+Input Parser
+        |
+        v
+Input Engine
+        |
+        v
+Search command
+        |
+        v
+Search becomes active
+        |
+        v
+User types a character
+        |
+        v
+Search query changes
+        |
+        v
+Search Document
+        |
+        v
+Update Editor State
+        |
+        v
+Render
+```
+
+The same event loop continues to operate.
+
+Search does not require a second event loop or a separate rendering system.
+
+This is an important architectural property: **new features should fit into the existing control flow instead of creating competing control flows.**
+
+## Incremental Search and Linear Search
+
+The simplest incremental search implementation may perform a fresh linear search after every query change.
+
+If the user enters:
+
+```text
+editor
+```
+
+the editor might perform searches for:
+
+```text
+e
+ed
+edi
+edit
+edito
+editor
+```
+
+This means the same portions of the Document may be examined repeatedly.
+
+That is not necessarily a problem.
+
+For the baseline editor, simplicity may be more valuable than eliminating every repeated comparison.
+
+Later, if search performance becomes a problem, the implementation could reuse previous search information or introduce more sophisticated search techniques.
+
+The important architectural point is that the user-facing feature does not force a particular optimization strategy.
+
+## Incremental Search Is an Interaction Model
+
+Incremental search illustrates a broader lesson.
+
+The underlying operation is still:
+
+```text
+Document + Query → Match
+```
+
+But the feature adds interaction state:
+
+```text
+User Input
+    |
+    v
+Search State
+    |
+    v
+Query
+    |
+    v
+Search Operation
+    |
+    v
+Match
+    |
+    v
+Editor State
+```
+
+The algorithm has not fundamentally changed.
+
+The **lifecycle of the operation** has changed.
+
+This distinction will be useful throughout the rest of the book. A real editor feature is usually more than the algorithm that performs its core operation. It must also define state, interaction, failure behavior, and integration with the rest of the system.
+
+## The Baseline Design
+
+For our editor, incremental search can therefore be understood using a small set of concepts:
+
+```text
+Search State
+├── active
+├── query
+├── direction
+├── original position
+└── current match
+```
+
+When the query changes:
+
+1. Update the query.
+2. Search the Document.
+3. Record the resulting match, if one exists.
+4. Update the Cursor when appropriate.
+5. Adjust the Viewport if necessary.
+6. Render the updated state.
+
+Incremental search turns search from a one-time operation into a **continuous interaction between user input, search state, the Document, and the existing editor state**.
+
+## Summary
+
+Incremental search changes the interaction between the editor and the user rather than the underlying search algorithm. As the query changes, the editor searches again relative to the search session's starting context and updates the Cursor and Viewport through the normal editor cycle. "No match" for the current query does not mean the search has ended.
+
+Because it reuses the existing event loop and literal search, incremental search can be designed as a small search state machine rather than a new search system.
+
+Because every query change flows through the normal input, state, and render cycle, incremental search fits the existing architecture instead of adding a parallel control path. The repeated literal scans are a deliberate simplicity trade-off that can later be optimized behind the same interface.
+
+Now that incremental search as an interaction model is clear, the next section examines regular expressions and the expressiveness they add to search.
+
+Continue to **Section 30.7, Regular Expressions**.

@@ -1,0 +1,443 @@
+---
+title: "30.8 Regex Changes the Problem"
+description: "Examines how regex introduces pattern interpretation, invalid-pattern failures, and pattern state, all contained inside the search subsystem."
+---
+
+Literal search and regular-expression search can expose the same result to the editor:
+
+```text
+Match
+├── start position
+└── length
+```
+
+But internally, they solve different problems.
+
+Literal search compares a query against candidate text.
+
+Regex search first interprets a pattern and then determines whether candidate text satisfies that pattern.
+
+This difference is important when designing the search subsystem.
+
+## Literal Search Has a Direct Relationship Between Query and Match
+
+Consider:
+
+```text
+editor
+```
+
+In literal search, the query directly describes the characters that must appear.
+
+Conceptually:
+
+```text
+query
+  |
+  v
+candidate text
+  |
+  v
+compare characters
+  |
+  v
+match / no match
+```
+
+The search mechanism can examine a candidate position and compare the query against the corresponding Document characters.
+
+The query itself does not need to be interpreted as a language.
+
+## Regex Introduces an Intermediate Representation
+
+A regular expression has syntax.
+
+For example:
+
+```text
+a[0-9]+
+```
+
+is not simply a sequence of characters that must appear literally.
+
+It describes a pattern.
+
+A regex-based search therefore has an additional conceptual step:
+
+```text
+pattern text
+     |
+     v
+interpret / compile pattern
+     |
+     v
+matching representation
+     |
+     v
+test Document text
+```
+
+The exact representation depends on the regex engine.
+
+The important architectural observation is that **pattern interpretation is separate from searching the Document**.
+
+This separation can prevent the search operation from becoming a large function responsible for every aspect of regex processing.
+
+## Pattern Compilation
+
+A regular expression can conceptually be transformed before matching begins.
+
+For example:
+
+```text
+pattern
+   |
+   v
+compile
+   |
+   v
+compiled representation
+```
+
+The compiled representation can then be used to test portions of the Document.
+
+This matters especially during incremental search.
+
+If the user changes the query from:
+
+```text
+err
+```
+
+to:
+
+```text
+erro
+```
+
+to:
+
+```text
+error
+```
+
+the pattern changes each time.
+
+The search system may therefore need to interpret or compile the new pattern again.
+
+This is one of the costs introduced by regex-based incremental search.
+
+## Regex Matching Is More General Than Literal Matching
+
+Literal search has a relatively narrow question:
+
+> Does this exact sequence occur here?
+
+Regex can ask considerably more general questions.
+
+A pattern can describe:
+
+- alternatives,
+- optional portions,
+- repetitions,
+- character classes,
+- boundaries,
+- and other matching rules.
+
+The matcher must therefore keep track of more possibilities while determining whether a candidate sequence satisfies the pattern.
+
+The important lesson is not to reproduce the internal implementation of a regex engine here.
+
+That would turn this section into a discussion of parsing and regex-engine construction rather than editor architecture.
+
+For this chapter, it is enough to recognize that regex introduces a **pattern language** and therefore a more complex matching process.
+
+## Search Still Produces the Same Kind of Result
+
+Despite this additional complexity, the result can remain simple.
+
+Suppose a regex matches:
+
+```text
+error42
+```
+
+starting at row 12, column 7.
+
+The rest of the editor does not need to know whether that result came from:
+
+```text
+literal search
+```
+
+or:
+
+```text
+regex search
+```
+
+It can receive:
+
+```text
+start = (12, 7)
+length = ...
+```
+
+and continue using the existing Cursor and Viewport mechanisms.
+
+This gives the search subsystem a useful boundary:
+
+```text
+                 Search Subsystem
+              ┌────────────────────┐
+              │                    │
+Query ───────>│ Matcher            │
+              │                    │
+              │ literal / regex    │
+              │                    │
+              └─────────┬──────────┘
+                        |
+                        v
+                     Match
+                        |
+                        v
+                 Editor State
+```
+
+The internal matching strategy can evolve without changing the rest of the editor.
+
+## Regex and Document Coordinates
+
+The Document model also remains unchanged.
+
+A regex matcher may inspect many characters across one or more logical lines, but its result still needs to be expressed using the editor's logical coordinate system.
+
+This is particularly important because the editor already distinguishes logical positions from visual terminal positions.
+
+Search should report:
+
+```text
+Document position
+```
+
+not:
+
+```text
+screen row
+screen column
+terminal escape sequence
+```
+
+The Viewport and Renderer remain responsible for converting logical state into visible output.
+
+## Regex Errors
+
+Regex introduces a new category of failure that literal search does not normally have.
+
+A literal query such as:
+
+```text
+error
+```
+
+is generally just text.
+
+A regex pattern may be syntactically invalid.
+
+For example, a pattern containing an unmatched special construct may fail during pattern interpretation.
+
+The editor therefore needs to distinguish:
+
+```text
+valid pattern, no match
+```
+
+from:
+
+```text
+invalid pattern
+```
+
+These are different results.
+
+Conceptually:
+
+```text
+Pattern
+   |
+   v
+Interpret pattern
+   |
+   +── invalid ──> search error
+   |
+   v
+valid pattern
+   |
+   v
+Search Document
+   |
+   +── no match
+   |
+   +── match
+```
+
+The error should not modify the Document.
+
+As with other recoverable editor errors, the result can be communicated through the editor's existing message mechanism while the editor continues operating.
+
+## Regex and Search State
+
+The introduction of regex does not eliminate the search state described earlier.
+
+The active search may still contain:
+
+```text
+query
+direction
+original position
+current match
+active/inactive
+```
+
+Regex adds information associated with interpreting the query.
+
+Conceptually:
+
+```text
+Search State
+├── query
+├── direction
+├── original position
+├── current match
+└── pattern state
+```
+
+Whether the implementation stores a compiled pattern, an engine-specific object, or something else is an implementation decision.
+
+The architectural requirement is simply that pattern-specific information remains associated with the search operation rather than leaking into unrelated editor components.
+
+## Incremental Regex Search Has a Real Cost
+
+Incremental search already performs repeated searches.
+
+Regex can make each search more expensive because the query may need to be interpreted and matched using more complex rules.
+
+The interaction can therefore look like:
+
+```text
+User types
+   |
+   v
+Update pattern
+   |
+   v
+Interpret / compile
+   |
+   v
+Search Document
+   |
+   v
+Update match
+   |
+   v
+Render
+```
+
+For a small Document, this may be entirely acceptable.
+
+For a large Document or a complex pattern, repeated work can become noticeable.
+
+This is an important example of a broader engineering principle:
+
+> A feature can be functionally simple while its repeated interactive use exposes performance costs.
+
+The editor should therefore begin with a clear and maintainable design before introducing optimization.
+
+## Regex Is an Extension, Not a Replacement
+
+Literal search should remain a useful capability even when regex support exists.
+
+The two modes serve different purposes:
+
+```text
+Literal
+    |
+    +── simple
+    +── predictable
+    +── exact text
+
+Regex
+    |
+    +── expressive
+    +── pattern-based
+    +── more complex
+```
+
+A user searching for an exact filename or word should not need to understand a pattern language.
+
+Conversely, a user looking for a class of text may benefit from regex.
+
+Treating them as separate matching strategies keeps both concepts clear.
+
+## Keep the Complexity Behind the Boundary
+
+The most important architectural decision is therefore not which regex algorithm to use.
+
+It is where regex complexity should live.
+
+A clean design keeps it inside the search subsystem:
+
+```text
+Input
+  |
+  v
+Search State
+  |
+  v
+Search Interface
+  |
+  +───────────────+
+  |               |
+  v               v
+Literal        Regex
+Matcher        Matcher
+  |               |
+  +───────┬───────+
+          |
+          v
+        Match
+          |
+          v
+    Cursor / Viewport
+          |
+          v
+       Renderer
+```
+
+The rest of the editor deals with the result rather than the internal matching process.
+
+This gives us a useful separation of concerns:
+
+- **Input** determines what the user is asking for.
+- **Search State** remembers the active search.
+- **Matcher** determines whether text satisfies the query.
+- **Document** supplies the text.
+- **Cursor** represents the selected logical position.
+- **Viewport** ensures that position can be seen.
+- **Renderer** presents the resulting state.
+
+Regex therefore changes the complexity **inside** the search subsystem without requiring a fundamentally different editor architecture.
+
+The next section steps back from matching rules and examines search from the user's point of view.
+
+## Summary
+
+Regex changes the internal problem of search: the query must be interpreted or compiled into a matching representation before the Document can be tested. It introduces invalid patterns as a distinct failure case and adds pattern-related state and cost to incremental search, yet it still produces the same logical match consumed by the Cursor and Viewport.
+
+By keeping this complexity inside the search subsystem, regex does not require a fundamentally different editor architecture.
+
+Pattern compilation and invalid-pattern handling belong inside the search subsystem, along with any pattern-specific state retained during a session. That containment lets the matcher evolve without changing the Document model or the interface consumed by the rest of the editor.
+
+Now that regex is understood as a distinct search problem, the next section examines search from the user's perspective.
+
+Continue to **Section 30.9, Search User Experience**.

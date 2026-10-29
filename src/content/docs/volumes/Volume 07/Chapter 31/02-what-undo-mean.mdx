@@ -1,0 +1,138 @@
+---
+title: "31.2 What Does an Undo Operation Mean?"
+description: "Defines undo as reversing a previous transition rather than restoring a stored document, and explains inverse operations and lost information."
+---
+
+Before deciding how to store undo history, we need to define what **undo** actually means.
+
+At first glance, the idea seems simple:
+
+> Undo should restore the document to what it was before the last edit.
+
+But an editor does not necessarily need to store the entire previous document to achieve this. It can instead remember **what changed** and use that information to reverse the change.
+
+## From One State to Another
+
+Consider the document:
+
+```text
+Hello
+```
+
+The user inserts `!` at the end:
+
+```text
+Hello!
+```
+
+Conceptually, we have:
+
+```text
+State A
+Hello
+   │
+   │ Insert '!'
+   ▼
+State B
+Hello!
+```
+
+Undo must perform the reverse transition:
+
+```text
+State B
+Hello!
+   │
+   │ Reverse insertion
+   ▼
+State A
+Hello
+```
+
+The important point is that undo is not inherently a command to "load the previous document."
+
+It is a command to **reverse a previous change**.
+
+## The Inverse Operation
+
+We can describe the relationship using the idea of an **inverse operation**.
+
+If an operation transforms:
+
+```text
+A → B
+```
+
+then its inverse should transform:
+
+```text
+B → A
+```
+
+For example:
+
+| Original operation | Inverse operation         |
+| ------------------ | ------------------------- |
+| Insert `A`         | Delete `A`                |
+| Delete `A`         | Insert `A`                |
+| Split a line       | Merge the resulting lines |
+| Merge two lines    | Restore the line boundary |
+
+The relationship can be visualized as:
+
+```text
+        Operation
+A ─────────────────► B
+        │
+        │ inverse
+        ▼
+A ◄───────────────── B
+```
+
+This is the basic conceptual foundation of operation-based undo.
+
+## The Inverse May Need Lost Information
+
+There is an important complication: **the inverse operation may require information that is no longer present in the Document.**
+
+Suppose the document contains:
+
+```text
+Hello world
+```
+
+The user deletes `world`:
+
+```text
+Hello
+```
+
+To undo the deletion we need to insert `world` again—but the Document itself no longer contains that text. The editor must have retained at least the deleted text and the position where it belonged.
+
+In other words, an undo record must retain the information the inverse operation cannot recover from the current document. Section 31.4 formalizes this requirement and examines the concrete shape these records take.
+
+For now, the important idea is that an undo operation reverses a *transition*, not a full state.
+
+## Undo Must Preserve Semantics
+
+An undo operation should reverse the **meaningful editing action**, not merely manipulate bytes until the document happens to look correct.
+
+For example, if the user inserts a character, undo should conceptually mean:
+
+```text
+Remove the character that was inserted.
+```
+
+It should not depend on unrelated information such as the current cursor position if that position has changed since the insertion.
+
+This is why an undo record should contain enough information to identify the original operation independently of subsequent navigation. The history describes **past editing actions**, not merely the current state of the editor.
+
+## Summary
+
+Undo is best understood as a command to reverse a previous change rather than to load a stored copy of the document. An undo record must preserve whatever information the inverse operation cannot recover from the current Document, and it should capture the semantic editing action rather than merely restoring matching bytes.
+
+There are two ways to carry this information: preserving complete states, or preserving the operations themselves. The next section starts with the simplest strategy: snapshot-based undo.
+
+The requirement that an undo record preserve unrecoverable information is what makes deletions harder than insertions, because the removed text must be carried forward in the record itself. Defining undo in terms of the original action also keeps it stable when the cursor or other editor state has moved since the edit.
+
+Continue to **Section 31.3, The Snapshot Strategy**.

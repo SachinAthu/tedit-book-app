@@ -1,0 +1,272 @@
+---
+title: "31.6 The Two-Stack State Machine"
+description: "Models undo and redo as two stacks with three transitions, showing why new edits discard redo history and keep editing history linear."
+---
+
+Undo and redo are easiest to reason about when history is treated as a **state machine** rather than as two unrelated features.
+
+At any point, the editor has a current document state and a history of operations that can either be undone or reapplied. The fundamental model uses two stacks:
+
+```text
+                 Current State
+                     │
+                     ▼
+               ┌───────────────┐
+               │ Undo History  │
+               └───────────────┘
+                     │
+                     │ undo
+                     ▼
+               ┌───────────────┐
+               │ Redo History  │
+               └───────────────┘
+                     │
+                     │ redo
+                     └──────────────►
+```
+
+The two stacks represent different possibilities:
+
+- **Undo stack** — operations that have already been performed and can be reversed.
+- **Redo stack** — operations that were undone and can potentially be performed again.
+
+The redo stack is therefore not an archive of old operations. It represents the **currently undone portion of the linear editing history**.
+
+## The Three Fundamental Transitions
+
+The complete model can be reduced to three transitions.
+
+### New Edit
+
+When the user performs a new undoable operation, it is pushed onto the undo stack, and the redo stack is cleared because the user has created a new editing path.
+
+```text
+Undo Stack:  U
+Redo Stack:  R
+
+new operation X
+
+Undo Stack:  U + X
+Redo Stack:  empty
+```
+
+### Undo
+
+Undo takes the most recent operation from the undo stack, applies its inverse to the document, and moves the record to the redo stack.
+
+```text
+Undo Stack:  U + X
+Redo Stack:  R
+
+undo
+
+Undo Stack:  U
+Redo Stack:  R + X
+```
+
+### Redo
+
+Redo performs the opposite transition: it takes the most recent redo record, reapplies its forward operation, and moves the record back to the undo stack.
+
+```text
+Undo Stack:  U
+Redo Stack:  R + X
+
+redo
+
+Undo Stack:  U + X
+Redo Stack:  R
+```
+
+These transitions define the core behavior of the history system.
+
+## Records Move, They Are Not Recreated
+
+An important consequence of the state-machine model is that undo and redo **move the same history record between the two stacks**; they do not create new records.
+
+A common mistake is to treat undo itself as an ordinary edit and record it:
+
+```text
+Undo
+  ↓
+Document changes
+  ↓
+Record new history entry
+```
+
+This can cause history to grow while undoing: each undo creates another operation that itself must be undone. Undo and redo are **history operations**. They apply existing history entries, so they must never be recorded as new user-edit entries in the ordinary way.
+
+The redo operation is based on the original command, not on the inverse command that was used to undo it:
+
+```text
+Original:
+    INSERT_TEXT
+
+Undo:
+    inverse(INSERT_TEXT)
+    → DELETE_TEXT
+
+Redo:
+    INSERT_TEXT
+```
+
+The inverse operation exists to move backward through history, while the original operation moves forward again.
+
+## A New Edit Invalidates Redo
+
+The most important rule governing the redo stack is what happens after an undo.
+
+Consider:
+
+```text
+A → B → C
+```
+
+After undoing `C`:
+
+```text
+A → B
+```
+
+The history is:
+
+```text
+Undo: [A, B]
+Redo: [C]
+```
+
+The user can still redo `C`. But suppose the user now performs a new operation `D`:
+
+```text
+A → B → D
+```
+
+The redo history must be cleared:
+
+```text
+Undo: [A, B, D]
+Redo: []
+```
+
+Why? Because `C` belongs to the previous editing path. Reapplying it after `D` would produce a history that the user did not create through the normal sequence of operations:
+
+```text
+Original path:
+
+A → B → C
+
+
+New path:
+
+A → B → D
+```
+
+The conventional two-stack model does not preserve both branches.
+
+> **Once a new edit is made after Undo, the redo stack is discarded.**
+
+## Example
+
+Consider a user making three edits:
+
+```text
+Type "A"
+Type "B"
+Type "C"
+```
+
+The history becomes:
+
+```text
+Undo: [A, B, C]
+Redo: []
+```
+
+The user presses Undo twice:
+
+```text
+Undo: [A]
+Redo: [C, B]
+```
+
+They now press Redo:
+
+```text
+Undo: [A, B]
+Redo: [C]
+```
+
+Finally, they type `"D"`:
+
+```text
+Undo: [A, B, D]
+Redo: []
+```
+
+The previous `"C"` operation is no longer redoable.
+
+## History Is Linear
+
+This model represents a **linear editing history**.
+
+After:
+
+```text
+A → B → C
+```
+
+and undoing `C`, the editor is effectively at:
+
+```text
+A → B
+      \
+       C
+```
+
+If the user creates `D`, the conventional model chooses the new path:
+
+```text
+A → B → D
+```
+
+rather than maintaining both branches. A more sophisticated editor could theoretically preserve branching histories, but that is a substantially different history model and is outside the scope of this editor.
+
+## Empty Stacks
+
+Both stacks can be empty.
+
+If the undo stack is empty, there is nothing left to undo; if the redo stack is empty, there is nothing available to redo. These are normal states, not error conditions. The editor should treat the corresponding command as having no effect, while potentially reporting appropriate user feedback through the Message Bar if that matches the editor's command behavior.
+
+## Why a State Machine Helps
+
+Thinking in terms of state transitions prevents several common design errors.
+
+For example, an implementation might accidentally leave an old redo entry after a new edit:
+
+```text
+Undo: [A, B, D]
+Redo: [C]       ← incorrect
+```
+
+That would allow the editor to attempt to reapply `C` even though the document has followed a different editing path. The state-machine model makes the required transition explicit:
+
+```text
+New Edit
+   │
+   ├── add to Undo
+   └── clear Redo
+```
+
+Similarly, undo and redo should **move history records between stacks**, rather than independently creating unrelated records.
+
+> **Undo and redo are best understood as controlled movement through a linear history: new edits extend the undo history, undo moves operations toward redo, and a new edit after undo discards the redo path.**
+
+## Summary
+
+Treating undo and redo as a state machine keeps the history model simple and correct. The system has just three fundamental transitions—new edit, undo, and redo—and making them explicit prevents common errors such as leaving stale redo entries or treating undo as a new user edit.
+
+Now that the state machine is established, the next section addresses which commands should enter the history at all.
+
+Because the three transitions are explicit, an implementation can be checked against them directly rather than inferring correct behavior from scattered edit paths. The linear model also explains why redo cannot resurrect a discarded branch after a new edit, which is a deliberate limitation rather than a defect.
+
+Continue to **Section 31.7, What Counts as an Undoable Action?**.

@@ -1,0 +1,453 @@
+---
+title: "30.7 Regular Expressions"
+description: "Explains how regular expressions turn the query into a pattern describing sequences, while matches still reduce to a logical start position and length."
+---
+
+Literal search looks for an exact sequence of characters.
+
+If the query is:
+
+```text
+error
+```
+
+the search finds occurrences of those four characters in that order.
+
+This is useful for many situations, but sometimes the user does not know the exact text they are looking for.
+
+For example, they may want to find:
+
+```text
+error
+errors
+Error
+ERROR
+```
+
+or every number in a document.
+
+A literal string is not expressive enough to describe such patterns.
+
+This is where **regular expressions**, commonly called regex, become useful.
+
+## Literal Text Describes Characters
+
+A literal search query has a direct interpretation.
+
+For example:
+
+```text
+hello
+```
+
+means:
+
+> Find the exact sequence `h`, `e`, `l`, `l`, `o`.
+
+The search system can compare the query against candidate text character by character.
+
+The query itself is therefore also the pattern.
+
+```text
+Query:
+hello
+
+Meaning:
+h → e → l → l → o
+```
+
+This makes literal search relatively easy to understand.
+
+## A Regular Expression Describes a Pattern
+
+A regular expression is different.
+
+Instead of describing one exact sequence, it describes a **set of possible sequences**.
+
+For example:
+
+```text
+err(or|ors)
+```
+
+conceptually describes more than one possible match.
+
+Similarly, a pattern can express concepts such as:
+
+```text
+one or more characters
+optional characters
+alternative forms
+character classes
+repeated patterns
+```
+
+The important change is therefore:
+
+```text
+Literal search
+    Query → exact sequence
+
+Regex search
+    Pattern → set of possible sequences
+```
+
+The search problem becomes more expressive because the query itself now has rules that must be interpreted.
+
+## The Search Query Becomes a Pattern
+
+With literal search, the query can be treated largely as data:
+
+```text
+"editor"
+```
+
+With regex search, the query has meaning beyond its individual characters.
+
+For example, characters such as:
+
+```text
+.
+*
++
+?
+[
+]
+(
+)
+|
+^
+$
+```
+
+may have special meanings depending on the regular-expression syntax being supported.
+
+Therefore:
+
+```text
+abc
+```
+
+and:
+
+```text
+a.c
+```
+
+are no longer simply sequences of characters.
+
+The second expression describes a pattern in which `.` may represent a class of possible characters.
+
+The search system must interpret the pattern before it can determine whether a portion of the Document matches it.
+
+## Why Regex Belongs in Search
+
+Regular expressions are particularly useful when the user knows the **shape** of the text they want rather than its exact contents.
+
+Consider a document containing:
+
+```text
+error: file not found
+warning: configuration missing
+error: permission denied
+info: operation complete
+```
+
+A literal search for:
+
+```text
+error
+```
+
+finds the word `error`.
+
+A more expressive pattern could search for lines beginning with a particular prefix, or for a broader class of text.
+
+The benefit is not that regex necessarily makes search faster.
+
+Its benefit is **expressiveness**.
+
+It allows one search query to describe many possible matches.
+
+## Regex Changes What Counts as a Match
+
+With literal search, the matching rule is straightforward:
+
+```text
+candidate characters == query characters
+```
+
+Regex introduces a different process:
+
+```text
+pattern
+   |
+   v
+interpret pattern
+   |
+   v
+test candidate text
+   |
+   v
+match / no match
+```
+
+The search system is no longer comparing two ordinary strings.
+
+It is evaluating whether a sequence of Document characters satisfies a pattern.
+
+This is an important conceptual boundary.
+
+The earlier sections described **where to search** and **how to navigate between matches**.
+
+Regex changes **what constitutes a match**.
+
+## Regex Does Not Change the Document Model
+
+Even though regex makes the matching rules more complicated, it does not require a different Document representation.
+
+The Document remains the same logical collection of text.
+
+Likewise, a successful regex match still needs to produce a logical location:
+
+```text
+Document
+   |
+   v
+Regex pattern
+   |
+   v
+Match
+   |
+   +── start position
+   +── length
+```
+
+The Cursor can then move to the match, and the Viewport can make it visible.
+
+Therefore:
+
+```text
+Regex search
+     |
+     v
+Document
+     |
+     v
+logical match
+     |
+     v
+Cursor / Viewport / Renderer
+```
+
+The existing architecture remains useful.
+
+Only the matching mechanism has become more sophisticated.
+
+## Regex and Match Length
+
+Literal search normally has a predictable match length.
+
+For:
+
+```text
+editor
+```
+
+the match consists of six characters.
+
+A regular expression may match different lengths.
+
+For example, a pattern representing one or more digits could match:
+
+```text
+7
+42
+1024
+```
+
+The same pattern can therefore produce matches of different lengths.
+
+This reinforces why a search result should conceptually contain both:
+
+```text
+start position
+match length
+```
+
+rather than merely a position.
+
+The editor may need the length to determine where the match ends, where the next search should continue, or how the result should be represented.
+
+## Regex and Case Sensitivity
+
+Case sensitivity also interacts naturally with regex.
+
+A literal search for:
+
+```text
+error
+```
+
+may distinguish between:
+
+```text
+error
+Error
+ERROR
+```
+
+depending on the selected search policy.
+
+Regex introduces another layer because the regular-expression engine may have its own matching semantics and options.
+
+The important architectural principle is to keep these concerns distinct:
+
+```text
+Search behavior
+    |
+    +── pattern
+    +── direction
+    +── case policy
+    +── wrapping policy
+```
+
+The search engine evaluates the pattern according to those rules.
+
+The rest of the editor does not need to know how the pattern was evaluated.
+
+## Regex Across Lines
+
+Regex also raises the question of whether patterns can span multiple logical lines.
+
+For example, a pattern might conceptually describe:
+
+```text
+hello
+world
+```
+
+as one match.
+
+Supporting unrestricted multi-line regular expressions significantly increases the complexity of the search system because the Document is represented as logical lines rather than one continuous character array.
+
+This chapter does not need to define a complete multi-line regex engine.
+
+The important design boundary is that **regex matching and multi-line search are separate capabilities**.
+
+An editor can support regular expressions without necessarily supporting every possible multi-line regex feature.
+
+Keeping those decisions separate prevents the baseline search design from becoming unnecessarily complicated.
+
+## Regex Is More Than a Bigger String Comparison
+
+It is tempting to think of regex as simply a more powerful form of literal search.
+
+At a high level, however, the difference is more fundamental.
+
+Literal search asks:
+
+> Does this exact sequence occur here?
+
+Regex search asks:
+
+> Does this sequence satisfy the rules described by this pattern?
+
+That distinction affects:
+
+- how queries are interpreted,
+- how matches are evaluated,
+- how match lengths are determined,
+- how special characters are handled,
+- and potentially how much computation is required.
+
+The rest of the editor can still treat the result uniformly:
+
+```text
+Match
+├── start position
+└── length
+```
+
+This is valuable because it isolates the complexity.
+
+Whether a match came from:
+
+```text
+literal search
+```
+
+or:
+
+```text
+regex search
+```
+
+the Cursor and Viewport only need its logical position.
+
+## Regex as an Optional Search Capability
+
+Regex does not have to replace literal search.
+
+A practical editor can offer different search modes:
+
+```text
+Literal search
+      |
+      +---- exact text
+
+Regex search
+      |
+      +---- pattern matching
+```
+
+The user can choose the appropriate mode for the task.
+
+For the baseline editor, literal search provides a simple and predictable foundation. Regex can then be layered on top as a more expressive search mechanism.
+
+This follows the same design principle used throughout the project:
+
+> Start with the simplest mechanism that satisfies the core requirement, then add complexity when the feature requires it.
+
+Regex is useful precisely because some search tasks cannot be expressed conveniently with literal matching.
+
+## The Architectural Boundary
+
+The most important lesson from regex is that the search feature should expose a relatively simple result to the rest of the editor.
+
+Conceptually:
+
+```text
+                 Search
+                    |
+          +---------+---------+
+          |                   |
+     Literal matcher     Regex matcher
+          |                   |
+          +---------+---------+
+                    |
+                  Match
+                    |
+                    v
+             Cursor / Viewport
+```
+
+The matching strategy may vary.
+
+The rest of the editor should not need to depend on the internal details of that strategy.
+
+This keeps regex complexity contained within the search subsystem and allows the existing editor architecture to remain stable.
+
+The next section examines exactly what changes when the editor moves from literal search to regex search, and why regex should be treated as a different **search problem**, not merely another option on a string-comparison function.
+
+## Summary
+
+Regular expressions turn the search query from literal text into a pattern that describes a set of possible sequences. This changes what counts as a match and how match lengths are determined, but it does not change the Document model or the logical result the rest of the editor consumes.
+
+Regex is best treated as an additional matching capability layered on top of literal search, with its complexity contained inside the search subsystem.
+
+A match still reduces to a start position and length, so the Cursor and Viewport remain unaware of how the pattern was evaluated. Treating regex as an optional mode also preserves literal search as the predictable default for exact text.
+
+Now that regex is understood as a more expressive matching mechanism, the next section examines how it changes the problems the search subsystem must solve.
+
+Continue to **Section 30.8, Regex Changes the Problem**.
