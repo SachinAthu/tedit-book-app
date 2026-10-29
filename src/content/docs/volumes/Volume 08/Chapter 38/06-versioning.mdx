@@ -1,0 +1,524 @@
+---
+title: "38.6 Versioning"
+description: "Explains how semantic versioning gives releases a stable identity tied to source state, artifacts, documentation, and compatibility expectations."
+---
+
+A release artifact needs an identity.
+
+If we produce several versions of the editor, users and developers must be able to determine which version they are running, which source state produced it, and which documentation or release notes apply to it.
+
+This is the purpose of **versioning**.
+
+Versioning therefore connects the source code, build process, release artifacts, and user-facing software:
+
+```text
+Source State
+    |
+    v
+Version
+    |
+    +----------+-----------+
+    |          |           |
+    v          v           v
+Executable  Documentation  Release Artifact
+    |
+    v
+   User
+```
+
+Without a reliable version identity, releases become difficult to distinguish and maintain.
+
+## Why Software Needs Versions
+
+Consider a user reporting:
+
+```text
+"The editor crashes when I save a file."
+```
+
+That information is incomplete.
+
+The first question is:
+
+> Which version of the editor are you using?
+
+A project may have many different releases:
+
+```text
+0.1.0
+0.2.0
+0.3.0
+1.0.0
+1.1.0
+...
+```
+
+A problem that exists in one version may already be fixed in another.
+
+Versioning therefore provides a common identity for:
+
+- users,
+- developers,
+- documentation,
+- release artifacts,
+- bug reports,
+- source code,
+- distribution systems.
+
+### Version Identity
+
+A version should identify a particular release rather than describe a vague development state.
+
+For example:
+
+```text
+Editor 1.0.0
+```
+
+is more useful than:
+
+```text
+Editor latest
+```
+
+"Latest" is not a stable identity because it changes over time.
+
+A version number provides a persistent reference:
+
+```text
+Version 1.0.0
+      |
+      v
+Specific release
+```
+
+This makes it possible to discuss a release long after newer versions have appeared.
+
+## Semantic Versioning
+
+A common versioning model is **Semantic Versioning**.
+
+It uses three primary components:
+
+```text
+MAJOR.MINOR.PATCH
+```
+
+For example:
+
+```text
+1.4.2
+```
+
+where:
+
+```text
+1 → MAJOR
+4 → MINOR
+2 → PATCH
+```
+
+The model provides a convention for communicating the significance of changes.
+
+At a high level:
+
+- **MAJOR** — incompatible changes
+- **MINOR** — backward-compatible functionality
+- **PATCH** — backward-compatible fixes
+
+The exact interpretation of compatibility must be considered in the context of the software being versioned.
+
+For our editor, this is primarily a way to communicate the significance of changes between releases.
+
+## Major Versions
+
+A major version represents a significant compatibility boundary.
+
+For example:
+
+```text
+1.x.x
+   |
+   v
+2.0.0
+```
+
+A major release may contain changes that require users, configurations, scripts, or integrations to adapt.
+
+For a standalone terminal editor, "compatibility" may be different from the compatibility concerns of a library.
+
+For example, compatibility might involve:
+
+- command-line behavior,
+- configuration formats,
+- key-binding configuration,
+- file formats introduced by the editor,
+- scripting interfaces if introduced later.
+
+The important point is that a major version communicates that users should not automatically assume complete compatibility with the previous major release.
+
+## Minor Versions
+
+A minor version communicates the addition of functionality without intentionally introducing a breaking change under the chosen versioning policy.
+
+For example:
+
+```text
+1.2.0
+   |
+   v
+1.3.0
+```
+
+The editor may gain new capabilities while retaining the expected compatibility of the existing interface.
+
+The precise features included in a minor release depend on the project's development plan.
+
+Versioning does not determine what features the editor must contain. It provides a convention for communicating how a release relates to previous releases.
+
+## Patch Versions
+
+A patch version is generally appropriate for fixes that do not intentionally introduce new functionality or compatibility changes.
+
+For example:
+
+```text
+1.3.0
+   |
+   v
+1.3.1
+```
+
+A patch release might correct:
+
+- a crash,
+- an incorrect cursor behavior,
+- a rendering defect,
+- a file-handling bug,
+- another implementation error.
+
+The purpose is to communicate:
+
+> This is a corrective release within the same minor version.
+
+## Versioning Is a Policy
+
+Semantic Versioning is a convention, not a mechanism that automatically determines the correct version.
+
+The project must still decide what constitutes:
+
+```text
+Breaking change
+New functionality
+Bug fix
+```
+
+For example, changing an internal function is normally irrelevant to users if that function is not part of a public interface.
+
+Changing a user-visible configuration format may be much more significant.
+
+Therefore:
+
+> Version numbers should reflect the compatibility policy of the software, not merely the number of changed source files.
+
+## Development Versions
+
+The editor will also exist in states that are not released versions.
+
+For example:
+
+```text
+1.0.0
+    |
+    v
+Development
+    |
+    v
+1.1.0
+```
+
+During development, the source tree may contain changes that have not yet been assigned to an official release.
+
+It is useful to distinguish:
+
+```text
+Released Version
+    |
+    → Stable public identity
+
+Development State
+    |
+    → Work toward a future release
+```
+
+A development build should therefore not automatically be treated as an official release simply because it happens to contain a version string.
+
+The release process must establish when a version becomes official.
+
+## Version Tags and Source State
+
+A release should correspond to a specific source state.
+
+Conceptually:
+
+```text
+Source History
+
+A ── B ── C ── D ── E
+              |
+              v
+           Version 1.0.0
+```
+
+The release identifier should allow developers to locate the source from which the release was produced.
+
+In a version-controlled project, a release tag is commonly used for this purpose.
+
+The important principle is:
+
+> A release version should identify both the user-facing release and the corresponding source state.
+
+This makes later investigation possible.
+
+If a bug is reported against version `1.0.0`, developers should be able to determine exactly what source constituted that release.
+
+## Version Information in the Editor
+
+The editor itself should provide a way for users to identify its version.
+
+A conventional mechanism is:
+
+```text
+editor --version
+```
+
+which might produce:
+
+```text
+Editor 1.0.0
+```
+
+The exact output format can be established during implementation.
+
+The important requirement is that the information be easily accessible.
+
+This is useful for:
+
+- bug reports,
+- support,
+- troubleshooting,
+- documentation,
+- package management,
+- verifying installations.
+
+Conceptually:
+
+```text
+Installed Editor
+       |
+       v
+   --version
+       |
+       v
+Version Identity
+```
+
+## Version Information Should Have One Source
+
+Version information should not be manually duplicated across many files.
+
+A problematic project might contain:
+
+```text
+CMakeLists.txt     → 1.0.0
+source code        → 0.9.0
+README             → 1.0.0
+package metadata   → 1.1.0
+```
+
+This creates inconsistent releases.
+
+Instead, the project should establish a controlled source for the release version and use it wherever version information is required.
+
+Conceptually:
+
+```text
+              Release Version
+                    |
+        +-----------+-----------+
+        |           |           |
+        v           v           v
+     CMake       Executable   Packaging
+        |                       |
+        v                       v
+   Documentation          Release Artifact
+```
+
+The implementation mechanism can be determined when the build and packaging system is implemented in Volume X.
+
+The architectural principle is more important here:
+
+> Version identity should be centralized and propagated, not independently typed into every artifact.
+
+## Versioning and Documentation
+
+Documentation must correspond to the software version it describes, so that a user never follows instructions for a feature that does not exist in their installed version. This keeps documentation aligned with the release identity established here.
+
+How documentation is written and verified against the actual software is the subject of Section 38.7.
+
+## Versioning and Release Artifacts
+
+The previous section established that release artifacts should be identifiable.
+
+Versioning provides that identity.
+
+For example:
+
+```text
+editor-1.0.0-linux-x86_64.tar.gz
+```
+
+communicates several pieces of information:
+
+```text
+editor
+    → Software
+
+1.0.0
+    → Release version
+
+linux
+    → Target operating system
+
+x86_64
+    → Target architecture
+```
+
+The filename is therefore not merely cosmetic. It becomes part of the user's ability to distinguish artifacts.
+
+## Versioning Does Not Replace Build Identification
+
+A version number identifies a release, but additional information may sometimes be useful during development.
+
+For example:
+
+```text
+Release Version
+       +
+Source Revision
+```
+
+A release can therefore have:
+
+```text
+Version: 1.0.0
+Source:  <specific revision>
+```
+
+This distinction is valuable when investigating problems.
+
+The version communicates the public release identity.
+
+The source revision provides a more precise development reference.
+
+The project does not need to expose every internal build identifier to ordinary users, but the release process should retain enough information to trace an artifact back to its source.
+
+## Versioning and Compatibility
+
+Versioning becomes particularly important when the editor introduces persistent user-facing data.
+
+For example, if future versions introduce a structured configuration format:
+
+```text
+Version 1
+Configuration
+```
+
+and a later release changes that format:
+
+```text
+Version 2
+Configuration
+```
+
+the versioning policy can help communicate whether the change is compatible or requires migration.
+
+The same principle can apply to other user-visible interfaces.
+
+Therefore, versioning is not merely about labeling executables. It provides a framework for communicating **change and compatibility**.
+
+## A Release Version as a Contract
+
+A useful way to think about a release version is as a contract.
+
+When the project publishes:
+
+```text
+Editor 1.0.0
+```
+
+it is making a statement about what that release represents.
+
+The version identifies:
+
+```text
+Source State
+     +
+Build Configuration
+     +
+Release Artifacts
+     +
+Documentation
+     +
+Expected Compatibility
+```
+
+This gives users and developers a stable reference point.
+
+The contract becomes stronger as the project develops a consistent release policy.
+
+## Versioning in the Release Pipeline
+
+Versioning is cross-cutting: it does not occupy its own stage in the pipeline, but is applied across it.
+
+```text
+Source → Build → Install / Package → Release Artifact → Verify → Distribute → User
+                    └──────────── versioning applied across every stage ────────────┘
+```
+
+The version should be established before the final artifacts are produced so that the executable, documentation, and packaging metadata can agree on the same release identity.
+
+## Summary
+
+**Versioning gives every official release a stable identity and communicates how that release relates to previous and future releases.**
+
+For our editor, versioning should:
+
+- identify official releases,
+- distinguish development states from releases,
+- communicate compatibility changes,
+- identify release artifacts,
+- appear in the installed editor,
+- connect releases to their source state,
+- remain consistent across documentation and packaging.
+
+The conceptual relationship is:
+
+```text
+Source State
+    |
+    v
+Release Version
+    |
+    +---- Executable
+    +---- Documentation
+    +---- Release Artifact
+    +---- Release Notes
+    |
+    v
+       User
+```
+
+Centralizing the version in one controlled source and propagating it into the executable, packaging metadata, and documentation prevents the inconsistencies that arise when each file is edited independently. Keeping the release version and the underlying source revision distinguishable also preserves a precise reference for later investigation.
+
+With versioning established, we can now address the material that allows users to **understand, install, configure, and use the released editor**. That is the subject of **38.7 Documentation**.

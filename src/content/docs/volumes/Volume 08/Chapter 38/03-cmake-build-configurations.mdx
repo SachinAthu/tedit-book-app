@@ -1,0 +1,565 @@
+---
+title: "38.3 CMake Build Configurations"
+description: "Shows how CMake expresses development, release, and sanitizer configurations reproducibly through targets, out-of-source builds, and install rules."
+---
+
+The previous two sections established that the editor needs different build configurations for development and release.
+
+The next question is:
+
+> How do we express those differences in a repeatable build system?
+
+For our project, the answer is **CMake**.
+
+Chapter 10 established the architectural decision to use CMake. That decision does not need to be reconsidered here. This section instead focuses on how CMake can represent the build configurations required by the editor. The project's architecture already identifies CMake as the build-system foundation.
+
+The purpose is not to teach CMake from first principles. It is to understand how the build system turns our source tree into controlled development and release builds.
+
+## Configuration Versus Compilation
+
+It is useful to distinguish two stages.
+
+CMake primarily **configures the build**. The compiler subsequently **performs the compilation**.
+
+Conceptually:
+
+```text
+Source Tree
+    |
+    v
+CMake Configuration
+    |
+    +-- Compiler selection
+    +-- Build configuration
+    +-- Compiler options
+    +-- Linker options
+    +-- Targets
+    |
+    v
+Build System
+    |
+    v
+Compiler / Linker
+    |
+    v
+Executable
+```
+
+This separation is important because CMake does not replace the compiler.
+
+Instead, CMake describes how the project should be built and generates the appropriate build-system files or invokes the appropriate build backend.
+
+## Build Configurations
+
+The editor needs at least two conceptual configurations:
+
+```text
+Development
+Release
+```
+
+The development configuration provides the facilities discussed in Section 38.1.
+
+The release configuration provides the characteristics discussed in Section 38.2.
+
+The important point is that these configurations should be **declared rather than manually reconstructed each time**.
+
+Without a build configuration, a developer might repeatedly type compiler options:
+
+```text
+compiler
+    + warning flags
+    + debug flags
+    + sanitizer flags
+    + optimization flags
+    + linker flags
+```
+
+This is fragile.
+
+A build system should make the configuration reproducible:
+
+```text
+CMake Configuration
+        |
+        v
+Consistent Build Settings
+        |
+        v
+Consistent Executable
+```
+
+## Out-of-Source Builds
+
+The project should keep generated build files separate from the source tree.
+
+For example:
+
+```text
+editor/
+├── CMakeLists.txt
+├── src/
+├── tests/
+└── ...
+
+build/
+└── ...
+```
+
+Rather than placing generated files directly alongside source files:
+
+```text
+editor/
+├── CMakeLists.txt
+├── src/
+├── tests/
+├── CMakeCache.txt
+├── generated files...
+└── ...
+```
+
+The first arrangement is called an **out-of-source build**.
+
+It provides several advantages:
+
+- the source tree remains clean,
+- different configurations can have separate build directories,
+- generated files are isolated,
+- removing a build does not remove source files,
+- multiple build configurations can coexist.
+
+For example:
+
+```text
+build/
+├── debug/
+└── release/
+```
+
+This allows development and release builds to be configured independently.
+
+## Development and Release Build Directories
+
+A practical project layout might therefore look like:
+
+```text
+project/
+├── CMakeLists.txt
+├── src/
+├── tests/
+│
+└── build/
+    ├── debug/
+    └── release/
+```
+
+The directories contain generated build information rather than source code.
+
+The conceptual relationship is:
+
+```text
+                    Source Tree
+                         |
+             +-----------+-----------+
+             |                       |
+             v                       v
+       Debug Configuration     Release Configuration
+             |                       |
+             v                       v
+       build/debug/            build/release/
+             |                       |
+             v                       v
+       Development             Release
+       Executable              Executable
+```
+
+This arrangement also makes it harder to accidentally mix development and release artifacts.
+
+## Compiler Settings Belong in the Build System
+
+Compiler options should be controlled by the build system rather than manually specified every time the editor is compiled.
+
+For example, development configuration may require settings related to:
+
+```text
+Debug information
+Assertions
+Warnings
+Sanitizers
+Reduced optimization
+```
+
+while the release configuration may require:
+
+```text
+Optimization
+Release-oriented compiler settings
+Appropriate warning policy
+```
+
+The exact flags are compiler-dependent.
+
+The important architectural principle is:
+
+> Build configuration belongs in the build system, not in the developer's memory.
+
+This makes the build process repeatable for every developer and every supported environment.
+
+## Targets
+
+CMake organizes a project around **targets**.
+
+A target represents something the build system knows how to produce or use.
+
+For our editor, the primary target is the executable:
+
+```text
+editor
+```
+
+The source files belonging to the editor are associated with that target.
+
+Conceptually:
+
+```text
+             editor target
+                  |
+        +---------+---------+
+        |         |         |
+        v         v         v
+      input    document   renderer
+        |         |         |
+        +---------+---------+
+                  |
+                  v
+              Executable
+```
+
+This is preferable to thinking of the build as a collection of independent compiler commands.
+
+The target represents the software product being built.
+
+## Configuration-Specific Target Properties
+
+Some target properties can differ between development and release configurations.
+
+For example:
+
+```text
+                     editor target
+                          |
+              +-----------+-----------+
+              |                       |
+              v                       v
+       Development              Release
+       configuration            configuration
+              |                       |
+       Debug information       Optimization
+       Assertions              Reduced diagnostics
+       Sanitizers               Release settings
+```
+
+The source files remain the same.
+
+The build configuration determines how the compiler and linker process them.
+
+This is another reason why build configuration should not be implemented through duplicated source trees.
+
+We should not have:
+
+```text
+src/debug/
+src/release/
+```
+
+for ordinary build differences.
+
+Instead, we should have:
+
+```text
+src/
+```
+
+and allow CMake to select the appropriate build properties.
+
+## Build Types and Configuration Models
+
+CMake supports different configuration models depending on the generator and platform.
+
+A common model provides configurations such as:
+
+```text
+Debug
+Release
+RelWithDebInfo
+MinSizeRel
+```
+
+The exact set and behavior should not be treated as universal across every generator.
+
+For this project, the important conceptual configurations are:
+
+```text
+Development-oriented
+        |
+        v
+Debug
+
+Production-oriented
+        |
+        v
+Release
+```
+
+Additional configurations can be useful when needed.
+
+For example, a release-oriented build that retains debugging information can be useful when investigating a problem in an otherwise optimized executable.
+
+The project should therefore distinguish the **conceptual purpose** of a configuration from the exact CMake configuration name.
+
+## Sanitizers as a Specialized Configuration
+
+Sanitizers deserve separate treatment because they are not simply equivalent to "Debug."
+
+A useful model is:
+
+```text
+                 Development Builds
+                        |
+             +----------+----------+
+             |                     |
+          Debug              Sanitizer
+             |                     |
+       Normal diagnosis      Instrumented diagnosis
+```
+
+CMake can provide a dedicated configuration or controlled build options for sanitizer instrumentation.
+
+This allows developers to request a sanitizer-enabled build without manually modifying compiler commands.
+
+The important property is reproducibility:
+
+```text
+Developer A
+    |
+    +-- Sanitizer configuration
+    |
+    v
+Same build policy
+
+Developer B
+    |
+    +-- Sanitizer configuration
+    |
+    v
+Same build policy
+```
+
+This is considerably safer than relying on undocumented personal compiler commands.
+
+## CMake and Platform Differences
+
+Chapter 37 (ADR-030) established that platform-specific behavior should be contained at the platform boundary rather than spread through the Core. The build system follows the same principle.
+
+Platform-specific build decisions should therefore be centralized rather than scattered throughout the project:
+
+```text
+Common Build Rules
+       |
+       v
+Platform-specific Build Rules
+       |
+       v
+Compiler / Linker
+```
+
+This does not mean that every platform must have an entirely different build description. Common settings should remain common, while genuinely platform-specific requirements are isolated in one place.
+
+## The Build Tree Is Not the Source Tree
+
+An important practical rule is that generated build artifacts should not become part of the source tree accidentally.
+
+The source repository should contain things such as:
+
+```text
+CMakeLists.txt
+src/
+tests/
+docs/
+```
+
+while generated files belong in a build directory:
+
+```text
+build/
+├── debug/
+└── release/
+```
+
+This separation has another useful property: a clean build can be produced by removing the generated directory and configuring it again.
+
+```text
+Remove build/
+       |
+       v
+Configure again
+       |
+       v
+Build again
+       |
+       v
+Fresh executable
+```
+
+If the software only works because of files left over from an earlier build, the build process is not sufficiently reliable.
+
+## A Reproducible Build Workflow
+
+The build process should eventually be expressible as a sequence of well-defined operations:
+
+```text
+Source
+  |
+  v
+Configure
+  |
+  v
+Build
+  |
+  v
+Test
+  |
+  v
+Install / Package
+```
+
+For development:
+
+```text
+Source
+  |
+  v
+CMake
+  |
+  v
+Development Configuration
+  |
+  v
+Development Build
+  |
+  v
+Testing / Debugging
+```
+
+For release:
+
+```text
+Source
+  |
+  v
+CMake
+  |
+  v
+Release Configuration
+  |
+  v
+Release Build
+  |
+  v
+Testing
+  |
+  v
+Release Artifact
+```
+
+The same source tree therefore supports both workflows.
+
+## What CMake Should Not Become
+
+It is tempting to place every project decision into the build system.
+
+That should be avoided.
+
+CMake should describe **how the software is built**, not become a second implementation of the editor.
+
+For example, CMake should not contain the editor's:
+
+- cursor logic,
+- document model,
+- command semantics,
+- rendering logic,
+- input parsing rules.
+
+Those belong to the source code and architecture.
+
+The boundary should remain clear:
+
+```text
+CMake
+  |
+  | builds
+  v
+Editor
+```
+
+not:
+
+```text
+CMake
+  |
+  +-- partially defines
+  |   editor behavior
+  |
+  +-- builds
+  |   editor
+  |
+  +-- controls
+      application logic
+```
+
+A build system should support the architecture, not replace it.
+
+## The Role of CMake in the Release Process
+
+At this point, CMake has three important responsibilities in our project:
+
+```text
+1. Configure
+       ↓
+   Define how the editor is built
+
+2. Build
+       ↓
+   Produce the requested target
+
+3. Install
+       ↓
+   Place release components
+   into the intended layout
+```
+
+Packaging and distribution will build on these capabilities in later sections.
+
+CMake therefore becomes the bridge between the source repository and the software artifacts that users eventually receive.
+
+## Summary
+
+CMake should make the editor's build process **explicit, repeatable, and configuration-driven**.
+
+The important distinction across the first three sections is now:
+
+```text
+38.1 Development Builds
+    What do developers need?
+
+38.2 Release Builds
+    What do users need?
+
+38.3 CMake Build Configurations
+    How do we express those requirements
+    as reproducible builds?
+```
+
+Out-of-source build directories, declared target properties, and explicit install rules keep the configuration under version control rather than in individual developer habits. CMake therefore describes how the editor is built without absorbing the editor's own logic, preserving the architectural boundary between build system and source.
+
+With the build configurations established, the next problem is no longer **how to compile the editor**, but **where the resulting software belongs on a user's system**. That leads to installation.

@@ -1,0 +1,310 @@
+---
+title: "38.1 Development Builds"
+description: "Explains why development builds prioritize observability, debugging symbols, assertions, warnings, and sanitizers over production efficiency."
+---
+
+A development build is the version of the editor intended for **software development rather than distribution to users**.
+
+Its purpose is not simply to produce an executable. It is to produce an executable that makes development easier by preserving the information and diagnostic mechanisms needed to understand, test, and debug the program.
+
+This distinction matters because the needs of a developer and the needs of an end user are different.
+
+A developer wants the program to expose useful information when something goes wrong. A user wants the program to be efficient, stable, and free from unnecessary development overhead.
+
+The development build therefore becomes the environment in which the editor is actively constructed and investigated.
+
+A note on terminology: this chapter uses **development build** for the configuration as a whole. The project glossary records the same configuration under the canonical term **Debug Build**, and Section 38.3 shows how the build system names it explicitly as the `Debug` configuration. A sanitizer-enabled build is a specialized development build, not a synonym for either.
+
+## Why Have a Separate Development Build?
+
+A compiler can produce an executable from the same source code in many different ways.
+
+For example, one build might prioritize:
+
+```text
+Debug information
+Assertions
+Diagnostics
+Sanitizers
+Warnings
+Ease of debugging
+```
+
+while another might prioritize:
+
+```text
+Optimization
+Small artifacts
+Performance
+Reduced diagnostics
+Release readiness
+```
+
+Trying to satisfy both purposes with a single configuration creates problems.
+
+If development diagnostics are always enabled, the final program may contain unnecessary overhead. If they are always disabled, developers lose valuable information when investigating failures.
+
+The editor therefore maintains a distinction between development and release builds.
+
+```text
+                 Source Code
+                     |
+          +----------+----------+
+          |                     |
+          v                     v
+   Development Build      Release Build
+          |                     |
+          v                     v
+   Observability           Efficiency
+   Diagnostics             Optimization
+   Debugging               Distribution
+```
+
+The source code remains the same. The build configuration determines how that source is compiled.
+
+## Development Builds and Debugging
+
+Chapter 36 established debugging as a process of locating the **first incorrect state** rather than merely observing the final symptom.
+
+A development build provides the conditions that make this possible.
+
+For example, the development build may include:
+
+- debugging symbols
+- assertions
+- diagnostic logging
+- tracing
+- sanitizers
+- reduced optimization
+- extensive compiler warnings
+
+These mechanisms serve different purposes.
+
+**Debugging symbols** allow a debugger to relate machine instructions back to source code.
+
+**Assertions** detect violations of assumptions and invariants during execution.
+
+**Logging and tracing** record important events and state transitions.
+
+**Sanitizers** detect classes of memory and undefined-behavior problems that may otherwise be difficult to diagnose.
+
+**Reduced optimization** can make the relationship between source code and generated machine code easier for a debugger to follow.
+
+These mechanisms were introduced as debugging techniques in Chapter 36. Here, the concern is different: **which of those mechanisms belong in the development build?**
+
+The distinction prevents Chapter 38 from repeating the debugging material.
+
+## Debug Information
+
+A development executable should normally contain debugging information.
+
+Consider a failure reported by the operating system:
+
+```text
+Segmentation fault
+```
+
+Without debugging information, a debugger may be able to identify a machine address but have limited ability to relate that address to the original C source.
+
+With debugging information, the same failure can be associated with information such as:
+
+```text
+editor.c:142
+```
+
+and the debugger can inspect relevant variables, stack frames, and functions.
+
+Conceptually:
+
+```text
+C Source
+   |
+   | compiler
+   v
+Machine Code
+   +
+Debug Information
+   |
+   v
+Development Executable
+```
+
+The debug information does not change the conceptual architecture of the editor. It provides additional information alongside the executable that development tools can use.
+
+It is therefore primarily a **development artifact**, rather than something that needs to be exposed in the normal user-facing release.
+
+## Assertions in Development Builds
+
+Assertions are particularly valuable during development because they turn assumptions into executable checks.
+
+Suppose the editor requires the cursor to remain within the valid bounds of the current line.
+
+A development build might check this invariant:
+
+```c
+assert(cursor->column <= line_length);
+```
+
+If an operation accidentally violates the invariant, the program can stop close to the point where the invalid state was created.
+
+Without the assertion, the invalid state might continue through several components:
+
+```text
+Command
+   |
+   v
+Cursor State
+   |
+   v
+Viewport
+   |
+   v
+Renderer
+   |
+   v
+Incorrect Screen
+```
+
+The visible rendering problem may occur much later than the actual mistake.
+
+Assertions therefore provide an early indication that an invariant has been violated.
+
+However, an important principle from Chapter 36 remains:
+
+> Assertions are development-time observers of correctness; they are not substitutes for correctness itself.
+
+The release build must still maintain valid state even when development assertions are absent.
+
+## Compiler Warnings
+
+A development build should also use a strong set of compiler warnings.
+
+Warnings can identify suspicious or potentially incorrect code before the program is executed.
+
+Examples include:
+
+```text
+unused variables
+unused parameters
+implicit conversions
+missing declarations
+uninitialized values
+suspicious comparisons
+```
+
+The exact warning options depend on the compiler and platform, so the build system should centralize them rather than scattering compiler-specific flags throughout the source code.
+
+Warnings are especially useful for this project because the editor is written in C, where certain classes of mistakes can otherwise remain unnoticed until runtime.
+
+A useful development policy is:
+
+```text
+Compile
+   |
+   v
+Warnings
+   |
+   +---- Problems found? ----> Fix
+   |
+   v
+Executable
+```
+
+Warnings should therefore be treated as part of the development process rather than as optional cosmetic messages.
+
+## Sanitizer-Enabled Development Builds
+
+Sanitizers provide another development-oriented configuration.
+
+For example, a sanitizer-enabled build can help detect problems such as:
+
+- invalid memory accesses
+- use-after-free
+- buffer overflows
+- certain forms of undefined behavior
+- memory leaks, depending on the sanitizer and environment
+
+The important point is that a sanitizer build is **not simply another name for a release build or an ordinary debug build**.
+
+It is better understood as a specialized development configuration:
+
+```text
+                    Development
+                         |
+             +-----------+-----------+
+             |                       |
+        Normal Debug          Sanitizer Build
+             |                       |
+        Debugging              Memory / UB
+        Assertions             Diagnostics
+        Logging                Instrumentation
+```
+
+Sanitizers can impose additional runtime overhead and can change execution characteristics. They are therefore primarily useful during development and testing.
+
+Chapter 36 already established that sanitizer-enabled builds belong to the development-time observability strategy. Chapter 38 establishes where that configuration fits into the overall build system.
+
+## Optimization During Development
+
+Optimization affects how the compiler transforms source code into machine code.
+
+A highly optimized executable may be faster, but optimization can make debugging more difficult because:
+
+- variables may be optimized away,
+- instructions may be reordered,
+- functions may be inlined,
+- source-level execution may no longer correspond directly to machine-level execution.
+
+For development, the project therefore benefits from a configuration that does not aggressively optimize the program.
+
+This does **not** mean that optimization must always be completely disabled.
+
+The important principle is:
+
+> Development builds should choose compiler settings that make development and diagnosis practical.
+
+The exact optimization level can depend on the compiler and development requirements.
+
+## Development Build Characteristics
+
+The development build can therefore be summarized as follows:
+
+| Characteristic      | Development Build               |
+| ------------------- | ------------------------------- |
+| Debug information   | Enabled                         |
+| Assertions          | Enabled                         |
+| Diagnostics         | Enabled                         |
+| Logging/tracing     | Available                       |
+| Sanitizers          | Available                       |
+| Optimization        | Reduced or development-oriented |
+| Compiler warnings   | Strong                          |
+| Primary purpose     | Development and verification    |
+| Distribution target | No                              |
+
+This gives us a clear separation from the release build that follows.
+
+```text
+Development Build
+        |
+        +-- Debug information
+        +-- Assertions
+        +-- Diagnostics
+        +-- Sanitizers
+        +-- Strong warnings
+        +-- Development-oriented optimization
+        |
+        v
+Developer
+```
+
+The development build is therefore not merely a "debug version" of the editor. It is a **purpose-specific build configuration designed to make the software easier to develop, inspect, test, and correct**.
+
+## Summary
+
+A development build should maximize **observability and diagnosability**, not production efficiency.
+
+The source code remains the same. What changes is the environment in which that source is compiled and executed.
+
+Debug information, assertions, sanitizers, and strong warnings all serve that observability goal, and each should be a declared part of the configuration rather than an ad hoc compiler command. Keeping those mechanisms in the development build also keeps the same source tree responsible for producing the user-facing executable.
+
+This separation gives us a foundation for the next section, where we examine the opposite goal: the **release build** and the characteristics required when the editor is prepared for users.

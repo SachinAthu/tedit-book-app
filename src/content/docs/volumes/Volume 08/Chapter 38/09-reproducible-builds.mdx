@@ -1,0 +1,612 @@
+---
+title: "38.9 Reproducible Builds"
+description: "Explains reproducible builds as a controlled, auditable process where known source, toolchain, and dependencies can regenerate a comparable artifact."
+---
+
+The previous sections established the release pipeline:
+
+```text
+Source → Build → Install / Package → Release Artifact → Verify → Distribute
+```
+
+This pipeline raises an important engineering question:
+
+> If we build the same version again from the same source, how confident are we that we will obtain the same result?
+
+**Reproducible builds** address this problem.
+
+A reproducible build is a build process designed so that the same source and relevant build inputs can produce the same resulting artifact, or at least an artifact whose important properties can be independently verified.
+
+## Why Reproducibility Matters
+
+Imagine that version `1.0.0` is released today.
+
+Several months later, a developer obtains the source corresponding to that release and builds it again.
+
+Ideally:
+
+```text
+Original Release
+      |
+      v
+Build from Release Source
+      |
+      v
+Same Result
+```
+
+If the resulting artifact differs unexpectedly, several questions arise:
+
+- Did the source change?
+- Did the compiler change?
+- Did the build configuration change?
+- Did an external dependency change?
+- Did the build environment affect the output?
+- Was the original release built differently from what the project documentation says?
+
+Reproducibility makes these questions easier to answer.
+
+## Reproducibility vs "It Builds"
+
+A successful build is not necessarily a reproducible build.
+
+Consider:
+
+```text
+Build A
+Source 1.0.0
+      |
+      v
+editor-A
+
+
+Build B
+Same Source 1.0.0
+      |
+      v
+editor-B
+```
+
+Both builds may work correctly.
+
+But if:
+
+```text
+editor-A != editor-B
+```
+
+we need to understand why.
+
+The distinction is:
+
+```text
+Successful Build
+    → The program was produced successfully.
+
+Reproducible Build
+    → The production process is sufficiently controlled
+      that repeated builds can be independently compared.
+```
+
+Reproducibility is therefore a property of the **build process**, not simply of the executable.
+
+## Sources of Build Variation
+
+Many things besides source code can influence a build.
+
+For example:
+
+```text
+Source Code
+Compiler
+Compiler Version
+Compiler Options
+Linker
+Libraries
+Build Environment
+Generated Files
+Timestamps
+Environment Variables
+Platform
+```
+
+Conceptually:
+
+```text
+             Source
+                |
+       +--------+--------+
+       |        |        |
+   Compiler   Options   Dependencies
+       |        |        |
+       +--------+--------+
+                |
+                v
+             Build
+                |
+                v
+             Artifact
+```
+
+If these inputs are not controlled, two builds can differ even when the source appears identical.
+
+## Source Reproducibility
+
+The first requirement is to know exactly **which source** produced a release. Section 38.6 established that a release version must correspond to a specific source state; reproducibility extends that requirement into the build process itself.
+
+A vague instruction such as "build whatever is currently in the repository" is not sufficient. The release must begin from an identifiable source state, and that source must be recorded so the release can be rebuilt later.
+
+## Controlled Build Configuration
+
+The build configuration must also be controlled.
+
+Section 38.3 established CMake as the mechanism for expressing build configurations.
+
+Instead of relying on undocumented compiler commands:
+
+```text
+Developer
+    |
+    +-- remembers some flags
+    +-- adds local options
+    +-- chooses compiler manually
+    |
+    v
+Artifact
+```
+
+the project should define the build configuration explicitly:
+
+```text
+Release Source
+      |
+      v
+CMake Configuration
+      |
+      +-- Compiler settings
+      +-- Build settings
+      +-- Installation rules
+      +-- Packaging rules
+      |
+      v
+Release Artifact
+```
+
+This makes the intended build process easier to reproduce.
+
+## Compiler Versions Matter
+
+The compiler is part of the build environment.
+
+Two different compiler versions may generate different machine code even when given identical source code and options.
+
+For example:
+
+```text
+Source 1.0.0
+     |
+     +---- Compiler A ----> Artifact A
+     |
+     +---- Compiler B ----> Artifact B
+```
+
+Both artifacts may be correct.
+
+However, they are not necessarily byte-for-byte identical.
+
+Therefore, a reproducible release process should record enough information about the toolchain to identify how the artifact was produced.
+
+This does not mean that the book must prescribe one specific compiler version for every platform.
+
+The important principle is:
+
+> The tools used to create a release should be identifiable.
+
+## Dependencies Matter
+
+External dependencies can also affect reproducibility.
+
+If a build retrieves an unspecified dependency:
+
+```text
+Build
+  |
+  v
+"Latest dependency"
+  |
+  v
+Artifact
+```
+
+then rebuilding the same source later may obtain a different dependency version.
+
+A more controlled process is:
+
+```text
+Build
+  |
+  v
+Specified dependency version
+  |
+  v
+Artifact
+```
+
+The same principle applies to system libraries and other external inputs where they materially affect the build.
+
+For our editor, minimizing unnecessary dependencies already reduces this problem.
+
+The project's small, layered architecture is therefore helpful from a release-engineering perspective.
+
+## Generated Files
+
+Build systems often generate intermediate files.
+
+Examples include:
+
+```text
+configuration files
+generated headers
+dependency information
+object files
+metadata
+```
+
+These files should normally be generated from controlled inputs rather than manually maintained as hidden requirements.
+
+A clean build should therefore be possible:
+
+```text
+Clean Source
+     |
+     v
+Configure
+     |
+     v
+Generate
+     |
+     v
+Compile
+     |
+     v
+Artifact
+```
+
+This is another reason out-of-source builds are valuable.
+
+The build directory can be discarded and recreated without affecting the source tree.
+
+## Environment Variables
+
+The environment can unexpectedly influence a build.
+
+For example:
+
+```text
+Environment
+    |
+    +-- PATH
+    +-- compiler selection
+    +-- flags
+    +-- locale
+    +-- platform variables
+    |
+    v
+Build
+```
+
+If a build depends on undocumented environment variables, another developer may not be able to reproduce it.
+
+The solution is not necessarily to eliminate every environment variable.
+
+Instead, the build should distinguish between:
+
+```text
+Intentional Build Inputs
+```
+
+and:
+
+```text
+Accidental Local State
+```
+
+The former should be documented or encoded in the build system.
+
+The latter should not determine release behavior.
+
+## Timestamps and Other Nondeterminism
+
+Build systems may also introduce values that naturally change from one build to another.
+
+Examples include:
+
+```text
+timestamps
+temporary paths
+machine-specific paths
+build identifiers
+environment-dependent metadata
+```
+
+Suppose an executable contains the time at which it was compiled:
+
+```text
+Build A → timestamp A
+Build B → timestamp B
+```
+
+The resulting binaries will differ even when every meaningful source and toolchain input is identical.
+
+This does not necessarily mean the software is incorrect.
+
+It means the build is **not byte-for-byte reproducible**.
+
+When reproducibility is important, such sources of nondeterminism should be controlled where practical.
+
+## Byte-for-Byte Reproducibility
+
+The strongest form of reproducibility is often **bit-for-bit or byte-for-byte reproducibility**.
+
+Conceptually:
+
+```text
+Same Inputs
+     |
+     +---- Build A ----> Artifact A
+     |
+     +---- Build B ----> Artifact B
+                          |
+                          v
+                    Artifact A
+                       ==
+                    Artifact B
+```
+
+If the artifacts are identical, comparing their hashes can provide a simple verification mechanism.
+
+```text
+Hash(Artifact A)
+      ==
+Hash(Artifact B)
+```
+
+This is a powerful property because it allows an independently produced artifact to be compared directly with the original.
+
+However, achieving complete byte-for-byte reproducibility can require controlling many details of the toolchain and environment.
+
+The project should therefore treat reproducibility as a goal to be engineered rather than assuming that it happens automatically.
+
+## Functional Reproducibility
+
+There is also a useful distinction between **identical artifacts** and **equivalent behavior**.
+
+Two compiler versions might produce different binaries:
+
+```text
+Artifact A != Artifact B
+```
+
+while both correctly implement the same release:
+
+```text
+Behavior A == Behavior B
+```
+
+This can still be useful, but it is weaker than byte-for-byte reproducibility.
+
+The strongest release process aims to make the build inputs sufficiently controlled that artifacts can be reproduced and compared directly where practical.
+
+## Recording the Build Environment
+
+A release process should retain information about how the artifact was produced.
+
+Useful information may include:
+
+```text
+Version
+Source revision
+Compiler
+Compiler version
+CMake version
+Target platform
+Target architecture
+Build configuration
+Relevant dependency versions
+```
+
+Conceptually:
+
+```text
+Release Artifact
+      |
+      +-- Version
+      +-- Source State
+      +-- Toolchain
+      +-- Platform
+      +-- Configuration
+```
+
+This information does not necessarily need to be embedded visibly inside the executable.
+
+It should at least be available as release metadata or build records.
+
+## Reproducibility and Clean Builds
+
+A clean build is an important prerequisite. Section 38.3 established out-of-source builds so that generated files never contaminate the source tree and a build can be discarded and recreated from controlled inputs.
+
+A clean build does not by itself guarantee reproducibility, but it removes one major source of accidental variation: an existing build directory may otherwise contain stale object or generated files that change the result.
+
+## Reproducibility and Release Artifacts
+
+The previous sections established that release artifacts should be versioned and verified.
+
+Reproducibility strengthens that process.
+
+```text
+Version 1.0.0
+      |
+      v
+Known Source
+      |
+      v
+Controlled Build
+      |
+      v
+Artifact
+      |
+      v
+Checksum
+```
+
+Later:
+
+```text
+Known Source
+      |
+      v
+Controlled Build
+      |
+      v
+Reproduced Artifact
+      |
+      v
+Compare
+```
+
+This provides a stronger level of confidence in the release process.
+
+## Reproducibility Does Not Mean Every Machine Is Identical
+
+A common misconception is that reproducible builds require every developer to use identical hardware.
+
+That is not the essential requirement.
+
+The goal is to control the relevant build inputs sufficiently that environmental differences do not unexpectedly change the intended result.
+
+For example:
+
+```text
+Developer A Hardware
+        |
+        v
+Controlled Toolchain
+        |
+        v
+Release Artifact
+
+
+Developer B Hardware
+        |
+        v
+Controlled Toolchain
+        |
+        v
+Comparable Release Artifact
+```
+
+The more of the environment that is controlled, the stronger the reproducibility guarantees can become.
+
+## Reproducibility and Portability Are Different
+
+Chapter 37 dealt with **portability**.
+
+This section deals with **reproducibility**.
+
+They solve different problems.
+
+```text
+Portability
+    → Can the editor be built and run
+      on different platforms?
+
+Reproducibility
+    → Can the same release be built again
+      from the same controlled inputs?
+```
+
+For example:
+
+```text
+Linux ──────────────── Windows
+       Portability
+
+
+Linux Build A ──────── Linux Build B
+          Reproducibility
+```
+
+A project can have good portability without reproducible builds, and reproducible builds on one platform without broad portability.
+
+Keeping these concepts separate prevents the chapter from repeating Chapter 37.
+
+## Practical Reproducibility Strategy
+
+For this project, a reasonable release strategy is to establish the following controls:
+
+```text
+1. Identify exact source state
+2. Identify release version
+3. Use defined CMake configuration
+4. Use known toolchain
+5. Use controlled dependencies
+6. Build from a clean environment
+7. Generate artifacts automatically
+8. Record relevant build metadata
+9. Verify resulting artifacts
+```
+
+The goal is not to turn the editor into a research project about build determinism.
+
+The goal is to ensure that the release process is **understood, repeatable, and auditable**.
+
+## Reproducibility in the Release Pipeline
+
+Reproducibility is a property of the whole pipeline rather than a separate stage. A later build should be capable of following essentially the same process:
+
+```text
+Same Source State
+       |
+       v
+Same Build Inputs
+       |
+       v
+Rebuild
+       |
+       v
+Comparable Artifact
+```
+
+This is the central idea of reproducible release engineering.
+
+## Summary
+
+**A reproducible build makes the path from source to release artifact controlled enough that the result can be independently rebuilt and meaningfully compared.**
+
+For our editor, this means:
+
+- releases correspond to known source states,
+- build configurations are defined,
+- toolchains are identifiable,
+- dependencies are controlled,
+- clean builds are possible,
+- accidental environment differences are minimized,
+- build metadata is retained,
+- and release artifacts can be independently verified.
+
+The distinction can be summarized as:
+
+```text
+Normal Build
+    → Produce an executable.
+
+Reproducible Build
+    → Produce an executable through a
+      controlled and repeatable process.
+```
+
+Recording the source revision, toolchain, configuration, and dependency versions makes a later rebuild auditable even when byte-for-byte identity is not achievable. Separating reproducibility from portability also keeps the goal clear: this is about rebuilding the same release, not about running on more platforms.
+
+We have now covered the complete release pipeline from development builds through reproducibility.
+
+The final section, **38.10 Preparing the Editor for Release**, will bring these ideas together into a practical release-readiness process rather than introducing another independent build concept.

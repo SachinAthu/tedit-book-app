@@ -1,0 +1,216 @@
+---
+title: "38.10 Preparing the Editor for Release"
+description: "Presents the release-readiness checklist and candidate process that confirm source, build, tests, installation, documentation, and artifacts are ready."
+---
+
+A release should not begin with a last-minute build command. The editor should first be brought into a known, releasable state.
+
+This section provides the final **release-readiness process** for the editor.
+
+The objective is simple:
+
+> Confirm that the software, source tree, artifacts, documentation, and release metadata are ready to be delivered.
+
+## Release Readiness
+
+Before creating a release, verify the major release dimensions:
+
+```text
+Release Readiness
+    |
+    +-- Source
+    +-- Build
+    +-- Tests
+    +-- Installation
+    +-- Documentation
+    +-- Version
+    +-- Artifacts
+    +-- Distribution
+```
+
+These are not new subsystems. They are the final conditions that must be satisfied before publishing the software. Each dimension corresponds to a section earlier in this chapter, and the checklist below consolidates them rather than introduces new material.
+
+## Final Release Candidate
+
+The release candidate should pass through one final sequence:
+
+```text
+Release Source
+      |
+      v
+Clean Build
+      |
+      v
+Test
+      |
+      v
+Package
+      |
+      v
+Install
+      |
+      v
+Smoke Test
+      |
+      v
+Release Candidate
+```
+
+A **smoke test** here means a short verification that the packaged release works in the way a normal user is expected to encounter it.
+
+For the editor, this can include:
+
+```text
+Start
+  ↓
+Open file
+  ↓
+Edit
+  ↓
+Save
+  ↓
+Exit
+```
+
+The exact smoke-test workflow should reflect the features that are actually part of the current release.
+
+## Release Decision
+
+After verification, the project reaches a simple decision point:
+
+```text
+              Release Candidate
+                     |
+              +------+------+
+              |             |
+          Accept          Reject
+              |             |
+              v             v
+          Publish       Fix Problems
+                            |
+                            v
+                     Build Again
+```
+
+A release should not be published merely because a planned date has arrived. If a release-blocking problem is discovered, the correct action is to return to development, correct the problem, and produce a new candidate.
+
+## Release Checklist
+
+The complete checklist can be kept deliberately small. Each line points back to the section that established the underlying requirement:
+
+```text
+Source                (38.1, 38.9)
+[ ] Correct source state
+[ ] No unintended files
+
+Build                 (38.1, 38.2, 38.3)
+[ ] Clean release build succeeds
+[ ] Correct target produced
+
+Tests                 (Chapter 35)
+[ ] Required tests pass
+[ ] Release candidate verified
+
+Installation          (38.4)
+[ ] Installation succeeds
+[ ] Installed editor works
+
+Version               (38.6)
+[ ] Version finalized
+[ ] Version information consistent
+
+Documentation         (38.7)
+[ ] User documentation current
+[ ] Release notes prepared
+[ ] License included
+
+Artifacts             (38.5)
+[ ] Correct artifacts generated
+[ ] Artifact contents verified
+[ ] Checksums generated where applicable
+
+Reproducibility       (38.9)
+[ ] Source revision recorded
+[ ] Toolchain/build information recorded
+
+Distribution          (38.8)
+[ ] Correct artifacts selected
+[ ] Release publication prepared
+```
+
+This checklist is the practical endpoint of the chapter.
+
+## The Release Boundary
+
+Once these checks pass, the project has crossed an important boundary:
+
+```text
+Development
+     |
+     v
+Release Preparation
+     |
+     v
+Release Candidate
+     |
+     v
+Verified Release
+     |
+     v
+Distribution
+```
+
+After publication, the released artifact should be treated as an identified historical version rather than an editable development output.
+
+If a defect is later discovered, the project does not silently modify the published artifact. Instead, the defect is corrected in development and a subsequent release is produced.
+
+```text
+1.0.0
+  |
+  | bug discovered
+  v
+Fix
+  |
+  v
+1.0.1
+```
+
+This preserves the meaning of published versions.
+
+## Summary
+
+**Release preparation is a disciplined verification process that brings the editor to a known, releasable state before anything is published.**
+
+For our editor, release preparation should ensure:
+
+- the source state is correct and free of unintended files,
+- a clean release build succeeds for the intended target,
+- required tests pass and the release candidate is verified,
+- installation works and the installed editor runs,
+- the version is finalized and consistent,
+- documentation, release notes, and license are current,
+- correct artifacts and checksums are produced,
+- reproducibility information is recorded,
+- and distribution is prepared.
+
+The release boundary can be summarized as:
+
+```text
+Development
+     |
+     v
+Release Preparation
+     |
+     v
+Release Candidate
+     |
+     v
+Verified Release
+     |
+     v
+Distribution
+```
+
+A published release becomes an identified historical version: defects are fixed in development and delivered in a subsequent release rather than silently changing the published artifact.
+
+The chapter has now assembled the full path from build to distribution; **38.11 Conclusion** draws these threads together.

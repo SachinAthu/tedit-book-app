@@ -1,0 +1,247 @@
+---
+title: "38.4 Installation"
+description: "Explains installation as placing the executable and required resources into a usable layout, distinct from building and configuring the editor."
+---
+
+Building the editor produces an executable. **Installation is the process of placing that executable and its associated resources into a layout from which the software can be used as an installed application.**
+
+This distinction is important: a successful build does not automatically mean that the editor is ready for users.
+
+```text
+Source Code
+    |
+    v
+Build
+    |
+    v
+Executable
+    |
+    v
+Installation
+    |
+    v
+Installed Editor
+```
+
+The build answers:
+
+> Can we produce the software?
+
+Installation answers:
+
+> Where should the produced software and its supporting files go?
+
+## The Installation Prefix
+
+An installation normally has a **prefix**: the root location under which the editor's installed files are placed.
+
+Conceptually:
+
+```text
+Prefix
+  |
+  +-- bin/
+  |
+  +-- share/
+  |
+  +-- other platform-specific locations
+```
+
+For example, a system installation might use a system-wide prefix, while a user might install the editor beneath a directory in their home environment.
+
+The important property is that the installation layout should be determined by the installation system rather than hard-coded throughout the application. This matters for portability: different platforms have different conventions for where executables, documentation, configuration, and other resources belong.
+
+## Installing the Executable
+
+The most important installed component is the editor executable itself.
+
+Conceptually:
+
+```text
+Build
+  |
+  v
+editor
+  |
+  | install
+  v
+<installation-prefix>/bin/editor
+```
+
+Once installed, the executable should be accessible through the platform's normal mechanisms.
+
+On systems where the installation directory is included in the user's command search path, the user can invoke:
+
+```text
+editor
+```
+
+without needing to know where the executable physically resides.
+
+This is one of the differences between **having an executable** and **having an installed application**.
+
+## Installed Resources
+
+The executable may not be the only thing that belongs to an installation.
+
+Depending on the final editor design, an installation may also contain resources such as:
+
+- documentation,
+- example configuration files,
+- default data,
+- license information,
+- other read-only resources.
+
+Which files belong in a release — and, just as importantly, which development files do not — is established in Section 38.5, where release artifacts are defined. The installation's job is narrower: it places the executable and its required resources into a usable system layout.
+
+## Installation Is Not Configuration
+
+Installation and configuration are related, but they are different concerns.
+
+Installation determines **where software components are placed**.
+
+Configuration determines **how the installed editor behaves**.
+
+For example:
+
+```text
+Installation
+    |
+    +-- editor executable
+    +-- documentation
+    +-- shared resources
+
+
+User Configuration
+    |
+    +-- key bindings
+    +-- tab width
+    +-- other editor preferences
+```
+
+Chapter 33 already established the editor's configuration model:
+
+```text
+Built-in Defaults
+       ↓
+User Configuration
+       ↓
+Optional Command-Line Overrides
+```
+
+That configuration model should not be duplicated here: Chapter 38 is concerned with getting the software onto the system; Chapter 33 is concerned with how the installed editor obtains its behavior settings.
+
+## System Installation vs User Installation
+
+An editor can conceptually be installed at different scopes.
+
+A **system installation** makes the software available to multiple users on a machine.
+
+A **user installation** places the software within a user's own environment.
+
+The difference is primarily about ownership, permissions, and installation location.
+
+```text
+System Installation
+    |
+    v
+System-wide location
+    |
+    v
+Multiple users
+
+
+User Installation
+    |
+    v
+User-controlled location
+    |
+    v
+Individual user
+```
+
+The book does not need to prescribe one universal installation location. Instead, the build and installation system should support the conventions of the target platform, as established by the portability strategy in Chapter 37 (ADR-030).
+
+## CMake Installation Rules
+
+CMake can describe which targets and resources should be installed.
+
+This provides an important separation:
+
+```text
+CMake Build Rules
+    |
+    +-- What gets compiled?
+    |
+    v
+Build Output
+
+
+CMake Install Rules
+    |
+    +-- What gets installed?
+    +-- Where does it go?
+    |
+    v
+Installed Software
+```
+
+The source project can therefore define an installation model without requiring developers or users to manually copy files. This is especially valuable for release preparation because the same installation procedure can be repeated consistently.
+
+## Installation as a Release Boundary
+
+Installation creates an important boundary in the release pipeline.
+
+Before installation, we are primarily dealing with **project and build artifacts**.
+
+After installation, we are dealing with **software as experienced by a user**.
+
+```text
+Development World
+       |
+       v
+Source
+       |
+       v
+Build
+       |
+       v
+Release Executable
+       |
+       v
+Installation
+       |
+       v
+User Environment
+```
+
+This makes installation an important validation point: if the editor works only from its build directory but fails after installation, the release process is incomplete even though compilation succeeded. Verifying that installed copy is folded into the consolidated release checklist in Section 38.10.
+
+## Summary
+
+**Building produces the editor; installation makes the editor available as software.**
+
+The installation process should:
+
+- place the executable in the appropriate location,
+- install only required user-facing resources,
+- respect platform conventions,
+- avoid dependence on the source or build tree,
+- and remain reproducible through the build system.
+
+```text
+Build
+    → Produce the executable.
+
+Installation
+    → Place the executable and required resources
+      into a usable system layout.
+```
+
+An installation that is verified from the installed location, rather than from the build tree, confirms that the executable and its resources are genuinely self-contained. Supporting both system and user prefixes keeps the layout aligned with the target platform's conventions.
+
+With installation defined, the next question is:
+
+> **What exactly do we package and hand to users as a release?**
+
+That leads to **Release Artifacts**.

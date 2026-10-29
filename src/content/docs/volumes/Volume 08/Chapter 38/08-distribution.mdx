@@ -1,0 +1,486 @@
+---
+title: "38.8 Distribution"
+description: "Distinguishes distribution from packaging and examines direct downloads, source releases, package managers, release hosting, and automated publication."
+---
+
+Building, installing, and documenting the editor prepares it for delivery. **Distribution is the process of making a release artifact available to users through an appropriate delivery channel.**
+
+This is a different concern from packaging.
+
+```text
+Build
+  |
+  v
+Install / Package
+  |
+  v
+Release Artifact
+  |
+  v
+Distribution
+  |
+  v
+User
+```
+
+Packaging creates something that can be delivered.
+
+Distribution determines **how that thing reaches users**.
+
+## Packaging vs Distribution
+
+These concepts are closely related but should remain separate.
+
+**Packaging** answers:
+
+> What files belong together as a release?
+
+**Distribution** answers:
+
+> Where and how do users obtain that release?
+
+For example:
+
+```text
+Source
+  |
+  v
+Release Build
+  |
+  v
+Package
+  |
+  v
+editor-1.0.0-linux-x86_64.tar.gz
+  |
+  v
+Distribution Channel
+  |
+  v
+User
+```
+
+The archive is the artifact.
+
+The location or mechanism through which the archive is obtained is the distribution channel.
+
+## Distribution Channels
+
+Different projects can distribute software through different channels.
+
+For a terminal editor, possible channels include:
+
+```text
+Distribution
+    |
+    +-- Source repository
+    +-- Release hosting
+    +-- System package manager
+    +-- Operating-system package
+    +-- Direct archive download
+```
+
+Not every channel needs to be supported immediately.
+
+The project should choose channels appropriate to its supported platforms and intended audience.
+
+The important principle is:
+
+> Distribution should be deliberate rather than an accidental consequence of publishing build files.
+
+## Direct Binary Distribution
+
+The simplest binary distribution model is to provide a prebuilt artifact.
+
+For example:
+
+```text
+editor-1.0.0-linux-x86_64.tar.gz
+```
+
+A user obtains the artifact, extracts it, and installs or runs the editor according to the provided instructions.
+
+The workflow is:
+
+```text
+Release Build
+     |
+     v
+Binary Artifact
+     |
+     v
+Publish
+     |
+     v
+User Download
+     |
+     v
+Install
+     |
+     v
+Run Editor
+```
+
+This approach is straightforward, particularly for early releases.
+
+However, the project must produce artifacts appropriate to each supported platform and architecture.
+
+## Source Distribution
+
+The project can also distribute source code.
+
+A source distribution is useful for:
+
+- developers,
+- users who prefer building locally,
+- maintainers of downstream packages,
+- platforms for which no prebuilt artifact is provided.
+
+The workflow becomes:
+
+```text
+Release Source
+     |
+     v
+User / Maintainer
+     |
+     v
+CMake Configuration
+     |
+     v
+Build
+     |
+     v
+Install
+```
+
+This is different from binary distribution because the recipient becomes responsible for the build environment.
+
+The source release therefore needs accurate build and dependency documentation.
+
+## Package Managers
+
+Operating-system package managers provide another distribution mechanism.
+
+Instead of manually downloading an archive, a user can obtain the editor through the package-management system appropriate to their environment.
+
+Conceptually:
+
+```text
+Project Release
+      |
+      v
+Package Definition
+      |
+      v
+Package Repository
+      |
+      v
+Package Manager
+      |
+      v
+User
+```
+
+The package manager can provide useful functionality such as:
+
+- installation,
+- removal,
+- upgrading,
+- dependency management,
+- platform-specific integration.
+
+However, package-manager distribution introduces additional maintenance requirements.
+
+The project may need to coordinate with package maintainers or maintain its own package definitions depending on the ecosystem.
+
+## Distribution Is Platform-Specific
+
+Chapter 37 established the editor's portability targets (Linux, macOS, Windows, WSL), and those environments do not use identical distribution mechanisms. The project should therefore distinguish a **supported platform** from a **supported distribution channel**: supporting an operating system does not automatically mean that every possible delivery mechanism for that operating system is supported.
+
+## Release Hosting
+
+A project may publish release artifacts through a release-hosting service associated with its source repository.
+
+The important characteristics are:
+
+- each release has a stable version,
+- artifacts are attached to that release,
+- users can identify the intended platform,
+- checksums can accompany the artifacts,
+- release notes describe the changes.
+
+Conceptually:
+
+```text
+Version 1.0.0
+      |
+      +-- Source
+      +-- Linux Artifact
+      +-- Windows Artifact
+      +-- Checksums
+      +-- Release Notes
+```
+
+This provides users with a central location from which they can obtain a specific release.
+
+The particular hosting service is an implementation choice and does not change the release architecture.
+
+## Distribution and Version Selection
+
+A distribution system should make it easy for users to select the correct artifact.
+
+Suppose a release provides:
+
+```text
+editor-1.0.0-linux-x86_64.tar.gz
+editor-1.0.0-linux-aarch64.tar.gz
+editor-1.0.0-windows-x86_64.zip
+```
+
+The user needs enough information to choose correctly.
+
+This is why artifact naming and platform documentation are important.
+
+The relationship is:
+
+```text
+Version
+   +
+Operating System
+   +
+Architecture
+   |
+   v
+Correct Artifact
+```
+
+Distribution should make these distinctions visible rather than forcing users to guess.
+
+## Checksums During Distribution
+
+Section 38.5 introduced checksums as a way of verifying artifact integrity; distribution is where they become useful to recipients. The user calculates the checksum of a downloaded artifact and compares it with the published value, confirming that the content corresponds to the expected release.
+
+## Distribution and Authenticity
+
+Integrity and authenticity are related but different.
+
+A checksum can answer:
+
+> Did the downloaded file change relative to the published checksum?
+
+A signing mechanism can provide stronger evidence about:
+
+> Who published or authorized this artifact?
+
+The exact signing infrastructure depends on the chosen distribution ecosystem.
+
+The important release-engineering principle is that the project should understand the distinction rather than treating a checksum as a complete security mechanism.
+
+For the baseline editor, artifact checksums provide a useful integrity mechanism without requiring the book to prescribe one universal signing infrastructure.
+
+## Distribution Should Not Depend on a Developer's Machine
+
+A release should not be distributed directly from an arbitrary developer workspace.
+
+A fragile process might look like:
+
+```text
+Developer Laptop
+     |
+     +-- build
+     +-- manually copy
+     +-- rename
+     +-- upload
+     |
+     v
+Users
+```
+
+This makes it difficult to know whether the uploaded file actually corresponds to the intended release.
+
+A stronger process is:
+
+```text
+Source State
+    |
+    v
+Release Configuration
+    |
+    v
+Automated Build
+    |
+    v
+Automated Packaging
+    |
+    v
+Verification
+    |
+    v
+Distribution Artifact
+```
+
+This makes the path from source to published software explicit.
+
+## Automated Distribution
+
+As the project matures, the release process can be automated through a continuous integration or release pipeline.
+
+Conceptually:
+
+```text
+Release Trigger
+      |
+      v
+Build
+      |
+      v
+Test
+      |
+      v
+Package
+      |
+      v
+Verify
+      |
+      v
+Publish
+```
+
+Automation reduces the chance of human mistakes such as:
+
+- publishing the wrong build,
+- forgetting an artifact,
+- using an outdated executable,
+- forgetting checksums,
+- attaching the wrong version.
+
+However, automation should implement a clearly defined release process. It should not replace the need for that process to be understood.
+
+## Distribution Does Not Mean "Publish Everything"
+
+The source repository contains many files that should never reach ordinary users (tests, build scripts, internal files). Distribution therefore starts from the release artifacts defined in Section 38.5 — which establishes what belongs in a release and what is a development-only file — rather than from the entire development repository.
+
+## Distribution and Installation
+
+Distribution and installation form two consecutive stages:
+
+```text
+Distribution
+    |
+    | delivers
+    v
+Release Artifact
+    |
+    | installed by
+    v
+Installation
+    |
+    v
+User Environment
+```
+
+They should not be confused.
+
+A package manager, for example, may perform both delivery and installation as part of one user-visible operation.
+
+Architecturally, however, the concerns remain distinct:
+
+```text
+Distribution
+    → Get the software to the user.
+
+Installation
+    → Place the software correctly on the system.
+```
+
+Keeping the distinction clear helps us reason about different delivery mechanisms without changing the underlying release model.
+
+## Distribution and Documentation
+
+Users need to know **where to obtain the editor** and **what to do after obtaining it**.
+
+Therefore the documentation should connect the distribution and installation processes:
+
+```text
+User
+  |
+  v
+Distribution Documentation
+  |
+  v
+Choose Artifact
+  |
+  v
+Download / Obtain
+  |
+  v
+Install
+  |
+  v
+Run
+```
+
+This is particularly important when multiple artifacts exist for different platforms or architectures.
+
+A user should not need to understand the internal build system to determine which release artifact is appropriate.
+
+## A Complete Distribution Pipeline
+
+```text
+Source → Build → Install / Package → Release Artifact → Verify → ▸ Distribute → User
+```
+
+Each stage has a distinct responsibility: versioning identifies the release, the build produces the software, packaging organizes it for delivery, verification confirms the artifact is correct, distribution makes it available, and installation places it into the user's environment. This separation gives the release process a clear structure.
+
+## Distribution Channels Should Be Introduced Gradually
+
+The editor does not need to support every possible distribution mechanism from its first release.
+
+A sensible progression could be:
+
+```text
+Initial Release
+    |
+    v
+Source + Direct Binary Artifacts
+    |
+    v
+Additional Platform Artifacts
+    |
+    v
+Package Manager Integration
+    |
+    v
+Broader Distribution
+```
+
+The exact sequence is a project decision.
+
+The important principle is to avoid making distribution infrastructure more complicated than the software's current audience and platform requirements justify.
+
+## Summary
+
+**Distribution is the controlled delivery of verified release artifacts to users through appropriate channels.**
+
+For our editor, distribution should:
+
+- distinguish source and binary releases,
+- provide platform-appropriate artifacts,
+- make version selection clear,
+- preserve artifact identity,
+- provide integrity information where appropriate,
+- avoid manual and error-prone release procedures,
+- and connect naturally with installation and documentation.
+
+```text
+Source → Build → Install / Package → Release Artifact → Verify → ▸ Distribute → User
+```
+
+Each channel carries its own maintenance burden, so the project should add them in step with its audience and supported platforms rather than attempting universal coverage at once. Connecting distribution documentation to artifact choice and installation keeps the path from download to running editor unambiguous.
+
+The next section addresses an important property of this entire pipeline:
+
+> **Can we produce the same release reliably from the same source and build inputs?**
+
+That is the purpose of **38.9 Reproducible Builds**.

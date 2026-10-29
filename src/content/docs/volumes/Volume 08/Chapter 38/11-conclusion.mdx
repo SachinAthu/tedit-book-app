@@ -1,0 +1,60 @@
+---
+title: "38.11 Conclusion"
+description: "Summarizes the packaging chapter, its release pipeline, review exercises, and previews plugin architecture as the next volume's topic."
+---
+
+Packaging turns the editor from a program we can build into software we can hand to a user. The unifying idea of the chapter is that development and release are two configurations of the same editor: the **development build** makes problems easy to find, and the **release build** makes the finished software suitable to use.
+
+The chapter follows a single progression:
+
+```text
+Development Builds — observability
+        ↓
+Release Builds — suitability
+        ↓
+CMake Configurations — reproducible builds
+        ↓
+Installation → Artifacts → Versioning → Documentation
+        ↓
+Distribution → Reproducible Verification
+        ↓
+Release Readiness
+```
+
+The important lessons are:
+
+- A build configuration changes how the source is compiled, not what the editor is.
+- Development builds maximize observability — debug information, assertions, diagnostics, sanitizers, warnings.
+- Release builds maximize suitability — optimization, stability, clean artifacts — without being "less correct."
+- Compiler settings belong in the build system, not in the developer's memory.
+- Installation determines where software belongs on a system; a successful build does not imply a usable installation.
+- A release artifact is the exact deliverable, and versioning gives every artifact an identity tied to its source state.
+- Documentation and distribution make a release usable and reachable; reproducible builds confirm the pipeline can be rebuilt and verified.
+- The release checklist brings the editor to a known state before a candidate crosses the boundary from development to distribution.
+
+The build system foundation for this chapter is recorded as **ADR-012: CMake as Build System**, first referenced in Chapter 10. The build configuration strategy is recorded as **ADR-031: Build Configuration Strategy**, and the release and versioning strategy as **ADR-032: Release and Versioning Strategy**. Once a release is published, it is a historical version: defects are fixed in development and shipped in a subsequent release, never silently patched in the published artifact.
+
+## Exercises
+
+### Review Questions
+
+1. Why is a release build not simply "the debug build with debugging turned off"?
+2. What does each build configuration—development, release, and sanitizer—prioritize?
+3. Why should build configuration belong to the build system rather than to a developer's memory?
+4. Why does a successful build not guarantee a successful installation?
+5. What distinguishes a release artifact from a release build?
+6. Why must a released version identify both the software and the source state that produced it?
+7. What documentation should accompany a release, and why must it match the release version?
+8. Why is distribution a different concern from packaging?
+9. What does a reproducible build verify, and why does verification matter?
+10. Why should a released artifact be treated as a historical version rather than an editable output?
+
+### Optional Challenge
+
+Define a minimal release checklist for the editor that covers source, build, tests, installation, version, documentation, artifacts, reproducibility, and distribution. For one dimension of your choice, describe the failure that each checklist item is intended to prevent.
+
+## Preview of the Next Chapter
+
+> Packaging moves the editor beyond the terminal: once built, installed, and shipped, the editor becomes software others can use.
+
+The next volume turns to **advanced topics**. The editor is now feature-complete enough to study as a real software system, but one capability still separates it from a professional product: extensibility. The next chapter moves into **Plugin Architecture**, where the book examines how a program opens itself to change without recompilation — through stable interfaces, a documented **ABI**, and dynamic loading.

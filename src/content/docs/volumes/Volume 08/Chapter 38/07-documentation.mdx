@@ -1,0 +1,559 @@
+---
+title: "38.7 Documentation"
+description: "Surveys the user, developer, and release documentation a complete release needs, from installation and usage to changelogs and license information."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+A software release is not complete merely because the executable can be built and installed.
+
+Users also need to understand **what the editor is, how to install it, how to use it, how to configure it, and what changed between releases**.
+
+Documentation therefore becomes part of the release process.
+
+The distinction is important:
+
+```text
+Source Code
+    |
+    v
+Build
+    |
+    v
+Executable
+    |
+    v
+Documentation
+    |
+    v
+Complete Release
+```
+
+The purpose of this section is not to teach technical writing. It is to identify the documentation that should accompany a releasable editor.
+
+## Why Documentation Is Part of the Product
+
+An executable without sufficient documentation places unnecessary responsibility on the user.
+
+For a terminal editor, the user needs answers to questions such as:
+
+- How do I install it?
+- How do I start it?
+- How do I open a file?
+- How do I save a file?
+- What are the keyboard commands?
+- Where is configuration stored?
+- Which platforms are supported?
+- What limitations should I know about?
+
+If these questions cannot be answered easily, the software may be technically functional but practically difficult to use.
+
+Therefore:
+
+> Documentation is part of making software usable, not merely an optional description of the software.
+
+## Different Documentation Serves Different Audiences
+
+Not all documentation has the same purpose.
+
+For our editor, it is useful to distinguish at least three categories:
+
+```text
+Documentation
+     |
+     +-- Developer Documentation
+     |
+     +-- User Documentation
+     |
+     +-- Release Documentation
+```
+
+**Developer documentation** explains how the project is developed, built, tested, and maintained.
+
+**User documentation** explains how to install, configure, and use the editor.
+
+**Release documentation** explains what changed in a particular version.
+
+These categories may share files or pages, but their purposes should remain distinct.
+
+## Developer Documentation
+
+Developer documentation supports people who work on the editor itself.
+
+It can describe:
+
+- project structure,
+- build requirements,
+- development builds,
+- testing,
+- debugging,
+- supported platforms,
+- contribution procedures,
+- architectural decisions.
+
+Much of the project's architectural knowledge already exists in this book and its supporting design documents.
+
+The released software does not need to reproduce the entire book.
+
+Instead, developer documentation should provide enough information for another developer to enter the project and understand how to work with it.
+
+Conceptually:
+
+```text
+Developer
+    |
+    v
+Developer Documentation
+    |
+    +-- Build
+    +-- Test
+    +-- Debug
+    +-- Understand architecture
+    |
+    v
+Project
+```
+
+## User Documentation
+
+User documentation has a different objective.
+
+It should answer:
+
+> How do I successfully use the editor?
+
+A basic user documentation set may include:
+
+```text
+Installation
+Usage
+Keyboard Commands
+Configuration
+Supported Platforms
+Troubleshooting
+```
+
+The amount of documentation should be appropriate to the complexity of the software.
+
+A simple command-line editor does not require hundreds of pages before it can be considered documented.
+
+The important requirement is that the information users actually need is easy to find.
+
+## Installation Documentation
+
+The installation process described in Section 38.4 should be reflected in user documentation.
+
+For example, documentation should explain the supported installation methods rather than requiring users to infer them from the project structure.
+
+Conceptually:
+
+```text
+User
+  |
+  v
+Installation Documentation
+  |
+  +-- Requirements
+  +-- Installation
+  +-- Verification
+  |
+  v
+Installed Editor
+```
+
+Installation documentation should also make clear when a user is expected to build the editor from source and when a prebuilt artifact is available.
+
+The exact commands depend on the distribution method and target platform, so the documentation should describe the supported procedure rather than presenting an unnecessarily universal command sequence.
+
+## Usage Documentation
+
+Once the editor is installed, the user needs to know how to operate it.
+
+For a terminal editor, this is particularly important because the interface is primarily keyboard-driven.
+
+Usage documentation should therefore explain the essential workflow:
+
+```text
+Start Editor
+     |
+     v
+Open / Create File
+     |
+     v
+Edit
+     |
+     v
+Save
+     |
+     v
+Exit
+```
+
+It should also explain important commands and their expected behavior.
+
+The documentation does not need to repeat the architecture of the Input Engine or Command Engine. Those are implementation concepts.
+
+The user needs the **observable behavior**.
+
+## Keyboard Commands
+
+A terminal editor depends heavily on keyboard interaction.
+
+Users therefore need a clear reference for commands such as:
+
+```text
+Movement
+Editing
+Saving
+Searching
+Buffer operations
+Window operations
+Exit
+```
+
+The exact command set will be established during implementation.
+
+The documentation should describe the commands as users experience them:
+
+```text
+Key
+  ↓
+Command
+  ↓
+Effect
+```
+
+rather than exposing the internal event-processing pipeline:
+
+```text
+Terminal Input
+  ↓
+Input Parser
+  ↓
+Input Event
+  ↓
+Command Engine
+  ↓
+Editor State
+```
+
+The latter belongs to the architecture. The former belongs to user documentation.
+
+This distinction prevents documentation from becoming another repetition of earlier chapters.
+
+## Configuration Documentation
+
+Chapter 33 established configuration as part of the editor's design.
+
+The configuration hierarchy is:
+
+```text
+Built-in Defaults
+        ↓
+User Configuration
+        ↓
+Optional Command-Line Overrides
+```
+
+The release documentation should explain how users interact with that configuration system.
+
+It should answer questions such as:
+
+- Where is the configuration file?
+- Which settings can be changed?
+- What are the defaults?
+- What values are valid?
+- What happens when a configuration value is invalid?
+
+The implementation details of configuration parsing do not belong here.
+
+The user needs the interface and behavior.
+
+## Supported Platforms
+
+The documentation should clearly identify supported environments.
+
+Chapter 37 established the project's portability strategy around:
+
+```text
+Linux
+macOS
+Windows
+WSL
+```
+
+as the relevant platform targets in the book's current scope.
+
+The release documentation should distinguish between:
+
+```text
+Supported
+    → Tested and intentionally maintained
+
+Possible
+    → May work but is not a supported target
+
+Unsupported
+    → Not part of the project's release guarantees
+```
+
+This prevents users from interpreting successful compilation on an arbitrary platform as a promise of support.
+
+## Troubleshooting Documentation
+
+Some problems are predictable enough to deserve documented solutions.
+
+For example:
+
+```text
+Problem
+   |
+   v
+Possible Cause
+   |
+   v
+Recommended Action
+```
+
+Troubleshooting documentation can cover issues such as:
+
+- installation problems,
+- terminal compatibility problems,
+- configuration errors,
+- unsupported environments,
+- permission problems,
+- common startup failures.
+
+However, troubleshooting documentation should not become a replacement for proper error handling.
+
+The editor should still report meaningful runtime errors.
+
+Documentation provides additional guidance when the immediate error message is not enough.
+
+## Known Limitations
+
+A professional release should also be honest about what it does **not** support.
+
+For example:
+
+```text
+Supported:
+    Feature A
+    Feature B
+    Feature C
+
+Not yet supported:
+    Feature D
+    Feature E
+```
+
+This is especially important for a project that is intentionally developed in stages.
+
+The absence of a feature should not be mistaken for a defect if the feature is explicitly outside the current release scope.
+
+A clear limitations section sets appropriate expectations.
+
+## License and Legal Information
+
+A release should also identify the license under which the software is distributed.
+
+The license tells users what they are permitted to do with the software.
+
+The release artifact should therefore make the applicable license easy to locate.
+
+Conceptually:
+
+```text
+Release
+   |
+   +-- Software
+   |
+   +-- Documentation
+   |
+   +-- License
+```
+
+The license itself is a legal document and should not be casually rewritten or summarized in place of the actual license text.
+
+The important release-engineering principle is simply that users should be able to identify the licensing terms that apply to the software.
+
+## Changelogs
+
+A changelog records changes across versions.
+
+For example:
+
+```text
+1.1.0
+    Added ...
+    Improved ...
+    Fixed ...
+
+1.0.1
+    Fixed ...
+
+1.0.0
+    Initial release
+```
+
+A changelog answers:
+
+> What changed between releases?
+
+This is different from the user manual.
+
+The manual answers:
+
+> How does the current version work?
+
+The changelog answers:
+
+> What changed?
+
+Keeping those purposes separate prevents the user documentation from becoming an ever-growing historical record.
+
+## Release Notes
+
+Release notes provide a more focused description of a particular release.
+
+They may highlight:
+
+- important new functionality,
+- significant fixes,
+- compatibility changes,
+- known limitations,
+- migration considerations.
+
+A useful distinction is:
+
+```text
+User Documentation
+    → How to use the editor.
+
+Changelog
+    → Historical list of changes.
+
+Release Notes
+    → Important information about this release.
+```
+
+The three may be generated from related information, but their purposes remain different.
+
+## Documentation Must Match the Software
+
+Documentation becomes dangerous when it describes a different version from the software being used. A manual that says "press X to run command Y" while the editor actually uses Z is worse than no documentation, because it actively misleads the user.
+
+This is why the version identity established in Section 38.6 matters: the executable, documentation, and release notes must all identify the same release. Documentation should therefore be reviewed as part of release preparation.
+
+## Documentation Should Be Tested
+
+Documentation can contain errors just as software can. If documentation contains a command, procedure, path, configuration example, or expected behavior, it should be verified against the actual software whenever practical — especially for command-line software, where users frequently copy commands directly from documentation.
+
+That verification is folded into the consolidated release checklist in Section 38.10, which treats documentation as one of the release-readiness dimensions.
+
+## Documentation as a Release Artifact
+
+Documentation itself can become part of the release artifact.
+
+For example:
+
+```text
+Release Artifact
+    |
+    +-- editor
+    +-- README
+    +-- LICENSE
+    +-- Documentation
+```
+
+Alternatively, documentation may be published separately.
+
+The important point is that documentation should be considered when defining the complete release rather than added after the release has already been published.
+
+## Documentation and the Book
+
+There is an important distinction between **this book** and the editor's user documentation.
+
+This book explains:
+
+```text
+Why the editor is designed this way
+How its architecture works
+What engineering principles guide it
+```
+
+User documentation explains:
+
+```text
+How to install the editor
+How to use it
+How to configure it
+What commands are available
+What the current release supports
+```
+
+The two serve different audiences.
+
+The book is therefore not a substitute for the final editor's documentation.
+
+Likewise, the user manual does not need to reproduce the book's architectural discussions.
+
+## Documentation in the Release Pipeline
+
+Documentation is cross-cutting: it is prepared alongside the build and verified before packaging, rather than occupying its own stage.
+
+Before a release is published, we should be able to answer:
+
+```text
+Can users install it?
+Can users start it?
+Can users understand its commands?
+Can users configure it?
+Can users identify the version?
+Can users understand important limitations?
+```
+
+If the answer to these questions is no, the release is not yet complete from the user's perspective.
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+Documentation turns a technically released executable into an understandable and usable product.
+
+</Aside>
+
+## Summary
+
+Documentation is part of the release process rather than an optional extra. A complete release supplies the information users need to install, start, operate, configure, and troubleshoot the editor, to identify its supported platforms, limitations, and license, and to understand what changed between releases. Developer, user, and release documentation serve different audiences, and all of it must remain consistent with the software version it describes.
+
+For our editor, release documentation should provide the information necessary to:
+
+- install the editor,
+- start and use it,
+- understand keyboard commands,
+- configure it,
+- identify supported platforms,
+- troubleshoot common problems,
+- understand limitations,
+- identify the license,
+- and understand changes between releases.
+
+The relationship can be summarized as:
+
+```text
+Software
+   |
+   +---- Executable
+   |
+   +---- Installation
+   |
+   +---- User Documentation
+   |
+   +---- Release Notes
+   |
+   +---- License
+   |
+   v
+Complete Release
+```
+
+The next step is to move from **preparing the software and explaining it** to **actually making it available to users**. That is the purpose of **38.8 Distribution**.

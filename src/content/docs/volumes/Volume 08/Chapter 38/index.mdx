@@ -1,0 +1,73 @@
+---
+title: "Chapter 38 — Packaging"
+description: "Traces the editor from source tree to shipped software through build configurations, installation, release artifacts, versioning, distribution, and reproducible builds."
+---
+
+## Introduction
+
+Writing the editor was only the first stage. At some point the software must leave the developer's machine and reach users. **Packaging is the discipline that turns a source tree into software that can be built, installed, and delivered to others.**
+
+The chapter builds on a central distinction established in previous chapters: the editor we develop is the same editor users receive. What changes is how it is configured. A **development build** maximizes observability for the developer; a **release build** maximizes suitability for the end user. Expressing both from the same source is the job of the build system.
+
+The release process builds progressively:
+
+```text
+Development Builds — what developers need to diagnose
+        ↓
+Release Builds — what users need to run
+        ↓
+CMake Configurations — how both are expressed reproducibly
+        ↓
+Installation — where the software belongs on a system
+        ↓
+Release Artifacts — what exactly is delivered
+        ↓
+Versioning — how each artifact is identified
+        ↓
+Documentation — how users understand the release
+        ↓
+Distribution — how the release reaches users
+        ↓
+Reproducible Builds — verifying the whole pipeline
+        ↓
+Preparing the Editor for Release — confirming the release is ready to publish
+```
+
+These sections share one underlying pipeline, referenced throughout the chapter:
+
+```text
+Source → Build → Install / Package → Release Artifact → Verify → Distribute → User
+```
+
+Versioning and documentation are cross-cutting: they apply across the pipeline rather than occupying their own stage.
+
+We begin by separating development from release builds, then examine how CMake expresses both as reproducible configurations. We walk through installation, release artifacts, versioning, documentation, and distribution, and we close by verifying the pipeline through reproducible builds and by bringing the editor to a known, releasable state. By the end, the editor is no longer a program we can build, but software we can hand to a user.
+
+## Learning Objectives
+
+By the end of this chapter, you should be able to:
+
+- Distinguish a development build from a release build and explain what each prioritizes.
+- Explain why the editor needs separate configurations rather than a single universal build.
+- Describe how CMake expresses development and release configurations from the same source tree.
+- Explain what installation means and why a successful build does not imply a usable installation.
+- Define a release artifact and describe the files a release may contain.
+- Explain why released software needs a version and how versioning connects source state to artifacts.
+- Describe the documentation a release should include.
+- Distinguish packaging from distribution and describe appropriate delivery channels.
+- Explain what a reproducible build is and why verification matters.
+- Summarize the overall release-readiness process for the editor.
+
+## Sections
+
+- [38.1 Development Builds](/volumes/volume-08/chapter-38/01-development-builds/)
+- [38.2 Release Builds](/volumes/volume-08/chapter-38/02-release-builds/)
+- [38.3 CMake Build Configurations](/volumes/volume-08/chapter-38/03-cmake-build-configurations/)
+- [38.4 Installation](/volumes/volume-08/chapter-38/04-installation/)
+- [38.5 Release Artifacts](/volumes/volume-08/chapter-38/05-release-artifacts/)
+- [38.6 Versioning](/volumes/volume-08/chapter-38/06-versioning/)
+- [38.7 Documentation](/volumes/volume-08/chapter-38/07-documentation/)
+- [38.8 Distribution](/volumes/volume-08/chapter-38/08-distribution/)
+- [38.9 Reproducible Builds](/volumes/volume-08/chapter-38/09-reproducible-builds/)
+- [38.10 Preparing the Editor for Release](/volumes/volume-08/chapter-38/10-preparing-editor-for-release/)
+- [38.11 Conclusion](/volumes/volume-08/chapter-38/11-conclusion/)

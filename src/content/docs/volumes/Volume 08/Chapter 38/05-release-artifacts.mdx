@@ -1,0 +1,454 @@
+---
+title: "38.5 Release Artifacts"
+description: "Defines release artifacts as deliberate, self-consistent deliverables and distinguishes binaries, source archives, debug symbols, and checksums."
+---
+
+A release build produces software that is ready to distribute, but the executable itself is not necessarily the complete release.
+
+A **release artifact** is a file or collection of files produced for delivery to users, developers, or distribution systems.
+
+This distinction is important:
+
+```text
+Release Build
+     |
+     v
+Executable
+     |
+     v
+Release Packaging
+     |
+     v
+Release Artifacts
+```
+
+The build answers:
+
+> What software did we produce?
+
+Release artifacts answer:
+
+> What exactly are we going to deliver?
+
+## Why Release Artifacts Matter
+
+A user normally should not need access to the project's source tree or build directory.
+
+Instead, they receive something that represents a specific release.
+
+For example:
+
+```text
+editor-1.0.0-linux-x86_64.tar.gz
+```
+
+or a platform-appropriate package or archive.
+
+The artifact should contain the files necessary for its intended purpose.
+
+This creates a boundary between the **development project** and the **released product**.
+
+```text
+Development Project
+        |
+        v
+    Release Build
+        |
+        v
+    Release Files
+        |
+        v
+ Release Artifact
+        |
+        v
+       User
+```
+
+## The Executable as the Primary Artifact
+
+For our terminal editor, the executable is the central release component.
+
+Conceptually:
+
+```text
+Release
+   |
+   +-- editor
+```
+
+If the editor has no runtime resources outside the executable, this may be enough for a minimal binary distribution.
+
+However, the release process should not assume that the executable is always the only thing users need.
+
+Other release components may include:
+
+- documentation,
+- license information,
+- configuration examples,
+- platform-specific resources,
+- checksums,
+- debugging symbols as separate developer artifacts.
+
+The exact contents depend on the distribution format.
+
+## Source Artifacts
+
+Not every user wants a precompiled executable.
+
+Developers and package maintainers may want the source code so that they can build the editor themselves.
+
+A source release might therefore contain:
+
+```text
+editor-1.0.0/
+├── src/
+├── tests/
+├── CMakeLists.txt
+├── documentation/
+├── LICENSE
+└── ...
+```
+
+The source artifact should represent the source state corresponding to the release version.
+
+It should not contain accidental development leftovers such as:
+
+```text
+build/
+CMakeCache.txt
+temporary files
+local configuration
+compiler-generated files
+```
+
+The objective is a **clean source distribution**.
+
+## Binary Artifacts
+
+A binary distribution contains software that has already been compiled for a particular platform and architecture.
+
+Conceptually:
+
+```text
+Source Code
+     |
+     v
+Compiler
+     |
+     v
+Platform-specific Executable
+     |
+     v
+Binary Artifact
+```
+
+A binary artifact can make installation much simpler for users because they do not need to install a compiler or build the editor themselves.
+
+However, a binary artifact is inherently associated with an environment.
+
+For example:
+
+```text
+Operating System
+       +
+CPU Architecture
+       +
+ABI / Runtime Requirements
+       |
+       v
+Binary Artifact
+```
+
+This is one reason distribution becomes more complicated as platform support expands.
+
+Chapter 37 established the project's phased portability strategy. The release process must respect those platform distinctions rather than pretending that one binary automatically works everywhere.
+
+## Archive Artifacts
+
+One simple way to distribute a binary is to place the required files into an archive.
+
+For example:
+
+```text
+editor-1.0.0-linux-x86_64/
+├── bin/
+│   └── editor
+├── share/
+│   └── documentation/
+└── LICENSE
+```
+
+The directory can then be packaged into an archive appropriate to the target platform.
+
+The archive provides a convenient unit for distribution:
+
+```text
+Installation Files
+       |
+       v
+     Archive
+       |
+       v
+   Distribution
+       |
+       v
+      User
+```
+
+The archive is therefore not the same thing as the executable.
+
+It is a **container for a release's installation contents**.
+
+## What Belongs in an Artifact?
+
+The contents of an artifact should be determined by its purpose.
+
+A minimal binary artifact might contain:
+
+```text
+editor
+LICENSE
+README
+```
+
+A more complete artifact might contain:
+
+```text
+bin/
+    editor
+
+share/
+    documentation/
+    examples/
+
+LICENSE
+README
+```
+
+A source artifact might instead contain:
+
+```text
+src/
+tests/
+CMakeLists.txt
+documentation/
+LICENSE
+```
+
+The important rule is:
+
+> An artifact should contain everything required for its intended use, and nothing that exists merely because it happened to be present in the development environment.
+
+## Release Artifacts Must Be Self-Consistent
+
+A release artifact should represent one coherent version of the editor: the executable, documentation, and metadata must all identify the same release, not three different ones.
+
+The artifact should also be traceable back to the source state from which it was produced. Both requirements are developed in Section 38.6, where versioning establishes a single source of identity across the release.
+
+## Checksums and Artifact Integrity
+
+A release artifact can be accompanied by a checksum.
+
+The purpose is to allow a recipient to verify that the downloaded artifact has the expected contents.
+
+Conceptually:
+
+```text
+Release Artifact
+      |
+      v
+Checksum
+      |
+      v
+Published with Release
+```
+
+After downloading:
+
+```text
+Downloaded Artifact
+       |
+       v
+Calculate Checksum
+       |
+       v
+Compare
+       |
+   +---+---+
+   |       |
+ Match   Mismatch
+   |       |
+   v       v
+Accept   Investigate
+```
+
+A checksum does not establish that the software is trustworthy by itself. It establishes whether the artifact matches the expected content represented by the published checksum.
+
+More advanced authenticity mechanisms, such as cryptographic signing, may be introduced by a particular distribution ecosystem, but they are not required to understand the basic artifact model here.
+
+## Debug Symbols as Separate Artifacts
+
+Debugging information does not always need to be included inside the primary user-facing artifact.
+
+A project can preserve it separately:
+
+```text
+Release
+   |
+   +-- User Artifact
+   |      └── editor
+   |
+   +-- Developer Artifact
+          └── Debug Symbols
+```
+
+This provides a useful balance.
+
+Users receive a suitable release artifact, while developers retain information that can help diagnose serious failures in that exact release.
+
+The important requirement is that the debug symbols correspond to the exact executable they describe.
+
+## Artifact Naming
+
+Artifact names should communicate useful identity information.
+
+A release artifact name may contain:
+
+```text
+editor
+  +
+version
+  +
+platform
+  +
+architecture
+  +
+format
+```
+
+Conceptually:
+
+```text
+editor-1.0.0-linux-x86_64.tar.gz
+```
+
+This is much more informative than:
+
+```text
+editor-final.tar.gz
+```
+
+Names such as `final`, `latest`, or `new` do not provide a stable identity.
+
+A release artifact should be identifiable without requiring the user to inspect its contents.
+
+## Artifact Generation Should Be Automated
+
+Release artifacts should not depend on manually copying files from a developer's machine.
+
+Manual packaging introduces opportunities for mistakes:
+
+```text
+Build
+  |
+  v
+Developer manually copies files
+  |
+  +-- forgot LICENSE
+  +-- copied old executable
+  +-- included debug build
+  +-- omitted documentation
+  |
+  v
+Incorrect Artifact
+```
+
+A better process is:
+
+```text
+Release Build
+     |
+     v
+Installation / Packaging Rules
+     |
+     v
+Release Artifact
+```
+
+This makes the release process repeatable.
+
+The same source state and build configuration should produce the same intended artifact structure.
+
+## Build Artifacts vs Release Artifacts
+
+Several different kinds of output can exist during development.
+
+For example:
+
+```text
+Build Artifacts
+    |
+    +-- object files
+    +-- dependency information
+    +-- intermediate files
+    +-- executable
+    +-- generated build metadata
+
+Release Artifacts
+    |
+    +-- user-facing executable
+    +-- required resources
+    +-- documentation
+    +-- license
+    +-- distribution metadata
+```
+
+These categories should not be conflated.
+
+An object file may be necessary to produce the editor but is not something a normal user needs.
+
+This distinction becomes increasingly important as the build process becomes more automated.
+
+## Release Artifact Verification
+
+Before an artifact is distributed, it should be checked against the release's expectations: the correct executable, the correct version, the required resources, the intended platform, and the absence of unintended development files. This is a release-quality check, not a replacement for the testing strategy established in Chapter 35.
+
+The full verification sequence is consolidated in Section 38.10, where the release-readiness checklist applies it alongside the other release dimensions.
+
+## Release Artifacts and the Release Pipeline
+
+```text
+Source → Build → Install / Package → ▸ Release Artifact → Verify → Distribute → User
+```
+
+Within that pipeline, the artifact plays a specific role: the build produces software, installation and packaging organize it for delivery, the artifact provides a distributable unit, verification confirms the unit is correct, and distribution makes it available to users. This separation prevents the release process from becoming one large, ambiguous operation.
+
+## Summary
+
+A **release artifact is a deliberate, version-specific representation of the software prepared for delivery**.
+
+It is not simply whatever files happen to appear in the build directory.
+
+A well-defined artifact should be:
+
+- complete for its intended purpose,
+- self-consistent,
+- identifiable,
+- appropriate for its target platform,
+- free from unnecessary development files,
+- verifiable,
+- and reproducible through the release process.
+
+The distinction can now be summarized:
+
+```text
+Build Output
+    → What the build system produces.
+
+Release Artifact
+    → What we intentionally prepare for delivery.
+```
+
+Automating artifact generation from the declared install and packaging rules keeps the delivered files traceable to a specific build, while checksums and separate debug symbols make that delivery verifiable. The artifact is thus a reviewed product of the release process, not an incidental snapshot of a build directory.
+
+With the artifact defined, we now need a reliable way to identify **which release an artifact represents**. That leads to **versioning** in Section 38.6.

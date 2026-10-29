@@ -1,0 +1,326 @@
+---
+title: "38.2 Release Builds"
+description: "Describes release builds as production-oriented configurations that optimize for users while preserving correctness and excluding development instrumentation."
+---
+
+A release build is the version of the editor prepared for **actual users**.
+
+The development build is optimized for understanding and diagnosing the program. The release build has a different objective: it should provide a stable, efficient, and appropriately packaged executable without carrying unnecessary development-time instrumentation.
+
+The two builds therefore begin with the same source code but serve different purposes.
+
+```text
+                    Source Code
+                        |
+             +----------+----------+
+             |                     |
+             v                     v
+     Development Build       Release Build
+             |                     |
+             v                     v
+      Diagnose Problems       Serve Users
+      Inspect State           Run Efficiently
+      Find Defects            Produce Artifacts
+```
+
+A release build is not a different implementation of the editor. It is a different **build configuration** of the same implementation.
+
+## The Purpose of a Release Build
+
+A release build should provide the properties expected from software that is ready to distribute.
+
+Its priorities include:
+
+- correct behavior
+- appropriate optimization
+- predictable runtime behavior
+- reasonable executable size
+- absence of unnecessary development instrumentation
+- compatibility with the supported platforms
+- suitability for packaging and distribution
+
+The release build should therefore represent the editor as users are expected to run it.
+
+This creates an important boundary:
+
+```text
+Development Build
+    ↓
+Used to discover and diagnose defects
+
+Release Build
+    ↓
+Used after the software is considered ready
+```
+
+A release build should not be treated as merely "the debug build with debugging turned off." It is a deliberate configuration with its own requirements.
+
+## Optimization
+
+One of the major differences between development and release builds is optimization.
+
+The compiler can transform the source code to produce a more efficient executable. Depending on the compiler and configuration, optimization can reduce execution time, reduce code size, or enable transformations that are not practical in a minimally optimized build.
+
+For an interactive program such as a text editor, optimization can contribute to responsive behavior.
+
+However, optimization must not be confused with correctness.
+
+The release build should never depend on an optimization level to make an incorrect program appear correct.
+
+```text
+Correct Source
+     |
+     v
+Compiler
+     |
+     +---- Development optimization
+     |
+     +---- Release optimization
+     |
+     v
+Correct Executable
+```
+
+The source-level invariants established throughout the architecture must remain valid regardless of the selected optimization level.
+
+## Development Diagnostics Are Not Release Features
+
+Development builds may contain mechanisms whose primary purpose is to expose internal problems.
+
+For example:
+
+```text
+Assertions
+Diagnostic logging
+Tracing
+Sanitizer instrumentation
+Debug symbols
+```
+
+These mechanisms are valuable while developing the editor, but they do not automatically belong in the user-facing executable.
+
+A release configuration should therefore distinguish between **features required by the editor** and **tools used to develop the editor**.
+
+For example:
+
+```text
+Required by Editor
+    ├── Document operations
+    ├── Cursor movement
+    ├── Rendering
+    ├── Input processing
+    └── File operations
+
+Development Support
+    ├── Assertions
+    ├── Debug logging
+    ├── Sanitizers
+    └── Debug symbols
+```
+
+The first group remains part of the editor.
+
+The second group is primarily associated with development.
+
+This distinction prevents development infrastructure from becoming an accidental runtime dependency.
+
+## Assertions and Release Builds
+
+Assertions deserve particular attention.
+
+A development build may contain checks such as:
+
+```c
+assert(cursor->row < document->line_count);
+```
+
+These checks help detect violations of internal assumptions during development.
+
+A release configuration may disable such assertions to avoid their development-time overhead.
+
+However, disabling an assertion must **not** remove the requirement that the invariant be true.
+
+Consider:
+
+```text
+Development:
+
+Operation
+   |
+   v
+Check Invariant
+   |
+   +---- violated ----> Detect failure
+   |
+   v
+Continue
+
+
+Release:
+
+Operation
+   |
+   v
+Maintain Invariant
+   |
+   v
+Continue
+```
+
+The assertion is a mechanism for detecting a violation. It is not the mechanism that makes the invariant true.
+
+This distinction is essential.
+
+A release build must remain correct even when diagnostic checks are absent.
+
+## Logging and Diagnostics
+
+The editor may also contain diagnostic output intended for development.
+
+For example, developers might want to observe:
+
+```text
+Input Event: KEY_LEFT
+Command: MOVE_CURSOR_LEFT
+Cursor: (12, 8) → (12, 7)
+```
+
+Such information can be extremely useful while investigating a problem.
+
+But continuously producing this information during normal use can:
+
+- generate unnecessary output,
+- affect performance,
+- complicate terminal interaction,
+- expose internal implementation details.
+
+Therefore, diagnostic facilities should have a deliberate build or runtime policy.
+
+The important distinction is:
+
+> Removing development diagnostics must not remove the editor's ability to report genuine user-facing errors.
+
+For example, a failed file save is part of normal application behavior and requires an appropriate user-facing error message. Internal tracing of why the save operation reached a particular code path is development instrumentation.
+
+## Debug Symbols and Distribution
+
+Debug information can make an executable considerably more useful when investigating crashes, but it does not need to ship inside the primary user-facing executable. A release may instead keep debugging information as a separate artifact.
+
+The architectural point here is only that development debugging information is a development-support concern, not a user-facing feature. How that separate artifact is produced and packaged belongs to the definition of release artifacts in Section 38.5.
+
+## Compiler Warnings in Release Builds
+
+The fact that a release build is optimized does not mean that compiler warnings should disappear.
+
+Warnings are part of the development and build-quality process, not merely a debugging feature.
+
+A useful principle is:
+
+> Optimization may change between build configurations; the project's standards for source correctness should not be relaxed merely because the build is intended for release.
+
+The release build should therefore still be compiled with an appropriate warning policy.
+
+This helps catch mistakes that might otherwise reach the release artifact.
+
+## Release Builds Must Preserve the Architecture
+
+The release configuration does not change the editor's architectural responsibilities.
+
+The same major components remain:
+
+```text
+Input Handler
+      |
+      v
+Input Parser
+      |
+      v
+Command Engine
+      |
+      v
+Editor State
+      |
+      +----------+
+      |          |
+      v          v
+Document     Viewport
+      |          |
+      +-----+----+
+            |
+            v
+        Renderer
+            |
+            v
+      Terminal Interface
+```
+
+Changing compiler optimization or removing development diagnostics should not alter these responsibilities.
+
+The release build is therefore a **different compilation configuration**, not a different architecture.
+
+This is particularly important for our project because the architecture deliberately separates platform-dependent mechanisms from the platform-independent Core. ADR-030 establishes that the Core remains independent while platform-facing components contain environmental differences.
+
+## Release Build Characteristics
+
+The distinction can now be summarized:
+
+| Characteristic       | Development Build       | Release Build            |
+| -------------------- | ----------------------- | ------------------------ |
+| Primary purpose      | Development             | Distribution             |
+| Debug information    | Enabled                 | Usually reduced/separate |
+| Assertions           | Enabled                 | Typically disabled       |
+| Diagnostics          | Extensive               | Minimal/appropriate      |
+| Sanitizers           | Available               | Normally absent          |
+| Optimization         | Development-oriented    | Release-oriented         |
+| Compiler warnings    | Strong                  | Strong                   |
+| User-facing behavior | Not the primary concern | Primary concern          |
+| Distribution         | No                      | Yes                      |
+
+The exact compiler flags will be introduced when we examine the CMake build configurations in Section 38.3.
+
+## Release Does Not Mean "Less Correct"
+
+There is an important misconception to avoid.
+
+A release build is not a version of the editor in which safety and correctness have been removed.
+
+Instead:
+
+```text
+Development Build
+    ↓
+Correctness
+    +
+Additional detection mechanisms
+
+
+Release Build
+    ↓
+Correctness
+    +
+Production-oriented configuration
+```
+
+Development builds contain additional mechanisms for **detecting** problems.
+
+Release builds must still contain the logic necessary to **avoid** those problems.
+
+For example, if a cursor must never leave the document's valid bounds, the editor must maintain that invariant in both builds. An assertion may detect a violation during development, but removing the assertion cannot make the violation acceptable.
+
+## Summary
+
+A release build is a **production-oriented compilation of the same editor**, designed to provide appropriate optimization, stable behavior, and a clean user-facing executable while excluding development-only instrumentation where appropriate.
+
+The distinction between development and release builds can therefore be expressed simply:
+
+```text
+Development Build
+    → Make problems easier to find.
+
+Release Build
+    → Make the finished software suitable to use.
+```
+
+The release build still has to uphold every architectural invariant established for the editor; optimization and stripped diagnostics change how the program is compiled, not what it must guarantee. Treating release as a deliberate configuration in its own right prevents correctness and packaging requirements from being deferred until the end.
+
+The next section moves from these two build purposes to the mechanism that allows us to define and reproduce them: **CMake build configurations**.
