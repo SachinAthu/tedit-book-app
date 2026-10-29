@@ -1,0 +1,706 @@
+---
+title: "36.5 Breakpoints"
+description: "Shows how to place function, line, and conditional breakpoints at architectural boundaries so each stop answers a specific debugging question."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A breakpoint is a deliberate stopping point in program execution.
+
+Instead of allowing the editor to run continuously until the visible symptom appears, a breakpoint allows the developer to stop execution at a meaningful point and inspect the program's state.
+
+For the terminal editor, breakpoints are particularly useful because the runtime is a sequence of state transitions:
+
+```text
+Input
+  │
+  ▼
+Input Parser
+  │
+  ▼
+Input Engine
+  │
+  ▼
+Command Engine
+  │
+  ▼
+Editor State
+  │
+  ▼
+Renderer
+  │
+  ▼
+Terminal
+```
+
+A breakpoint lets us interrupt this sequence at a chosen location.
+
+The important skill is therefore not simply knowing how to create a breakpoint, but knowing **where a breakpoint provides useful evidence**.
+
+## What a Breakpoint Does
+
+Conceptually, a breakpoint tells the debugger:
+
+> Stop execution when this location is reached.
+
+For example:
+
+```c
+void cursor_move_down(EditorState *state)
+{
+    /* breakpoint here */
+
+    state->cursor.row++;
+}
+```
+
+When execution reaches the breakpoint:
+
+```text
+Program
+   │
+   ▼
+cursor_move_down()
+   │
+   X  ← execution stops
+   │
+   ▼
+Debugger
+```
+
+The developer can then inspect:
+
+- the current function,
+- its parameters,
+- local variables,
+- Editor State,
+- the call stack,
+- relevant expressions.
+
+Execution does not continue until the developer explicitly resumes it.
+
+## Breakpoints Should Represent Questions
+
+A breakpoint is most useful when it is associated with a debugging question.
+
+Weak approach:
+
+```text
+"Something is wrong.
+I will put breakpoints everywhere."
+```
+
+Better approach:
+
+```text
+"Did the cursor command receive the expected command?"
+```
+
+Then place a breakpoint at the beginning of the relevant command-processing function.
+
+Another example:
+
+```text
+"Does the cursor become invalid during movement?"
+```
+
+Place a breakpoint around the cursor state transition.
+
+Another:
+
+```text
+"Does rendering receive the correct viewport?"
+```
+
+Place a breakpoint at the renderer boundary.
+
+The breakpoint should therefore answer a specific question.
+
+## Function Breakpoints
+
+A function breakpoint stops execution whenever a particular function is entered.
+
+For example, suppose the developer is investigating cursor movement:
+
+```text
+cursor_move_down()
+```
+
+A function breakpoint there means:
+
+```text
+Any execution
+     │
+     ├── unrelated command
+     ├── file operation
+     ├── rendering
+     │
+     └── cursor_move_down()
+                 │
+                 ▼
+             BREAKPOINT
+```
+
+This is useful when the exact source line is not yet known.
+
+For architectural debugging, function breakpoints can be particularly effective because important operations are organized into distinct modules.
+
+Examples include functions associated with:
+
+- input parsing,
+- command execution,
+- cursor movement,
+- viewport updates,
+- file operations,
+- rendering.
+
+The exact functions depend on the implementation, but the principle remains the same: break at a meaningful component boundary.
+
+## Line Breakpoints
+
+A line breakpoint stops execution when a particular source line is reached.
+
+For example:
+
+```c
+state->cursor.row++;
+```
+
+A breakpoint on this line allows the developer to inspect the state immediately before the modification.
+
+This creates an important debugging opportunity:
+
+```text
+Before
+cursor.row = 10
+    │
+    ▼
+state->cursor.row++;
+    │
+    X  breakpoint
+    │
+    ▼
+After
+cursor.row = 11
+```
+
+The developer can then determine whether the operation is being performed on the correct state and whether the resulting value is expected.
+
+Line breakpoints are especially useful when a function contains several state transitions and only one of them is suspicious.
+
+## Breakpoints at State Transitions
+
+For this editor, state transitions are often more informative than arbitrary lines of code.
+
+Consider:
+
+```text
+Command
+   │
+   ▼
+State Mutation
+   │
+   ▼
+New Editor State
+```
+
+Suppose the Dirty Flag is unexpectedly cleared.
+
+A useful breakpoint is near the operation that changes it:
+
+```text
+dirty = true
+     │
+     ▼
+save operation
+     │
+     ▼
+dirty = false
+```
+
+The question becomes:
+
+```text
+Why did dirty change here?
+```
+
+The debugger can inspect the call stack and determine which operation caused the transition.
+
+This is more useful than simply stopping somewhere in the rendering code after the incorrect value has already propagated.
+
+## Conditional Breakpoints
+
+Sometimes a function executes many times before the interesting case occurs.
+
+For example, the renderer may execute once per event-loop iteration:
+
+```text
+Event 1 → Render
+Event 2 → Render
+Event 3 → Render
+Event 4 → Render
+...
+Event 500 → Render
+```
+
+A normal breakpoint would stop at every invocation.
+
+That can make debugging unnecessarily slow.
+
+A **conditional breakpoint** allows execution to stop only when a specified condition is true.
+
+Conceptually:
+
+```text
+renderer()
+    │
+    ├── condition false → continue
+    ├── condition false → continue
+    ├── condition false → continue
+    └── condition true  → STOP
+```
+
+For example, the developer might want to stop only when:
+
+```text
+cursor.row == unexpected_row
+```
+
+or when:
+
+```text
+buffer == target_buffer
+```
+
+The exact debugger expression depends on the program and debugger.
+
+The important principle is:
+
+> Use conditions to reduce repeated stops and isolate the execution that matters.
+
+## Breakpoints and Repetition
+
+Interactive editors naturally execute some operations repeatedly.
+
+The event loop repeatedly performs:
+
+```text
+Wait
+  ↓
+Input
+  ↓
+Command
+  ↓
+State Update
+  ↓
+Render
+  ↓
+Wait
+```
+
+Consequently, indiscriminate breakpoints can produce an enormous amount of debugger output.
+
+For example, placing a breakpoint in the main event loop may stop execution for every event:
+
+```text
+Event 1 → STOP
+Event 2 → STOP
+Event 3 → STOP
+Event 4 → STOP
+...
+```
+
+This is useful when investigating the event loop itself, but it is usually too broad for a localized bug.
+
+A better strategy is to move the breakpoint deeper into the relevant operation.
+
+```text
+Event Loop
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Specific Command
+    │
+    ▼
+State Mutation ← breakpoint
+```
+
+This keeps the investigation focused.
+
+## Breakpoint Placement by Architectural Layer
+
+The editor's layered architecture gives a useful way to select breakpoint locations.
+
+### Input problems
+
+Investigate:
+
+```text
+Input Handler
+      ↓
+Input Parser
+      ↓
+Input Engine
+```
+
+Useful questions:
+
+```text
+What bytes were received?
+
+What event was produced?
+
+What command was selected?
+```
+
+### Command problems
+
+Investigate:
+
+```text
+Input Engine
+      ↓
+Command Engine
+      ↓
+Editor State
+```
+
+Useful questions:
+
+```text
+Was the correct command executed?
+
+Was the correct state modified?
+
+Was the command allowed in the current context?
+```
+
+### State problems
+
+Investigate:
+
+```text
+Command Engine
+      ↓
+Editor State
+      ↓
+Cursor / Viewport / Document
+```
+
+Useful questions:
+
+```text
+Which value changed?
+
+Who owns that value?
+
+Was the resulting state valid?
+```
+
+### Rendering problems
+
+Investigate:
+
+```text
+Editor State
+      ↓
+Renderer
+      ↓
+Screen Buffer
+      ↓
+Terminal Interface
+```
+
+Useful questions:
+
+```text
+Was the state correct?
+
+Was the correct frame constructed?
+
+Was the expected output generated?
+```
+
+This reflects the architecture's separation of responsibilities rather than treating every bug as a problem inside the renderer or event loop.
+
+## Temporary Breakpoints
+
+Not every breakpoint needs to remain permanently.
+
+A developer may create a temporary breakpoint for a single investigation:
+
+```text
+Reproduce bug
+     ↓
+Set breakpoint
+     ↓
+Run program
+     ↓
+Inspect state
+     ↓
+Understand cause
+     ↓
+Remove breakpoint
+```
+
+This keeps the debugging environment clean.
+
+Permanent breakpoints should generally correspond to locations that are repeatedly useful during development.
+
+Temporary breakpoints are appropriate for questions such as:
+
+> Does execution ever reach this function?
+
+or:
+
+> What is the state immediately before this operation?
+
+## Breakpoints and Invariants
+
+Assertions and breakpoints work particularly well together.
+
+Suppose the editor has the cursor invariant:
+
+```text
+0 <= cursor.row < document.line_count
+```
+
+An assertion can detect the invalid state:
+
+```c
+assert(cursor.row >= 0);
+assert(cursor.row < document.line_count);
+```
+
+The debugger can then be used to determine how execution reached that state.
+
+The combined workflow becomes:
+
+```text
+State Mutation
+      │
+      ▼
+Invalid State
+      │
+      ▼
+Assertion Failure
+      │
+      ▼
+Debugger Stops
+      │
+      ▼
+Inspect Call Stack
+      │
+      ▼
+Inspect State
+      │
+      ▼
+Find Responsible Operation
+```
+
+This is significantly more effective than relying on the assertion alone.
+
+The assertion answers:
+
+> **What invariant was violated?**
+
+The debugger helps answer:
+
+> **How did it become violated?**
+
+## Breakpoints and the First Incorrect State
+
+Consider a scrolling bug.
+
+The final screen looks incorrect:
+
+```text
+Expected:
+    line 50 visible
+
+Actual:
+    line 47 visible
+```
+
+A naive debugging strategy might immediately place a breakpoint inside the renderer.
+
+A more systematic strategy is to investigate the state transitions:
+
+```text
+Cursor
+  ↓
+Viewport
+  ↓
+Renderer
+  ↓
+Screen Buffer
+```
+
+Suppose the values are:
+
+```text
+Cursor row       = 50
+Viewport offset  = 47
+```
+
+If the viewport should have moved to keep the cursor visible, this provides evidence that the problem occurred before rendering.
+
+The debugger can then move the investigation toward the viewport update.
+
+This illustrates an important rule:
+
+> Place breakpoints before and after important state transitions when searching for the first incorrect state.
+
+## Avoiding Breakpoint Overuse
+
+Breakpoints are powerful, but too many breakpoints can make debugging harder.
+
+If a debugger stops constantly, the developer may spend more time managing debugger interruptions than understanding the bug.
+
+Common symptoms of excessive breakpoint use include:
+
+- repeatedly stopping in unrelated functions,
+- losing the original debugging question,
+- stepping through large amounts of irrelevant code,
+- becoming dependent on manual execution rather than reasoning about the architecture.
+
+A better strategy is:
+
+```text
+Start broad
+    ↓
+Identify relevant component
+    ↓
+Narrow breakpoint location
+    ↓
+Add condition if necessary
+    ↓
+Inspect only relevant execution
+```
+
+Debugging should reduce uncertainty, not create more of it.
+
+## Breakpoints Do Not Fix Bugs
+
+A breakpoint only stops execution.
+
+It does not establish that the stopped state is incorrect, and it does not explain why that state occurred.
+
+For example:
+
+```text
+Breakpoint
+    ↓
+cursor.row = 20
+```
+
+The value `20` has no meaning by itself.
+
+The developer must compare it with the relevant context:
+
+```text
+document.line_count = 15
+```
+
+Now the state is clearly inconsistent if the cursor invariant requires:
+
+```text
+cursor.row < document.line_count
+```
+
+Therefore, debugger inspection must always be interpreted against the program's invariants and architectural rules.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The most useful breakpoint is usually not the one closest to the visible symptom.
+
+It is the one closest to the **decision or state transition that can explain the symptom**.
+
+For example:
+
+```text
+Wrong Screen
+    │
+    ▼
+Renderer
+    │
+    ▼
+Wrong Viewport
+    │
+    ▼
+Wrong Cursor
+    │
+    ▼
+Wrong Command
+    │
+    ▼
+Wrong Input
+```
+
+The visible problem may occur at the top of this chain, but the cause may be much earlier.
+
+Breakpoints allow the developer to move backward through the chain until the first incorrect state is found.
+
+```text
+Symptom
+   ↑
+   │
+Trace backward
+   │
+First incorrect state
+```
+
+This is the practical connection between debugging and the editor's state-centered architecture.
+
+</Aside>
+
+## Summary
+
+Breakpoints provide controlled stopping points during execution.
+
+For the terminal editor, useful breakpoint strategies include:
+
+- breaking at functions,
+- breaking at specific source lines,
+- breaking at state transitions,
+- using conditional breakpoints,
+- placing breakpoints at architectural boundaries,
+- combining breakpoints with assertions,
+- narrowing breakpoints as the investigation progresses.
+
+The goal is not to stop execution as often as possible.
+
+The goal is to stop execution at points that provide useful evidence.
+
+A disciplined breakpoint strategy looks like:
+
+```text
+Bug
+ │
+ ▼
+Identify execution path
+ │
+ ▼
+Choose meaningful boundary
+ │
+ ▼
+Set breakpoint
+ │
+ ▼
+Inspect state
+ │
+ ▼
+Narrow investigation
+ │
+ ▼
+Find first incorrect state
+ │
+ ▼
+Identify cause
+```
+
+Conditional breakpoints keep repetitive event-loop and rendering paths from burying the one transition that matters. Placing stops before and after a state change turns a breakpoint into a comparison rather than a single observation.
+
+With this foundation, the next step is to focus specifically on **inspecting Editor State**—the central state model that connects commands, documents, cursors, viewports, buffers, and rendering.

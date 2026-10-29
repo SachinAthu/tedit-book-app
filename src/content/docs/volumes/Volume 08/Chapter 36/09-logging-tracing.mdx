@@ -1,0 +1,995 @@
+---
+title: "36.9 Logging and Tracing"
+description: "Explains how logging and tracing record event history for intermittent or long-running failures, while remaining observational and separate from the UI."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+A debugger is powerful when the developer can stop execution at the right moment. However, stopping an interactive editor is not always convenient.
+
+Some bugs are easier to understand when the program records what happened while continuing to run.
+
+This is the purpose of **logging and tracing**.
+
+Logging records selected information about program execution:
+
+```text
+Event received
+Command executed
+State changed
+File operation failed
+Rendering completed
+```
+
+Tracing goes further by recording a sequence of related events so that the execution path can be reconstructed afterward.
+
+For the terminal editor, this is particularly useful because the system is event-driven:
+
+```text
+Input
+  ↓
+Parse
+  ↓
+Command
+  ↓
+State Update
+  ↓
+Render
+  ↓
+Next Event
+```
+
+Logging is therefore one of the debugging techniques used alongside assertions, a debugger, and breakpoints—each makes a different aspect of execution observable.
+
+## Why Logging Is Useful
+
+A debugger answers questions interactively:
+
+> What is the value of this variable right now?
+
+Logging answers a different question:
+
+> What happened during this execution?
+
+Consider an intermittent bug:
+
+```text
+User input
+    ↓
+Several commands
+    ↓
+Several state changes
+    ↓
+Bug appears
+```
+
+By the time the problem becomes visible, the operation that caused it may have happened many events earlier.
+
+A log can preserve that history:
+
+```text
+12:01:04 INPUT  KEY_ARROW_DOWN
+12:01:04 COMMAND MOVE_DOWN
+12:01:04 STATE  cursor.row 10 -> 11
+12:01:04 INPUT  KEY_ARROW_DOWN
+12:01:04 COMMAND MOVE_DOWN
+12:01:04 STATE  cursor.row 11 -> 12
+12:01:04 INPUT  KEY_DELETE
+12:01:04 COMMAND DELETE
+12:01:04 STATE  line_count 20 -> 19
+12:01:04 STATE  cursor.row 12 -> 12
+```
+
+The developer can then reconstruct the sequence without having been attached to the debugger when the operation occurred.
+
+## Logging Versus Tracing
+
+The terms are related but useful to distinguish.
+
+### Logging
+
+Logging records individual diagnostic events.
+
+For example:
+
+```text
+INFO  file opened: example.txt
+ERROR save failed
+DEBUG cursor moved
+```
+
+### Tracing
+
+Tracing records a sequence of events intended to show how execution progressed.
+
+For example:
+
+```text
+INPUT
+  ↓
+PARSE
+  ↓
+COMMAND
+  ↓
+STATE
+  ↓
+RENDER
+```
+
+A trace might therefore contain:
+
+```text
+EVENT 42
+  input: KEY_ARROW_DOWN
+  command: MOVE_DOWN
+  cursor: (10, 5) -> (11, 5)
+  viewport: (8, 0) -> (8, 0)
+  render: frame 42
+```
+
+The distinction is not absolute. A logging system can produce traces when related events are recorded consistently.
+
+The important engineering principle is:
+
+> Record enough information to reconstruct the behavior being investigated.
+
+## What Should Be Logged?
+
+Logging everything is usually a mistake.
+
+A useful log records information that helps answer specific debugging questions.
+
+For this editor, useful categories include:
+
+```text
+Input
+    key events
+    parser results
+
+Commands
+    command type
+    command parameters
+
+State
+    important state transitions
+
+File Operations
+    open
+    save
+    failures
+
+Buffers
+    creation
+    switching
+    closing
+
+Rendering
+    frame generation
+    terminal dimensions
+
+Errors
+    failure reason
+    affected operation
+```
+
+The exact logging surface should remain deliberately small.
+
+Every additional log statement adds output, maintenance cost, and potential noise.
+
+## Log Events, Not Every Variable
+
+A common mistake is to print the entire Editor State after every operation.
+
+For example:
+
+```text
+cursor.row = 10
+cursor.column = 5
+viewport_row = 7
+viewport_column = 0
+dirty = true
+buffer_count = 3
+terminal.rows = 30
+terminal.columns = 100
+...
+```
+
+repeated hundreds of times.
+
+This can make the log difficult to read.
+
+A better approach is to record meaningful transitions:
+
+```text
+DEBUG cursor moved:
+    (10, 5) -> (11, 5)
+```
+
+or:
+
+```text
+DEBUG buffer switched:
+    buffer 1 -> buffer 3
+```
+
+or:
+
+```text
+DEBUG save:
+    path="example.txt"
+    result=success
+```
+
+The difference is important:
+
+```text
+State Dump
+    ↓
+Large amount of information
+
+State Transition
+    ↓
+Specific diagnostic information
+```
+
+Logging should help the developer reason about behavior, not force them to reconstruct every fact from a massive dump.
+
+## Logging State Transitions
+
+State transitions are particularly valuable because many editor bugs are state-transition bugs.
+
+Consider:
+
+```text
+Before:
+    cursor.row = 10
+
+Command:
+    MOVE_DOWN
+
+After:
+    cursor.row = 11
+```
+
+A useful log entry could be:
+
+```text
+DEBUG cursor: row 10 -> 11
+```
+
+Similarly:
+
+```text
+DEBUG dirty: false -> true
+DEBUG viewport_row: 10 -> 11
+DEBUG window.buffer: 2 -> 3
+```
+
+These messages expose the changes rather than merely reporting the final state.
+
+This also aligns with the editor's centralized state model and explicit ownership of state.
+
+## Logging Input
+
+Input logging is useful when diagnosing problems that occur before commands reach the rest of the editor.
+
+A trace might record:
+
+```text
+INPUT  raw=ESC [ A
+EVENT  type=KEY_ARROW_UP
+COMMAND type=MOVE_CURSOR_UP
+```
+
+This immediately exposes the transformation:
+
+```text
+Raw Input
+    ↓
+Key Event
+    ↓
+Command
+```
+
+If the log instead shows:
+
+```text
+INPUT  raw=ESC [ A
+EVENT  type=KEY_ESCAPE
+```
+
+the parser becomes the likely investigation point.
+
+If it shows:
+
+```text
+INPUT  raw=ESC [ A
+EVENT  type=KEY_ARROW_UP
+COMMAND type=MOVE_CURSOR_DOWN
+```
+
+the problem is further along, in event-to-command mapping.
+
+Logging therefore works particularly well with the input-debugging method established earlier.
+
+## Logging Rendering
+
+Rendering can also benefit from carefully selected diagnostics.
+
+A useful rendering trace might contain:
+
+```text
+RENDER frame=42
+  terminal=120x30
+  cursor=(12,18)
+  viewport=(8,0)
+  buffer=2
+```
+
+This does not attempt to log every screen cell.
+
+Instead, it records the inputs that determine the frame.
+
+If a rendering problem occurs, the developer can compare:
+
+```text
+Editor State
+    ↓
+Render Log
+    ↓
+Screen Buffer
+```
+
+For example:
+
+```text
+RENDER
+cursor=(20,15)
+viewport_row=18
+```
+
+If the cursor is expected to be visible but the viewport does not contain row 20, the log immediately identifies a state or viewport problem.
+
+## Logging File Operations
+
+File operations are another area where logging is valuable because failures may depend on external conditions.
+
+For example:
+
+```text
+FILE open:
+    path="example.txt"
+    result=success
+```
+
+or:
+
+```text
+FILE save:
+    path="example.txt"
+    result=failure
+    reason="permission denied"
+```
+
+This helps distinguish:
+
+```text
+Save command not executed
+```
+
+from:
+
+```text
+Save command executed
+    ↓
+File Manager attempted save
+    ↓
+Operating system rejected operation
+```
+
+The editor's requirements explicitly include notifying the user when file operations succeed or fail.
+
+A diagnostic log can provide additional detail for developers without exposing implementation details through the normal user interface.
+
+## Logging Levels
+
+A logging system can classify messages by importance.
+
+A simple model might be:
+
+```text
+ERROR
+WARN
+INFO
+DEBUG
+TRACE
+```
+
+Their conceptual roles are:
+
+| Level | Purpose                                      |
+| ----- | -------------------------------------------- |
+| ERROR | Operation failed or serious problem occurred |
+| WARN  | Unexpected but recoverable condition         |
+| INFO  | Significant normal operation                 |
+| DEBUG | Developer-oriented diagnostic information    |
+| TRACE | Detailed execution history                   |
+
+For example:
+
+```text
+ERROR save failed
+WARN terminal size changed
+INFO file opened
+DEBUG cursor moved
+TRACE input byte received
+```
+
+Not every project needs all of these levels.
+
+The important idea is that the developer should be able to control how much information is produced.
+
+## Debug Logging Should Be Configurable
+
+Detailed logging is useful during development but can become noisy during normal operation.
+
+Conceptually:
+
+```text
+Release
+    ↓
+ERROR / important diagnostics
+
+Debug
+    ↓
+INFO + DEBUG
+
+Deep Investigation
+    ↓
+TRACE
+```
+
+This allows the same source code to support different diagnostic levels.
+
+For example:
+
+```text
+LOG_DEBUG("cursor moved: %d -> %d",
+          old_row,
+          new_row);
+```
+
+The message may be compiled in or enabled only for development depending on the logging design.
+
+The important architectural rule is that logging should not change the ownership of state or application behavior.
+
+## Logging Must Not Become Application State
+
+A logging system is an observer of the editor.
+
+It should not become another owner of Editor State.
+
+For example, this is conceptually undesirable:
+
+```text
+Editor State
+    │
+    ├── actual cursor
+    │
+    └── logging cursor
+```
+
+because the diagnostic representation could become a second source of truth.
+
+Instead:
+
+```text
+Editor State
+    │
+    ▼
+Logger
+    │
+    ▼
+Log Output
+```
+
+The logger observes state and records information about it.
+
+It should not determine what the state is.
+
+This follows the same single-owner principle used throughout the architecture.
+
+## Logging Must Not Change Program Behavior
+
+A particularly dangerous logging bug occurs when adding diagnostics changes the behavior being investigated.
+
+For example:
+
+```c
+log_debug("cursor = %d", state->cursor.row);
+```
+
+should ideally only observe the value.
+
+Logging should not:
+
+- modify Editor State,
+- consume input,
+- alter command execution,
+- change rendering decisions,
+- introduce hidden synchronization,
+- replace normal error handling.
+
+The intended relationship is:
+
+```text
+Program
+   │
+   ├──────────────► Normal behavior
+   │
+   └──────────────► Diagnostic output
+```
+
+rather than:
+
+```text
+Program
+   │
+   ▼
+Logger
+   │
+   ▼
+Changed behavior
+```
+
+This is particularly important when investigating subtle bugs.
+
+## Logging and Interactive Terminal Output
+
+A terminal editor already uses its terminal for the user interface.
+
+This creates a practical problem:
+
+```text
+Editor UI
+    │
+    ▼
+Terminal
+```
+
+If diagnostic messages are printed directly into the same terminal stream, they may corrupt the editor display.
+
+For example:
+
+```text
+Hello World
+DEBUG cursor moved
+Status Bar
+```
+
+The log message has become part of the user's screen.
+
+Therefore, diagnostic output should be separated from normal editor rendering when possible.
+
+Conceptually:
+
+```text
+                  +--> Terminal UI
+Editor Process ---|
+                  +--> Diagnostic Log
+```
+
+The exact mechanism depends on the runtime environment and implementation, but the architectural principle is straightforward:
+
+> Debug output should not interfere with the terminal UI being debugged.
+
+This is especially important for full-screen terminal applications.
+
+## Logging to a File
+
+A file is often a convenient destination for diagnostic output.
+
+Conceptually:
+
+```text
+Editor
+   │
+   ├── stdout/stderr → terminal interaction
+   │
+   └── log output → debug log
+```
+
+The developer can then inspect the log after reproducing a problem.
+
+For example:
+
+```bash
+$ ./editor example.txt
+```
+
+followed by examination of:
+
+```text
+editor.log
+```
+
+This is particularly useful for bugs that require many interactive steps.
+
+A log can preserve the sequence even after the program exits.
+
+## Correlating Events
+
+A long log becomes much more useful when related events can be associated with the same execution or event-loop iteration.
+
+For example:
+
+```text
+EVENT 41
+    INPUT   KEY_ARROW_DOWN
+    COMMAND MOVE_DOWN
+    STATE   cursor.row 10 -> 11
+    RENDER  frame=41
+
+EVENT 42
+    INPUT   KEY_ARROW_DOWN
+    COMMAND MOVE_DOWN
+    STATE   cursor.row 11 -> 12
+    RENDER  frame=42
+```
+
+Now the developer can reason about the editor in terms of complete event cycles.
+
+The runtime model is event-driven: the editor waits for an event, parses it, executes a command, updates Editor State, and renders a frame. A trace that follows this sequence mirrors the architecture directly. This makes the log much easier to interpret than unrelated individual messages.
+
+## Tracing a Bug Across Modules
+
+Suppose a user reports:
+
+> Pressing Down sometimes moves the cursor too far.
+
+A trace might show:
+
+```text
+EVENT 108
+    INPUT   KEY_ARROW_DOWN
+    EVENT   KEY_ARROW_DOWN
+    COMMAND MOVE_DOWN
+
+    CURSOR  (10, 4) -> (11, 4)
+
+EVENT 109
+    INPUT   KEY_ARROW_DOWN
+    EVENT   KEY_ARROW_DOWN
+    COMMAND MOVE_DOWN
+
+    CURSOR  (11, 4) -> (13, 4)
+```
+
+The second transition is suspicious.
+
+The developer can then investigate the implementation responsible for:
+
+```text
+(11, 4) -> (13, 4)
+```
+
+The log has narrowed the investigation without requiring the developer to reproduce the exact moment under an interactive debugger.
+
+## Logging Errors Without Hiding Them
+
+Logging should complement normal error handling.
+
+For example, if saving fails:
+
+```text
+File Manager
+    │
+    ├── return failure
+    │
+    └── log diagnostic information
+```
+
+The application should still follow its normal error-handling path:
+
+```text
+Save failure
+    ↓
+Message Bar
+    ↓
+Editor continues
+```
+
+The log might contain:
+
+```text
+ERROR save failed:
+    path="example.txt"
+    reason="permission denied"
+```
+
+while the user sees an appropriate message in the Message Bar.
+
+The diagnostic log and the user-facing message therefore serve different audiences.
+
+## Logging and Assertions
+
+Assertions and logging complement each other.
+
+An assertion detects an invariant violation:
+
+```c
+assert(cursor.row < document.line_count);
+```
+
+Logging can preserve the events that led to that violation:
+
+```text
+DEBUG document line_count: 20 -> 19
+DEBUG cursor.row remains 19
+ASSERT cursor.row < document.line_count failed
+```
+
+The assertion identifies:
+
+```text
+What is wrong?
+```
+
+The trace helps identify:
+
+```text
+What happened before it became wrong?
+```
+
+Together:
+
+```text
+Trace
+  ↓
+State transition
+  ↓
+Assertion
+  ↓
+Debugger
+```
+
+provide a strong debugging chain.
+
+## Logging and Testing
+
+Logging is also useful when a test fails.
+
+Suppose an integration test reports:
+
+```text
+Expected:
+    cursor.row = 10
+
+Actual:
+    cursor.row = 12
+```
+
+A debug log can reveal:
+
+```text
+COMMAND MOVE_DOWN
+cursor.row 9 -> 10
+
+COMMAND DELETE
+document.line_count 20 -> 19
+
+COMMAND MOVE_DOWN
+cursor.row 10 -> 12
+```
+
+The test establishes that behavior is incorrect.
+
+The trace helps explain the sequence that produced the incorrect result.
+
+This fits the testing strategy's principle of using tests to detect failures and debugging techniques to investigate them.
+
+## When Logging Is Better Than a Breakpoint
+
+Logging is especially useful when:
+
+### The bug is intermittent
+
+```text
+Sometimes fails
+    ↓
+Cannot reliably pause at the correct moment
+    ↓
+Record execution history
+```
+
+### The bug occurs after a long sequence
+
+```text
+100 events
+    ↓
+Bug at event 100
+    ↓
+Trace preserves events 1–99
+```
+
+### The bug depends on user interaction
+
+A log can record the complete sequence of commands that produced the failure.
+
+### The program must continue running
+
+Stopping at a breakpoint may alter the behavior being investigated.
+
+### The problem occurs outside an interactive debugger
+
+For example, a test, automated execution, or user-provided reproduction may be easier to diagnose from a log.
+
+## When a Breakpoint Is Better
+
+A breakpoint is generally more useful when the developer needs to inspect a complex state interactively.
+
+For example:
+
+```text
+"Why does this pointer contain this value?"
+```
+
+or:
+
+```text
+"Which function called this state mutation?"
+```
+
+or:
+
+```text
+"What does the entire Editor State look like at this exact point?"
+```
+
+The two mechanisms therefore serve different purposes:
+
+```text
+Breakpoint
+    ↓
+Interactive inspection
+
+Logging
+    ↓
+Historical observation
+```
+
+Neither replaces the other.
+
+## A Practical Diagnostic Strategy
+
+For the terminal editor, a useful diagnostic hierarchy is:
+
+```text
+                    Bug
+                     │
+          +----------+----------+
+          │                     │
+       Repeatable          Intermittent
+          │                     │
+          ▼                     ▼
+      Debugger              Logging
+          │                     │
+          +----------+----------+
+                     │
+                     ▼
+             Find first wrong state
+                     │
+                     ▼
+              Identify cause
+                     │
+                     ▼
+               Fix the code
+                     │
+                     ▼
+              Add regression test
+```
+
+The choice depends on the nature of the problem.
+
+A developer should not automatically reach for the debugger simply because it is available.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Logging becomes especially powerful when it follows the architecture's vocabulary.
+
+Instead of:
+
+```text
+function_a()
+function_b()
+value changed
+```
+
+prefer diagnostics that describe the system:
+
+```text
+INPUT
+COMMAND
+EDITOR STATE
+BUFFER
+CURSOR
+VIEWPORT
+RENDER
+FILE
+```
+
+For example:
+
+```text
+COMMAND MOVE_CURSOR_DOWN
+CURSOR row 10 -> 11
+VIEWPORT viewport_row 8 -> 8
+RENDER frame 42
+```
+
+The log then becomes a compact description of the editor's runtime behavior.
+
+This is more useful than a stream of implementation-level messages because it allows the developer to reason in terms of the architecture itself.
+
+The goal of logging is therefore not simply to produce more information.
+
+> **The goal is to produce the right information at the right abstraction level.**
+
+</Aside>
+
+## Summary
+
+Logging and tracing provide a historical view of program execution.
+
+For the terminal editor, useful diagnostic information includes:
+
+- raw input and parsed events,
+- commands,
+- important state transitions,
+- buffer operations,
+- file operations,
+- rendering events,
+- errors and failures.
+
+The most useful logs describe **transitions and events**, rather than dumping every variable continuously.
+
+A good trace follows the editor's runtime model:
+
+```text
+Input
+  ↓
+Parse
+  ↓
+Command
+  ↓
+State Update
+  ↓
+Render
+```
+
+Logging should remain observational, should not become another owner of Editor State, and should not interfere with the terminal UI.
+
+The distinction between debugging mechanisms can be summarized as:
+
+```text
+Assertions
+    → Detect invalid assumptions
+
+Debugger
+    → Inspect execution interactively
+
+Breakpoints
+    → Stop at important locations
+
+Logging
+    → Record what happened
+
+Tracing
+    → Reconstruct execution history
+```
+
+Together, these tools provide complementary views of the same system.
+
+Recording transitions rather than full state dumps keeps a trace readable while still preserving the sequence that produced a failure. Correlating entries by event-loop iteration lets the developer read the log in the same order the architecture processes it.
+
+The next section addresses a different class of failures: **memory errors**, where the problem is not merely that the program has an incorrect value, but that it accesses memory outside the bounds or lifetime defined by the program.

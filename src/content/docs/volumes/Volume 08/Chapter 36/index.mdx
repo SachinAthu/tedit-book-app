@@ -1,0 +1,60 @@
+---
+title: "Chapter 36 — Debugging"
+description: "Presents debugging as a disciplined skill, using assertions, debug builds, breakpoints, state inspection, logging, and memory diagnostics to locate errors."
+---
+
+## Introduction
+
+Chapter 35 made the editor's correctness **verifiable** through testing. But tests describe the conditions we anticipated; real programs fail in ways we did not. When the editor misbehaves—a cursor appears on the wrong line, a keystroke runs the wrong command, text corrupts after a save—the question is no longer whether the design is correct, but where it first became incorrect.
+
+Debugging a terminal editor is hard for structural reasons. It is stateful, event-driven, split across architectural boundaries, and it talks to a terminal it does not control. A defect can originate far from its symptom, so the goal is to make behavior observable and trace each operation until it first diverges from expectation.
+
+This chapter treats debugging as a disciplined engineering skill rather than improvisation. We build the model progressively:
+
+```text
+Motivation — why editors are difficult to debug
+    ↓
+Safety nets — assertions, debug builds, debuggers, breakpoints
+    ↓
+Visibility — inspecting state, input, and rendering
+    ↓
+Evidence — logging, tracing, memory diagnostics
+    ↓
+Reproduction — and the mistakes that undermine it
+```
+
+We begin by explaining why the editor's architecture makes bugs hard to locate, then build a set of tools: assertions that state invariants, debug builds that preserve them, and a debugger used to find the first incorrect state. We examine breakpoints, state inspection, and targeted debugging of the input and rendering pipelines. We then add logging and tracing for behavior that cannot be paused, and diagnose memory errors through ownership. We close by learning to reproduce bugs reliably and by reviewing the mistakes that turn debugging into guesswork.
+
+## Learning Objectives
+
+By the end of this chapter, you should be able to:
+
+- Explain why an editor's statefulness, pipeline, and terminal interaction make bugs hard to locate.
+- Define the "first incorrect state" and use it to guide a debugging investigation.
+- Explain what assertions check and why they express invariants rather than error handling.
+- Describe how debug builds make state observable without changing program behavior.
+- Use a debugger to step, inspect variables, and read the call stack.
+- Place breakpoints that answer specific questions about execution.
+- Inspect editor state—cursor, document, viewport, buffer, and dirty—at module boundaries.
+- Debug input by tracing the transformation from raw bytes to commands.
+- Debug rendering by separating incorrect state from an incorrect presentation.
+- Use logging and tracing to observe behavior that cannot be paused.
+- Diagnose memory errors through bounds, lifetime, and ownership reasoning.
+- Reproduce a bug from the smallest deterministic sequence of operations.
+- Recognize and avoid common debugging mistakes.
+
+## Sections
+
+- [36.1 Why Editors Are Difficult to Debug](/volumes/volume-08/chapter-36/01-why-editors-difficult-to-debug/)
+- [36.2 Assertions](/volumes/volume-08/chapter-36/02-assertions/)
+- [36.3 Debug Builds](/volumes/volume-08/chapter-36/03-debug-builds/)
+- [36.4 Using a Debugger](/volumes/volume-08/chapter-36/04-using-a-debugger/)
+- [36.5 Breakpoints](/volumes/volume-08/chapter-36/05-breakpoints/)
+- [36.6 Inspecting Editor State](/volumes/volume-08/chapter-36/06-inspecting-editor-state/)
+- [36.7 Debugging Input](/volumes/volume-08/chapter-36/07-debugging-input/)
+- [36.8 Debugging Rendering](/volumes/volume-08/chapter-36/08-debugging-rendering/)
+- [36.9 Logging and Tracing](/volumes/volume-08/chapter-36/09-logging-tracing/)
+- [36.10 Diagnosing Memory Errors](/volumes/volume-08/chapter-36/10-diagnosing-memory-errors/)
+- [36.11 Reproducing Bugs](/volumes/volume-08/chapter-36/11-reproducing-bugs/)
+- [36.12 Common Debugging Mistakes](/volumes/volume-08/chapter-36/12-common-debugging-mistakes/)
+- [36.13 Conclusion](/volumes/volume-08/chapter-36/13-conclusion/)

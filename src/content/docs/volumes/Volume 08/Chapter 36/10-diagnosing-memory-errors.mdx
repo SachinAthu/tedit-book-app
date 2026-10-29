@@ -1,0 +1,915 @@
+---
+title: "36.10 Diagnosing Memory Errors"
+description: "Frames memory debugging around bounds, lifetime, and ownership, and shows how assertions, sanitizers, and stack traces expose invalid accesses."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Memory errors are among the most serious bugs that can occur in a C program.
+
+Unlike an ordinary logical error, where a variable contains an unexpected value, a memory error can violate the boundaries or lifetime of the program's memory itself.
+
+Examples include:
+
+- accessing an array outside its bounds,
+- using memory after it has been freed,
+- freeing the same allocation more than once,
+- dereferencing an invalid pointer,
+- writing through an uninitialized pointer,
+- leaking allocated memory,
+- corrupting adjacent data.
+
+For the terminal editor, these problems can occur in areas such as the Document, dynamic text storage, Screen Buffer, parser state, and other dynamically allocated structures.
+
+The difficulty is that the visible failure may occur much later than the operation that caused the corruption.
+
+```text
+Incorrect Memory Access
+        │
+        ▼
+Memory Corruption
+        │
+        ▼
+Several Operations
+        │
+        ▼
+Unrelated Code
+        │
+        ▼
+Crash / Incorrect State
+```
+
+Therefore, debugging memory errors requires a different strategy from simply inspecting the final incorrect value.
+
+## Why Memory Errors Are Difficult
+
+Consider a buffer containing text:
+
+```text
++---+---+---+---+---+
+| H | e | l | l | o |
++---+---+---+---+---+
+```
+
+Suppose the program accidentally writes beyond the allocated region:
+
+```text
++---+---+---+---+---+---+
+| H | e | l | l | o | X |
++---+---+---+---+---+---+
+                      ^
+                 invalid write
+```
+
+The invalid write may not immediately crash the program.
+
+Instead, it may corrupt another object.
+
+Later:
+
+```text
+Invalid Write
+     │
+     ▼
+Corrupted Memory
+     │
+     ▼
+Normal Execution
+     │
+     ▼
+Different Function
+     │
+     ▼
+Crash
+```
+
+The crash therefore occurs at a different location from the original error.
+
+This creates one of the most important rules of memory debugging:
+
+> **The location where the program fails is not necessarily the location where memory was corrupted.**
+
+## Common Memory Errors
+
+### Out-of-bounds access
+
+A program accesses memory beyond the valid range of an allocation.
+
+For example:
+
+```c
+char text[10];
+
+text[10] = 'x';
+```
+
+The valid indexes are:
+
+```text
+0 ... 9
+```
+
+so index `10` is outside the array.
+
+The same problem can occur with dynamically allocated memory:
+
+```c
+char *text = malloc(10);
+
+text[10] = 'x';
+```
+
+The allocation contains ten bytes, but the last valid index is `9`.
+
+### Use-after-free
+
+Memory is accessed after it has been released:
+
+```c
+char *text = malloc(100);
+
+free(text);
+
+text[0] = 'A';
+```
+
+Conceptually:
+
+```text
+allocate
+   │
+   ▼
+valid memory
+   │
+   ▼
+free
+   │
+   ▼
+memory no longer owned
+   │
+   ▼
+invalid access
+```
+
+The pointer may still contain an address, but that does not mean the program still has the right to access the memory.
+
+### Double free
+
+The same allocation is released more than once:
+
+```c
+free(text);
+free(text);
+```
+
+After the first `free`, ownership of the allocation has ended.
+
+The second operation violates the expected lifetime of the allocation.
+
+### Invalid pointer access
+
+A pointer may contain an invalid or uninitialized address:
+
+```c
+char *text;
+
+text[0] = 'A';
+```
+
+The pointer does not point to a valid allocation.
+
+### Memory leak
+
+Memory is allocated but never released when its lifetime ends:
+
+```c
+char *text = malloc(100);
+
+/* use text */
+
+/* missing free(text) */
+```
+
+A leak may not cause an immediate crash, but repeated leaks can increase memory usage throughout a long editor session.
+
+## Memory Ownership
+
+Memory debugging becomes much easier when ownership is explicit.
+
+For every dynamically allocated object, we should be able to answer:
+
+```text
+Who allocated it?
+
+Who owns it?
+
+Who may modify it?
+
+Who releases it?
+
+When does its lifetime end?
+```
+
+Consider the Document:
+
+```text
+Document
+   │
+   ├── owns lines
+   │
+   └── owns line storage
+```
+
+If the Document owns a line allocation, another component should not arbitrarily release that memory.
+
+This follows the broader architectural principle of clear state ownership.
+
+The project's architecture deliberately assigns responsibilities to components rather than allowing unrelated modules to manage the same state.
+
+Memory ownership should follow the same principle.
+
+## Memory Errors in the Document
+
+The baseline Document is represented as a vector of lines, with each line containing its own sequence of characters. This representation was chosen partly because it is simple to understand and debug.
+
+Nevertheless, dynamic allocation introduces several possible failure points.
+
+Conceptually:
+
+```text
+Document
+   │
+   ▼
+Line Collection
+   │
+   ├── Line 0 → character storage
+   ├── Line 1 → character storage
+   ├── Line 2 → character storage
+   └── ...
+```
+
+A bug can occur when:
+
+- a line grows,
+- a character is inserted,
+- a character is deleted,
+- a line is split,
+- two lines are merged,
+- a line is removed,
+- the document is destroyed.
+
+For example:
+
+```text
+Before:
+    "Hello"
+
+Insert:
+    'X'
+
+Expected:
+    "HelXlo"
+```
+
+The implementation may need to move existing characters and ensure that the destination has sufficient capacity.
+
+A memory error in this operation could corrupt the line or adjacent memory.
+
+## Memory Errors in the Screen Buffer
+
+The Screen Buffer is another important memory boundary.
+
+Its dimensions are determined by the terminal size:
+
+```text
+rows × columns
+```
+
+and the buffer represents the complete visible frame.
+
+Conceptually:
+
+```text
+Screen Buffer
+┌─────┬─────┬─────┐
+│     │     │     │
+├─────┼─────┼─────┤
+│     │     │     │
+├─────┼─────┼─────┤
+│     │     │     │
+└─────┴─────┴─────┘
+```
+
+A typical indexing operation can be conceptually represented as:
+
+```text
+index = row * columns + column
+```
+
+This creates an important invariant:
+
+```text
+0 <= row < rows
+0 <= column < columns
+```
+
+A failure to preserve these bounds can result in an out-of-bounds access.
+
+The Screen Buffer architecture deliberately uses a contiguous allocation while preserving a logical row/column model.
+
+This makes the indexing relationship explicit and therefore provides a clear place to investigate when a rendering-related memory error occurs.
+
+## Memory Errors in Input Parsing
+
+Input parsing can also involve temporary storage.
+
+For example, an escape sequence may be accumulated while the parser determines which key event it represents:
+
+```text
+ESC
+ ↓
+ESC [
+ ↓
+ESC [ A
+ ↓
+KEY_ARROW_UP
+```
+
+If the parser stores bytes in a buffer, that buffer has a capacity.
+
+The invariant becomes:
+
+```text
+sequence_length <= sequence_capacity
+```
+
+If the parser writes beyond that capacity, memory corruption may occur.
+
+This illustrates why parser state should be treated as ordinary program state with explicit bounds, rather than as something that is inherently safe because the sequences are normally short.
+
+## Use Assertions for Memory-Related Invariants
+
+Assertions can detect some conditions before they become memory errors.
+
+For example:
+
+```c
+assert(index >= 0);
+assert(index < length);
+```
+
+or:
+
+```c
+assert(row >= 0);
+assert(row < screen_rows);
+```
+
+These assertions do not replace memory-safety tools, but they make important assumptions explicit.
+
+The relationship is:
+
+```text
+Program Invariant
+      │
+      ▼
+Assertion
+      │
+      ▼
+Early Detection
+```
+
+rather than:
+
+```text
+Invalid State
+      │
+      ▼
+Memory Corruption
+      │
+      ▼
+Later Crash
+```
+
+The earlier the problem is detected, the easier it is to identify its source.
+
+## Compiler-Assisted Memory Diagnostics
+
+Modern C development environments provide runtime instrumentation that can detect many classes of memory errors.
+
+A particularly useful family of tools is **sanitizers**.
+
+For example, AddressSanitizer can detect problems such as:
+
+- out-of-bounds accesses,
+- use-after-free,
+- double-free errors,
+- some forms of memory corruption.
+
+Conceptually:
+
+```text
+Normal Program
+      │
+      ▼
+Memory Error
+      │
+      ▼
+Undefined behavior
+```
+
+With runtime instrumentation:
+
+```text
+Program + Memory Instrumentation
+      │
+      ▼
+Invalid Memory Access
+      │
+      ▼
+Diagnostic Report
+      │
+      ├── location
+      ├── stack trace
+      └── memory information
+```
+
+This can be significantly more informative than waiting for the program to crash naturally.
+
+## Sanitizers and Debug Builds
+
+Sanitizers fit naturally into the debug-build strategy discussed earlier.
+
+Conceptually:
+
+```text
+Development Build
+       │
+       ├── Debug Symbols
+       ├── Assertions
+       ├── Logging
+       └── Sanitizers
+```
+
+A sanitizer-enabled build is not necessarily the normal release build.
+
+Instead, it is another diagnostic configuration used when investigating particular classes of defects.
+
+For example:
+
+```text
+Normal Debug Build
+    ↓
+Bug remains unclear
+    ↓
+Sanitizer-enabled Build
+    ↓
+Memory violation reported
+```
+
+This is an example of choosing a diagnostic tool based on the type of bug being investigated.
+
+## Reading a Memory Diagnostic
+
+A memory diagnostic may report information conceptually similar to:
+
+```text
+ERROR: heap-buffer-overflow
+
+WRITE of size 1
+
+at insert_character()
+    cursor.c:84
+
+called from:
+    execute_command()
+    event_loop()
+```
+
+The most useful information is often:
+
+```text
+What operation failed?
+Where did the invalid access occur?
+What call path led there?
+Was the memory allocated, freed, or never valid?
+```
+
+The stack trace is particularly important.
+
+For example:
+
+```text
+event_loop()
+    ↓
+execute_command()
+    ↓
+document_insert()
+    ↓
+line_insert()
+    ↓
+INVALID WRITE
+```
+
+This connects the memory error back to the editor's architecture.
+
+## Do Not Trust the Crash Location
+
+Suppose the editor crashes inside the Renderer:
+
+```text
+Renderer
+   ↓
+segmentation fault
+```
+
+It is tempting to conclude:
+
+> The Renderer is broken.
+
+But the actual sequence could be:
+
+```text
+Document operation
+     ↓
+Memory corruption
+     ↓
+Several commands
+     ↓
+Renderer accesses corrupted data
+     ↓
+Crash
+```
+
+The Renderer is simply where the corrupted state became fatal.
+
+Memory diagnostics are therefore valuable because they can often identify the earlier invalid access rather than only the later crash.
+
+## Memory Lifetime During Buffer Switching
+
+Multiple buffers introduce another important lifetime problem.
+
+Conceptually:
+
+```text
+Editor
+├── Buffer A
+└── Buffer B
+```
+
+Suppose a component retains a pointer into Buffer A.
+
+Then Buffer A is destroyed:
+
+```text
+Buffer A
+   │
+   ▼
+destroy
+   │
+   ▼
+memory released
+```
+
+If the old pointer is later used:
+
+```text
+old pointer
+     │
+     ▼
+freed memory
+     │
+     ▼
+use-after-free
+```
+
+The bug may appear during an apparently unrelated operation.
+
+This is why memory lifetime should be considered whenever an object stores references or pointers to data owned elsewhere.
+
+## Memory Leaks
+
+Not every memory problem causes an immediate crash.
+
+A **memory leak** occurs when allocated memory becomes unreachable or is otherwise no longer released.
+
+For an editor, repeated operations can expose leaks:
+
+```text
+Open
+  ↓
+Allocate
+  ↓
+Close
+  ↓
+Forgot to release
+  ↓
+Open
+  ↓
+Allocate
+  ↓
+Close
+  ↓
+Forgot to release
+```
+
+Repeated sufficiently many times:
+
+```text
+Memory Usage
+    ↑
+    │       /
+    │     /
+    │   /
+    │ /
+    └──────────────→ Time
+```
+
+A short test session may never expose the problem.
+
+Long-running editor sessions make leak detection particularly relevant.
+
+## Memory Debugging and Resource Ownership
+
+Memory ownership should be documented at module boundaries.
+
+For example:
+
+```text
+File Manager
+     │
+     │ creates Document data
+     ▼
+Document
+     │
+     │ owns data
+     ▼
+Command Engine
+```
+
+The Command Engine may modify the Document through its interface without becoming the owner of the Document's allocations.
+
+Similarly:
+
+```text
+Renderer
+    │
+    │ reads
+    ▼
+Screen Buffer
+```
+
+The Renderer should not unexpectedly release memory belonging to another component.
+
+Clear ownership answers the critical memory questions:
+
+```text
+Who owns this memory?
+
+Who is responsible for freeing it?
+
+Can this pointer remain valid after this operation?
+```
+
+## Memory Errors and Undefined Behavior
+
+Many memory errors in C produce **undefined behavior**.
+
+This means the language does not define what must happen after the invalid operation.
+
+The result could be:
+
+```text
+Crash
+Incorrect value
+Apparently correct behavior
+Silent corruption
+Different behavior after recompilation
+Different behavior under a debugger
+```
+
+This explains why some memory bugs appear to "disappear" when debugging.
+
+Adding debugging instrumentation or changing compiler optimization can alter memory layout and execution sufficiently to change the observable result.
+
+Therefore:
+
+> A bug disappearing under a debugger does not prove that the bug is gone.
+
+This is another reason runtime memory diagnostics are valuable.
+
+## Reproducing Memory Errors
+
+A useful memory-debugging workflow is:
+
+```text
+Reproduce
+   ↓
+Identify failing operation
+   ↓
+Run diagnostic build
+   ↓
+Capture memory diagnostic
+   ↓
+Inspect stack trace
+   ↓
+Identify allocation/lifetime/bounds problem
+   ↓
+Fix ownership or boundary
+   ↓
+Run regression tests
+```
+
+The fix should address the underlying memory rule rather than merely preventing the particular crash.
+
+For example, changing:
+
+```c
+text[index] = value;
+```
+
+to:
+
+```c
+if (index < capacity)
+    text[index] = value;
+```
+
+may prevent one immediate access, but the correct design must also establish what happens when capacity is insufficient.
+
+Memory correctness includes both **bounds** and **ownership/lifetime**.
+
+## Common Memory-Debugging Mistakes
+
+### Fixing the crash instead of the invalid access
+
+A developer may add a check around the crash site while leaving the earlier corruption intact.
+
+### Assuming a pointer is valid because it is non-NULL
+
+A non-NULL pointer can still point to:
+
+- freed memory,
+- memory outside the intended object,
+- memory of the wrong type,
+- an object whose lifetime has ended.
+
+### Freeing memory in multiple modules
+
+If ownership is unclear, two components may both believe they are responsible for releasing the same allocation.
+
+### Keeping stale pointers
+
+A pointer retained after its owner's object is destroyed can become a dangling pointer.
+
+### Ignoring leaks because the editor is small
+
+A small leak repeated thousands of times can become significant.
+
+### Relying only on the debugger
+
+A debugger can inspect memory, but specialized runtime instrumentation is often better at detecting invalid memory operations.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Memory debugging is fundamentally about three questions:
+
+```text
+             Memory
+                │
+       +--------+--------+
+       │        │        │
+       ▼        ▼        ▼
+     Bounds   Lifetime  Ownership
+```
+
+### Bounds
+
+Is this access inside the valid memory region?
+
+### Lifetime
+
+Is the object still alive?
+
+### Ownership
+
+Who is responsible for this memory?
+
+These questions apply throughout the editor:
+
+```text
+Document
+Screen Buffer
+Input Parser
+Undo/Redo
+Buffers
+Temporary allocations
+File-loading data
+```
+
+The specific data structure may change, but these three questions remain.
+
+The architectural decision to keep the Document representation behind a stable Document abstraction is particularly useful here. The baseline vector-of-lines representation can be inspected and replaced independently of higher-level editor behavior.
+
+## A Practical Memory-Debugging Model
+
+The overall investigation can be summarized as:
+
+```text
+Memory Error
+     │
+     ▼
+What kind?
+     │
+     ├── Out of bounds
+     │       ↓
+     │    Check size/index
+     │
+     ├── Use after free
+     │       ↓
+     │    Check lifetime
+     │
+     ├── Double free
+     │       ↓
+     │    Check ownership
+     │
+     └── Leak
+             ↓
+          Check cleanup
+```
+
+Then:
+
+```text
+Identify invalid operation
+        │
+        ▼
+Find responsible owner
+        │
+        ▼
+Correct lifetime / bounds / ownership
+        │
+        ▼
+Run memory diagnostics again
+        │
+        ▼
+Run regression tests
+```
+
+The goal is to restore a valid memory model, not merely to make the immediate symptom disappear.
+
+</Aside>
+
+## Summary
+
+Memory errors require special attention because they can corrupt program state and cause failures far from the original mistake.
+
+Important classes include:
+
+- out-of-bounds access,
+- use-after-free,
+- double free,
+- invalid pointer access,
+- memory leaks.
+
+For the terminal editor, important memory boundaries include:
+
+```text
+Document
+    ↓
+Line Storage
+
+Screen Buffer
+    ↓
+Cell Storage
+
+Input Parser
+    ↓
+Temporary Input Storage
+
+Buffers
+    ↓
+Buffer-specific allocations
+```
+
+Assertions can detect some invalid states early, while sanitizer-enabled debug builds can detect many runtime memory violations and provide useful diagnostic information.
+
+The most important memory-debugging questions are:
+
+```text
+Is the access within bounds?
+
+Is the object still alive?
+
+Who owns the memory?
+
+Who is responsible for releasing it?
+```
+
+The overall principle is:
+
+> **When debugging memory, follow the allocation, the bounds, and the lifetime—not merely the crash.**
+
+Sanitizer-enabled builds extend the same principle by reporting the invalid access itself, including the allocation and call path, instead of waiting for a later crash. Ownership and lifetime questions matter just as much as bounds because a non-NULL pointer can still refer to memory the program no longer owns.
+
+Once memory correctness has been established, another important debugging problem remains: determining how to reliably reproduce a failure. The next section addresses **reproducing bugs**, because a bug that cannot be reproduced consistently is much harder to diagnose and verify.

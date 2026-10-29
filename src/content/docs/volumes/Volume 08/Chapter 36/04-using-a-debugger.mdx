@@ -1,0 +1,712 @@
+---
+title: "36.4 Using a Debugger"
+description: "Explains how to drive GDB to stop, step, inspect variables, and read the call stack so the editor's execution path becomes visible evidence."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+A debugger allows the developer to observe a running program while it executes.
+
+For the terminal editor, this is particularly valuable because the editor is an interactive, stateful system. A visible problem on the terminal may be caused by an earlier state transition, and the debugger allows execution to be stopped at specific points so that the relevant state can be inspected.
+
+The debugger therefore complements the architecture established throughout the book:
+
+```text
+Keyboard
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Editor State
+    │
+    ▼
+Renderer
+    │
+    ▼
+Terminal
+```
+
+This is the same event-processing pipeline used by the runtime model.
+
+The debugger gives us a way to stop execution at different points in that pipeline and examine what is actually happening.
+
+## What a Debugger Provides
+
+A source-level debugger generally allows a developer to:
+
+- start a program under debugger control,
+- pause execution,
+- continue execution,
+- execute one source-level statement at a time,
+- inspect variables,
+- inspect function parameters,
+- inspect the call stack,
+- set breakpoints,
+- evaluate expressions,
+- examine memory,
+- observe how execution reaches a particular function.
+
+The important concept is that the debugger changes **how we observe execution**, not what the program is supposed to do.
+
+Without a debugger:
+
+```text
+Program
+   │
+   ▼
+Runs continuously
+   │
+   ▼
+Unexpected result
+```
+
+With a debugger:
+
+```text
+Program
+   │
+   ▼
+Run
+   │
+   ▼
+Breakpoint
+   │
+   ▼
+Inspect State
+   │
+   ▼
+Continue
+   │
+   ▼
+Breakpoint
+   │
+   ▼
+Inspect State
+```
+
+This makes the execution sequence visible.
+
+## Starting the Editor Under a Debugger
+
+A debugger such as GDB can launch the editor and take control of its execution.
+
+Conceptually:
+
+```text
+Debugger
+    │
+    ▼
+Editor Process
+    │
+    ├── Input
+    ├── Commands
+    ├── State Updates
+    └── Rendering
+```
+
+Instead of launching the editor normally:
+
+```bash
+$ ./editor file.txt
+```
+
+the developer launches it through the debugger:
+
+```bash
+$ gdb ./editor
+```
+
+The exact commands are tool-specific and may vary with the build system and environment. The important principle is that the executable must be built with the information required for source-level debugging.
+
+The debugger can then start the program and pause it when a breakpoint or other debugging condition is reached.
+
+## Continuing Execution
+
+A debugger normally does not execute the entire program one instruction at a time.
+
+Instead, the developer establishes a point of interest and allows execution to continue until that point.
+
+For example:
+
+```text
+Start
+  │
+  │ continue
+  ▼
+Input Parser
+  │
+  │ continue
+  ▼
+Command Engine
+  │
+  │ continue
+  ▼
+State Update
+  │
+  │ continue
+  ▼
+Renderer
+```
+
+This is much more practical than manually stepping through every instruction executed by the editor.
+
+The debugger becomes useful when combined with **breakpoints**, which are discussed in the next section.
+
+## Stepping Through Execution
+
+Once execution is paused, the developer can move through the program incrementally.
+
+Suppose the Command Engine contains:
+
+```c
+void execute_command(EditorState *state, Command command)
+{
+    if (command.type == COMMAND_MOVE_LEFT)
+    {
+        cursor_move_left(&state->cursor,
+                         &state->document);
+    }
+}
+```
+
+The debugger can stop at this function and allow execution to proceed one source-level operation at a time.
+
+Conceptually:
+
+```text
+execute_command()
+        │
+        ▼
+check command
+        │
+        ▼
+cursor_move_left()
+        │
+        ▼
+update cursor
+```
+
+This helps answer questions such as:
+
+- Was the expected command received?
+- Was the correct branch selected?
+- Was the cursor operation called?
+- Did the state change as expected?
+- Did the function return normally?
+
+Stepping is especially useful when the developer already knows the approximate location of the defect.
+
+## Step Over and Step Into
+
+Two forms of stepping are particularly important.
+
+### Step over
+
+Step over executes the current function call without entering its implementation.
+
+For example:
+
+```c
+cursor_move_left(&state->cursor, &state->document);
+```
+
+The debugger executes the function and stops at the next source statement in the current function.
+
+This is useful when the called function is already trusted or is not the current focus of investigation.
+
+### Step into
+
+Step into enters the called function.
+
+For example:
+
+```text
+execute_command()
+       │
+       └── cursor_move_left()
+                  │
+                  ▼
+             inspect logic
+```
+
+This is useful when the behavior of the called function itself is under investigation.
+
+The distinction can be summarized as:
+
+```text
+Step Over
+    |
+    +---- execute function
+    |
+    +---- return to caller
+
+Step Into
+    |
+    +---- enter function
+    |
+    +---- inspect its execution
+```
+
+A disciplined debugger user does not automatically step into every function. Doing so can produce a large amount of irrelevant execution detail.
+
+## Inspecting Variables
+
+One of the debugger's most useful capabilities is examining the values of variables at a specific point in execution.
+
+For example:
+
+```c
+void cursor_move_down(EditorState *state)
+{
+    int row = state->cursor.row;
+    int column = state->cursor.column;
+
+    /* ... */
+}
+```
+
+When execution stops inside the function, the developer can inspect:
+
+```text
+row
+column
+state->cursor.row
+state->cursor.column
+```
+
+This is much more reliable than guessing from the final screen.
+
+Consider a cursor that appears on the wrong line.
+
+The developer might discover:
+
+```text
+cursor.row       = 14
+viewport_row     = 10
+terminal.rows    = 20
+```
+
+Those values provide concrete evidence about the current state.
+
+The architecture deliberately centralizes application state, making this kind of inspection meaningful. The Editor State acts as the single source of truth for the application's current state.
+
+## Inspecting the Call Stack
+
+When execution stops inside a function, the debugger can show the chain of function calls that led there.
+
+For example:
+
+```text
+main()
+  └── event_loop()
+       └── input_engine_handle()
+            └── command_execute()
+                 └── cursor_move_down()
+```
+
+This is called the **call stack**.
+
+The call stack answers an important debugging question:
+
+> How did execution get here?
+
+Suppose `cursor_move_down()` receives an unexpected value.
+
+The problem may not be inside `cursor_move_down()`.
+
+The caller may have:
+
+- passed the wrong state,
+- selected the wrong command,
+- modified state before calling the function,
+- violated an interface assumption.
+
+The stack therefore provides context that inspecting the current function alone cannot provide.
+
+## Finding the First Incorrect State
+
+One of the most useful debugging techniques introduced earlier in this chapter is finding the **first incorrect state**.
+
+Suppose the user presses the Down Arrow and the cursor eventually appears in the wrong location.
+
+The runtime path is:
+
+```text
+Input
+  │
+  ▼
+Parser
+  │
+  ▼
+Input Engine
+  │
+  ▼
+Command Engine
+  │
+  ▼
+Cursor
+  │
+  ▼
+Viewport
+  │
+  ▼
+Renderer
+```
+
+Instead of starting at the Renderer and assuming that rendering is broken, inspect the state at each meaningful boundary.
+
+For example:
+
+```text
+Input Parser
+    |
+    | event = KEY_ARROW_DOWN
+    v
+Input Engine
+    |
+    | command = MOVE_DOWN
+    v
+Command Engine
+    |
+    | cursor.row = 12
+    v
+Cursor
+    |
+    | cursor.row = 13
+    v
+Viewport
+    |
+    | viewport_row = 8
+    v
+Renderer
+```
+
+If `KEY_ARROW_DOWN` is already incorrect, the problem lies before the Command Engine.
+
+If the event is correct but the command is wrong, investigate the Input Engine.
+
+If the command is correct but the Cursor becomes invalid, investigate the Command Engine or Cursor logic.
+
+This follows the architectural separation of responsibilities rather than treating the entire editor as one undifferentiated program.
+
+## Debugging an Event-Driven Program
+
+Interactive programs behave differently from simple command-line programs because execution is organized around events.
+
+The editor's event loop follows:
+
+```text
+Wait for Event
+      │
+      ▼
+Parse Input
+      │
+      ▼
+Execute Command
+      │
+      ▼
+Update Editor State
+      │
+      ▼
+Render Frame
+      │
+      └──────────────┐
+                     ▼
+                Wait Again
+```
+
+This means that a breakpoint can appear to "freeze" the editor.
+
+That is expected.
+
+While the debugger has paused the process:
+
+```text
+Terminal
+   │
+   ▼
+Editor
+   │
+   X  paused
+   │
+   ▼
+Debugger
+```
+
+The editor is not processing new input or rendering new frames.
+
+The developer should therefore avoid interpreting a paused editor as an application failure when execution has intentionally been stopped by the debugger.
+
+## Debugging Terminal Interaction
+
+Terminal applications introduce an additional complication: the editor interacts with terminal state.
+
+The editor operates in raw terminal mode during normal operation, and terminal configuration is part of initialization and cleanup. The runtime model explicitly requires terminal restoration during shutdown.
+
+Therefore, debugging can sometimes produce confusing terminal behavior.
+
+For example:
+
+```text
+Editor starts
+    ↓
+Raw mode enabled
+    ↓
+Debugger stops process
+    ↓
+Editor cannot continue
+    ↓
+Terminal may remain in an unusual state
+```
+
+This is one reason terminal restoration must be treated as an important lifecycle responsibility.
+
+A debugger stopping a process is not necessarily equivalent to the editor performing its normal cleanup path.
+
+When debugging terminal applications, the developer must therefore understand the distinction between:
+
+```text
+Normal exit
+    ↓
+Cleanup
+    ↓
+Restore terminal
+    ↓
+Exit
+```
+
+and:
+
+```text
+Debugger interruption
+    ↓
+Process paused or terminated
+```
+
+This is also why terminal-related debugging should be performed carefully rather than assuming every interruption follows the normal application lifecycle.
+
+## Debugging at Architectural Boundaries
+
+The debugger becomes significantly more useful when breakpoints are placed at meaningful architectural boundaries.
+
+For example:
+
+```text
+Input Parser
+     │
+     ▼
+Input Engine
+     │
+     ▼
+Command Engine
+     │
+     ▼
+Editor State
+     │
+     ▼
+Renderer
+```
+
+Useful investigation points include:
+
+- after input parsing,
+- before command execution,
+- after a state-changing command,
+- before rendering.
+
+At each point, ask:
+
+```text
+What entered this component?
+
+What did this component produce?
+
+Which state did it change?
+
+Does the resulting state satisfy its invariants?
+```
+
+This converts debugging from random stepping into a structured investigation.
+
+## Debugger as Evidence, Not Guesswork
+
+A debugger should be used to gather evidence.
+
+Suppose a save operation appears to clear the Dirty Flag incorrectly.
+
+Rather than assuming that the File Manager is responsible, inspect the state transitions:
+
+```text
+Before Save
+    dirty = true
+        │
+        ▼
+Command Engine
+        │
+        ▼
+File Manager
+        │
+        ▼
+Save Result
+        │
+        ▼
+Editor State
+        │
+        ▼
+After Save
+```
+
+The debugger can establish:
+
+```text
+save succeeded
+dirty changed from true → false
+```
+
+or:
+
+```text
+save failed
+dirty changed from true → false
+```
+
+The second case would provide concrete evidence of an invariant violation.
+
+The testing strategy also identifies preservation of the Dirty Flag on failed saves as an important invariant.
+
+The debugger therefore helps answer **what actually happened**, rather than what the developer thinks happened.
+
+## A Disciplined Debugger Workflow
+
+A useful workflow for this editor is:
+
+```text
+1. Reproduce the problem
+          │
+          ▼
+2. Identify the affected behavior
+          │
+          ▼
+3. Identify the architectural path
+          │
+          ▼
+4. Choose a meaningful breakpoint
+          │
+          ▼
+5. Inspect the current state
+          │
+          ▼
+6. Step through the relevant operation
+          │
+          ▼
+7. Find the first incorrect state
+          │
+          ▼
+8. Identify the responsible component
+          │
+          ▼
+9. Fix the underlying cause
+          │
+          ▼
+10. Add or update a regression test
+```
+
+The final step is important.
+
+A debugger session explains one occurrence of a problem. A regression test protects the resulting behavior against future changes.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A debugger is most effective when combined with the architecture.
+
+Without clear boundaries, a debugger can expose thousands of functions and variables without providing much understanding.
+
+With clear boundaries, the investigation becomes structured:
+
+```text
+Input Problem
+     ↓
+Input Parser
+
+Command Problem
+     ↓
+Input Engine / Command Engine
+
+State Problem
+     ↓
+Editor State / State Owner
+
+Visibility Problem
+     ↓
+Viewport
+
+Display Problem
+     ↓
+Renderer / Screen Buffer
+
+Persistence Problem
+     ↓
+File Manager
+```
+
+This is one of the practical benefits of architectural decomposition.
+
+The architecture does not merely organize the source tree. It also organizes the **debugging process**.
+
+> A good architecture reduces the search space of a bug.
+
+</Aside>
+
+## Summary
+
+A debugger provides controlled observation of a running program.
+
+For the terminal editor, its most important uses are:
+
+- stopping execution,
+- stepping through relevant code,
+- inspecting variables,
+- inspecting the call stack,
+- tracing state transitions,
+- investigating architectural boundaries,
+- finding the first incorrect state.
+
+The debugger should be used as an evidence-gathering tool rather than as a replacement for testing or architectural reasoning.
+
+The most useful mental model is:
+
+```text
+Symptom
+   │
+   ▼
+Execution Path
+   │
+   ▼
+Breakpoint
+   │
+   ▼
+Inspect State
+   │
+   ▼
+Step
+   │
+   ▼
+First Incorrect State
+   │
+   ▼
+Responsible Component
+```
+
+Choosing whether to step over or step into a call is itself an architectural decision, since it determines whether the investigation stays at a boundary or descends into an implementation. Reading the call stack also reveals which caller supplied an unexpected value, which is often more informative than the stopped function alone.
+
+Once the developer knows **where** to stop, the next question becomes **what to stop on**. Breakpoints provide that control, allowing debugging to focus on specific functions, operations, and state transitions rather than the entire execution of the editor.

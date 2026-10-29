@@ -1,0 +1,521 @@
+---
+title: "36.1 Why Editors Are Difficult to Debug"
+description: "Explains why the editor's statefulness, pipeline, and terminal coupling make defects appear far from their cause, and introduces the first-incorrect-state strategy."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Debugging a text editor is different from debugging a small command-line program.
+
+A simple program often follows a straightforward sequence:
+
+```text
+Input
+  ↓
+Processing
+  ↓
+Output
+```
+
+A terminal editor continuously repeats a much more complex cycle:
+
+```text
+Keyboard
+   │
+   ▼
+Input Handler
+   │
+   ▼
+Input Parser
+   │
+   ▼
+Input Engine
+   │
+   ▼
+Command Engine
+   │
+   ▼
+Editor State
+   │
+   ├──────────────┐
+   │              │
+   ▼              ▼
+Document       Cursor
+   │              │
+   └──────┬───────┘
+          ▼
+      Viewport
+          │
+          ▼
+       Renderer
+          │
+          ▼
+    Screen Buffer
+           │
+           ▼
+        Terminal
+```
+
+In this chapter, "Screen Buffer" refers to the **Editor Screen Buffer** — the editor's own application-side frame buffer — not the screen buffers maintained inside the terminal emulator itself.
+
+Each stage can introduce a defect. More importantly, a defect introduced in one stage may not become visible until several stages later.
+
+For example, the user might press the Down Arrow and observe that the cursor appears on the wrong line. The visible symptom occurs during rendering, but the actual defect could be anywhere in the input, command, cursor, or viewport pipeline.
+
+This makes debugging fundamentally a problem of **finding where the system first becomes incorrect**.
+
+## The Distance Between Cause and Symptom
+
+Consider a simplified example.
+
+The user presses:
+
+```text
+Down Arrow
+```
+
+The expected processing is:
+
+```text
+Raw Bytes
+    │
+    ▼
+Input Parser
+    │
+    │ KEY_ARROW_DOWN
+    ▼
+Input Engine
+    │
+    │ MOVE_CURSOR_DOWN
+    ▼
+Command Engine
+    │
+    ▼
+Cursor
+    │
+    ▼
+Viewport
+    │
+    ▼
+Renderer
+    │
+    ▼
+Terminal
+```
+
+Suppose the cursor appears one line too high.
+
+The error might be caused by:
+
+- the Input Parser producing the wrong key event,
+- the Input Engine selecting the wrong command,
+- the Command Engine failing to execute the command,
+- the Cursor calculating the wrong destination row,
+- the Viewport applying an incorrect offset,
+- the Renderer translating coordinates incorrectly,
+- or the terminal output containing an incorrect cursor-positioning sequence.
+
+The final symptom is the same:
+
+```text
+Cursor appears in the wrong place
+```
+
+But the causes are completely different.
+
+This is why debugging cannot simply begin with the component where the problem is visible.
+
+## State Makes Bugs Persistent
+
+The editor is a stateful application.
+
+Its behavior depends not only on the current input, but also on the state accumulated from previous operations.
+
+For example:
+
+```text
+Open File
+    ↓
+Move Cursor
+    ↓
+Insert Text
+    ↓
+Scroll
+    ↓
+Delete Text
+    ↓
+Move Cursor
+```
+
+Each operation changes the state used by the next operation.
+
+A bug may therefore require a particular sequence of actions before it appears.
+
+For example:
+
+```text
+Open document
+    ↓
+Move to a long line
+    ↓
+Move down
+    ↓
+Move through a short line
+    ↓
+Move down again
+    ↓
+Cursor appears in wrong column
+```
+
+The final Down Arrow operation may be completely correct.
+
+The incorrect state may have been introduced several operations earlier.
+
+This is particularly important for the Cursor because its behavior includes both its actual position and its preferred column. As established in the cursor architecture, vertical movement can preserve a preferred horizontal position even when the current line is shorter. A defect in that state can therefore remain hidden until a later movement exposes it.
+
+## Bugs Can Cross Architectural Boundaries
+
+The editor deliberately separates responsibilities between modules.
+
+For example:
+
+```text
+Input Parser
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command Engine
+      │
+      ▼
+Editor State
+```
+
+Each boundary creates a contract.
+
+The Input Parser promises to convert terminal input into abstract events.
+
+The Input Engine promises to map those events to commands.
+
+The Command Engine promises to execute those commands and update the appropriate state.
+
+A defect at any boundary can propagate forward.
+
+For example:
+
+```text
+Wrong byte interpretation
+        │
+        ▼
+Wrong Key Event
+        │
+        ▼
+Wrong Command
+        │
+        ▼
+Wrong State
+        │
+        ▼
+Wrong Frame
+        │
+        ▼
+Wrong Screen
+```
+
+By the time the user sees the problem, the original cause may be several modules away.
+
+This is one reason the architecture emphasizes clear responsibilities and one-way dependencies. Modules should communicate through defined interfaces rather than sharing hidden assumptions.
+
+## Terminal Behavior Adds Another Layer
+
+A terminal editor also interacts with an external system that the program does not completely control.
+
+The editor produces bytes:
+
+```text
+Renderer
+    │
+    ▼
+ANSI Escape Sequences
+    │
+    ▼
+stdout
+    │
+    ▼
+PTY
+    │
+    ▼
+Terminal Emulator
+    │
+    ▼
+Screen
+```
+
+Therefore, a visual problem does not necessarily mean the internal editor state is wrong.
+
+For example, the editor may have correctly calculated:
+
+```text
+cursor_row    = 5
+cursor_column = 12
+```
+
+and generated the expected terminal command.
+
+If the displayed result is still unexpected, the investigation may need to continue into terminal output and terminal behavior.
+
+The rendering architecture intentionally separates state from presentation. The Renderer reads Editor State, constructs a frame, and produces terminal output without modifying the underlying editor state.
+
+This gives us an important diagnostic question:
+
+> Is the internal state wrong, or is the correct state being rendered incorrectly?
+
+## The First Incorrect State
+
+A useful debugging strategy for the editor is to trace an operation forward until something first becomes incorrect.
+
+Consider:
+
+```text
+Input
+  ↓
+Event
+  ↓
+Command
+  ↓
+State
+  ↓
+Frame
+  ↓
+Terminal
+```
+
+Suppose the terminal display is wrong.
+
+Instead of immediately modifying the Renderer, inspect each stage:
+
+```text
+Was the input correct?
+        │
+        ▼
+Was the event correct?
+        │
+        ▼
+Was the command correct?
+        │
+        ▼
+Was Editor State correct?
+        │
+        ▼
+Was the frame correct?
+        │
+        ▼
+Was the terminal output correct?
+```
+
+The goal is to locate the **first incorrect state**.
+
+For example:
+
+```text
+Input       ✓
+Event       ✓
+Command     ✓
+State       ✗
+Frame       ✗
+Terminal    ✗
+```
+
+The Renderer may be behaving perfectly. It is simply rendering an already-invalid state.
+
+Alternatively:
+
+```text
+Input       ✓
+Event       ✓
+Command     ✓
+State       ✓
+Frame       ✗
+Terminal    ✗
+```
+
+Now the investigation should move toward the rendering pipeline.
+
+This distinction prevents a common debugging mistake: fixing a downstream symptom instead of correcting the component that introduced the invalid state.
+
+## Debugging Is an Information Problem
+
+A debugger does not automatically solve a bug.
+
+It gives the developer information that makes the program's behavior observable.
+
+The same is true of:
+
+- assertions,
+- logs,
+- tracing,
+- sanitizers,
+- test failures,
+- breakpoints,
+- stack traces.
+
+Each tool answers different questions.
+
+```text
+Question                         Useful Tool
+────────────────────────────────────────────────
+Is this invariant violated?      Assertion
+What happened earlier?           Logging
+Where did execution stop?        Debugger
+What values exist here?          Debugger
+What changed unexpectedly?       Watchpoint / tracing
+Is memory being corrupted?       Sanitizer
+Can I reproduce the failure?     Test / controlled workflow
+```
+
+The tools discussed in the remainder of this chapter should therefore be understood as **ways of making program behavior observable**.
+
+## Debugging and Architecture
+
+Good architecture does not eliminate bugs.
+
+It makes bugs easier to locate.
+
+The editor's architecture gives us useful boundaries:
+
+```text
+Input Handler
+     │
+Input Parser
+     │
+Input Engine
+     │
+Command Engine
+     │
+Editor State
+     │
+Renderer
+     │
+Terminal
+```
+
+If every component has a clear responsibility, we can ask:
+
+> Which component first violated its responsibility?
+
+That question is much more useful than asking:
+
+> Which line of code looks suspicious?
+
+The project's state-ownership rule is particularly valuable here. Each piece of state has an owner, and other components should not independently maintain competing copies. This reduces the number of places that must be inspected when state becomes inconsistent.
+
+## Debugging Is Not Random Experimentation
+
+A weak debugging process often looks like this:
+
+```text
+Bug appears
+   ↓
+Change something
+   ↓
+Run program
+   ↓
+Bug still exists
+   ↓
+Change something else
+   ↓
+Run program
+```
+
+This can eventually produce a fix, but it provides little understanding and can introduce new defects.
+
+A more disciplined process is:
+
+```text
+Observe
+   ↓
+Reproduce
+   ↓
+Form a hypothesis
+   ↓
+Inspect evidence
+   ↓
+Locate the first incorrect state
+   ↓
+Identify the responsible component
+   ↓
+Fix the cause
+   ↓
+Verify the behavior
+   ↓
+Add a regression test
+```
+
+The final step connects debugging directly to the testing strategy established in Chapter 35. A discovered defect should, where practical, become a permanent test so that the same failure does not silently return later.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A useful mental model for debugging the editor is:
+
+> **Follow the data, follow the state, and find the first point where reality differs from the expected behavior.**
+
+Do not begin by assuming which module is wrong.
+
+Instead, trace the operation through the architecture:
+
+```text
+Input
+  ↓
+Event
+  ↓
+Command
+  ↓
+State
+  ↓
+Frame
+  ↓
+Terminal
+```
+
+At each boundary, compare:
+
+```text
+Expected
+   vs.
+Actual
+```
+
+Once the first discrepancy is found, the search space becomes much smaller.
+
+That is the foundation on which the debugging techniques in the rest of this chapter—assertions, debug builds, GDB, breakpoints, state inspection, logging, tracing, and memory diagnostics—will build.
+
+</Aside>
+
+## Summary
+
+The terminal editor is difficult to debug for structural reasons: it is stateful, event-driven, split across architectural boundaries, and coupled to a terminal it does not fully control.
+
+A defect introduced in one stage may not become visible until several stages later. The state that accumulates across operations can hide a bug behind an otherwise-correct sequence, and a boundary or terminal can transform a correct state into an incorrect display.
+
+Debugging therefore becomes an information problem. The architecture supplies the boundaries, and the tools in the rest of this chapter supply the observability.
+
+The guiding strategy is:
+
+```text
+Reproduce
+   ↓
+Trace the operation through the architecture
+   ↓
+Find the first incorrect state
+   ↓
+Identify the responsible component
+   ↓
+Fix the cause
+   ↓
+Add a regression test
+```
+
+The same reasoning explains why a fix belongs at the component that first produced an invalid value, not at the stage where the terminal finally displayed it. Tracing each representation in order also turns a vague visual complaint into a concrete boundary question.
+
+The next section begins building the toolbox with **Assertions**, the first technique for making internal correctness assumptions observable.

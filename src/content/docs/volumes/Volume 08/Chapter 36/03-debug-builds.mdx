@@ -1,0 +1,497 @@
+---
+title: "36.3 Debug Builds"
+description: "Describes a debug build as a deliberate observability environment that preserves symbols, assertions, and inspectable state without changing program semantics."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Assertions are most useful when they are active during development. A debug build provides an environment in which internal invariants, diagnostic information, and debugging tools can be used without imposing unnecessary constraints on the final release build.
+
+For the terminal editor, a debug build is not simply a build with debugging symbols enabled. It is a development-oriented configuration designed to make incorrect behavior easier to observe, diagnose, and reproduce.
+
+## Why Separate Debug and Release Builds?
+
+A software project normally needs at least two different build configurations:
+
+```text
+                    Source Code
+                         |
+              +----------+----------+
+              |                     |
+              v                     v
+        Debug Build           Release Build
+              |                     |
+        Diagnostics            Production
+        Assertions             Optimizations
+        Debug Symbols          Smaller Output
+        Easy Inspection        Normal Runtime
+```
+
+The source code remains the same, but the compiler and build configuration can produce different executable characteristics.
+
+A debug build should make the program easier to understand while it is being developed.
+
+A release build should produce the intended production behavior with appropriate optimization and without unnecessary debugging overhead.
+
+For example, a debug build may contain:
+
+- debugging symbols,
+- active assertions,
+- reduced optimization,
+- additional diagnostic logging,
+- runtime checks provided by development tools,
+- information required by debuggers.
+
+A release build may instead:
+
+- enable compiler optimization,
+- disable ordinary assertions,
+- reduce diagnostic output,
+- remove development-only instrumentation,
+- produce the intended distribution executable.
+
+The important distinction is therefore:
+
+> A debug build optimizes for observability and diagnosis; a release build optimizes for deployment.
+
+## Debugging Symbols
+
+A debugger needs information that allows machine-level execution to be related back to the source code.
+
+Consider:
+
+```c
+cursor->column++;
+```
+
+After compilation, the processor does not execute the C statement itself. It executes machine instructions.
+
+Without debugging information, a debugger may be able to show that execution stopped at a particular machine address, but connecting that address to:
+
+```text
+src/editor/cursor.c:87
+```
+
+is much more difficult.
+
+Debugging symbols provide information that allows the debugger to associate compiled instructions with source-level information such as:
+
+- source files,
+- line numbers,
+- function names,
+- local variables,
+- parameters,
+- types,
+- stack frames.
+
+Conceptually:
+
+```text
+C Source
+   |
+   | compilation
+   v
+Machine Code + Debug Information
+   |
+   v
+Executable
+   |
+   | debugger
+   v
+Source-level inspection
+```
+
+This allows the developer to ask questions such as:
+
+```text
+Where am I?
+
+What function called this function?
+
+What is cursor_row?
+
+What is cursor_column?
+
+What does EditorState contain?
+
+Which command caused this state change?
+```
+
+Without this information, debugging becomes significantly more difficult.
+
+## Optimization and Debugging
+
+Compiler optimization can make debugging less intuitive.
+
+An optimized program may:
+
+- remove variables that are no longer needed,
+- reorder instructions,
+- inline functions,
+- eliminate unreachable code,
+- combine operations,
+- transform control flow.
+
+For example:
+
+```c
+int new_column = cursor->column + 1;
+
+cursor->column = new_column;
+```
+
+An optimizing compiler may determine that `new_column` provides no meaningful runtime benefit and effectively reduce the operation to:
+
+```c
+cursor->column++;
+```
+
+More complex transformations can make the relationship between source code and machine instructions less obvious.
+
+This does not mean optimized code is incorrect.
+
+It means:
+
+> The source-level execution model and the machine-level execution model are not necessarily identical.
+
+For debugging architectural behavior, lower optimization is often easier to work with.
+
+A development configuration may therefore choose debugging-friendly optimization settings rather than aggressive optimization.
+
+## Debug Builds and Editor State
+
+The terminal editor has a particularly useful reason to maintain a strong debug configuration: much of its behavior depends on Editor State.
+
+The architecture centralizes state rather than allowing unrelated modules to maintain independent copies of important state. State ownership is therefore an important architectural boundary.
+
+During debugging, the developer should be able to inspect that state directly.
+
+For example:
+
+```text
+Editor State
+├── editor-wide
+│   └── terminal dimensions
+├── buffer-specific
+│   ├── document
+│   └── dirty
+└── window-specific
+    ├── cursor
+    └── viewport
+```
+
+For a single-window debugging session it is convenient to speak of these collectively as "the Editor State"; the label groups scoped state rather than implying that the Document, Cursor, and Viewport are editor-wide fields. The active buffer is not stored as a field: it is derived from the active Window in the active Tab.
+
+Suppose the editor displays the wrong line after scrolling.
+
+A debugger can stop execution immediately after the relevant command and inspect:
+
+```text
+cursor.row
+viewport_row
+terminal.rows
+```
+
+The question is then not simply:
+
+> Why does the screen look wrong?
+
+Instead, we can ask:
+
+> Is the Editor State already incorrect before rendering begins?
+
+This distinction is fundamental.
+
+If the state is correct:
+
+```text
+Command Engine
+      |
+      v
+Editor State  ---- correct
+      |
+      v
+Renderer      ---- investigate
+```
+
+If the state is already incorrect:
+
+```text
+Command Engine
+      |
+      v
+Editor State  ---- incorrect
+      |
+      v
+Renderer      ---- probably only displaying the error
+```
+
+A debug build makes this investigation practical.
+
+## A Typical Debug Configuration
+
+The exact compiler and build-system settings are implementation details, but conceptually a debug configuration might provide:
+
+```text
+Debug Build
+│
+├── Debug symbols
+├── Assertions enabled
+├── Low or moderate optimization
+├── Diagnostic logging
+├── Optional runtime instrumentation
+└── Debugger-friendly executable
+```
+
+The release configuration might provide:
+
+```text
+Release Build
+│
+├── Optimization enabled
+├── Assertions normally disabled
+├── Reduced diagnostics
+├── Production-oriented executable
+└── Distribution settings
+```
+
+The important point is not a particular compiler flag.
+
+The important point is that the project should deliberately define what each build configuration means.
+
+## Debugging Without Changing Program Semantics
+
+A common mistake is to modify the program substantially just to make a bug easier to observe.
+
+For example, suppose a cursor bug occurs only after a complicated sequence of commands. A developer might temporarily add arbitrary state changes, delays, or alternative control flow.
+
+This can make the original bug disappear.
+
+The debugging environment should therefore provide **observability without unnecessarily changing the behavior being investigated**.
+
+Useful mechanisms include:
+
+```text
+                    Program
+                       |
+          +------------+------------+
+          |            |            |
+          v            v            v
+      Assertions     Logging     Debugger
+          |            |            |
+          +------------+------------+
+                       |
+                       v
+                  Observation
+```
+
+These mechanisms expose execution rather than redesigning it.
+
+This is especially important for timing-sensitive or state-dependent bugs.
+
+## Development Diagnostics
+
+Additional diagnostic checks can sometimes be enabled in debug builds.
+
+For example, a development-only function might validate important Editor State invariants:
+
+```c
+static void validate_editor_state(const EditorState *state)
+{
+    assert(state != NULL);
+    assert(state->cursor.row >= 0);
+    assert(state->cursor.row < state->document.line_count);
+}
+```
+
+Such validation can be called at architectural boundaries:
+
+```text
+Input
+  |
+  v
+Command Engine
+  |
+  v
+validate state
+  |
+  v
+Editor State
+  |
+  v
+Renderer
+  |
+  v
+validate state
+```
+
+This can reveal the operation that first produced an invalid state.
+
+However, diagnostic checks should be designed carefully. Excessive checking can make the program harder to understand and may introduce significant overhead.
+
+The goal is not to check everything everywhere.
+
+The goal is to check important invariants at meaningful boundaries.
+
+## Debug Builds Are Not a Substitute for Testing
+
+A debug build helps investigate behavior, but it does not replace automated tests.
+
+The distinction is important:
+
+| Mechanism        | Primary purpose                       |
+| ---------------- | ------------------------------------- |
+| Unit test        | Verify a defined behavior             |
+| Integration test | Verify interaction between components |
+| End-to-end test  | Verify complete workflows             |
+| Assertion        | Detect violated internal assumptions  |
+| Debugger         | Inspect execution interactively       |
+| Logging          | Record runtime behavior               |
+| Debug build      | Provide an environment for diagnosis  |
+
+The testing strategy established for the editor deliberately uses multiple levels of testing, including unit, integration, end-to-end, and manual testing.
+
+A useful workflow is therefore:
+
+```text
+Test fails
+    |
+    v
+Reproduce failure
+    |
+    v
+Run debug build
+    |
+    v
+Use assertions / logs / debugger
+    |
+    v
+Find first incorrect state
+    |
+    v
+Fix implementation
+    |
+    v
+Add or improve regression test
+```
+
+The debugger helps explain **why** a test fails.
+
+The test helps ensure that the failure does not return.
+
+## Debug Builds and the Release Boundary
+
+A debug build should not become a different version of the editor.
+
+The same architectural rules must continue to apply:
+
+```text
+                Same Source
+                    |
+          +---------+---------+
+          |                   |
+          v                   v
+      Debug Build        Release Build
+          |                   |
+          +---------+---------+
+                    |
+                    v
+              Same Design
+```
+
+For example, debugging code should not create a second source of truth for Editor State.
+
+A temporary diagnostic variable should not become a hidden replacement for the actual state.
+
+A logging function should not modify the state it is observing.
+
+A debugger should be used to inspect the architecture, not bypass it.
+
+This preserves an important property:
+
+> Debugging mechanisms should help reveal the architecture rather than create a second architecture.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A good debug configuration is an **observability environment** for the software.
+
+For this editor, that means being able to observe the progression:
+
+```text
+Terminal Input
+      |
+      v
+Input Parser
+      |
+      v
+Input Event
+      |
+      v
+Input Engine
+      |
+      v
+Command Engine
+      |
+      v
+Editor State
+      |
+      v
+Renderer
+      |
+      v
+Screen Buffer
+      |
+      v
+Terminal
+```
+
+When something goes wrong, the developer can inspect this pipeline one boundary at a time.
+
+This is much more powerful than simply attaching a debugger to a program and stepping through arbitrary instructions.
+
+The architecture determines **what should be observable**.
+
+The debug build provides the environment in which that observability becomes practical.
+
+</Aside>
+
+## Summary
+
+A debug build is a development-oriented build configuration designed to make program behavior observable and diagnosable.
+
+For the terminal editor, it provides an environment suitable for:
+
+- source-level debugging,
+- active assertions,
+- state inspection,
+- diagnostic logging,
+- controlled runtime checks,
+- debugger-assisted investigation.
+
+Debug symbols connect machine execution to source code, while reduced optimization generally makes that relationship easier to inspect.
+
+Most importantly, a debug build should preserve the editor's architectural design. It should expose Editor State and module interactions without introducing alternative sources of truth or unrelated behavior.
+
+The distinction can be summarized as:
+
+```text
+Debug Build
+    |
+    +-- Observe
+    +-- Inspect
+    +-- Validate
+    +-- Diagnose
+    |
+    v
+Find the Cause
+
+Release Build
+    |
+    +-- Optimize
+    +-- Minimize Diagnostics
+    +-- Deploy
+```
+
+Debug symbols and reduced optimization matter because they keep the machine-level execution traceable to the source-level state the developer is reasoning about. Diagnostic validation should stay limited to meaningful boundaries so the observability environment does not become a second, inconsistent model of the editor.
+
+The next step is to examine the debugger itself and how it can be used to investigate the editor's execution at the source-code level.

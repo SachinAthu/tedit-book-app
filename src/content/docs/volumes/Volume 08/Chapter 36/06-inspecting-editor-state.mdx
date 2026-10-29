@@ -1,0 +1,805 @@
+---
+title: "36.6 Inspecting Editor State"
+description: "Explains how to inspect cursor, document, viewport, buffer, and dirty state before and after commands to locate the first incorrect transition."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The central purpose of debugging the terminal editor is not merely to determine which function is executing. It is to determine whether the **Editor State** remains correct as the program processes input, executes commands, modifies the document, changes the viewport, switches buffers, and renders frames.
+
+The architecture deliberately centralizes important application state. State ownership establishes which component is responsible for maintaining each piece of state, while the Editor State provides the common state model used by the application.
+
+This makes Editor State one of the most important objects to inspect during debugging.
+
+## Why Editor State Matters
+
+A terminal editor continuously transforms state:
+
+```text
+Input Event
+    │
+    ▼
+Command
+    │
+    ▼
+Editor State
+    │
+    ▼
+New Editor State
+    │
+    ▼
+Rendered Frame
+```
+
+The terminal only shows the final consequence of these transformations.
+
+For example, suppose the cursor appears on the wrong line.
+
+The terminal shows:
+
+```text
+Wrong cursor position
+```
+
+But the actual cause might be:
+
+```text
+Input Event
+    ↓
+Wrong command
+    ↓
+Wrong cursor movement
+    ↓
+Incorrect cursor state
+    ↓
+Incorrect viewport
+    ↓
+Renderer displays incorrect position
+```
+
+Inspecting Editor State allows the developer to determine where the incorrect value first appeared.
+
+## Editor State as the Debugging Reference Point
+
+The Editor State represents the current logical condition of the editor.
+
+Conceptually:
+
+```text
+Editor State
+├── Editor-wide
+│   ├── Configuration
+│   ├── Terminal Dimensions
+│   ├── Buffer collection
+│   ├── Tab collection
+│   └── Window layout
+│
+├── Buffer-specific (per Buffer)
+│   ├── Document
+│   ├── File association
+│   ├── Dirty Flag
+│   └── Undo history
+│
+└── Window-specific (per Window)
+    ├── Geometry
+    ├── Displayed Buffer reference
+    ├── Viewport
+    └── Cursor
+```
+
+The exact fields depend on the implementation, but the important principle is that these values describe the editor's current state rather than the terminal's visual representation. The classification follows the state-ownership model: the Document and the Dirty Flag belong to the Buffer, while the Cursor and the Viewport belong to the Window that displays the Buffer. When debugging a single window, it is often convenient to speak of "the" Document, Cursor, Viewport, and Dirty Flag as one aggregate, but they are scoped state, not editor-wide fields.
+
+During debugging, the developer should therefore ask:
+
+```text
+What should the Editor State be?
+
+What is the Editor State actually?
+
+Where did the two become different?
+```
+
+This changes debugging from visual guesswork into state analysis.
+
+## Inspecting State Before an Operation
+
+Suppose the user presses the Down Arrow.
+
+Before executing the command, the debugger might show:
+
+```text
+cursor.row    = 10
+cursor.column = 7
+document.lines = 40
+```
+
+The expected transition may be:
+
+```text
+cursor.row = 10
+        │
+        │ move down
+        ▼
+cursor.row = 11
+```
+
+If the state is already incorrect before the operation:
+
+```text
+cursor.row = 50
+document.lines = 40
+```
+
+then the Down Arrow operation is probably not the original source of the problem.
+
+The debugging process should move backward toward the operation that created the invalid state.
+
+This is an important distinction:
+
+> Inspecting state before an operation establishes whether that operation received valid input.
+
+## Inspecting State After an Operation
+
+The second useful observation point is immediately after the state transition.
+
+Consider:
+
+```text
+Before Command
+      │
+      ▼
+Execute Command
+      │
+      ▼
+After Command
+```
+
+The developer can compare the two states.
+
+For example:
+
+```text
+Before:
+    cursor.row    = 10
+    cursor.column = 7
+
+Command:
+    MOVE_DOWN
+
+After:
+    cursor.row    = 11
+    cursor.column = 7
+```
+
+This appears consistent.
+
+But suppose the result is:
+
+```text
+Before:
+    cursor.row    = 10
+    cursor.column = 7
+
+Command:
+    MOVE_DOWN
+
+After:
+    cursor.row    = 13
+    cursor.column = 7
+```
+
+The unexpected transition provides a much narrower debugging target.
+
+The question becomes:
+
+> Why did this command change the cursor by three rows?
+
+This is far more useful than simply observing the final incorrect screen.
+
+## Inspecting Cursor State
+
+The cursor is one of the most frequently inspected pieces of state.
+
+Typical values include:
+
+```text
+cursor.row
+cursor.column
+```
+
+The logical constraints established for cursor movement must remain valid.
+
+Conceptually:
+
+```text
+0 <= cursor.row < line_count
+0 <= cursor.column <= current_line_length
+```
+
+These constraints are useful during debugging because they provide an immediate test for state validity.
+
+For example:
+
+```text
+document.line_count = 20
+cursor.row = 20
+```
+
+The problem is immediately apparent if the valid row range is:
+
+```text
+0 ... 19
+```
+
+The debugger can then inspect the call stack to determine which operation produced the invalid value.
+
+This demonstrates an important relationship:
+
+```text
+Invariant
+    ↓
+State Inspection
+    ↓
+Invalid Value
+    ↓
+Call Stack
+    ↓
+Responsible Operation
+```
+
+## Inspecting Document State
+
+Cursor state cannot be interpreted independently from the Document.
+
+For example:
+
+```text
+cursor.row = 15
+```
+
+does not tell us whether the value is valid.
+
+We also need:
+
+```text
+document.line_count = ?
+```
+
+Similarly, a cursor column depends on the length of the current logical line.
+
+A useful debugging snapshot may therefore include:
+
+```text
+Document
+├── line_count
+├── current line length
+└── relevant line contents
+
+Cursor
+├── row
+└── column
+```
+
+Conceptually:
+
+```text
+Document
+    │
+    ├── Line 0
+    ├── Line 1
+    ├── ...
+    └── Line 15
+             ▲
+             │
+         Cursor
+```
+
+This is particularly important after document modifications.
+
+For example, deleting a line may change:
+
+```text
+line_count
+```
+
+while the cursor still contains its previous row.
+
+The debugger can determine whether the cursor was adjusted appropriately after the document changed.
+
+## Inspecting Viewport State
+
+The cursor and viewport are closely related, but they represent different concepts.
+
+The cursor identifies the logical editing position.
+
+The viewport identifies which portion of the document is currently visible.
+
+Conceptually:
+
+```text
+Document
+│
+│  line 0
+│  line 1
+│  line 2
+│  ...
+│  line 40  ← cursor
+│  ...
+│  line 100
+│
+└───────────────
+        │
+        ▼
+    Viewport
+```
+
+During debugging, inspect values such as:
+
+```text
+cursor.row
+viewport_row
+terminal.rows
+```
+
+The relevant question is:
+
+> Is the cursor visible within the current viewport?
+
+For example:
+
+```text
+cursor.row       = 50
+viewport_row     = 45
+visible_rows     = 20
+```
+
+The cursor is logically within the visible range:
+
+```text
+45 ... 64
+```
+
+If the renderer nevertheless places it elsewhere, the problem may be further down the rendering pipeline.
+
+## Inspecting Buffer State
+
+With multiple buffers, Editor State also contains information about which document is currently active.
+
+Importantly, the active buffer is not a stored editor-level field. It is a **derived value**, resolved as the buffer referenced by the active Window in the active Tab. A window records which Buffer it displays, so the active buffer can be read by following that reference rather than by looking up a separately maintained copy.
+
+Conceptually:
+
+```text
+Active Tab
+    │
+    └── Active Window
+          │
+          └── Buffer reference ──► Buffer
+```
+
+Because the active buffer is derived, its correct value follows directly from the window layout. A buffer-switching bug can therefore be investigated by inspecting:
+
+```text
+active window
+window's buffer reference
+active document
+cursor
+viewport
+dirty state
+```
+
+For example:
+
+```text
+Before:
+    window.buffer = A
+
+Command:
+    SWITCH_BUFFER
+
+After:
+    window.buffer = B
+```
+
+The `SWITCH_BUFFER` command is a selection operation: it changes which Buffer the active Window references, without copying or modifying the Buffers themselves.
+
+If the screen displays Buffer B but the cursor state still belongs to Buffer A, the debugger has identified a state-management problem.
+
+This is particularly important because buffer-specific and window-specific state must remain associated with the correct editing context.
+
+## Inspecting Dirty State
+
+The Dirty Flag represents whether the current document contains modifications that have not yet been safely saved.
+
+A typical debugging sequence is:
+
+```text
+Open file
+    ↓
+dirty = false
+    ↓
+Edit document
+    ↓
+dirty = true
+    ↓
+Save
+    ↓
+dirty = false
+```
+
+A failed save should not incorrectly clear the Dirty Flag.
+
+Therefore, if a save operation fails:
+
+```text
+Before:
+    dirty = true
+
+Save:
+    failure
+
+Expected:
+    dirty = true
+```
+
+If debugging reveals:
+
+```text
+After:
+    dirty = false
+```
+
+the state transition provides strong evidence of a bug.
+
+The testing strategy explicitly includes failure-case testing and preservation of important state under failed operations.
+
+## Inspecting State Across a Command
+
+A useful debugging technique is to capture the state at three points:
+
+```text
+          Command
+             │
+             ▼
+       ┌─────────────┐
+       │             │
+Before ──► Execute ──► After
+       │             │
+       └─────────────┘
+```
+
+For example:
+
+```text
+Before:
+    cursor.row = 10
+    cursor.column = 5
+    dirty = false
+
+Command:
+    INSERT_CHARACTER
+
+After:
+    cursor.row = 10
+    cursor.column = 6
+    dirty = true
+```
+
+This provides a concise description of the command's state transition.
+
+If an unexpected value appears, the developer can focus on the code responsible for that transition.
+
+This approach is especially useful for commands because the Command Engine is responsible for translating commands into changes to application state.
+
+## Comparing Expected and Actual State
+
+Debugging becomes much more effective when the expected state is explicitly known.
+
+Consider a simple movement:
+
+```text
+Current:
+    cursor.row = 10
+    cursor.column = 5
+
+Command:
+    MOVE_RIGHT
+
+Expected:
+    cursor.row = 10
+    cursor.column = 6
+```
+
+If the debugger reports:
+
+```text
+Actual:
+    cursor.row = 11
+    cursor.column = 0
+```
+
+we now have a precise discrepancy:
+
+```text
+Expected                    Actual
+────────                    ──────
+row    = 10                 row    = 11
+column = 6                  column = 0
+```
+
+The debugging problem is therefore no longer:
+
+> The cursor is behaving strangely.
+
+It is:
+
+> `MOVE_RIGHT` produced a row transition and column reset that were not expected for this state.
+
+This precision dramatically reduces the search space.
+
+## Inspecting State at Module Boundaries
+
+Editor State should also be inspected when control moves between major components.
+
+For example:
+
+```text
+Input Parser
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command Engine
+      │
+      ▼
+Editor State
+      │
+      ▼
+Renderer
+```
+
+At each boundary, the developer can ask:
+
+```text
+What information entered this component?
+
+What information did it produce?
+
+What state changed?
+
+Who owns that state?
+```
+
+The architecture establishes clear responsibilities and state ownership precisely so that these questions have meaningful answers.
+
+## State Snapshots
+
+When investigating a complex bug, it can be useful to think in terms of **state snapshots**.
+
+For example:
+
+```text
+Snapshot A
+──────────
+buffer       = 0
+cursor       = (10, 5)
+viewport     = (7, 20)
+dirty        = true
+
+        │
+        │ command
+        ▼
+
+Snapshot B
+──────────
+buffer       = 0
+cursor       = (11, 5)
+viewport     = (8, 20)
+dirty        = true
+```
+
+A snapshot does not need to mean a new runtime data structure.
+
+It is a debugging concept: a description of the important state at a particular point in execution.
+
+Comparing snapshots helps identify unexpected transitions.
+
+```text
+State A
+   │
+   │ expected transition
+   ▼
+State B
+
+        versus
+
+State A
+   │
+   │ actual transition
+   ▼
+State C
+```
+
+This is especially useful for bugs involving several sequential commands.
+
+## Inspecting State Without Modifying It
+
+When debugging, inspection should normally be observational.
+
+The developer should avoid casually changing program variables from the debugger simply to make the program continue.
+
+For example, changing:
+
+```text
+cursor.row = 10
+```
+
+to:
+
+```text
+cursor.row = 5
+```
+
+may allow execution to continue, but it can also hide the original problem.
+
+Debugger modifications can be useful for carefully controlled experiments, but they should not be confused with fixing the underlying program.
+
+The normal workflow should therefore be:
+
+```text
+Observe
+   ↓
+Understand
+   ↓
+Modify source code
+   ↓
+Rebuild
+   ↓
+Retest
+```
+
+rather than:
+
+```text
+Observe
+   ↓
+Modify runtime state
+   ↓
+Continue
+   ↓
+Assume fixed
+```
+
+## State Ownership Helps Debugging
+
+One of the strongest architectural advantages of explicit state ownership is that it narrows responsibility.
+
+Suppose the viewport offset is incorrect.
+
+If the architecture clearly identifies the component responsible for viewport state, the developer has a much smaller search space.
+
+Conceptually:
+
+```text
+State Field
+    │
+    ▼
+Known Owner
+    │
+    ▼
+Known Mutation Paths
+    │
+    ▼
+Breakpoint
+    │
+    ▼
+Inspect Transition
+```
+
+Without clear ownership:
+
+```text
+Viewport State
+   │
+   ├── Module A
+   ├── Module B
+   ├── Module C
+   ├── Renderer
+   └── Miscellaneous helper
+```
+
+the same debugging problem becomes much harder.
+
+State ownership is therefore not merely a design principle. It is also a debugging aid.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+When debugging a stateful editor, **the state is often more informative than the screen**.
+
+The screen is a projection of the internal state:
+
+```text
+Editor State
+     │
+     ▼
+Renderer
+     │
+     ▼
+Frame
+     │
+     ▼
+Terminal
+```
+
+If the screen is wrong, inspecting the state first helps determine whether the problem is:
+
+```text
+State problem
+     or
+Rendering problem
+```
+
+If the state is already wrong, investigate the state transition.
+
+If the state is correct but the frame is wrong, investigate rendering.
+
+If the frame is correct but the terminal display is wrong, investigate terminal output or terminal behavior.
+
+This produces a useful debugging hierarchy:
+
+```text
+1. Is Editor State correct?
+             │
+        yes / \ no
+           /   \
+          ▼     ▼
+    Rendering   State transition
+       │             │
+       ▼             ▼
+ Terminal       Responsible owner
+```
+
+The debugger becomes much more powerful when used with this hierarchy.
+
+</Aside>
+
+## Summary
+
+Inspecting Editor State is one of the most important debugging techniques for the terminal editor.
+
+Useful state to inspect includes:
+
+- active buffer,
+- document structure,
+- cursor position,
+- viewport position,
+- dirty state,
+- terminal dimensions,
+- other application-level state relevant to the current operation.
+
+The most useful comparison is:
+
+```text
+Expected State
+      │
+      │ compare
+      ▼
+Actual State
+      │
+      ▼
+First Difference
+      │
+      ▼
+Responsible State Transition
+```
+
+By inspecting state before and after commands, across module boundaries, and at important state transitions, the developer can move from a visible symptom to the first incorrect state.
+
+The central principle is:
+
+> **Do not debug the screen when the real problem may be in the state that produced it.**
+
+Snapshots captured before and after a command give the comparison a stable form, so an unexpected transition can be described precisely instead of vaguely. Because each field has a known owner, an invalid value also narrows the search to the mutation paths that are allowed to write it.
+
+The next section applies this approach to one of the editor's most difficult debugging areas: **input**, where terminal bytes, escape sequences, parsed events, and commands must all remain consistent.

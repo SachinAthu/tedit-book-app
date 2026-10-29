@@ -1,0 +1,788 @@
+---
+title: "36.7 Debugging Input"
+description: "Traces input from raw bytes through parser events and commands, showing how to find the first representation that diverges in the input pipeline."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Input is one of the most difficult parts of a terminal editor to debug because the information received from the terminal is not necessarily the same information used by the rest of the application.
+
+A key press passes through several transformations:
+
+```text
+Keyboard
+   │
+   ▼
+Input Handler
+   │
+   │ raw bytes
+   ▼
+Input Parser
+   │
+   │ abstract key event
+   ▼
+Input Engine
+   │
+   │ command
+   ▼
+Command Engine
+   │
+   ▼
+Editor State
+```
+
+The architecture deliberately separates these responsibilities. The Input Handler reads raw terminal input, the Input Parser converts raw bytes into abstract key events, and the Input Engine maps those events to editor commands.
+
+This separation also provides a useful debugging strategy: inspect the input at each transformation rather than treating "the key press" as one indivisible operation.
+
+## Why Input Bugs Are Difficult
+
+A terminal key does not necessarily arrive as one byte.
+
+A normal character such as:
+
+```text
+a
+```
+
+may produce a single byte.
+
+A special key such as an arrow key may produce an escape sequence:
+
+```text
+ESC [ A
+```
+
+The terminal therefore provides a byte stream rather than a ready-made concept such as:
+
+```text
+KEY_ARROW_UP
+```
+
+The Input Parser must perform that interpretation.
+
+Conceptually:
+
+```text
+Terminal
+    │
+    │ raw bytes
+    ▼
+Input Handler
+    │
+    ▼
+Input Parser
+    │
+    │ KEY_ARROW_UP
+    ▼
+Input Engine
+```
+
+A bug can occur at any stage.
+
+For example:
+
+```text
+Wrong key behavior
+       │
+       ├── Input Handler read incorrect bytes
+       ├── Input Parser recognized them incorrectly
+       ├── Input Engine selected wrong command
+       └── Command Engine executed incorrectly
+```
+
+The visible symptom alone does not identify which component is responsible.
+
+## Debug the Transformation Pipeline
+
+The most useful way to debug input is to follow the transformation:
+
+```text
+Raw Bytes
+    │
+    ▼
+Key Event
+    │
+    ▼
+Command
+    │
+    ▼
+State Change
+```
+
+Each stage has a different representation.
+
+For example:
+
+```text
+Raw bytes:
+    ESC [ D
+
+        ↓
+
+Key event:
+    KEY_ARROW_LEFT
+
+        ↓
+
+Command:
+    MOVE_CURSOR_LEFT
+
+        ↓
+
+State change:
+    cursor.column -= 1
+```
+
+This gives four separate questions:
+
+```text
+1. Were the correct bytes received?
+2. Were the bytes parsed correctly?
+3. Was the correct command selected?
+4. Did the command produce the correct state change?
+```
+
+This decomposition follows the architecture rather than mixing terminal-specific behavior with editor behavior.
+
+## Inspecting Raw Input
+
+The first question in an input problem is sometimes:
+
+> What did the terminal actually send?
+
+This is particularly important for special keys and control sequences.
+
+A debugging mechanism can represent raw input in a visible form such as:
+
+```text
+ESC [ A
+```
+
+rather than displaying the escape character directly.
+
+For example:
+
+```text
+Key pressed:
+    Arrow Up
+
+Observed bytes:
+    0x1B 0x5B 0x41
+```
+
+The exact byte representation is less important than making invisible control characters observable.
+
+### Note
+
+Raw terminal input can contain characters that are not visually printable. A debugging representation should therefore make control bytes explicit rather than attempting to print them normally.
+
+## Input Parser Debugging
+
+Once the raw bytes are known, the next question is whether the Input Parser produced the correct abstract event.
+
+For example:
+
+```text
+Raw Input
+    │
+    │ ESC [ A
+    ▼
+Input Parser
+    │
+    ▼
+KEY_ARROW_UP
+```
+
+If the parser instead produces:
+
+```text
+KEY_ESCAPE
+```
+
+or:
+
+```text
+KEY_CHARACTER
+```
+
+then the problem is inside the parsing stage.
+
+The Input Engine should not need to understand the original escape sequence.
+
+Its input should already be abstract:
+
+```text
+Input Engine
+    │
+    │ KEY_ARROW_UP
+    ▼
+Command
+```
+
+This is an important architectural boundary.
+
+The Input Parser hides terminal protocol details from higher-level components.
+
+## Breakpoint at the Parser Boundary
+
+A breakpoint at the point where the Input Parser produces an event can answer an important question:
+
+> What event did the parser actually produce?
+
+For example:
+
+```text
+Raw bytes
+    │
+    ▼
+Input Parser
+    │
+    X  ← breakpoint
+    │
+    ▼
+Key Event
+```
+
+At this point, inspect the resulting event:
+
+```text
+event.type = KEY_ARROW_UP
+```
+
+If that value is correct, the investigation can move forward.
+
+If it is incorrect, there is little reason to investigate the Command Engine yet.
+
+This illustrates the general debugging rule:
+
+> Verify each representation before moving to the next layer.
+
+## Input Engine Debugging
+
+The Input Engine receives abstract key events and maps them to commands.
+
+For example:
+
+```text
+KEY_ARROW_UP
+       │
+       ▼
+Input Engine
+       │
+       ▼
+MOVE_CURSOR_UP
+```
+
+Its responsibility is not to understand terminal escape sequences.
+
+The ADR for the Input Engine explicitly separates key-event interpretation from command execution: the Input Engine maps abstract key events to commands and dispatches them without reading raw terminal bytes or modifying the Document.
+
+Therefore, if the parser produces:
+
+```text
+KEY_ARROW_UP
+```
+
+but the Input Engine produces:
+
+```text
+MOVE_CURSOR_DOWN
+```
+
+the bug belongs to the event-to-command mapping.
+
+This is a much more precise diagnosis than simply saying:
+
+> The Up Arrow is broken.
+
+## Debugging the Command Boundary
+
+The next transformation is:
+
+```text
+Key Event
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command
+    │
+    ▼
+Command Engine
+```
+
+A breakpoint at the Command Engine boundary can establish what command was actually dispatched.
+
+For example:
+
+```text
+event.type = KEY_ARROW_UP
+
+command.type = MOVE_CURSOR_UP
+```
+
+If both are correct, the input path may be functioning correctly.
+
+The investigation can then move into command execution.
+
+This follows the distinction established by the architecture:
+
+```text
+Input Engine:
+    Which command?
+
+Command Engine:
+    What should happen?
+```
+
+The separation exists precisely because these are different responsibilities.
+
+## Partial Escape Sequences
+
+Terminal escape sequences introduce another important debugging case.
+
+A special key may arrive as several bytes:
+
+```text
+ESC
+[
+A
+```
+
+The Input Parser may therefore receive:
+
+```text
+ESC
+```
+
+before the remaining bytes have arrived.
+
+The parser must distinguish between:
+
+```text
+ESC
+```
+
+as an actual Escape key and:
+
+```text
+ESC [ A
+```
+
+as an arrow-key sequence.
+
+Conceptually:
+
+```text
+First byte
+   │
+   ▼
+ESC
+   │
+   ├── complete Escape key
+   │
+   └── possible sequence
+          │
+          ▼
+       read more
+          │
+          ▼
+       recognize event
+```
+
+This is a common source of subtle input bugs.
+
+When debugging such a problem, inspect the parser's state between bytes rather than only looking at the final event.
+
+## Parser State
+
+If the Input Parser maintains temporary state while recognizing a sequence, that state should also be inspected.
+
+Conceptually:
+
+```text
+Parser State
+├── current input byte
+├── sequence state
+└── accumulated sequence
+```
+
+For example:
+
+```text
+Receive ESC
+    ↓
+Parser enters escape state
+    ↓
+Receive '['
+    ↓
+Parser enters CSI state
+    ↓
+Receive 'A'
+    ↓
+Produce KEY_ARROW_UP
+```
+
+A useful debugging question at each point is:
+
+```text
+What byte was received?
+
+What parser state existed before it?
+
+What parser state exists afterward?
+
+Was an event produced?
+```
+
+This allows the developer to determine whether the parser is losing, duplicating, or misinterpreting input.
+
+## Debugging Character Input
+
+Not every input problem involves escape sequences.
+
+Ordinary character input can also expose bugs.
+
+Suppose the user presses:
+
+```text
+x
+```
+
+The expected pipeline is:
+
+```text
+'x'
+  │
+  ▼
+KEY_CHARACTER('x')
+  │
+  ▼
+INSERT_CHARACTER('x')
+  │
+  ▼
+Document modification
+```
+
+A debugger can inspect each transformation.
+
+```text
+Raw byte:
+    'x'
+
+Event:
+    KEY_CHARACTER
+    value = 'x'
+
+Command:
+    INSERT_CHARACTER
+    value = 'x'
+```
+
+If the character is correct until the Command Engine but the Document contains a different character afterward, the problem is no longer an input problem.
+
+It is a state-modification problem.
+
+## Debugging Control Keys
+
+Control combinations should be treated similarly.
+
+For example:
+
+```text
+Ctrl-S
+```
+
+might become:
+
+```text
+KEY_CTRL_S
+```
+
+and then:
+
+```text
+COMMAND_SAVE
+```
+
+The debugging path is:
+
+```text
+Raw Input
+    │
+    ▼
+KEY_CTRL_S
+    │
+    ▼
+COMMAND_SAVE
+    │
+    ▼
+File Manager
+```
+
+If saving does not occur, inspect the pipeline from left to right.
+
+Possible observations include:
+
+```text
+Correct raw byte
+        ↓
+Wrong key event
+```
+
+which points toward the Input Parser.
+
+Or:
+
+```text
+Correct key event
+        ↓
+Wrong command
+```
+
+which points toward the Input Engine.
+
+Or:
+
+```text
+Correct command
+        ↓
+Save operation fails
+```
+
+which moves the investigation toward the File Manager.
+
+The same debugging method therefore works across different types of input.
+
+## Input Bugs and Terminal Modes
+
+Terminal mode can also affect input debugging.
+
+The editor uses Raw Mode during normal interactive operation. In Raw Mode, input is delivered to the application without the normal line-oriented behavior associated with Canonical Mode.
+
+Therefore, an input problem may sometimes be caused by terminal configuration rather than parser logic.
+
+The investigation may need to distinguish:
+
+```text
+Terminal Configuration
+        │
+        ▼
+Input Handler
+        │
+        ▼
+Input Parser
+        │
+        ▼
+Input Engine
+```
+
+For example:
+
+```text
+"Why didn't the application receive the key?"
+```
+
+is different from:
+
+```text
+"Why did the parser interpret the received bytes incorrectly?"
+```
+
+The first question may concern the Input Handler or terminal configuration.
+
+The second concerns the Input Parser.
+
+## Do Not Debug Input by Changing the Parser First
+
+A common mistake is to modify the Input Parser immediately because the visible symptom involves a key.
+
+For example:
+
+```text
+User presses Up
+      ↓
+Cursor moves incorrectly
+      ↓
+Modify parser
+```
+
+This is premature.
+
+The parser might already be producing:
+
+```text
+KEY_ARROW_UP
+```
+
+correctly.
+
+The actual problem might be:
+
+```text
+KEY_ARROW_UP
+      ↓
+MOVE_CURSOR_UP
+      ↓
+incorrect cursor operation
+```
+
+A better workflow is:
+
+```text
+Observe raw input
+      ↓
+Verify parsed event
+      ↓
+Verify command
+      ↓
+Verify state transition
+      ↓
+Modify responsible component
+```
+
+This prevents unrelated components from being changed simply because they occur earlier in the pipeline.
+
+## Input Debugging as a Layered Investigation
+
+The complete debugging process can be represented as:
+
+```text
+                 Input Problem
+                      │
+                      ▼
+              What bytes arrived?
+                      │
+                      ▼
+              What event was parsed?
+                      │
+                      ▼
+              What command was mapped?
+                      │
+                      ▼
+              What state changed?
+                      │
+                      ▼
+              What appeared on screen?
+```
+
+Each answer determines the next place to investigate.
+
+For example:
+
+```text
+Bytes incorrect
+    → Input Handler / terminal behavior
+
+Bytes correct
+Event incorrect
+    → Input Parser
+
+Event correct
+Command incorrect
+    → Input Engine
+
+Command correct
+State incorrect
+    → Command Engine / state owner
+
+State correct
+Display incorrect
+    → Renderer / terminal output
+```
+
+This is one of the clearest practical benefits of separating the input pipeline into distinct components.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Input debugging should follow **representation boundaries**.
+
+At the beginning of the pipeline, the program deals with:
+
+```text
+raw bytes
+```
+
+Then:
+
+```text
+abstract key events
+```
+
+Then:
+
+```text
+editor commands
+```
+
+Then:
+
+```text
+application state
+```
+
+Each representation has a different meaning.
+
+```text
+Raw Bytes
+    │
+    │ Input Parser
+    ▼
+Key Event
+    │
+    │ Input Engine
+    ▼
+Command
+    │
+    │ Command Engine
+    ▼
+Editor State
+```
+
+If the developer skips these boundaries, debugging becomes guesswork.
+
+If the developer verifies each boundary, the possible location of the defect becomes progressively smaller.
+
+> **When debugging input, identify the first representation that is wrong.**
+
+That representation usually points directly toward the component responsible for the error.
+
+</Aside>
+
+## Summary
+
+Input debugging is most effective when the complete input transformation pipeline is made observable:
+
+```text
+Raw Bytes
+    ↓
+Input Handler
+    ↓
+Input Parser
+    ↓
+Key Event
+    ↓
+Input Engine
+    ↓
+Command
+    ↓
+Command Engine
+    ↓
+Editor State
+```
+
+The developer should verify, in order:
+
+1. What raw bytes were received?
+2. What key event did the Input Parser produce?
+3. What command did the Input Engine produce?
+4. What state change did the Command Engine perform?
+5. Did the Renderer correctly display the resulting state?
+
+This approach respects the responsibilities established by the architecture and avoids modifying components without evidence. The Input Handler, Input Parser, Input Engine, and Command Engine each have distinct roles, so debugging should preserve those boundaries.
+
+Partial escape sequences make parser state itself part of the evidence, so inspecting the bytes accumulated between reads can explain an event that never appears. Verifying each representation before moving forward prevents a later command or cursor bug from being mistaken for a parsing failure.
+
+The next section turns to the other major observable side of the editor: **debugging rendering**, where the problem is no longer what the user pressed, but how correct Editor State became the visual Frame displayed by the terminal.

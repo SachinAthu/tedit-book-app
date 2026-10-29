@@ -1,0 +1,56 @@
+---
+title: "36.13 Conclusion"
+description: "Summarizes the debugging toolkit, exercises, and key lessons, and previews portability as the next step after making failures observable."
+---
+
+Debugging turns an observed failure into a located cause. The unifying idea of the chapter is that a defect in the editor usually appears far from where it was introduced, so each tool exists to make behavior observable and allow the developer to find the **first incorrect state**:
+
+```text
+Assertions          ◄─ declare what must always be true
+Debug Builds        ◄─ preserve that information
+Debugger            ◄─ stop execution and inspect it
+Breakpoints         ◄─ ask questions at specific moments
+State Inspection    ◄─ compare expected and actual state
+Logging & Tracing   ◄─ observe what cannot be paused
+Memory Diagnostics  ◄─ expose invalid bounds, lifetimes, ownership
+Reproduction        ◄─ make the investigation repeatable
+```
+
+The important lessons are:
+
+- Debugging is a disciplined process of observing, reproducing, forming a hypothesis, and locating the first point where reality differs from expectation—not random experimentation.
+- The editor's statefulness, pipeline, and terminal interaction are why bugs are hard to find; the architecture also gives us the boundaries that make them findable.
+- Assertions express invariants and state ownership; they are executable documentation, not error handling.
+- Debug builds keep state observable and meaningful by disabling optimization and providing symbols.
+- A debugger and carefully placed breakpoints answer specific questions rather than revealing code by luck.
+- Rendering problems require first deciding whether the editor state is wrong or the correct state is being rendered incorrectly.
+- Logging and tracing capture events across modules for intermittent or long-running failures.
+- Memory diagnostics rest on bounds, lifetime, and ownership; the crash location is not the cause.
+- A reliable reproduction is the foundation that connects every other tool, and regression tests protect the fix.
+
+Debugging therefore does not promise a defect-free editor. It provides a repeatable way to investigate failures, so that the next bug is located through evidence and reasoning rather than chance.
+
+The debugging and diagnostics strategy — assertions, debug builds, logging as an observer, sanitizers, and reproduction feeding regression tests — is recorded as **ADR-029: Debugging and Diagnostics Strategy**, making it an explicit engineering contract rather than an accidental consequence of the debugging code.
+
+## Exercises
+
+### Review Questions
+
+1. Why does a defect in the editor often appear several stages after it was introduced?
+2. State the diagnostic question that separates a rendering bug from a state bug.
+3. Why are assertions not a form of error handling?
+4. What does a debug build provide that a release build does not, and in what order?
+5. Why should breakpoints be placed at architectural boundaries rather than wherever code looks suspicious?
+6. Why must logging never change program behavior or become application state?
+7. Explain why the crash location should not be trusted when diagnosing a memory error.
+8. Why is the reproduction sequence considered the foundation of the debugging workflow?
+
+### Optional Challenge
+
+Pick a defect you found while building the editor and take it through the full disciplined workflow: reduce it to the smallest deterministic reproduction, locate the first incorrect state across a boundary, fix the cause, verify the behavior, and add a regression test.
+
+## Preview of the Next Chapter
+
+> Debugging tells us **why something is wrong**. 
+
+Now that the editor behaves correctly on one platform, the next question is whether that behavior survives a change of environment. The next chapter moves into **Portability**, where the book examines how the editor is affected by moving across Linux, macOS, Windows, and WSL—applying the observability built here to discover platform-specific problems rather than assuming the editor will work unchanged.

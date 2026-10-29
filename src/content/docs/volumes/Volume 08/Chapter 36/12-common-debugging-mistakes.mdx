@@ -1,0 +1,936 @@
+---
+title: "36.12 Common Debugging Mistakes"
+description: "Surveys debugging mistakes such as fixing symptoms, overusing breakpoints, and guessing, and replaces them with an evidence-driven process."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Debugging is a disciplined engineering activity, but it is easy to turn it into trial and error.
+
+The terminal editor provides several powerful debugging mechanisms:
+
+```text
+Assertions
+Debugger
+Breakpoints
+State Inspection
+Logging
+Tracing
+Memory Diagnostics
+Reproduction
+Integration Testing
+```
+
+These tools are most effective when they are used systematically. The architecture itself is designed to improve consistency and simplify debugging through centralized state, explicit ownership, one-way dependencies, and clear component responsibilities.
+
+This section collects common mistakes that can make debugging slower, less reliable, or misleading.
+
+## Debugging the Symptom Instead of the Cause
+
+The most common mistake is fixing the location where the problem becomes visible rather than the location where it originates.
+
+Consider:
+
+```text
+Wrong Screen
+    ↓
+Renderer
+```
+
+It is tempting to immediately modify the Renderer.
+
+But the actual sequence might be:
+
+```text
+Wrong Input
+    ↓
+Wrong Command
+    ↓
+Wrong Editor State
+    ↓
+Renderer correctly displays wrong state
+```
+
+The Renderer may be functioning correctly.
+
+The general rule is:
+
+> **Find the first incorrect state, not the last visible symptom.**
+
+This principle applies throughout the editor:
+
+```text
+Input
+  ↓
+Event
+  ↓
+Command
+  ↓
+State
+  ↓
+Frame
+  ↓
+Terminal
+```
+
+Debug from the first incorrect state forward.
+
+## Adding Breakpoints Everywhere
+
+Another common mistake is placing breakpoints throughout the entire program.
+
+For an event-driven editor, this can quickly become overwhelming:
+
+```text
+Event Loop
+   ↓
+Input
+   ↓
+Parser
+   ↓
+Command
+   ↓
+State
+   ↓
+Renderer
+   ↓
+Terminal
+```
+
+If every function has a breakpoint, almost every event causes the debugger to stop.
+
+The developer then spends more time continuing execution than investigating the bug.
+
+A better approach is:
+
+```text
+Identify the question
+        ↓
+Identify the relevant component
+        ↓
+Choose one meaningful breakpoint
+        ↓
+Narrow further if necessary
+```
+
+A breakpoint should answer a question.
+
+## Stepping Through Everything
+
+Stepping through every function call can produce enormous amounts of irrelevant information.
+
+For example:
+
+```text
+main()
+  ↓
+event_loop()
+  ↓
+input_handler()
+  ↓
+read()
+  ↓
+library function
+  ↓
+system call
+  ↓
+return
+  ↓
+parser()
+  ↓
+...
+```
+
+The goal is not to observe every instruction.
+
+The goal is to observe the execution relevant to the failure.
+
+Use:
+
+```text
+Step into
+```
+
+when the implementation itself is under investigation, and:
+
+```text
+Step over
+```
+
+when the called operation is not relevant to the current question.
+
+## Ignoring the Architecture
+
+A developer may sometimes debug the program as if it were one large function.
+
+For example:
+
+> Somewhere in the editor, the cursor is wrong.
+
+This ignores the architectural structure.
+
+The architecture provides a more useful decomposition:
+
+```text
+Input Parser
+     ↓
+Input Engine
+     ↓
+Command Engine
+     ↓
+Cursor
+     ↓
+Viewport
+     ↓
+Renderer
+```
+
+The project deliberately separates responsibilities and enforces one-way dependencies.
+
+Debugging should take advantage of those boundaries.
+
+Ask:
+
+```text
+Which component owns the state?
+
+Which component produced the value?
+
+Which component consumed it?
+
+Where did the value first become incorrect?
+```
+
+## Blaming the Last Module
+
+A related mistake is blaming the last component involved in the failure.
+
+For example:
+
+```text
+Screen is wrong
+    ↓
+Renderer must be broken
+```
+
+or:
+
+```text
+Save failed
+    ↓
+File Manager must be broken
+```
+
+or:
+
+```text
+Cursor is invalid
+    ↓
+Cursor code must be broken
+```
+
+The last component to observe incorrect data is not necessarily the component that created it.
+
+Instead:
+
+```text
+Observe incorrect result
+        ↓
+Trace backward
+        ↓
+Find first incorrect state
+        ↓
+Identify its owner
+```
+
+## Changing Code Before Reproducing the Bug
+
+Changing code before establishing a reliable reproduction is dangerous.
+
+Suppose:
+
+```text
+Bug observed
+    ↓
+Change implementation
+    ↓
+Bug disappears
+```
+
+This does not establish that the change fixed the bug.
+
+The original behavior may simply not have occurred again.
+
+The better sequence is:
+
+```text
+Observe
+   ↓
+Reproduce
+   ↓
+Record
+   ↓
+Debug
+   ↓
+Hypothesis
+   ↓
+Change
+   ↓
+Reproduce again
+   ↓
+Verify
+```
+
+Reproduction gives the debugging process a stable reference point.
+
+## Making Several Changes at Once
+
+Suppose the editor has a scrolling bug.
+
+A developer changes:
+
+- cursor movement,
+- viewport calculations,
+- renderer logic,
+- Screen Buffer indexing.
+
+Then the bug disappears.
+
+What was actually fixed?
+
+It is now difficult to know.
+
+Multiple simultaneous changes also make regressions harder to diagnose.
+
+A better approach is:
+
+```text
+Hypothesis
+    ↓
+One focused change
+    ↓
+Reproduce
+    ↓
+Result
+```
+
+If the change does not address the problem, the evidence from the failed attempt is still useful.
+
+## Using Logging as a Replacement for Reasoning
+
+Logging can produce enormous amounts of information.
+
+That does not automatically make debugging easier.
+
+For example:
+
+```text
+cursor.row=10
+cursor.column=4
+...
+cursor.row=10
+cursor.column=4
+...
+cursor.row=10
+cursor.column=4
+...
+```
+
+A large log may contain every variable while answering none of the important questions.
+
+Useful logging focuses on meaningful events and transitions:
+
+```text
+COMMAND MOVE_DOWN
+CURSOR row 10 -> 11
+VIEWPORT viewport_row 8 -> 8
+RENDER frame 42
+```
+
+Concise, purposeful technical material is preferable to unnecessary complexity. The same principle applies to diagnostics: record information that helps explain behavior.
+
+## Logging Into the Editor's Terminal UI
+
+A terminal editor owns the terminal display.
+
+Writing arbitrary diagnostic text directly into that display can corrupt the interface:
+
+```text
+Editor Screen
+
+Hello
+World
+DEBUG cursor moved
+Status Bar
+```
+
+The debugging mechanism has now changed the behavior being observed.
+
+Diagnostic output should therefore be separated from normal rendering whenever practical.
+
+Conceptually:
+
+```text
+                    ┌──► Terminal UI
+Editor Process ─────┤
+                    └──► Diagnostic Output
+```
+
+This is particularly important when debugging rendering and terminal behavior.
+
+## Treating Assertions as Error Handling
+
+Assertions are for conditions that must always be true.
+
+They should not replace normal handling of expected runtime failures.
+
+For example, a failed file open is a normal possibility:
+
+```text
+File does not exist
+```
+
+This should be handled through normal error handling.
+
+An impossible internal state is different:
+
+```text
+cursor.row >= document.line_count
+```
+
+That is an appropriate assertion target.
+
+The distinction is:
+
+```text
+Expected runtime condition
+    → error handling
+
+Impossible internal condition
+    → assertion
+```
+
+Assertions should express invariants, not ordinary application behavior.
+
+## Disabling Assertions and Forgetting the Invariant
+
+A release build may disable ordinary C assertions through `NDEBUG`.
+
+That does not mean the underlying invariant is no longer important.
+
+For example:
+
+```text
+0 <= cursor.row < document.line_count
+```
+
+remains a correctness requirement regardless of build configuration.
+
+A debug build may detect a violation immediately.
+
+A release build may not.
+
+Therefore:
+
+> Disabling an assertion removes one diagnostic mechanism; it does not remove the rule being asserted.
+
+The underlying invariant should still be protected by correct program logic and appropriate testing.
+
+## Trusting a Single Successful Run
+
+A bug may be intermittent.
+
+Consider:
+
+```text
+Run 1 → failure
+Run 2 → success
+Run 3 → success
+Run 4 → success
+```
+
+The developer may conclude:
+
+> Fixed.
+
+That conclusion is not justified by these runs alone.
+
+A stronger verification process is:
+
+```text
+Reproduce failure
+      ↓
+Apply fix
+      ↓
+Run original reproduction
+      ↓
+Run regression test
+      ↓
+Run related tests
+      ↓
+Check for new failures
+```
+
+The goal is not merely to observe one successful execution.
+
+## Ignoring Regression Tests
+
+A developer may fix a bug and verify it manually:
+
+```text
+Bug fixed
+```
+
+Then several weeks later another change reintroduces it.
+
+A regression test prevents this class of failure.
+
+The project's testing strategy explicitly includes regression testing: corrected defects should remain fixed, and important failure cases should be preserved in the automated test suite.
+
+The workflow should therefore be:
+
+```text
+Bug
+ ↓
+Reproduction
+ ↓
+Fix
+ ↓
+Regression Test
+ ↓
+Future Protection
+```
+
+## Debugging Without Checking Invariants
+
+A debugger shows values.
+
+It does not automatically tell you whether those values are valid.
+
+For example:
+
+```text
+cursor.row = 20
+```
+
+is meaningless without context.
+
+If:
+
+```text
+document.line_count = 100
+```
+
+the value may be valid.
+
+If:
+
+```text
+document.line_count = 20
+```
+
+the same cursor value may violate an invariant.
+
+Therefore, state inspection should always be combined with the relevant correctness rules:
+
+```text
+Observed Value
+      +
+Invariant
+      ↓
+Meaning
+```
+
+## Ignoring Ownership
+
+Suppose the Viewport contains an incorrect value.
+
+A developer may search every module that references it.
+
+The better first question is:
+
+> Who owns the Viewport state?
+
+The architecture deliberately establishes one owner for each piece of state. This reduces the number of legitimate mutation paths and makes unexpected changes easier to locate.
+
+Therefore:
+
+```text
+Incorrect State
+     ↓
+Identify Owner
+     ↓
+Inspect Mutation Paths
+     ↓
+Find Unexpected Mutation
+```
+
+This is much more efficient than searching the entire codebase.
+
+## Debugging Memory Errors Only at the Crash
+
+Memory corruption often occurs before the eventual crash.
+
+For example:
+
+```text
+Invalid write
+    ↓
+Memory corruption
+    ↓
+Several operations
+    ↓
+Renderer
+    ↓
+Crash
+```
+
+Debugging only the crash site can therefore lead to the wrong component.
+
+Use memory diagnostics and sanitizers where appropriate.
+
+The important questions are:
+
+```text
+Where was the invalid access?
+
+What allocation did it affect?
+
+What was its lifetime?
+
+Which component owned the memory?
+```
+
+Memory debugging should follow the invalid access, not merely the eventual segmentation fault.
+
+## Assuming the Debugger Shows Normal Execution
+
+A debugger changes the execution environment.
+
+Breakpoints pause the program.
+
+Stepping changes timing.
+
+Instrumentation can alter memory layout.
+
+Logging changes I/O behavior.
+
+Sanitizers add runtime checks.
+
+Therefore:
+
+```text
+Observed under debugger
+```
+
+is not always identical to:
+
+```text
+Observed during normal execution
+```
+
+This does not make debugging tools unreliable.
+
+It means their observations must be interpreted appropriately, especially for timing-sensitive and memory-related bugs.
+
+## Modifying Runtime State and Calling It a Fix
+
+A debugger may allow variables to be changed while the program is stopped.
+
+For example:
+
+```text
+cursor.row = 5
+```
+
+This can be useful for controlled experiments.
+
+But it is not a source-code fix.
+
+The correct distinction is:
+
+```text
+Runtime modification
+    → diagnostic experiment
+
+Source modification
+    → actual fix
+```
+
+After an experiment, the original reproduction should be rerun against the actual source code.
+
+## Ignoring the Build Configuration
+
+A bug may appear in one build configuration but not another.
+
+For example:
+
+```text
+Debug Build
+    → works
+
+Release Build
+    → fails
+```
+
+or:
+
+```text
+Normal Debug
+    → appears stable
+
+Sanitizer Build
+    → reports memory error
+```
+
+The developer should record which configuration reproduces the problem.
+
+Relevant conditions may include:
+
+```text
+Compiler
+Optimization
+Debug symbols
+Assertions
+Sanitizers
+Build flags
+```
+
+This becomes particularly important when diagnosing undefined behavior.
+
+## Confusing User Errors With Program Bugs
+
+Not every unexpected outcome is necessarily a software defect.
+
+For example:
+
+```text
+User requests:
+    Save to unwritable path
+```
+
+The correct behavior may be:
+
+```text
+Save fails
+Message Bar reports failure
+Dirty Flag remains set
+Editor continues
+```
+
+That is not necessarily a bug.
+
+The debugging question should therefore begin with:
+
+> What behavior does the design require?
+
+Only then can actual behavior be compared with expected behavior.
+
+This is one reason the project establishes requirements, architecture, and invariants before implementation. Understanding what problem exists and why a solution was chosen must come before implementation begins.
+
+## Debugging Without Preserving the Original Reproduction
+
+A subtle mistake is changing the reproduction while investigating it.
+
+For example:
+
+```text
+Original:
+    A → B → C → BUG
+```
+
+Then during debugging:
+
+```text
+A → B → C → D → BUG
+```
+
+The developer may now be investigating a different failure.
+
+The original reproduction should remain preserved.
+
+If experimentation is necessary:
+
+```text
+Original reproduction
+        │
+        ├── preserved
+        │
+        └── experimental variation
+```
+
+This keeps the investigation grounded in a known failure.
+
+## Debugging by Guessing
+
+Statements such as:
+
+> It is probably the Renderer.
+
+or:
+
+> The parser probably loses the Escape sequence.
+
+are hypotheses, not evidence.
+
+A disciplined process is:
+
+```text
+Observation
+    ↓
+Hypothesis
+    ↓
+Evidence
+    ↓
+Confirm / Reject
+```
+
+For example:
+
+```text
+Hypothesis:
+    Parser produces wrong event.
+
+Evidence:
+    Debugger shows KEY_ARROW_UP.
+
+Conclusion:
+    Hypothesis rejected.
+```
+
+This is more reliable than changing code according to intuition.
+
+## A Better Debugging Discipline
+
+The mistakes above can be replaced with a consistent process:
+
+```text
+1. Observe
+      ↓
+2. Reproduce
+      ↓
+3. Minimize
+      ↓
+4. State the expected behavior
+      ↓
+5. Identify the execution path
+      ↓
+6. Inspect representations
+      ↓
+7. Find the first mismatch
+      ↓
+8. Identify the responsible owner
+      ↓
+9. Fix one cause
+      ↓
+10. Reproduce again
+      ↓
+11. Run regression tests
+```
+
+This process is deliberately evidence-driven.
+
+It also matches the architecture of the editor: events move through defined stages, state has explicit ownership, and modules communicate through controlled boundaries.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Most debugging mistakes can be reduced to one underlying problem:
+
+> **The developer changes or observes the system without first establishing what should have happened.**
+
+A useful debugging loop is therefore:
+
+```text
+Expected Behavior
+       │
+       ▼
+Actual Behavior
+       │
+       ▼
+Difference
+       │
+       ▼
+First Incorrect State
+       │
+       ▼
+Responsible Component
+       │
+       ▼
+Evidence-Based Fix
+```
+
+This approach prevents debugging from becoming a sequence of guesses.
+
+The editor's architecture reinforces this discipline because it gives the developer explicit concepts to inspect:
+
+```text
+Input Event
+Command
+Editor State
+Document
+Cursor
+Viewport
+Frame
+Screen Buffer
+Terminal Output
+```
+
+Each is a meaningful representation in the runtime pipeline.
+
+</Aside>
+
+## Summary
+
+Common debugging mistakes include:
+
+- debugging the symptom instead of the cause,
+- placing too many breakpoints,
+- stepping through irrelevant code,
+- ignoring architectural boundaries,
+- blaming the last module,
+- changing code before reproducing the bug,
+- making several changes at once,
+- producing excessive or poorly targeted logs,
+- treating assertions as normal error handling,
+- trusting a single successful run,
+- failing to create regression tests,
+- ignoring invariants and ownership,
+- debugging memory errors only at the crash,
+- assuming debugger behavior is identical to normal execution,
+- modifying runtime state and treating it as a fix,
+- ignoring build configuration,
+- debugging by guesswork.
+
+A disciplined alternative is:
+
+```text
+Observe
+  ↓
+Reproduce
+  ↓
+Minimize
+  ↓
+Define expected behavior
+  ↓
+Inspect state and boundaries
+  ↓
+Find first incorrect state
+  ↓
+Identify owner
+  ↓
+Fix
+  ↓
+Verify
+  ↓
+Regression test
+```
+
+The central lesson of this chapter is that debugging should be **systematic rather than reactive**.
+
+The architecture, invariants, tests, assertions, debugger, logging, memory diagnostics, and reproduction techniques all serve the same purpose:
+
+> **Make incorrect behavior observable, locate the first point where it becomes incorrect, and verify that the underlying cause has been corrected.**
+
+The discipline is to state the expected behavior first, because without it an observed value or a single successful run cannot be judged correct or incorrect. Each mistake in the list is a way of skipping that comparison and substituting a guess for evidence.
+
+This completes the main technical sections of Chapter 36. The chapter summary that follows consolidates these techniques, connects debugging with the testing strategy established in Chapter 35, and previews the next chapter.

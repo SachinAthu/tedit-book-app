@@ -1,0 +1,547 @@
+---
+title: "36.2 Assertions"
+description: "Shows how C assertions turn the editor's invariants into executable checks that expose invalid state early, while distinguishing them from ordinary error handling."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Assertions are one of the simplest ways to make a program's assumptions visible during development.
+
+An assertion states:
+
+> **At this point in the program, this condition must be true.**
+
+If the condition is false, the program stops and reports the violated assumption.
+
+For a text editor, assertions are particularly useful because the architecture contains many invariants: the Cursor must remain within valid Document bounds, the Viewport must remain valid, and components must preserve the assumptions made by the modules that consume their state.
+
+## What Is an Assertion?
+
+C provides assertions through the `<assert.h>` header.
+
+A simple example is:
+
+```c
+#include <assert.h>
+
+assert(cursor_row >= 0);
+```
+
+The assertion expresses a requirement:
+
+```text
+cursor_row >= 0
+```
+
+If the condition is true, execution continues.
+
+If it is false, the assertion fails.
+
+Conceptually:
+
+```text
+             Condition
+                 │
+          ┌──────┴──────┐
+          │             │
+        TRUE          FALSE
+          │             │
+          ▼             ▼
+      Continue       Stop
+                   + diagnostic
+```
+
+An assertion therefore turns an assumption that previously existed only in the programmer's mind into an executable check.
+
+## Assertions and Editor Invariants
+
+The editor contains many conditions that should always hold during normal execution.
+
+For example, if the Document contains `line_count` lines, a valid cursor row must satisfy:
+
+```text
+0 <= cursor_row < line_count
+```
+
+Similarly, the cursor column must remain within the bounds of the current line:
+
+```text
+0 <= cursor_column <= line_length
+```
+
+These are not merely recommendations.
+
+They are invariants of the editor's state.
+
+A simplified check might look like:
+
+```c
+assert(cursor_row >= 0);
+assert(cursor_row < document->line_count);
+assert(cursor_column >= 0);
+assert(cursor_column <= line_length(cursor_row));
+```
+
+If one of these assertions fails, the program has discovered an invalid state at the point where it was detected.
+
+That is much more useful than allowing the invalid state to propagate into another component.
+
+## Why Assertions Matter in a Stateful Editor
+
+Without assertions, an invalid state can travel through several modules.
+
+Consider:
+
+```text
+Cursor
+  │
+  │ invalid row
+  ▼
+Viewport
+  │
+  │ accepts invalid position
+  ▼
+Renderer
+  │
+  │ calculates invalid screen position
+  ▼
+Screen Buffer
+  │
+  │ out-of-bounds access
+  ▼
+Crash
+```
+
+The eventual crash may occur inside the Renderer or Screen Buffer.
+
+But the original defect may have occurred in the Cursor logic much earlier.
+
+An assertion can stop execution closer to the source:
+
+```text
+Cursor
+  │
+  ▼
+ASSERTION FAILURE
+```
+
+This reduces the distance between the cause and the observed failure.
+
+## Assertions as Executable Documentation
+
+Assertions also document the assumptions made by a module.
+
+Suppose a function expects a valid Document:
+
+```c
+void renderer_draw_document(const Document *document)
+{
+    assert(document != NULL);
+
+    /* Rendering logic */
+}
+```
+
+The assertion communicates an important fact:
+
+> `renderer_draw_document()` requires a valid Document pointer.
+
+Likewise:
+
+```c
+void cursor_move_down(Cursor *cursor, const Document *document)
+{
+    assert(cursor != NULL);
+    assert(document != NULL);
+
+    /* Cursor movement */
+}
+```
+
+The assertions do not replace the function's documentation, but they make important assumptions executable.
+
+This is particularly valuable in a modular architecture because each component has a defined responsibility and boundary. The architecture relies on those boundaries remaining valid.
+
+## Assertions and State Ownership
+
+The project's state-ownership model gives assertions an especially useful role.
+
+Each piece of state has one owner, classified by scope:
+
+```text
+Document
+   │
+   └── owned by the Buffer
+
+Dirty Flag
+   │
+   └── owned by the Buffer
+
+Cursor
+   │
+   └── owned by the Window
+
+Viewport
+   │
+   └── owned by the Window
+
+Buffer collection
+   │
+   └── owned by the Buffer Manager
+```
+
+The Document and the Dirty Flag are buffer-specific state, so they belong to the Buffer that owns them. The Cursor and the Viewport are window-specific state, so they belong to the Window that displays the Buffer. This is the classification established by the multiple-buffer architecture: when a component changes its state, it should preserve the invariants associated with that state.
+
+A useful conceptual pattern is:
+
+```text
+Before operation
+       │
+       ▼
+Preconditions
+       │
+       ▼
+Perform operation
+       │
+       ▼
+Postconditions
+       │
+       ▼
+Valid state
+```
+
+For example:
+
+```text
+cursor_move_down()
+       │
+       ├── verify required state
+       │
+       ├── calculate destination
+       │
+       ├── update cursor
+       │
+       └── verify cursor invariant
+```
+
+This makes state corruption easier to detect.
+
+## Preconditions and Postconditions
+
+Assertions can express both **preconditions** and **postconditions**.
+
+A precondition describes what must be true before an operation begins.
+
+For example:
+
+```c
+assert(document != NULL);
+assert(cursor != NULL);
+```
+
+A postcondition describes what must be true after the operation completes.
+
+For example:
+
+```c
+cursor_move_left(cursor, document);
+
+assert(cursor->column >= 0);
+```
+
+Conceptually:
+
+```text
+          Preconditions
+                │
+                ▼
+          +-----------+
+          | Operation |
+          +-----------+
+                │
+                ▼
+          Postconditions
+```
+
+This is useful when debugging because it tells us where an invariant stopped being true.
+
+## Assertions Are Not Error Handling
+
+Assertions should not be used for ordinary runtime errors.
+
+Consider opening a file:
+
+```c
+FILE *file = fopen(path, "r");
+```
+
+The file may legitimately fail to open because:
+
+- the file does not exist,
+- the user lacks permission,
+- the filesystem is unavailable,
+- the path is invalid.
+
+These are runtime conditions that the editor should handle.
+
+They are not necessarily programming errors.
+
+The correct model is:
+
+```text
+File open
+    │
+    ▼
+Success? ───── No ────► Report error
+    │
+   Yes
+    │
+    ▼
+Continue
+```
+
+An assertion would be inappropriate here:
+
+```c
+assert(file != NULL);
+```
+
+The failure is not necessarily a violation of an internal invariant. It is a condition the program is expected to encounter.
+
+The distinction is important:
+
+| Situation                         | Appropriate response |
+| --------------------------------- | -------------------- |
+| Programmer invariant is violated  | Assertion            |
+| User provides invalid input       | Normal validation    |
+| File cannot be opened             | Error handling       |
+| Memory allocation fails           | Error handling       |
+| Internal state becomes impossible | Assertion            |
+| Expected boundary condition       | Normal control flow  |
+
+## Assertions Should Check Things That Must Be True
+
+A good assertion checks an invariant that should never be violated during correct execution.
+
+For example:
+
+```c
+assert(viewport_row >= 0);
+assert(viewport_column >= 0);
+```
+
+A poor assertion merely restates an ordinary condition:
+
+```c
+assert(character != '\n');
+```
+
+if newline is a perfectly valid character at that point.
+
+The question to ask is:
+
+> **If this condition is false, does it indicate a programming defect or an expected runtime situation?**
+
+If it indicates a programming defect, an assertion may be appropriate.
+
+## Assertions and the Debugging Process
+
+Assertions fit naturally into the debugging workflow introduced in the previous section.
+
+Without assertions:
+
+```text
+Bug
+ ↓
+Incorrect state
+ ↓
+Several operations
+ ↓
+Visible failure
+ ↓
+Investigation
+```
+
+With assertions:
+
+```text
+Bug
+ ↓
+Incorrect state
+ ↓
+Assertion
+ ↓
+Immediate failure
+ ↓
+Inspect stack and state
+```
+
+The second path often provides much better information.
+
+For example:
+
+```text
+Command Engine
+      │
+      ▼
+Cursor movement
+      │
+      ▼
+Assertion failure
+      │
+      ▼
+Debugger
+      │
+      ├── call stack
+      ├── cursor state
+      ├── document state
+      └── local variables
+```
+
+The assertion becomes the point where the debugger can begin examining the failure.
+
+## Assertions and Testing
+
+Assertions and tests serve related but different purposes.
+
+A test asks:
+
+> Does this operation produce the expected result?
+
+An assertion asks:
+
+> Is this internal assumption still true?
+
+For example, a test might verify:
+
+```text
+Moving down from row 2 produces row 3.
+```
+
+An assertion might verify:
+
+```text
+cursor_row remains within Document bounds.
+```
+
+They work together:
+
+```text
+              Tests
+                │
+                ▼
+        Exercise behavior
+                │
+                ▼
+          Editor operation
+                │
+                ▼
+           Assertions
+                │
+                ▼
+       Verify internal state
+```
+
+This complements the testing strategy established in Chapter 35, where invariants are explicitly identified as properties that should remain true throughout editor operation.
+
+## Assertions Should Be Close to the Invariant
+
+An assertion is most useful when it is placed near the code responsible for maintaining the condition.
+
+Suppose the Cursor owns its position.
+
+Then cursor-related invariants should be checked near Cursor operations rather than only at the Renderer.
+
+This:
+
+```text
+Cursor operation
+      │
+      ▼
+Validate Cursor invariant
+```
+
+is generally more informative than:
+
+```text
+Cursor operation
+      │
+      ▼
+Viewport
+      │
+      ▼
+Renderer
+      │
+      ▼
+Validate Cursor invariant
+```
+
+The latter may detect the problem eventually, but the responsible operation is farther away.
+
+This follows the broader architectural principle of giving each component a clear responsibility and ownership boundary.
+
+## Assertions in Debug Builds
+
+Assertions are particularly useful during development.
+
+A common C convention is that assertions can be disabled by defining `NDEBUG` before including `<assert.h>`.
+
+Conceptually:
+
+```text
+Debug Build
+    │
+    └── Assertions enabled
+
+Release Build
+    │
+    └── Assertions disabled
+```
+
+This distinction will become important in the next section when we examine **Debug Builds**.
+
+However, disabling assertions does not mean the underlying invariant becomes unimportant.
+
+If an invariant is essential to correctness, the implementation must still preserve it. Assertions provide a mechanism for detecting violations during development; they are not the mechanism that makes the state valid.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Assertions are most valuable when they answer a precise question:
+
+> **What must always be true here?**
+
+For our editor, examples include:
+
+```text
+Cursor position is valid.
+
+Viewport offsets are valid.
+
+Document structures are internally consistent.
+
+A module receives the state it expects.
+
+A command does not leave Editor State partially invalid.
+
+A Screen Buffer index remains within its allocated bounds.
+```
+
+The purpose of an assertion is not to make the program more defensive against every possible failure.
+
+Its purpose is to make **internal correctness assumptions executable and visible**.
+
+When an assertion fails, the failure should be treated as valuable debugging evidence: something that the architecture assumed to be impossible has occurred, and the debugger can now investigate the exact state in which that assumption became false.
+
+</Aside>
+
+## Summary
+
+Assertions make the editor's invariants executable. They allow the developer to state what must always be true—in the Document, the Cursor, the Viewport, and across module boundaries—and to detect the first moment one of those assumptions is violated.
+
+Assertions are not error handling. They do not recover from failure or make invalid state acceptable; they expose it as early and as specifically as possible during development.
+
+For the stateful editor, assertions are most valuable when they are close to the invariant they protect and when they run in the debug build that debugging assumes.
+
+Preconditions and postconditions make this detection precise, because they identify whether the bad value arrived at an operation or was produced by it. Keeping assertions close to the state they protect shortens the path between the violated invariant and the code that broke it.
+
+Because assertions depend on the build configuration, the next section examines **Debug Builds**: how a debug configuration keeps assertions and diagnostics available without changing the program's behavior.
