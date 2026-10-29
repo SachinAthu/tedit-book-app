@@ -1,0 +1,180 @@
+---
+title: "43.1 Why Study Existing Editors?"
+description: "Explains why mature editors are studied as architectural case studies, showing how different requirements produce different editor designs."
+---
+
+A text editor can be built in many different ways. Our editor has a deliberately small architecture, but it is not the only architecture that works. Mature editors have been developed under different requirements, constraints, interaction models, and performance goals.
+
+Studying existing editors gives us an opportunity to step outside our own design and examine how these same problems have been solved in real systems.
+
+The purpose of this chapter is **not to teach readers how to reproduce another editor**. It is to understand the architectural decisions behind different editors and to see how requirements influence those decisions.
+
+Throughout the earlier chapters, we have made decisions such as:
+
+- using a layered architecture;
+- separating input parsing from command execution;
+- representing the document as a vector of lines;
+- using a dedicated cursor and viewport;
+- using an application-side screen buffer;
+- performing full-frame rendering;
+- keeping the baseline editor relatively small;
+- treating advanced capabilities such as plugins and language tooling as separate architectural concerns.
+
+These decisions are appropriate for the editor defined by our requirements. They should not be interpreted as universal rules.
+
+A different editor may have completely different requirements.
+
+For example, an editor designed primarily for modal editing may organize its input system around modes and commands. An editor designed as an extensible programming environment may place its extension system near the center of its architecture. An editor designed to support a large graphical workspace may require substantially different rendering and process architectures.
+
+The important engineering lesson is therefore:
+
+> **Architecture is shaped by requirements.**
+
+There is rarely a single architecture that is optimal for every editor.
+
+## From One Architecture to Many
+
+Consider three hypothetical editors.
+
+A small terminal editor might have:
+
+```text
+Keyboard
+   |
+   v
+Input
+   |
+   v
+Commands
+   |
+   v
+Document
+   |
+   v
+Renderer
+   |
+   v
+Terminal
+```
+
+A highly extensible editor might instead place an extension system around many of its core services:
+
+```text
+                 +----------------+
+                 |   Extensions   |
+                 +-------+--------+
+                         |
+        +----------------+----------------+
+        |                |                |
+        v                v                v
+     Commands        Documents        Language
+        |                |             Services
+        +----------------+----------------+
+                         |
+                         v
+                    Editor Core
+```
+
+A modern graphical editor may require yet another structure:
+
+```text
+              +------------------+
+              |     Workbench     |
+              +---------+--------+
+                        |
+        +---------------+---------------+
+        |               |               |
+        v               v               v
+     Editor          Extensions     Language
+       UI               Host        Services
+        |                               |
+        +---------------+---------------+
+                        |
+                        v
+                   Text Model
+```
+
+None of these diagrams is inherently the "correct" architecture.
+
+Each represents a different set of requirements.
+
+This distinction is important because experienced software engineers do not normally begin with the question:
+
+> "What is the best architecture?"
+
+They begin with questions such as:
+
+- What must the system do?
+- Who will use it?
+- What constraints must it satisfy?
+- What must remain simple?
+- What must scale?
+- What must be extensible?
+- What performance characteristics are required?
+- Which complexity is justified?
+
+Only after those questions are answered can architectural choices be evaluated.
+
+## Studying Editors as Case Studies
+
+In this chapter, we will therefore treat existing editors as **architectural case studies**.
+
+Rather than documenting every feature of each editor, we will focus on a common set of questions:
+
+1. **How is the editor organized?**
+2. **How does user input become an editing operation?**
+3. **How is editing state represented?**
+4. **How is text represented and manipulated?**
+5. **How does rendering interact with the editor state?**
+6. **How are extensions integrated?**
+7. **How are advanced services such as language tooling incorporated?**
+8. **What architectural trade-offs does the editor make?**
+9. **What lessons can we apply to our own design?**
+
+This gives us a consistent framework for comparison.
+
+It also prevents the chapter from becoming a collection of unrelated descriptions of famous editors.
+
+## Architecture Rather Than Imitation
+
+There is an important difference between **studying an architecture** and **copying an implementation**.
+
+Suppose we discover that an existing editor uses a sophisticated text representation.
+
+That does not automatically mean our editor should adopt it.
+
+We already established in Chapter 29 that a document representation is a design decision governed by workload, complexity, and requirements. Our project deliberately chooses a vector of lines because it provides a simple representation that maps naturally onto our editor's row-and-column model and line-oriented rendering, as recorded in ADR-013.
+
+Similarly, discovering that a mature editor has a complex plugin system does not mean our baseline editor needs one.
+
+The correct question is:
+
+> **What problem does this architecture solve, and do we have the same problem?**
+
+This question will guide the remainder of the chapter.
+
+## Why This Matters Before Implementation
+
+Chapter 43 also serves a final purpose before we enter Volume X.
+
+Volumes I–IX have deliberately separated **understanding** from **implementation**. The Book Bible establishes that the theory volumes should teach the concepts and architectural decisions before the implementation volume begins.
+
+By this point, the reader has studied individual mechanisms and architectural decisions in isolation.
+
+Now we can step back and see how those ideas appear in complete systems.
+
+The goal is not to make our editor more complicated.
+
+The goal is to make the reader better at answering the question:
+
+> **Why is our editor designed this way?**
+
+Once that question has been answered in the context of other real systems, we are ready to build it.
+
+## Summary
+
+This section established the chapter's purpose—to study editors as architectural case studies rather than to copy them—and introduced the principle that architecture is shaped by requirements.
+
+It also framed the study around a consistent set of questions about organization, input, state, text, rendering, extensibility, and language tooling, and it stressed that the goal is not to make our editor more complicated but to explain why it is designed the way it is before implementation begins.
+
+In the next section, we define the comparison framework that the rest of the chapter applies to each editor.

@@ -1,0 +1,325 @@
+---
+title: "43.9 Sublime Text - Performance and Responsiveness"
+description: "Explores how Sublime Text treats performance and responsiveness as architectural requirements, driving incremental work, GPU rendering, and async I/O."
+---
+
+Sublime Text provides a different lesson from the editors we have examined so far.
+
+Nano demonstrates the value of simplicity.  
+Vim demonstrates how a modal interaction model affects architecture.  
+Neovim and Emacs demonstrate extensibility.  
+Helix demonstrates modern structured editing and language tooling.  
+VS Code demonstrates the architecture of a complete development platform.
+
+Sublime Text gives us an opportunity to examine another architectural driver:
+
+> **What happens when responsiveness and performance become explicit design priorities?**
+
+This is especially relevant because a text editor is an interactive system. A theoretically efficient operation is not sufficient if the user experiences visible delays while typing, scrolling, searching, rendering, or switching files.
+
+## Performance Is a User-Facing Requirement
+
+For an interactive editor, performance is not simply a benchmark number.
+
+Consider typing:
+
+```text
+User presses key
+      |
+      v
+Input processing
+      |
+      v
+Document modification
+      |
+      v
+Analysis
+      |
+      v
+Rendering
+      |
+      v
+Visible result
+```
+
+The user expects this entire sequence to feel immediate.
+
+If one subsystem performs excessive work, the delay becomes visible.
+
+For example:
+
+```text
+Key Press
+   |
+   +--> Update document
+   |
+   +--> Recalculate everything
+   |
+   +--> Reparse everything
+   |
+   +--> Re-render everything
+   |
+   v
+Visible result
+```
+
+This may be functionally correct while still producing poor interactive performance.
+
+The architectural challenge is therefore to determine **which work must happen immediately and which work can be avoided, reduced, deferred, or performed asynchronously**.
+
+## Large Documents Change the Problem
+
+A small document makes inefficient algorithms difficult to notice.
+
+Suppose an operation scans the entire document:
+
+```text
+Operation
+   |
+   v
+Scan 10 lines
+```
+
+The cost is negligible.
+
+With a very large document:
+
+```text
+Operation
+   |
+   v
+Scan 1,000,000 lines
+```
+
+The same algorithm can become noticeable.
+
+This is one reason performance-oriented editors pay particular attention to large files, long lines, indexing, syntax processing, rendering, and other potentially expensive operations.
+
+Sublime Text's own release history illustrates this focus: its developers have repeatedly documented performance work involving large files, long lines, rendering, syntax processing, indexing, and many simultaneous selections.
+
+The important lesson is not that we should reproduce those optimizations.
+
+It is that **workload characteristics influence architectural decisions**.
+
+## Rendering Is a Major Performance Boundary
+
+Rendering provides a particularly clear example.
+
+Our baseline editor deliberately uses full-frame redraw:
+
+```text
+Editor State
+     |
+     v
+Renderer
+     |
+     v
+Screen Buffer
+     |
+     v
+Terminal
+```
+
+This is simple and appropriate for our project's requirements.
+
+A graphical editor operating at high resolution has a very different workload.
+
+Sublime Text has introduced GPU-based rendering and rendering optimizations; its developers describe using batching to take advantage of GPU parallelism, particularly for text glyph rendering.
+
+Conceptually:
+
+```text
+Editor State
+     |
+     v
+Layout / Rendering
+     |
+     v
+Rendering Commands
+     |
+     v
+GPU
+     |
+     v
+Display
+```
+
+The important architectural difference is not merely:
+
+> "One editor uses the GPU."
+
+It is:
+
+> **The rendering architecture is influenced by the performance characteristics of the target environment.**
+
+Our terminal renderer does not need GPU batching because the terminal emulator ultimately consumes character and control-sequence output.
+
+## Avoiding Unnecessary Work
+
+Performance-oriented architecture is often less about making every operation faster and more about **not performing unnecessary operations**.
+
+For example:
+
+```text
+Document
+   |
+   +---- Change at line 500
+   |
+   v
+Do we need to recompute lines 1–499?
+```
+
+Often, the answer is no.
+
+Likewise:
+
+```text
+One character changed
+       |
+       v
+Does the entire project need to be re-analyzed?
+```
+
+Again, not necessarily.
+
+This leads to a general principle:
+
+> **Efficient systems minimize the amount of work required to respond to a change.**
+
+The techniques used to achieve this can include:
+
+- caching;
+- incremental processing;
+- indexing;
+- batching;
+- lazy evaluation;
+- background work;
+- selective rendering;
+- bounded processing.
+
+These techniques have appeared repeatedly throughout the book in different contexts.
+
+## Responsiveness and Asynchronous Work
+
+Another important technique is moving expensive operations away from the immediate interaction path.
+
+Consider saving a file.
+
+A simplistic implementation might perform:
+
+```text
+User Input
+    |
+    v
+Save
+    |
+    v
+Disk I/O
+    |
+    v
+Continue
+```
+
+If the disk operation takes noticeable time, the editor can temporarily stop responding.
+
+A more sophisticated architecture may allow:
+
+```text
+                 User Input
+                     |
+                     v
+                  Editor
+                  /     \
+                 /       \
+        Immediate Work   Background Work
+                            |
+                            v
+                         Disk I/O
+```
+
+Sublime Text's current documentation notes that file saving is asynchronous, illustrating how an interactive editor can move potentially blocking work away from the immediate interaction path.
+
+This is a significant architectural step because asynchronous operations introduce additional concerns:
+
+- task lifetime;
+- synchronization;
+- cancellation;
+- error propagation;
+- state consistency;
+- race conditions.
+
+Therefore:
+
+> **Asynchronous execution can improve responsiveness, but it also increases architectural complexity.**
+
+## Performance Has a Cost
+
+It would be a mistake to conclude that every editor should immediately adopt sophisticated performance techniques.
+
+Consider our baseline:
+
+```text
+Full Redraw
++
+Simple Document
++
+Synchronous Operations
+```
+
+This architecture is easier to understand, test, and implement.
+
+If we introduced:
+
+```text
+Incremental Rendering
++
+Background Processing
++
+Caching
++
+Parallel Analysis
++
+Asynchronous I/O
+```
+
+we would gain potential performance benefits, but we would also introduce significantly more state and coordination.
+
+For example:
+
+```text
+Main Editor
+     |
+     +---- Background Task
+     |
+     +---- Cached Result
+     |
+     +---- Pending Update
+     |
+     +---- Synchronization
+```
+
+Every additional mechanism creates additional failure modes.
+
+This is precisely why our earlier complexity discussions matter.
+
+## What Sublime Text Teaches Us
+
+Sublime Text gives us several important architectural lessons.
+
+**First, performance is an architectural requirement, not merely an optimization performed at the end.**
+
+**Second, interactive applications must pay particular attention to latency, because even short delays can affect the user experience.**
+
+**Third, large workloads can force different algorithms and data flows than small workloads.**
+
+**Fourth, asynchronous and incremental processing can improve responsiveness, but they introduce additional state and coordination.**
+
+**Finally, optimization should follow requirements and measurements rather than fashion.**
+
+## Summary
+
+Sublime Text demonstrates that performance and responsiveness can be architectural requirements rather than final-stage optimizations: large documents change the character of the problem, rendering becomes a major performance boundary, and asynchronous or incremental work keeps the interface responsive at the cost of additional state and coordination.
+
+It also showed that avoiding unnecessary work—through caching, indexing, batching, lazy evaluation, and selective rendering—matters as much as making individual operations faster.
+
+The next section examines Zed, which carries these performance ideas into a modern native, GPU-oriented architecture.

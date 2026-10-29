@@ -1,0 +1,372 @@
+---
+title: "43.14 What We Are Not Building"
+description: "Draws the boundary before Volume X, distinguishing features from architecture and stating what our editor deliberately does not attempt to build."
+---
+
+This chapter has examined several mature editors and the architectural choices behind them.
+
+Before we begin implementation, it is important to establish one final boundary.
+
+The purpose of studying these systems is **not** to turn our editor into a smaller version of any of them.
+
+We are building our own system according to the requirements established throughout this book.
+
+## What We Are Building
+
+The project can be summarized simply:
+
+```text
+We are building:
+
+    A small
+    understandable
+    terminal
+    text editor
+    implemented in C
+```
+
+Its architecture is designed around that goal. Each component exists because it has a meaningful responsibility.
+
+The architecture should remain understandable enough that a reader can follow an operation from input to state change to rendering.
+
+## What We Are Not Building
+
+We are not attempting to reproduce:
+
+```text
+Vim
+Neovim
+Emacs
+VS Code
+Zed
+```
+
+We are also not attempting to reproduce the complete feature sets of other mature editors.
+
+That means we are **not** beginning Volume X by adding:
+
+```text
+Plugin ecosystem
+Language-server integration
+Collaborative editing
+GPU rendering
+Distributed architecture
+Large extension APIs
+Complex modal command languages
+```
+
+Simply because other editors provide them.
+
+Those systems have legitimate reasons for their complexity.
+
+Our project has different requirements.
+
+## Features Are Not Architecture
+
+It is important to distinguish between a feature and the architecture required to support it.
+
+For example:
+
+```text
+Feature:
+Plugins
+```
+
+may eventually require:
+
+```text
+Plugin API
+     |
+     +-- ABI
+     +-- Dynamic Loading
+     +-- Lifecycle
+     +-- Error Handling
+     +-- Compatibility
+```
+
+Likewise:
+
+```text
+Feature:
+LSP
+```
+
+may require:
+
+```text
+Editor
+   |
+   v
+Language Client
+   |
+   v
+Language Server
+   |
+   v
+Communication Protocol
+```
+
+And:
+
+```text
+Feature:
+Collaboration
+```
+
+may require:
+
+```text
+Local State
+     |
+     v
+Synchronization
+     |
+     v
+Remote State
+```
+
+Therefore, adding a feature is rarely just adding a function.
+
+It can introduce an entire architectural subsystem.
+
+Our project deliberately does not introduce those subsystems until there is a requirement that justifies them.
+
+## We Are Not Building a "Reduced" Version of a Mature Editor
+
+There is an important distinction between:
+
+```text
+"Build a smaller Vim"
+```
+
+and:
+
+```text
+"Build an editor whose requirements happen to be smaller."
+```
+
+The second describes our project.
+
+We are not removing 90% of Vim's features and calling the remaining 10% our architecture.
+
+Instead, we have designed the architecture from first principles.
+
+For example, our choices regarding:
+
+- Editor State;
+- Document;
+- Cursor;
+- Viewport;
+- Input Parser;
+- Command Engine;
+- Renderer;
+- Screen Buffer;
+- File Manager;
+
+were established because they provide useful boundaries for **our** system.
+
+The architecture therefore has its own internal rationale.
+
+## Professional Does Not Mean Complex
+
+This is the most important lesson to carry into Volume X.
+
+It is easy to assume:
+
+```text
+More Components
+       +
+More Abstractions
+       +
+More Features
+       =
+More Professional
+```
+
+That is false.
+
+A more accurate model is:
+
+```text
+Professional Architecture
+          |
+          v
+Requirements
+          |
+          v
+Appropriate Structure
+          |
+          v
+Controlled Complexity
+```
+
+Professional architecture means that complexity is **intentional**.
+
+If a component is necessary, we introduce it.
+
+If a boundary provides meaningful separation, we establish it.
+
+If an abstraction protects something likely to change, we use it.
+
+If a mechanism has no requirement behind it, we do not introduce it merely because it appears sophisticated.
+
+## Complexity Must Earn Its Place
+
+Every architectural decision should be able to answer:
+
+> **What problem does this complexity solve?**
+
+For example:
+
+```text
+Screen Buffer
+    |
+    +-- Why?
+         |
+         +-- Separates frame construction
+             from terminal output.
+```
+
+```text
+Command Engine
+    |
+    +-- Why?
+         |
+         +-- Separates input interpretation
+             from editing operations.
+```
+
+```text
+Editor State
+    |
+    +-- Why?
+         |
+         +-- Provides centralized ownership
+             of runtime editor state.
+```
+
+If we cannot provide a convincing answer, the complexity deserves reconsideration.
+
+This principle is especially important when implementation begins.
+
+It is easy during coding to introduce abstractions because they _might_ become useful later.
+
+That can gradually turn a small system into a complicated one without any actual requirement demanding the change.
+
+## Future Features Are Still Possible
+
+Drawing this boundary does not mean the architecture can never grow.
+
+It means growth should happen deliberately.
+
+For example:
+
+```text
+Current
+   |
+   v
+Small Editor
+   |
+   +---- Future: Multiple Buffers
+   |
+   +---- Future: Search
+   |
+   +---- Future: Undo/Redo
+   |
+   +---- Future: Plugins
+   |
+   +---- Future: LSP
+```
+
+Each future capability can be evaluated independently.
+
+If one becomes necessary, we can introduce the architectural mechanisms required to support it.
+
+This is preferable to building all possible infrastructure in advance.
+
+## The Boundary Before Volume X
+
+Everything up to this point has prepared us to understand the system.
+
+We have studied:
+
+```text
+Terminal
+   |
+   v
+Input
+   |
+   v
+State
+   |
+   v
+Document
+   |
+   v
+Commands
+   |
+   v
+Rendering
+   |
+   v
+File Persistence
+   |
+   v
+Testing
+   |
+   v
+Debugging
+   |
+   v
+Advanced Architecture
+   |
+   v
+Real-World Editors
+```
+
+Now we cross an important boundary.
+
+Volume IX asked:
+
+> **What can an editor become?**
+
+Volume X asks:
+
+> **How do we build the editor we actually designed?**
+
+The distinction matters.
+
+We are not going to implement every architecture discussed in Volume IX.
+
+We are going to implement **our architecture**.
+
+## Summary
+
+The boundary can therefore be stated in one sentence:
+
+> **We are not building the most sophisticated editor possible; we are building the simplest editor that satisfies our requirements while maintaining clear, deliberate, professional architecture.**
+
+That is the standard we should carry into implementation.
+
+```text
+                    Requirements
+                         |
+                         v
+                Deliberate Architecture
+                         |
+                         v
+                 Controlled Complexity
+                         |
+                         v
+                    Working Editor
+```
+
+The goal is not maximum complexity.
+
+The goal is **appropriate complexity**.
+
+It also separated features from the architecture required to support them: plugins, LSP, and collaboration each bring whole subsystems that our project will not introduce without a requirement. That keeps future capabilities individually evaluable rather than pre-building infrastructure for all of them.
+
+With that boundary established, Volume IX has completed its purpose.
+
+**Volume X can now begin: Building Our Editor.**

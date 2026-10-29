@@ -14,6 +14,7 @@ import {
   Badge,
   Card,
   CardGrid,
+  LinkButton,
   LinkCard,
   Steps,
 } from "@astrojs/starlight/components";
@@ -23,6 +24,10 @@ import {
 We spend thousands of hours inside Nano, Vim, Emacs, and VS Code — but most of us never stop to ask what's happening underneath. How does a keypress reach your program? How is text stored in memory? Why does inserting into a huge file sometimes feel slow?
 
 This book answers those questions by building a real terminal text editor from scratch in C. Along the way you'll pick up the systems programming, data structures, and architecture ideas that power every editor — and every interactive program.
+
+<LinkButton href="/outline" icon="right-arrow">
+  Get Started
+</LinkButton>
 
 ## What you'll learn
 
@@ -53,6 +58,8 @@ By the end, you'll have a working, Nano-like editor that can open, edit, and sav
 
 ## Where this book came from
 
+I've always been interested in text editors. I built clones of popular web-based editors like Medium and Hashnode using third-party packages, but I never built one from the ground up. I wanted to understand how an editor really works, so I decided to build one from scratch.
+
 This book started as a collection of ChatGPT prompts I used to learn how editors work and build a baseline Nano-like terminal text editor. That journey eventually grew into a full book, so you can follow the same path — from first principles to a working editor.
 
 ## Pick your route
@@ -81,12 +88,14 @@ Three ways to work through the book:
     description="Complete, commented code for every milestone. Feel free to contribute!"
     href="https://github.com/SachinAthu/tedit"
     icon="github"
+    target="_blank"
   />
   <LinkCard
     title="The book source"
     description="Browse the Markdown behind these pages on GitHub."
     href="https://github.com/SachinAthu/tedit-book-app/tree/main/src/content/docs"
     icon="open-book"
+    target="_blank"
   />
 </CardGrid>
 

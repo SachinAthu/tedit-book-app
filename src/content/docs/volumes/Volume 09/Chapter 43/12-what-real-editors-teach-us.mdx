@@ -1,0 +1,422 @@
+---
+title: "43.12 What Real Editors Teach Us"
+description: "Distills ten recurring architectural lessons from the case studies, from requirements driving architecture to studying other systems without copying them."
+---
+
+The comparison of existing editors is useful only if it produces architectural lessons that can be applied beyond the individual products.
+
+The editors examined in this chapter differ considerably, but several recurring principles appear across them.
+
+## 1. Requirements Drive Architecture
+
+The strongest pattern is that architecture follows requirements.
+
+A small terminal editor can reasonably use:
+
+```text
+Simple Input
+     |
+     v
+Simple Commands
+     |
+     v
+Document
+     |
+     v
+Full Rendering
+```
+
+A larger editor may require:
+
+```text
+Input
+  |
+  +---- Command System
+  +---- Extension System
+  +---- Language Services
+  +---- Background Tasks
+  +---- Rendering System
+  +---- Collaboration
+```
+
+The second architecture is not automatically better.
+
+It exists because the system solves a larger problem.
+
+This principle is consistent with the project's own architectural decisions. The Book Bible establishes that architectural decisions should begin with the problem, examine possible solutions, and then justify the selected solution and its trade-offs.
+
+## 2. Complexity Should Be Justified
+
+Every architectural mechanism has a cost.
+
+Consider adding:
+
+```text
+Plugin API
+```
+
+It creates API contracts.
+
+Adding:
+
+```text
+Asynchronous Tasks
+```
+
+creates concurrency and lifecycle concerns.
+
+Adding:
+
+```text
+Incremental Rendering
+```
+
+creates additional visual state.
+
+Adding:
+
+```text
+Language Services
+```
+
+creates communication and synchronization boundaries.
+
+Adding:
+
+```text
+Multiple Processes
+```
+
+creates IPC and failure-isolation concerns.
+
+Therefore:
+
+> **A mechanism should exist because it solves a real problem, not because another editor uses it.**
+
+This principle is visible in our own decisions.
+
+For example, the project deliberately chooses immediate-mode rendering and an application-side Screen Buffer rather than introducing retained-mode rendering and dirty-region tracking. ADR-017 explicitly accepts the reconstruction cost because the additional synchronization complexity is not justified for the baseline editor.
+
+## 3. Good Abstractions Preserve Future Options
+
+A small system does not need to implement every possible future feature, but its abstractions should avoid unnecessarily preventing future evolution.
+
+Our Document abstraction provides a good example.
+
+The baseline representation is a vector of lines:
+
+```text
+Document
+    |
+    v
+Vector of Lines
+```
+
+But higher-level components do not need to know that representation's internal details.
+
+Therefore, the representation could later change:
+
+```text
+                 Document
+                    |
+        +-----------+-----------+
+        |           |           |
+     Vector      Gap Buffer   Piece Table
+      Lines
+```
+
+The Command Engine, Cursor, and Renderer do not need to be redesigned merely because the internal representation changes.
+
+This is explicitly captured by ADR-013: the vector-of-lines representation is an implementation detail behind the Document abstraction, allowing alternatives to be introduced later without forcing higher-level components to understand their internals.
+
+This is an important distinction:
+
+> **Design for change does not mean implementing every possible future feature.**
+
+It means placing appropriate boundaries around the parts most likely to change.
+
+## 4. Separation of Responsibilities Reduces Coupling
+
+The editors also reinforce the value of separating responsibilities.
+
+Our architecture deliberately keeps responsibilities distinct:
+
+```text
+Input
+  |
+  v
+Input Parser
+  |
+  v
+Command
+  |
+  v
+Command Engine
+  |
+  v
+Document
+  |
+  v
+Renderer
+```
+
+The Input Parser does not need to know how a document is stored.
+
+The Renderer does not need to know which key caused the current state.
+
+The Document does not need to know how the terminal displays its contents.
+
+This separation makes the system easier to reason about.
+
+It also makes individual components replaceable.
+
+The project structure follows the same principle: each module represents a clear responsibility rather than simply grouping files by programming-language type, as recorded in ADR-010.
+
+## 5. More Features Create More State
+
+A recurring pattern in the editors we studied is that additional capabilities introduce additional state.
+
+A minimal editor might need:
+
+```text
+Editor State
+├── Document
+├── Cursor
+├── Viewport
+└── Dirty Flag
+```
+
+A more sophisticated editor may additionally require:
+
+```text
+Editor State
+├── Document
+├── Cursor
+├── Viewport
+├── Selections
+├── Mode
+├── Search State
+├── Undo History
+├── Language State
+├── Extension State
+├── Background Tasks
+└── Collaboration State
+```
+
+Every additional state variable creates possible combinations.
+
+Those combinations create:
+
+- more transitions;
+- more invariants;
+- more failure cases;
+- more tests;
+- more debugging difficulty.
+
+This is one reason why "just adding one more feature" can have architectural consequences.
+
+## 6. Performance Can Become Architecture
+
+Another recurring lesson is that performance starts as a requirement and can eventually become an architectural property.
+
+A simple editor can use:
+
+```text
+Change
+  |
+  v
+Rebuild Frame
+  |
+  v
+Render
+```
+
+A high-performance editor may require:
+
+```text
+Change
+  |
+  +---- Incremental Analysis
+  |
+  +---- Cached Data
+  |
+  +---- Background Work
+  |
+  +---- Selective Rendering
+  |
+  v
+Updated Frame
+```
+
+The important lesson is not that our full-redraw renderer is inadequate.
+
+ADR-017 deliberately chose it because it keeps the rendering model predictable and avoids the additional synchronization required by retained or incremental rendering.
+
+Instead:
+
+> **Optimization should be introduced when the workload justifies its complexity.**
+
+## 7. Extensibility Changes the Meaning of "Core"
+
+The case studies also demonstrate two fundamentally different ways of thinking about an editor.
+
+A traditional application can be thought of as:
+
+```text
+Core
+ |
+ +-- Features
+```
+
+An extensible platform can be thought of as:
+
+```text
+                 Core
+                  |
+          Extension Interface
+                  |
+       +----------+----------+
+       |          |          |
+    Plugin A   Plugin B   Plugin C
+```
+
+Once extensions become important, the extension boundary itself becomes part of the architecture.
+
+This affects:
+
+- APIs;
+- lifecycle;
+- compatibility;
+- security;
+- error handling;
+- testing.
+
+Our baseline editor intentionally avoids this complexity.
+
+That is a deliberate scope decision, not an architectural deficiency.
+
+## 8. Architecture Should Reflect Ownership
+
+One of the most useful lessons across the entire book is the question:
+
+> **Who owns this responsibility?**
+
+For our editor:
+
+```text
+Document
+  -> owns text
+
+Cursor
+  -> owns cursor position
+
+Viewport
+  -> owns visible document region
+
+Renderer
+  -> owns frame construction
+
+File Manager
+  -> owns file persistence
+
+Command Engine
+  -> owns command execution
+```
+
+This makes responsibilities explicit.
+
+When a component begins modifying state that another component owns, coupling increases.
+
+For example:
+
+```text
+Renderer
+    |
+    X
+    |
+Document
+```
+
+would be undesirable because rendering should not modify document content.
+
+Likewise:
+
+```text
+Input Parser
+    |
+    X
+    |
+Document
+```
+
+would bypass the command architecture.
+
+Clear ownership is therefore one of the mechanisms by which the architecture remains understandable.
+
+## 9. Simplicity Is a Valid Engineering Goal
+
+Perhaps the most important lesson from comparing our editor with much larger systems is that **simplicity should not be confused with immaturity**.
+
+Our project deliberately chooses:
+
+- a vector-of-lines Document;
+- a centralized Editor State;
+- explicit command representation;
+- immediate-mode rendering;
+- an application-side Screen Buffer;
+- full-frame redraw;
+- a small baseline feature set.
+
+These decisions are consistent with the project's stated priority of simplicity, readability, and educational value. ADR-013 explicitly records that the vector-of-lines choice favors these goals over more advanced optimization.
+
+The result is not intended to compete architecturally with VS Code or Zed.
+
+It is intended to provide a **small system in which the architecture can be understood completely**.
+
+That is a strength.
+
+## 10. Study Other Systems Without Copying Them
+
+Finally, the purpose of this chapter is not to identify features that we should now add to our editor.
+
+Instead, we should ask of every system:
+
+```text
+What problem were they solving?
+
+        ↓
+
+What architectural decision did they make?
+
+        ↓
+
+What benefit did that decision provide?
+
+        ↓
+
+What complexity did it introduce?
+
+        ↓
+
+Do we have the same requirement?
+```
+
+If the answer to the final question is **no**, we have learned something without needing to adopt the mechanism.
+
+This is the most valuable outcome of studying existing systems.
+
+## The Broader Engineering Principle
+
+The editors examined in this chapter demonstrate a general principle that applies far beyond text editors:
+
+> **Good architecture is not about maximizing abstraction, minimizing abstraction, or copying the architecture of successful software. Good architecture is about matching structure to requirements while controlling complexity.**
+
+That principle explains why our editor can be intentionally small while still being professionally structured.
+
+## Summary
+
+These editors converge on the same recurring principles—requirements drive architecture, complexity must be justified, good abstractions preserve future options, separation of responsibilities reduces coupling, and performance can become architecture—all summed up as matching structure to requirements while controlling complexity.
+
+It also emphasized ownership: each component owns a specific responsibility, and crossing those boundaries—such as a renderer modifying the document—increases coupling and weakens the architecture.
+
+The next section makes this comparison concrete by examining our own architecture in the context of these real-world systems.

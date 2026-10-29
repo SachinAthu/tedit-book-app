@@ -1,0 +1,41 @@
+---
+title: "43.15 Conclusion"
+description: "Summarizes the chapter's requirement-driven view of editor architecture, reviews the exercises, and previews Volume X and implementation."
+---
+
+The purpose of studying modern editors is not to copy them. It is to understand why their architectures differ. Each editor examined in this chapter is a solution to a particular set of requirements: Nano optimizes for simplicity, Vim for a modal command language, Neovim for API-oriented extensibility, Emacs for programmability, Helix for selections and structured parsing, VS Code for a development platform, Sublime Text for responsiveness, and Zed for native GPU-oriented performance.
+
+Taken together, these case studies demonstrate the chapter's central principle:
+
+> **Architecture is shaped by requirements.**
+
+There is no universally best text-editor architecture, only an architecture that is appropriate or inappropriate for a particular workload. That principle explains why our own editor is deliberately small: it is not a reduced copy of any existing system, but a design derived from our own requirements, borrowing the recurring lessons—separation of concerns, centralized state, explicit ownership, and justified complexity—without adopting the machinery that solves problems we do not have.
+
+With this comparison complete, the theory is finished. We understand what an editor can become, why our editor is designed the way it is, and precisely what we are not building. The next volume turns from understanding to implementation.
+
+## Exercises
+
+### Review Questions
+
+1. Why is architecture shaped by requirements rather than by a universal "best" design?
+2. What is the difference between studying an architecture and copying an implementation?
+3. Why does Nano's simplicity not mean "absence of architecture"?
+4. How does Vim's modal interaction model shape its input architecture?
+5. What does it mean for an API to become an architectural boundary, as in Neovim?
+6. How does Emacs change the meaning of "core"?
+7. How does Helix layer language tooling on top of a stable editing core?
+8. Why is VS Code closer to a development environment than to an editor?
+9. How does performance become an architectural driver in Sublime Text and Zed?
+10. What is the central lesson of the architecture comparison in 43.11?
+11. Why is our editor neither a miniature Vim nor a miniature VS Code?
+12. What are we deliberately not building, and why?
+
+### Optional Challenge
+
+Choose one real editor examined in this chapter and compare it to our editor using the eight-dimension framework from 43.2. Identify one architectural decision in that editor that solves a requirement our editor does not have, and one principle from that editor that does apply to our design. Justify both answers with reference to specific requirements.
+
+## Preview of the Next Chapter
+
+**Volume X — Building Our Editor**
+
+The advanced topics are complete. Having designed the architecture across Volumes I–IX, we now write the editor itself. The next volume begins with **Chapter 44 — Milestone 1: Initialize Terminal**, putting the terminal into raw mode, setting up the alternate screen buffer, and establishing the foundation on which every later milestone—rendering, the cursor, editing, and file I/O—will be built.

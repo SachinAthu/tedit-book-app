@@ -1,0 +1,303 @@
+---
+title: "43.2 How to Compare an Editor"
+description: "Defines an eight-dimension framework—architecture, interaction, document, state, rendering, extensibility, language tooling, and performance—for comparing editors."
+---
+
+Comparing text editors requires a consistent framework. Without one, it is easy to focus on visible features rather than the architectural decisions that make those features possible.
+
+Two editors may both provide cursor movement, file editing, search, and syntax highlighting while using fundamentally different internal designs.
+
+Therefore, this chapter will compare editors according to the **problems their architectures solve**, rather than simply comparing their feature lists.
+
+## 1. Core Architecture
+
+First, we examine the overall organization of the editor.
+
+Questions include:
+
+- What are the major subsystems?
+- How are those subsystems separated?
+- Where is the central editor state?
+- Which components communicate directly?
+- Which responsibilities are isolated behind interfaces?
+
+For our editor, for example, the architecture separates responsibilities among components such as the Input Handler, Input Parser, Input Engine, Command Engine, Document, Cursor, Viewport, Renderer, and File Manager.
+
+The important question when studying another editor is not whether it has components with exactly the same names.
+
+The question is:
+
+> **Where does each responsibility live?**
+
+## 2. Input and Interaction Model
+
+The second area is the path from user input to editor behavior.
+
+A simple editor might have:
+
+```text
+Keyboard
+    |
+    v
+Input
+    |
+    v
+Command
+    |
+    v
+Editor State
+```
+
+A modal editor might introduce an additional conceptual layer:
+
+```text
+Keyboard
+    |
+    v
+Input
+    |
+    v
+Current Mode
+    |
+    v
+Command
+    |
+    v
+Editor State
+```
+
+An extensible editor might allow commands to originate from several sources:
+
+```text
+Keyboard ----+
+             |
+Command ---->+----> Command System
+             |
+Plugin ------+
+             |
+Menu --------+
+```
+
+This reveals an important architectural property: **commands do not necessarily have a single source**.
+
+When comparing editors, we therefore ask:
+
+- How is input interpreted?
+- Does the editor have modes?
+- How are commands represented?
+- Can commands be invoked by mechanisms other than keyboard input?
+- Can extensions introduce new commands?
+- Where is the distinction between input and behavior maintained?
+
+These questions connect directly to the Input Engine and Command Engine architecture established earlier in the book.
+
+## 3. Text and Document Model
+
+We also examine how the editor represents editable text.
+
+However, this section must be treated differently from Chapter 29.
+
+Chapter 29 examined document representations as **data structures** and compared approaches such as:
+
+- vector of lines;
+- gap buffer;
+- piece table;
+- rope.
+
+Here, we are interested in the larger question:
+
+> **How does the editor's document model interact with the rest of the system?**
+
+For example:
+
+```text
+Document
+   |
+   +---- Cursor
+   |
+   +---- Selection
+   |
+   +---- Undo History
+   |
+   +---- Search
+   |
+   +---- Syntax Analysis
+   |
+   +---- Rendering
+```
+
+The representation itself is only one part of this relationship.
+
+We want to understand whether the editor treats the document as a central abstraction, how other systems access it, and what boundaries exist between text storage and higher-level editor behavior.
+
+This distinction prevents Chapter 43 from repeating the detailed data-structure comparison already performed in Chapter 29.
+
+## 4. Editor State
+
+Next, we examine what the editor considers to be **state**.
+
+This may include:
+
+- cursor position;
+- selections;
+- active document;
+- open buffers;
+- windows;
+- tabs;
+- viewport positions;
+- modes;
+- search state;
+- undo history;
+- configuration;
+- messages;
+- language-analysis state.
+
+The interesting question is not simply how much state exists.
+
+It is:
+
+> **Who owns the state, and who is allowed to modify it?**
+
+This is particularly important as editors become more sophisticated.
+
+A small editor can keep much of its state in one central structure. A large editor may distribute state across many interacting subsystems.
+
+## 5. Rendering Architecture
+
+The next question is how editor state becomes something visible to the user.
+
+Our terminal editor deliberately renders a complete frame through a screen buffer. Other editors may use very different rendering architectures. A graphical editor may have:
+
+```text
+Editor State
+     |
+     v
+UI Framework
+     |
+     v
+Layout
+     |
+     v
+Widgets
+     |
+     v
+Graphics System
+```
+
+A modern high-performance editor may introduce additional layers for asynchronous rendering, GPU acceleration, or incremental updates.
+
+When comparing editors, we therefore examine:
+
+- what is rendered;
+- who performs layout;
+- whether rendering is immediate or retained;
+- whether the entire screen is regenerated;
+- whether rendering is incremental;
+- how terminal or graphical output is produced.
+
+The purpose is not to decide that one model is universally superior.
+
+It is to understand **why the editor's requirements led to that model**.
+
+## 6. Extensibility
+
+Modern editors increasingly behave as platforms rather than isolated applications.
+
+We therefore ask:
+
+- Does the editor support plugins?
+- How are plugins loaded?
+- What APIs are exposed?
+- Can plugins modify editor state?
+- Can plugins introduce commands?
+- Can plugins provide language tooling?
+- Are extensions isolated from the core process?
+- What compatibility guarantees exist?
+
+This connects directly to Chapter 39, where plugin architecture was studied independently.
+
+Here, however, we can see what such an architecture looks like when integrated into a complete editor.
+
+## 7. Language Tooling
+
+For editors intended primarily for programming, language tooling can become a major architectural subsystem.
+
+We examine how the editor integrates capabilities such as:
+
+- syntax analysis;
+- syntax highlighting;
+- diagnostics;
+- completion;
+- navigation;
+- code actions;
+- language servers.
+
+This connects naturally to Chapters 40 and 41.
+
+The key question is:
+
+> **Is language intelligence part of the editor core, or is it provided through separate services?**
+
+Different answers produce very different architectures.
+
+## 8. Performance and Scalability
+
+Finally, we examine what happens when the editor's workload becomes large.
+
+Important questions include:
+
+- How does it handle large documents?
+- How does it handle long lines?
+- How does it update after an edit?
+- Does it perform work synchronously?
+- Does it use background processing?
+- Does it avoid unnecessary rendering?
+- How does it manage memory?
+
+This gives us a practical way to connect the performance concepts from earlier chapters with real systems.
+
+## A Common Comparison Framework
+
+We can summarize the framework as:
+
+```text
+                    Editor
+                      |
+        +-------------+-------------+
+        |             |             |
+   Architecture    Interaction    Document
+        |             |             |
+        +-------------+-------------+
+                      |
+              +-------+-------+
+              |               |
+          Rendering      Editor State
+              |               |
+              +-------+-------+
+                      |
+              +-------+-------+
+              |               |
+         Extensibility   Language Tools
+              |               |
+              +-------+-------+
+                      |
+                 Performance
+```
+
+Using the same questions for each editor allows us to make meaningful comparisons.
+
+More importantly, it lets us distinguish between **features** and **architectural consequences**.
+
+A feature tells us _what_ an editor does.
+
+Architecture helps us understand _how and why it can do it_.
+
+## Summary
+
+To compare editors meaningfully, we need a consistent framework that examines architecture rather than feature lists. That framework covers core architecture, input and interaction, document model, editor state, rendering, extensibility, language tooling, and performance.
+
+Using the same questions for each editor lets us distinguish a **feature**—what an editor does—from its **architectural consequences**—how and why it can do it. This framework now guides the individual case studies.
+
+It also deliberately separates the data-structure comparison of Chapter 29 from the larger question of how a document interacts with the rest of the system, keeping this chapter focused on architectural roles rather than representations.
+
+In the next section, we apply this framework to our first case study, Nano, and ask how far an editor can go while deliberately remaining simple.

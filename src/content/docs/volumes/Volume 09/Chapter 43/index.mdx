@@ -1,0 +1,46 @@
+---
+title: "Chapter 43 — Modern Text Editors: Architecture in the Real World"
+description: "Compares eight real-world editors—Nano, Vim, Neovim, Emacs, Helix, VS Code, Sublime Text, and Zed—to show how requirements shape editor architecture."
+---
+
+## Introduction
+
+Volumes I–IX have designed a small, deliberate editor architecture from first principles. Real editors, however, look very different from one another: Nano is simple, Vim is modal, Emacs is programmable, and VS Code is a full development platform. This chapter steps outside our own design to ask:
+
+> **Why do real editors have such different architectures, and what do those differences teach us about our own?**
+
+The purpose is not to copy any of them. It is to study them as architectural case studies, asking how each turns input into editing operations, represents text and state, renders, and integrates extensions and language tooling. We begin by justifying the study and defining a common comparison framework. We then examine eight editors in turn, compare them directly, and distill the recurring lessons. We close by placing our own architecture in context and drawing the boundary between what we are building and what we are deliberately leaving out.
+
+## Learning Objectives
+
+By the end of this chapter, you should be able to:
+
+- Explain why architecture is shaped by requirements
+- Apply a consistent framework to compare editors architecturally rather than by feature list
+- Describe how Nano's simplicity, Vim's modal command language, and Neovim's API orientation differ
+- Explain how Emacs makes extensibility central to the editor itself
+- Describe how Helix combines selections, structured parsing, and language tooling
+- Explain how VS Code turns the editor into one subsystem of a development platform
+- Explain how performance becomes an architectural driver in Sublime Text and Zed
+- Compare the editors across interaction, document, rendering, extensibility, language, and performance
+- Articulate the recurring architectural lessons these systems share
+- Place our own architecture in context without imitating any single editor
+- State what we are not building and why
+
+## Sections
+
+- [43.1 Why Study Existing Editors?](/volumes/volume-09/chapter-43/01-why-study-existing-editors/)
+- [43.2 How to Compare an Editor](/volumes/volume-09/chapter-43/02-how-to-compare-an-editor/)
+- [43.3 Nano - Simplicity as an Architectural Choice](/volumes/volume-09/chapter-43/03-nano/)
+- [43.4 Vim - Modal Editing and Command-Centric Architecture](/volumes/volume-09/chapter-43/04-vim/)
+- [43.5 Neovim - Refactoring the Editor Around APIs](/volumes/volume-09/chapter-43/05-neovim/)
+- [43.6 Emacs - The Editor as an Extensible Environment](/volumes/volume-09/chapter-43/06-emacs/)
+- [43.7 Helix - A Modern Modal Architecture](/volumes/volume-09/chapter-43/07-helix/)
+- [43.8 VS Code - The Editor as a Platform](/volumes/volume-09/chapter-43/08-vs-code/)
+- [43.9 Sublime Text - Performance and Responsiveness](/volumes/volume-09/chapter-43/09-sublime-text/)
+- [43.10 Zed - Modern Native Editor Architecture](/volumes/volume-09/chapter-43/10-zed/)
+- [43.11 Architecture Comparison](/volumes/volume-09/chapter-43/11-architecture-comparison/)
+- [43.12 What Real Editors Teach Us](/volumes/volume-09/chapter-43/12-what-real-editors-teach-us/)
+- [43.13 Our Architecture in Context](/volumes/volume-09/chapter-43/13-our-architecture-in-context/)
+- [43.14 What We Are Not Building](/volumes/volume-09/chapter-43/14-what-we-are-not-building/)
+- [43.15 Conclusion](/volumes/volume-09/chapter-43/15-conclusion/)

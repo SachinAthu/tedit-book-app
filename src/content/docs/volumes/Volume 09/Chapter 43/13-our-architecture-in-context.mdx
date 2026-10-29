@@ -1,0 +1,435 @@
+---
+title: "43.13 Our Architecture in Context"
+description: "Places our small terminal editor in context, explaining why it is neither a miniature Vim nor VS Code while still borrowing principles that scale."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+After examining Nano, Vim, Neovim, Emacs, Helix, VS Code, Sublime Text, and Zed, we can now place our editor in context.
+
+The purpose of this section is not to redesign our architecture.
+
+It is to answer a more important question:
+
+> **Why does our architecture look the way it does when compared with real-world editors?**
+
+The answer comes directly from our requirements.
+
+The SRS defines the project as a lightweight, single-document terminal editor whose architecture prioritizes simplicity, modularity, maintainability, and educational value over feature completeness and advanced optimization.
+
+## Our Architecture Is Deliberately Small
+
+Our architecture can be summarized as:
+
+```text
+                         Editor State
+                              |
+          +-------------------+-------------------+
+          |                   |                   |
+          v                   v                   v
+       Input              Commands            Renderer
+          |                   |                   |
+          v                   v                   v
+     Input Parser        Command Engine      Screen Buffer
+          |                   |                   |
+          +-------------------+-------------------+
+                              |
+                              v
+                           Document
+                              |
+                              v
+                         File Manager
+```
+
+This architecture is considerably smaller than the architecture of a modern development environment.
+
+That is intentional.
+
+The project does not require:
+
+- an extension host;
+- a language-server subsystem;
+- a plugin ABI;
+- a graphical UI framework;
+- a GPU rendering pipeline;
+- a collaboration protocol;
+- multiple processes;
+- distributed state.
+
+Introducing their architectural machinery would therefore violate one of the central principles established throughout the book:
+
+> **Do not introduce complexity without a requirement that justifies it.**
+
+## Our Editor Is Not a "Miniature Vim"
+
+The comparison with Vim might initially suggest that our editor should adopt modal editing.
+
+It should not.
+
+Vim's architecture is strongly influenced by its modal command language.
+
+Our editor has a different interaction model.
+
+The distinction is important:
+
+```text
+Vim
+
+Input
+  |
+  v
+Mode
+  |
+  v
+Command Language
+  |
+  v
+Operation
+```
+
+Our editor:
+
+```text
+Input
+  |
+  v
+Input Event
+  |
+  v
+Command
+  |
+  v
+Command Engine
+```
+
+The latter is sufficient for our requirements.
+
+We should therefore learn from Vim's architecture without copying Vim's architecture.
+
+## Our Editor Is Not a Miniature VS Code
+
+The same reasoning applies to VS Code.
+
+VS Code needs architecture for:
+
+```text
+Workbench
+Extensions
+Language Services
+Multiple UI surfaces
+Background Services
+Projects
+Debugging
+```
+
+Our editor needs:
+
+```text
+Terminal
+Document
+Editing
+Rendering
+File I/O
+```
+
+Trying to reproduce the former would produce a system whose architecture is much larger than its requirements.
+
+The result would be architectural overengineering.
+
+## Our Editor Does Borrow Important Principles
+
+This does not mean our architecture is isolated from professional editor design.
+
+Quite the opposite.
+
+Many of our decisions reflect principles that appear in larger systems.
+
+For example:
+
+**Separation of concerns**
+
+```text
+Input != Command != Document != Rendering
+```
+
+**Centralized state**
+
+```text
+Editor State
+    |
+    +-- configuration
+    +-- buffers
+    +-- terminal state
+    +-- windows
+```
+
+**Explicit ownership**
+
+```text
+Component
+    |
+    v
+Owns specific responsibility
+```
+
+**Stable abstractions**
+
+```text
+Document Interface
+        |
+        +---- Current Representation
+        +---- Future Representation
+```
+
+**Controlled complexity**
+
+```text
+Requirement
+     |
+     v
+Design Decision
+     |
+     v
+Necessary Complexity
+```
+
+These principles scale beyond our particular implementation.
+
+## The Architecture Can Grow
+
+An important consequence of these boundaries is that the architecture is not trapped at its current level of capability.
+
+For example, suppose we later decide to support multiple documents.
+
+We do not necessarily need to redesign the entire editor.
+
+The architecture can evolve:
+
+```text
+Current
+
+Editor
+ |
+ +-- Document
+```
+
+into:
+
+```text
+Extended
+
+Editor
+ |
+ +-- Buffer Manager
+       |
+       +-- Buffer
+       |     |
+       |     +-- Document
+       |
+       +-- Buffer
+             |
+             +-- Document
+```
+
+This is exactly the direction already established by ADR-027, which defines separate concepts for Document, Buffer, View, Window, and Tab and assigns their state to appropriate scopes.
+
+The important point is that the architecture can evolve **through explicit decisions** rather than through uncontrolled coupling.
+
+## Extensibility Should Be Added at the Boundary
+
+Suppose we eventually introduce plugins.
+
+We should not immediately make every internal structure publicly accessible.
+
+Instead:
+
+```text
+                    Editor Core
+                         |
+                  Stable Interface
+                         |
+              +----------+----------+
+              |          |          |
+           Plugin A   Plugin B   Plugin C
+```
+
+The existing architecture provides natural places at which such boundaries could later be introduced.
+
+The same principle applies to language tooling:
+
+```text
+Document
+   |
+   +---- Renderer
+   |
+   +---- Parser
+   |
+   +---- Language Service
+```
+
+And to advanced rendering:
+
+```text
+Renderer
+   |
+   +---- Terminal Backend
+   |
+   +---- Future Backend
+```
+
+These are possible extensions, not present requirements.
+
+## Why We Do Not Optimize Everything Now
+
+The comparison with Sublime Text and Zed is particularly useful here.
+
+Those editors have strong reasons to invest heavily in:
+
+- rendering performance;
+- asynchronous work;
+- large-file handling;
+- background analysis;
+- sophisticated caching.
+
+Our editor does not have those same requirements.
+
+Therefore:
+
+```text
+Simple architecture
+        |
+        v
+Measure actual behavior
+        |
+        v
+Identify real bottleneck
+        |
+        v
+Optimize only where justified
+```
+
+is preferable to:
+
+```text
+Modern editor does X
+        |
+        v
+We should also do X
+```
+
+This distinction is fundamental to professional engineering.
+
+## The Architecture Is an Educational Tool
+
+There is another reason our architecture is intentionally simpler.
+
+The editor is not merely a product.
+
+It is the vehicle through which the reader learns:
+
+- terminal programming;
+- event-driven architecture;
+- state management;
+- text representation;
+- rendering;
+- file I/O;
+- algorithms;
+- testing;
+- debugging;
+- system design.
+
+The Book Bible explicitly defines the goal as enabling readers to understand the architecture and eventually implement the editor without simply copying an existing implementation.
+
+That makes simplicity particularly valuable.
+
+A complicated architecture can hide the concepts we actually want the reader to learn.
+
+## A Professional Architecture Does Not Need Many Components
+
+It is tempting to measure architectural sophistication by the number of modules.
+
+That is the wrong metric.
+
+Consider:
+
+```text
+Architecture A
+
+20 modules
+12 interfaces
+4 processes
+3 extension systems
+2 communication protocols
+```
+
+and:
+
+```text
+Architecture B
+
+8 modules
+clear ownership
+explicit state
+well-defined boundaries
+```
+
+Architecture A is not automatically better.
+
+If the requirements only justify Architecture B, then B is the more appropriate engineering solution.
+
+Our project follows this principle.
+
+The early project structure already expresses the goal clearly: each module should have a clear responsibility so that the code remains understandable and extendable.
+
+## The Final Position
+
+After studying these editors, we can characterize our architecture accurately:
+
+```text
+                 Our Editor
+
+       Small and deliberate architecture
+                     |
+       +-------------+-------------+
+       |             |             |
+     Input        Editing       Rendering
+       |             |             |
+       +-------------+-------------+
+                     |
+                  Document
+                     |
+                File Manager
+```
+
+It is:
+
+- **smaller** than a modern development environment;
+- **less extensible** than Neovim or Emacs;
+- **less performance-oriented** than systems such as Sublime Text or Zed;
+- **less language-aware** than Helix or VS Code;
+- **less interactionally complex** than Vim;
+- **more structured than a minimal educational editor**.
+
+And that is exactly where it should be.
+
+The architecture is not trying to imitate any one of these editors.
+
+It is designed from the project's own requirements, while the case studies demonstrate how alternative requirements produce alternative architectures.
+
+<Aside type="note" title="The Key Conclusion">
+
+> **We study real editors not to copy their architecture, but to understand the consequences of architectural choices.**
+
+That is the real purpose of Chapter 43.
+
+With that comparison complete, **Chapter 43 has fulfilled its role**: it connects the architecture we designed theoretically with architectures used by real editors, without allowing those systems to dictate our design. The next volume can therefore move from **understanding and evaluating architecture** to **implementing our own architecture**.
+
+</Aside>
+
+## Summary
+
+Our architecture is deliberately small because its requirements are small. It is not a miniature Vim or VS Code, but it borrows the principles that scale across larger systems, and its boundaries leave room for future growth through explicit decisions.
+
+It also noted that the architecture can grow through explicit decisions—multiple buffers, plugins at a stable interface, language tooling, or alternative rendering backends—without redesigning the whole editor.
+
+The next and final section draws the boundary between what we are building and what we are deliberately leaving out.

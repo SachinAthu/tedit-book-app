@@ -1,0 +1,446 @@
+---
+title: "43.11 Architecture Comparison"
+description: "Compares the eight editors across interaction, document, rendering, extensibility, language, and performance, mapping requirements to architectural complexity."
+---
+
+The editors examined in this chapter solve related problems, but they do not solve them under the same constraints.
+
+The purpose of this comparison is therefore not to rank the editors from "simple" to "advanced." It is to identify how different requirements produce different architectural decisions.
+
+Our editor should be understood in that same context.
+
+## A Common Architectural View
+
+The editors can be viewed along several dimensions:
+
+| Concern            | Our Editor        | Nano       | Vim              | Neovim        | Emacs                  | Helix                | VS Code              | Sublime Text   | Zed                |
+| ------------------ | ----------------- | ---------- | ---------------- | ------------- | ---------------------- | -------------------- | -------------------- | -------------- | ------------------ |
+| Primary interface  | Terminal          | Terminal   | Terminal         | Terminal      | Terminal / GUI         | Terminal             | GUI                  | GUI            | Native GUI         |
+| Interaction model  | Command-based     | Direct     | Modal            | Modal         | Command / programmable | Modal                | Command / UI         | Command / UI   | Command / UI       |
+| Extensibility      | Minimal           | Limited    | High             | Very high     | Fundamental            | High                 | Fundamental          | High           | High               |
+| Language tooling   | Outside baseline  | Limited    | Extensions / LSP | LSP / plugins | Packages / tools       | LSP / syntax         | Integrated ecosystem | Plugins        | Integrated         |
+| Rendering model    | Full redraw       | Terminal   | Terminal         | Terminal      | Multiple               | Terminal             | GUI                  | Native GUI     | GPU-oriented       |
+| Architecture goal  | Understandability | Simplicity | Powerful editing | Extensibility | Programmability        | Modern modal editing | Development platform | Responsiveness | Native performance |
+| Overall complexity | Low               | Low        | High             | High          | Very high              | High                 | Very high            | High           | Very high          |
+
+The table should not be interpreted as an exact implementation comparison. It is a **conceptual architectural map**.
+
+The most important observation is the relationship between requirements and complexity.
+
+## Interaction Architecture
+
+The first major difference is how users communicate with the editor.
+
+Our editor uses a deliberately straightforward pipeline:
+
+```text
+Terminal Input
+      |
+      v
+Input Parser
+      |
+      v
+Input Event
+      |
+      v
+Input Engine
+      |
+      v
+Command Engine
+      |
+      v
+Editor State
+```
+
+Nano remains relatively close to this direct model.
+
+Vim and Neovim introduce modes and a more expressive command language:
+
+```text
+Input
+  |
+  v
+Mode
+  |
+  v
+Command Interpretation
+  |
+  v
+Editing Operation
+```
+
+Helix demonstrates another variation in which selections become central to editing operations.
+
+Emacs takes the command model further by making commands and modes part of a highly programmable environment.
+
+VS Code and Zed introduce additional interaction surfaces because editing is only part of a larger graphical application.
+
+The architectural lesson is:
+
+> **The user interaction model determines what the input subsystem must understand.**
+
+A simple interaction model permits a simpler input architecture.
+
+A composable or programmable interaction model requires more state and more sophisticated interpretation.
+
+## Document Architecture
+
+The document remains central across all of these editors, but its relationship with the rest of the system varies.
+
+Our architecture intentionally keeps the Document behind a defined abstraction:
+
+```text
+              Document
+                  |
+       +----------+----------+
+       |          |          |
+     Cursor     Search     Undo
+       |
+    Viewport
+       |
+    Renderer
+```
+
+The underlying representation is deliberately kept separate from higher-level editor behavior.
+
+This is an important distinction from Chapter 29.
+
+Chapter 29 compared **document data structures**.
+
+Here, we are comparing **the architectural role of the document**.
+
+In larger editors, the same underlying text may be consumed by:
+
+```text
+                    Text Model
+                        |
+        +---------------+---------------+
+        |               |               |
+        v               v               v
+     Editor          Parser           LSP
+       View
+        |
+        v
+     Renderer
+```
+
+The document therefore becomes a shared source of information for many services.
+
+The architectural complexity increases not necessarily because the text representation itself is more complicated, but because **more systems depend on the document**.
+
+## Rendering Architecture
+
+Rendering provides another clear distinction.
+
+Our editor deliberately uses:
+
+```text
+Editor State
+     |
+     v
+Renderer
+     |
+     v
+Screen Buffer
+     |
+     v
+Terminal Output
+```
+
+This gives us predictable behavior and keeps rendering conceptually separate from state mutation.
+
+Terminal editors such as Vim, Neovim, and Helix operate within the constraints of terminal rendering.
+
+Graphical editors introduce substantially different requirements:
+
+```text
+Editor State
+     |
+     v
+Layout
+     |
+     v
+UI Framework
+     |
+     v
+Graphics System
+     |
+     v
+Display
+```
+
+Zed goes further by making GPU-oriented rendering an important part of its application architecture.
+
+Again, the lesson is not that GPU rendering is inherently superior.
+
+The lesson is:
+
+> **Rendering architecture must match the output environment and performance requirements.**
+
+## Extensibility Architecture
+
+The differences become particularly clear when we compare extensibility.
+
+Our baseline editor:
+
+```text
+Editor Core
+```
+
+An editor with plugins:
+
+```text
+Editor Core
+     |
+     v
+Extension Interface
+     |
+     +---- Plugin A
+     +---- Plugin B
+     +---- Plugin C
+```
+
+An editor platform may require a much stronger boundary:
+
+```text
+Editor Core
+     |
+     v
+Extension Host / API
+     |
+     +---- Extension
+     +---- Extension
+     +---- Extension
+```
+
+Emacs, Neovim, VS Code, and Zed demonstrate different approaches to this problem.
+
+The architectural cost is substantial because extensions introduce:
+
+- external dependencies;
+- lifecycle management;
+- API contracts;
+- compatibility requirements;
+- error handling;
+- additional testing surfaces.
+
+This is why our decision to keep the baseline editor non-extensible is meaningful.
+
+We are not saying:
+
+> "Plugins are bad."
+
+We are saying:
+
+> **Plugins solve a problem that is outside the baseline requirements.**
+
+## Language Architecture
+
+Language tooling creates another layer.
+
+Our baseline:
+
+```text
+Document
+   |
+   v
+Renderer
+```
+
+A programming-oriented editor may have:
+
+```text
+                    Document
+                       |
+          +------------+------------+
+          |                         |
+          v                         v
+      Syntax Parser               LSP
+          |                         |
+          v                         v
+    Syntax Structure         Language Server
+          |                         |
+          +------------+------------+
+                       |
+                       v
+                       UI
+```
+
+This architecture allows the editor to provide programming-language features without placing the complete language implementation inside the editor core.
+
+It also explains why the architecture of a modern programming editor can become substantially more complex than that of a plain text editor.
+
+## Performance Architecture
+
+Performance requirements create another dimension.
+
+A simple editor can often afford:
+
+```text
+Edit
+ |
+ v
+Update State
+ |
+ v
+Render
+```
+
+A performance-oriented editor may instead require:
+
+```text
+                  Edit
+                   |
+          +--------+--------+
+          |                 |
+          v                 v
+   Immediate Work     Background Work
+          |                 |
+          |          +------+------+
+          |          |             |
+          |          v             v
+          |       Parsing       Analysis
+          |                        |
+          +------------+-----------+
+                       |
+                       v
+                    Update UI
+```
+
+This can improve responsiveness, but it introduces concurrency and synchronization problems.
+
+Thus:
+
+> **Performance optimization can become architecture.**
+
+Once background processing, caching, incremental analysis, and asynchronous operations become fundamental requirements, they cannot simply be treated as isolated optimizations.
+
+## The Central Comparison
+
+The most useful way to view the editors is therefore not:
+
+```text
+Simple  ------------------------------>  Advanced
+```
+
+but:
+
+```text
+                         Architectural Complexity
+                                  ^
+                                  |
+                                  |
+          Requirements ---------->|
+                                  |
+                                  |
+                                  +-------------------->
+                                      System Scope
+```
+
+Different editors occupy different points because they solve different problems.
+
+A small terminal editor does not need the same architecture as an extensible development environment.
+
+A development environment does not necessarily need the same architecture as a collaborative native editor.
+
+And a highly programmable editor does not necessarily need the same architecture as a performance-oriented editor.
+
+## Where Our Editor Fits
+
+Our architecture deliberately occupies a relatively small part of this design space:
+
+```text
+                 Our Editor
+
+             Small Scope
+                  |
+                  v
+        +---------------------+
+        |                     |
+        |   Editor State      |
+        |                     |
+        +----------+----------+
+                   |
+       +-----------+-----------+
+       |           |           |
+      Input     Commands    Renderer
+       |           |           |
+       +-----------+-----------+
+                   |
+                Document
+                   |
+              File Manager
+```
+
+The architecture is intentionally small, but it is not arbitrary.
+
+Each major boundary exists because it represents a meaningful responsibility:
+
+- **Input** interprets terminal interaction.
+- **Command Engine** performs editor operations.
+- **Document** represents editable content.
+- **Cursor** represents editing position.
+- **Viewport** determines visible document space.
+- **Renderer** converts state into a frame.
+- **File Manager** handles persistence.
+- **Editor State** provides the central runtime context.
+
+This gives us a useful conclusion:
+
+> **Our architecture is not a simplified version of one particular existing editor. It is a design derived from our own requirements.**
+
+The existing editors simply provide evidence that different requirements lead to different solutions.
+
+## The Most Important Lesson
+
+The comparison ultimately leads to one principle:
+
+> **There is no universally best text-editor architecture.**
+
+There is only an architecture that is appropriate—or inappropriate—for a particular set of requirements.
+
+A small terminal editor benefits from:
+
+```text
+Fewer components
++
+Clear boundaries
++
+Predictable state
++
+Simple rendering
++
+Limited scope
+```
+
+A large development environment may instead require:
+
+```text
+Extension APIs
++
+Language services
++
+Asynchronous processing
++
+Multiple UI systems
++
+Process boundaries
++
+Complex rendering
+```
+
+The second architecture is not automatically more professional.
+
+The first is not automatically more primitive.
+
+They are optimized for different goals.
+
+And this is exactly why architectural decisions must always be evaluated against **requirements, constraints, and expected workloads** rather than against the apparent sophistication of another system.
+
+## Summary
+
+The comparison is a conceptual map, not a ranking: each editor's differences across interaction, document, rendering, extensibility, language tooling, and performance trace back to differences in requirements, so there is no universally best architecture.
+
+It also showed that our architecture occupies a deliberately small part of the design space, with each boundary justified by a meaningful responsibility rather than by imitation of another editor.
+
+The next section distills the recurring lessons these editors share.
