@@ -1,0 +1,209 @@
+---
+title: "37.7 WSL"
+description: "Distinguishes the Windows host from the WSL execution environment and explains why platform selection follows available Linux/POSIX interfaces."
+---
+
+Windows Subsystem for Linux (WSL) introduces an important distinction into our portability model.
+
+A computer may be running Windows as its host operating system while the editor itself executes inside a Linux environment with Linux/POSIX interfaces.
+
+Therefore, the statement:
+
+> "The editor is running on Windows."
+
+is not sufficient to determine which platform APIs the editor should use. For portability, we must distinguish between the **host system** and the **execution environment**.
+
+## The Host Is Not Necessarily the Target Environment
+
+Consider this simplified model:
+
+```text
+Physical Computer
+        |
+        v
+     Windows
+        |
+        v
+       WSL
+        |
+        v
+   Linux environment
+        |
+        v
+     Editor
+```
+
+The machine is physically running Windows, but the editor may see a Linux/POSIX-oriented environment. The editor's platform boundary should be determined by the **interfaces available to the running program**, not simply by the operating system installed on the physical machine.
+
+## WSL Can Use the Linux Implementation
+
+From the editor's perspective, a WSL execution environment can often fit naturally into the Linux/POSIX side of the architecture:
+
+```text
+                 Editor
+                    |
+                    v
+             Platform Layer
+                    |
+                    v
+              POSIX APIs
+                    |
+                    v
+             Linux environment
+                    |
+                    v
+                   WSL
+                    |
+                    v
+                Windows
+```
+
+This is fundamentally different from compiling the editor as a native Windows application. The same editor source can potentially operate in WSL without introducing a separate Windows implementation.
+
+## WSL Does Not Mean "Windows Support"
+
+This distinction is important for the scope of the project. Supporting the editor under WSL does **not** automatically mean that the editor supports native Windows.
+
+```text
+                Windows machine
+                     |
+          +----------+----------+
+          |                     |
+          v                     v
+     Native Windows            WSL
+          |                     |
+    Windows APIs          Linux/POSIX APIs
+          |                     |
+          v                     v
+   Windows implementation   Linux implementation
+```
+
+A successful Linux build running under WSL demonstrates compatibility with the Linux environment provided by WSL. It does not prove that the editor can be compiled as a native Windows terminal application.
+
+## Why WSL Is Relevant to Our Architecture
+
+WSL provides a validation case for the platform boundary. If an editor implemented against POSIX interfaces works in WSL, then it has demonstrated that it does not depend unnecessarily on a particular physical machine or host environment.
+
+The application is interacting with the **provided programming environment**, not directly with the host hardware.
+
+## Host Detection Is Usually the Wrong Abstraction
+
+A poorly designed application might try to determine:
+
+```text
+Am I running on Windows?
+```
+
+and then select its implementation based on that answer. That can be misleading in WSL.
+
+The more useful question is:
+
+> **Which system interfaces are available to this process?**
+
+For example: what terminal interface is available, what filesystem interface is available, what compiler target was selected, and what operating-system APIs can this process use.
+
+This leads to a more robust architecture:
+
+```text
+Build / Runtime Environment
+            |
+            v
+Available Platform Interface
+            |
+            v
+Platform Implementation
+```
+
+rather than:
+
+```text
+Physical Host
+      |
+      v
+Guess platform
+      |
+      v
+Choose implementation
+```
+
+## Build Configuration Is Part of Portability
+
+WSL also demonstrates that portability is not limited to source code. A project must also be buildable in the target environment.
+
+A Linux-oriented build running under WSL may use the Linux compiler and libraries available within that environment. A native Windows build requires a different toolchain and potentially different platform libraries.
+
+Therefore:
+
+> **A platform implementation is not complete until its source code, dependencies, build configuration, and runtime environment are all compatible.**
+
+## WSL and the Reference Platform
+
+WSL does not change the project's reference platform. The Software Requirements Specification (SRS, Chapter 7) explicitly defines Linux as the primary development and reference platform:
+
+```text
+Primary platform:
+Linux / POSIX
+
+Additional execution environment:
+WSL
+```
+
+The architecture should not be modified simply to make WSL a special target. If the Linux implementation works correctly within WSL, WSL benefits from the existing Linux/POSIX implementation. This is preferable to introducing unnecessary code for a platform that does not actually require a separate implementation.
+
+## WSL Does Not Eliminate Terminal Variations
+
+One further distinction is important. Even if the editor sees a Linux/POSIX environment, its terminal may be provided through a Windows-hosted terminal application.
+
+The editor should continue to rely on the terminal abstractions already established by the architecture rather than assuming that "Linux process" implies a particular terminal emulator.
+
+## The Architectural Lesson
+
+WSL demonstrates that **platform is a property of the execution environment and interfaces, not simply the host machine**.
+
+```text
+                 Host
+                  |
+          +-------+-------+
+          |               |
+      Windows           Windows
+          |               |
+   Native execution      WSL
+          |               |
+   Windows APIs       Linux/POSIX APIs
+          |               |
+   Windows platform   Linux platform
+```
+
+The editor should select its implementation according to the environment in which it actually executes. This makes the platform boundary more precise.
+
+## Summary
+
+WSL is important because it prevents us from treating "Windows" as a single execution environment. The key principles are:
+
+1. **A Windows host can provide a Linux/POSIX execution environment through WSL.**
+2. **An editor running under WSL can use the Linux/POSIX implementation.**
+3. **WSL support is not equivalent to native Windows support.**
+4. **Platform selection should follow the interfaces available to the running process rather than the physical host alone.**
+5. **Build configuration is also part of portability.**
+6. **WSL should not require a separate editor architecture when the existing Linux implementation already satisfies its environment.**
+7. **WSL provides a useful test of whether the editor depends on interfaces or on accidental host assumptions.**
+
+The overall platform model is now:
+
+```text
+                         Editor
+                            |
+                     Platform Boundary
+                            |
+          +-----------------+-----------------+
+          |                 |                 |
+        POSIX             POSIX            Windows
+          |                 |                 |
+        Linux             macOS/BSD       Native APIs
+          |
+         WSL
+          |
+       Windows host
+```
+
+The next section turns from operating-system identity to the compile-time mechanisms that select among these implementations: **conditional compilation**.

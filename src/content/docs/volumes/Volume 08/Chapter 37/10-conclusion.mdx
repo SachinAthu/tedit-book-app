@@ -1,0 +1,51 @@
+---
+title: "37.10 Conclusion"
+description: "Summarizes the portability model, review exercises, and key lessons, and previews packaging as the next step in shipping the editor."
+---
+
+Portability keeps the editor's platform assumptions visible and contained. The unifying idea of the chapter is that the editor's **Core** — the Document, Cursor, Viewport, and Editor State — should remain stable while the mechanisms that interact with the operating system and terminal vary beneath it.
+
+```text
+Boundary → Layers → Targets → Selection → Containment
+```
+
+The platform boundary separates editor behavior from environmental mechanisms; the C standard library, POSIX, and platform-specific APIs form the layers beneath it; Linux, macOS and BSD, Windows, and WSL are the targets examined; conditional compilation selects among implementations; and the chapter closes with the mistakes that break the boundary.
+
+The important lessons are:
+
+- Portability does not mean identical behavior; it means stable behavior over differing implementations.
+- The platform boundary separates platform-independent editor concepts from platform-facing responsibilities.
+- Linux is the reference platform, but Linux-specific behavior is not automatically portable.
+- POSIX is an interface contract, not an operating system; shared interfaces do not imply identical behavior.
+- macOS and BSD share POSIX foundations with Linux without being interchangeable with it.
+- Windows differs most: handles and native APIs belong behind the platform boundary, not in the Core.
+- WSL is an execution environment, not a separate platform; selection follows available interfaces, not the physical host.
+- Conditional compilation selects implementations; it is not the abstraction itself.
+- The most common failure is allowing environmental details to become application semantics.
+
+The architecture does not eliminate platform differences. It **contains them**, so that adding a platform changes the Platform Layer rather than the Core.
+
+The portability strategy — Linux as the reference platform, POSIX as the common interface, and platform-specific behavior contained at the platform boundary — is recorded as **ADR-030: Portability Strategy**.
+
+## Exercises
+
+### Review Questions
+
+1. Why is portability not the same as identical behavior?
+2. What distinguishes a platform-independent responsibility from a platform-facing one?
+3. Why is Linux described as a reference platform rather than a portable one?
+4. Why does POSIX compatibility not guarantee identical behavior across systems?
+5. What must not cross the platform boundary into the Core, and why?
+6. Why is WSL an execution environment rather than a separate platform?
+7. When is conditional compilation appropriate, and where should it live?
+8. Why is "it builds on Linux" not evidence of portability?
+
+### Optional Challenge
+
+Choose one platform-facing operation — reading terminal input, obtaining terminal dimensions, or saving a file — and define the stable interface the Core would use, the platform-facing responsibilities behind it, and what would differ between a POSIX and a Windows implementation.
+
+## Preview of the Next Chapter
+
+> Portability tells us **where the editor's behavior ends and its environment begins**.
+
+A portable editor still has to reach the user in a usable form. The next chapter moves into **Packaging**, where the book turns from how the editor runs to how it is built, released, and distributed — using CMake, release builds, and packaging so that the editor we have made portable can actually be installed and shipped.

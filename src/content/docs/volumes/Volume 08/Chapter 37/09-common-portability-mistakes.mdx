@@ -1,0 +1,828 @@
+---
+title: "37.9 Common Portability Mistakes"
+description: "Surveys common portability mistakes—scattered platform checks, leaked types, and platform-only testing—and ties each back to the platform boundary."
+---
+
+Portability problems are rarely caused by one large architectural error. More often, they arise from small assumptions that are correct on the developer's primary platform but incorrect elsewhere.
+
+For a terminal editor, these assumptions can occur in the Core, Platform Layer, build configuration, terminal handling, filesystem operations, and testing process.
+
+The purpose of this section is to identify the most common mistakes and show how the architecture developed throughout this chapter prevents them.
+
+## Assuming Linux Means POSIX
+
+One of the most common mistakes is treating Linux-specific behavior as if it were automatically part of POSIX.
+
+For example:
+
+```text
+Linux behavior
+      |
+      v
+Assume POSIX behavior
+      |
+      v
+Use everywhere
+```
+
+This creates hidden dependencies on the reference platform.
+
+The safer model is:
+
+```text
+Required behavior
+      |
+      v
+POSIX interface?
+   /       \
+ yes       no
+ |          |
+ v          v
+Use POSIX   Isolate platform-specific code
+```
+
+Linux remains the primary platform for the project, but Linux-specific facilities should not automatically become architectural dependencies.
+
+## Assuming All Unix-Like Systems Are Identical
+
+The opposite mistake is assuming that Linux, macOS, and BSD are interchangeable.
+
+They share important interfaces, but they are still different operating systems.
+
+A design such as:
+
+```text
+if Unix:
+    everything works identically
+```
+
+is too broad.
+
+The correct assumption is:
+
+```text
+Common interface
+      |
+      +---- Linux
+      +---- macOS
+      +---- BSD
+```
+
+with platform-specific differences isolated where they actually exist.
+
+## Treating WSL as Native Windows
+
+WSL creates another common misconception.
+
+A program running inside WSL may use Linux/POSIX interfaces even though the physical machine is running Windows.
+
+Therefore:
+
+```text
+Windows host
+    |
+    v
+WSL
+    |
+    v
+Linux environment
+```
+
+should not automatically be treated as:
+
+```text
+Windows application
+```
+
+The editor should be classified according to the execution environment and APIs available to it.
+
+## Putting Platform Checks in the Core
+
+This is one of the most damaging portability mistakes.
+
+For example:
+
+```c
+if (windows) {
+    /* ... */
+} else {
+    /* ... */
+}
+```
+
+inside the Document, Cursor, Undo/Redo, or Command Engine indicates that platform knowledge has leaked into the Core.
+
+The better structure is:
+
+```text
+Core
+  |
+  v
+Stable Interface
+  |
+  v
+Platform Implementation
+```
+
+The Core should operate on editor concepts, not operating-system mechanisms.
+
+## Scattering `#ifdef` Throughout the Codebase
+
+Conditional compilation can solve platform differences, but scattered preprocessor branches make the architecture difficult to understand.
+
+For example:
+
+```text
+document.c
+cursor.c
+command.c
+renderer.c
+editor.c
+search.c
+```
+
+should not all contain unrelated platform branches merely because the project supports multiple systems.
+
+Prefer:
+
+```text
+terminal/
+    posix.c
+    windows.c
+
+file/
+    posix.c
+    windows.c
+```
+
+with stable interfaces above them.
+
+The rule is:
+
+> **Use conditional compilation to select implementations, not to make every component platform-aware.**
+
+## Exposing Platform-Specific Types
+
+Another common mistake is allowing operating-system-specific types to cross architectural boundaries.
+
+For example:
+
+```text
+Windows HANDLE
+POSIX file descriptor
+```
+
+should not become types understood by the Document or Command Engine.
+
+Instead:
+
+```text
+Core
+  |
+  v
+File Manager
+  |
+  +---- POSIX descriptor
+  |
+  +---- Windows handle
+```
+
+The platform representation remains an implementation detail.
+
+This keeps platform dependencies from spreading through headers and data structures.
+
+## Including Platform Headers in Core Headers
+
+A related mistake is exposing platform headers unnecessarily.
+
+For example:
+
+```c
+#include <windows.h>
+```
+
+inside a widely used Core header can introduce Windows-specific dependencies into unrelated modules.
+
+A platform-specific header should generally remain close to the implementation that actually requires it.
+
+The dependency direction should remain:
+
+```text
+Core
+  |
+  v
+Platform Interface
+  |
+  v
+Platform Implementation
+  |
+  v
+Operating-System API
+```
+
+not:
+
+```text
+Operating-System API
+        |
+        v
+Core
+        |
+        v
+Everything
+```
+
+## Assuming Terminal Behavior Is the Same Everywhere
+
+A terminal editor must not confuse the operating system with the terminal environment.
+
+Even on the same operating system, different terminal environments can expose different behavior.
+
+For example:
+
+```text
+Linux
+ ├── Terminal A
+ └── Terminal B
+```
+
+does not guarantee that every terminal-related assumption is identical.
+
+The editor should therefore isolate terminal interaction and translate terminal-specific representations into stable editor events.
+
+```text
+Terminal Input
+      |
+      v
+Input Parser
+      |
+      v
+Editor Event
+```
+
+Similarly:
+
+```text
+Editor State
+      |
+      v
+Renderer
+      |
+      v
+Terminal Interface
+```
+
+keeps terminal-specific output behavior at the edge.
+
+## Assuming Every Key Produces One Character
+
+Keyboard input is another frequent portability mistake.
+
+A character such as:
+
+```text
+a
+```
+
+may be represented by a simple byte.
+
+A special key may be represented by a sequence:
+
+```text
+ESC [ A
+```
+
+Treating every key as one character makes the input system fragile.
+
+The correct architecture already provides the necessary boundary:
+
+```text
+Raw Input
+    |
+    v
+Input Parser
+    |
+    v
+Editor Event
+```
+
+The rest of the application should work with events such as:
+
+```text
+KEY_ARROW_UP
+KEY_ESCAPE
+KEY_ENTER
+```
+
+rather than terminal-specific byte sequences.
+
+## Assuming Terminal Dimensions Never Change
+
+A program that reads terminal dimensions only once may work during basic testing but fail after the terminal window is resized.
+
+The editor should treat terminal dimensions as runtime environment information:
+
+```text
+Terminal
+   |
+   v
+New dimensions
+   |
+   v
+Editor State
+   |
+   v
+Viewport
+   |
+   v
+Renderer
+```
+
+The exact resize-detection mechanism belongs to the platform-facing layer.
+
+The response to a resize belongs to the editor architecture.
+
+## Assuming Every Terminal Supports Everything
+
+Another mistake is treating terminal support as universal.
+
+For example:
+
+```text
+"It is a terminal, therefore it supports every ANSI feature."
+```
+
+is not a sufficiently precise portability assumption.
+
+The editor should define the terminal behavior it requires and test against the environments it claims to support.
+
+This is especially important because portability should be based on a **defined support boundary**, not an unlimited promise.
+
+## Hard-Coding Path Separators
+
+Filesystem paths are another common source of platform assumptions.
+
+A simplistic implementation may assume one path syntax everywhere:
+
+```text
+directory/file.txt
+```
+
+and then embed path manipulation logic throughout the application.
+
+Platform-sensitive path handling should instead be localized to filesystem-related code.
+
+The Core should deal with concepts such as:
+
+```text
+file path
+file name
+directory
+```
+
+without needing to understand operating-system-specific path rules.
+
+## Assuming Filesystem Semantics Are Identical
+
+Portability problems are not limited to path syntax.
+
+Filesystem behavior can also differ between environments.
+
+For the editor, this matters particularly during saving.
+
+The editor has an established safe-save policy:
+
+```text
+Document
+   |
+   v
+Temporary file
+   |
+   v
+Write contents
+   |
+   v
+Replace destination
+```
+
+The policy is editor-level.
+
+The exact filesystem operations used to implement it belong to the File Manager and platform-specific layer.
+
+A portability mistake is therefore to embed operating-system-specific filesystem assumptions into the Document or save logic.
+
+## Assuming the Build Environment Is the Runtime Environment
+
+Portability also fails when developers test only the environment in which they compile.
+
+For example:
+
+```text
+Build succeeds
+      |
+      v
+Assume portability
+```
+
+is insufficient.
+
+A portable application must also operate correctly in its target runtime environment.
+
+The actual chain is:
+
+```text
+Source
+  |
+  v
+Compiler / Build System
+  |
+  v
+Executable
+  |
+  v
+Target Runtime
+  |
+  v
+Terminal / Filesystem
+```
+
+Each layer can introduce portability issues.
+
+## Testing Only the Reference Platform
+
+Because Linux is the project's primary development platform, it is easy to make the mistake of treating:
+
+```text
+Builds on Linux
+```
+
+as evidence that:
+
+```text
+Portable
+```
+
+is true.
+
+It is not.
+
+A portability claim requires testing the other environments that the project intends to support.
+
+The testing model should therefore be:
+
+```text
+Linux
+  |
+  +---- baseline
+
+macOS
+  |
+  +---- portability test
+
+BSD
+  |
+  +---- portability test
+
+Windows
+  |
+  +---- native-platform test
+
+WSL
+  |
+  +---- Linux-environment test
+```
+
+## Testing Only Compilation
+
+Successful compilation is necessary but insufficient.
+
+A program can compile successfully while still having:
+
+- incorrect terminal behavior,
+- broken input parsing,
+- incorrect terminal resizing,
+- filesystem failures,
+- platform-specific runtime bugs.
+
+Therefore:
+
+```text
+Portable
+   ≠
+Compiles
+```
+
+A stronger model is:
+
+```text
+Compiles
+   +
+Runs
+   +
+Behaves correctly
+   +
+Preserves editor invariants
+```
+
+## Testing Only the Happy Path
+
+Portability problems frequently appear in less common operations.
+
+For a terminal editor, testing should include operations such as:
+
+```text
+Start editor
+Open file
+Edit text
+Navigate
+Scroll
+Search
+Undo
+Redo
+Save
+Resize terminal
+Exit
+```
+
+and should exercise failure cases as well.
+
+For example:
+
+```text
+Save fails
+    |
+    v
+Dirty Flag remains set
+```
+
+The editor's correctness requirements should remain valid regardless of platform.
+
+## Creating Platform-Specific Behavior Without a Requirement
+
+Another mistake is introducing platform differences simply because a platform exists.
+
+For example:
+
+```text
+Linux:
+    behavior A
+
+Windows:
+    behavior B
+```
+
+is not automatically justified.
+
+The question should be:
+
+> **Does the platform actually require different behavior, or are we unnecessarily creating two implementations?**
+
+If the editor's semantics are identical, the implementation should remain shared.
+
+Platform-specific code should exist because a real platform difference requires it.
+
+## Over-Abstraction
+
+Portability can also be harmed by trying to abstract everything.
+
+For example:
+
+```text
+Universal Platform Abstraction
+    |
+    +-- every possible operating system
+    +-- every terminal
+    +-- every filesystem
+    +-- every input mechanism
+```
+
+can become more complicated than the platform differences themselves.
+
+The goal is not maximum abstraction.
+
+The goal is:
+
+> **The smallest abstraction that isolates a real platform dependency.**
+
+For this project, the Linux/POSIX reference environment should remain straightforward rather than being buried under abstractions designed for hypothetical platforms.
+
+## Under-Abstraction
+
+The opposite mistake is equally dangerous.
+
+If platform-specific code is directly used throughout the application:
+
+```text
+Document
+   |
+   +---- OS API
+
+Renderer
+   |
+   +---- terminal API
+
+Command Engine
+   |
+   +---- platform API
+```
+
+then adding another platform becomes increasingly expensive.
+
+A useful portability boundary should therefore be established before platform-specific details begin spreading through the Core.
+
+## Confusing Portability With Identical Implementation
+
+A portable application does not necessarily use identical source code on every platform.
+
+For example:
+
+```text
+                 File Manager
+                      |
+             +--------+--------+
+             |                 |
+          POSIX             Windows
+             |                 |
+       implementation     implementation
+```
+
+The implementations may differ.
+
+What should remain stable is the **interface and editor-level behavior**.
+
+Therefore:
+
+```text
+Portability
+    ≠
+Identical implementation
+```
+
+Instead:
+
+```text
+Portability
+    =
+Stable behavior
++
+Controlled platform differences
+```
+
+## Allowing Platform Code to Leak Through Abstractions
+
+Even when a Platform Layer exists, it can fail if its implementation details leak outward.
+
+For example:
+
+```text
+Platform Layer
+      |
+      v
+returns platform-specific object
+      |
+      v
+Core stores object
+```
+
+has not actually isolated the platform.
+
+A successful boundary looks like:
+
+```text
+Platform Layer
+      |
+      v
+stable editor-level result
+      |
+      v
+Core
+```
+
+The abstraction must hide the mechanism rather than merely rename it.
+
+## Failing to Document Platform Assumptions
+
+Every portability architecture has assumptions.
+
+For this editor, examples include:
+
+```text
+Primary target: Linux/POSIX
+
+Terminal model: ANSI-style terminal environment
+
+Execution environment: terminal-based
+
+Additional platforms: subject to implementation and testing
+```
+
+If these assumptions remain undocumented, later contributors may interpret "portable" as "works everywhere."
+
+The project documentation should therefore distinguish between:
+
+```text
+Supported
+Tested
+Potentially compatible
+Unsupported
+```
+
+This makes the portability contract explicit.
+
+## The Central Portability Failure
+
+Most of the mistakes discussed above reduce to one underlying problem:
+
+> **Allowing environmental details to become application semantics.**
+
+For example:
+
+```text
+Bad:
+
+Windows
+   ↓
+Command Engine behavior
+```
+
+or:
+
+```text
+Bad:
+
+Linux terminal sequence
+   ↓
+Document behavior
+```
+
+or:
+
+```text
+Bad:
+
+Windows handle
+   ↓
+Editor State
+```
+
+The correct direction is:
+
+```text
+Environment
+     |
+     v
+Platform Boundary
+     |
+     v
+Stable Editor Concepts
+     |
+     v
+Core
+```
+
+This is the fundamental portability principle of the chapter.
+
+## Summary
+
+The most important portability mistakes are:
+
+1. Assuming Linux behavior is automatically POSIX behavior.
+2. Assuming all Unix-like systems are identical.
+3. Treating WSL as native Windows.
+4. Putting platform checks inside the Core.
+5. Scattering `#ifdef` throughout the codebase.
+6. Exposing platform-specific types or headers.
+7. Assuming terminal behavior is identical everywhere.
+8. Treating every key as a single character.
+9. Assuming terminal dimensions never change.
+10. Assuming every terminal supports every capability.
+11. Hard-coding platform-specific filesystem assumptions.
+12. Testing only compilation.
+13. Testing only Linux.
+14. Creating platform-specific behavior without an actual requirement.
+15. Over-abstracting hypothetical platform differences.
+16. Under-abstracting real platform dependencies.
+17. Confusing portability with identical implementation.
+18. Allowing platform implementation details to leak through interfaces.
+19. Failing to document the project's actual portability contract.
+
+The overall lesson is simple:
+
+```text
+             External Environment
+                      |
+                      v
+             Platform Boundary
+                      |
+                      v
+              Stable Interface
+                      |
+                      v
+                 Editor Core
+```
+
+A portable architecture does not eliminate platform differences.
+
+It **contains them**.
+
+This concludes the planned conceptual material for Chapter 37. The next section provides the chapter summary, review exercises, and a preview of the next chapter.

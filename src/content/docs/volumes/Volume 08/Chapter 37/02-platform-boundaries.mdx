@@ -1,0 +1,481 @@
+---
+title: "37.2 Platform Boundaries"
+description: "Defines the platform boundary, separating platform-independent editor concepts from terminal, input, and filesystem responsibilities that face the environment."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Portability begins with a clear boundary between the parts of the editor that implement **editor behavior** and the parts that interact with the **operating system and terminal environment**.
+
+This boundary is already present in the architecture established earlier in the book. The editor is divided into Application, Core, and Platform layers, with dependencies directed toward the Core Layer.
+
+Chapter 37 now gives that boundary a specific portability purpose.
+
+## What Is a Platform Boundary?
+
+A platform boundary is the point at which platform-dependent mechanisms are separated from platform-independent application logic.
+
+For the editor, the boundary can be represented as:
+
+```text
++------------------------------------------------+
+|              Application Layer                 |
+|                                                |
+| Input Engine                                   |
+| Command Engine                                 |
++------------------------------------------------+
+                       │
+                       ▼
++------------------------------------------------+
+|                  Core Layer                    |
+|                                                |
+| Editor State                                   |
+| Document                                       |
+| Cursor                                         |
+| Viewport                                       |
++------------------------------------------------+
+                       │
+                       ▼
++------------------------------------------------+
+|                Platform Layer                  |
+|                                                |
+| Input Handler                                  |
+| Input Parser                                   |
+| Renderer                                       |
+| File Manager                                   |
+| Terminal Interface                             |
++------------------------------------------------+
+                       │
+                       ▼
++------------------------------------------------+
+|           Operating System / Terminal          |
++------------------------------------------------+
+```
+
+The upper layers should describe **what the editor does**.
+
+The Platform Layer handles **how the surrounding environment provides the required facilities**.
+
+This distinction prevents operating-system details from becoming part of the editor's fundamental model.
+
+## Platform-Independent Responsibilities
+
+Some parts of the editor have little reason to know which operating system is running.
+
+For example, the Document represents editable text.
+
+Its responsibilities include operations such as:
+
+```text
+Insert character
+Delete character
+Insert line
+Delete line
+Split line
+Merge lines
+```
+
+These operations describe editing behavior rather than operating-system behavior.
+
+Likewise, the Cursor operates in terms of document coordinates:
+
+```text
+row
+column
+preferred column
+```
+
+It does not need to know whether the editor is running on Linux, macOS, or another platform.
+
+The same principle applies to the Command Engine.
+
+A command such as:
+
+```text
+SAVE_DOCUMENT
+```
+
+expresses an editor operation.
+
+It should not need to know which operating-system API ultimately performs the save.
+
+## Platform-Dependent Responsibilities
+
+Other operations necessarily interact with the environment.
+
+The Terminal Interface, for example, must deal with:
+
+- terminal settings
+- raw input mode
+- terminal dimensions
+- terminal output
+- cursor visibility
+- terminal restoration
+
+The File Manager must interact with:
+
+- files
+- file descriptors
+- filesystem operations
+- operating-system errors
+
+The Input Handler must obtain input from the terminal environment.
+
+These are natural platform boundaries because they depend on facilities outside the editor's own data model.
+
+The existing architecture explicitly assigns these environmental responsibilities to the Platform Layer.
+
+## Platform-Independent vs. Platform-Facing Responsibilities
+
+The boundary can be summarized as a single list.
+
+```text
+Platform-independent (editor concepts)
+-------------------------------------
+Document
+Cursor
+Viewport
+Editor State
+Commands
+Undo/Redo
+Search
+Configuration
+Buffer management
+Window management
+Rendering decisions
+
+Platform-facing (environmental mechanisms)
+------------------------------------------
+Terminal mode configuration
+Terminal dimensions
+Terminal input acquisition
+Terminal output
+File descriptor / handle operations
+Filesystem access
+Platform-specific diagnostics
+```
+
+A full-screen editor's higher-level components should be expressible without mentioning the operating system. The platform-facing components absorb the environmental details.
+
+One nuance: "rendering decisions" — what should appear on screen — are platform-independent editor concepts, while the Renderer component (which lives in the Platform Layer) constructs the frame and writes it into the Editor Screen Buffer; emitting that frame to the terminal belongs to the Terminal Interface. Deciding what to draw is editor-level; converting the completed frame into terminal output is platform-facing.
+
+The terminal path can be represented as:
+
+```text
+Terminal Interface  (Linux / POSIX / macOS / ...)
+      |
+      v
+Input Handler       (reads raw terminal bytes)
+      |
+      v
+Input Parser        (bytes -> key events)
+      |
+      v
+Input Engine        (key events -> commands)
+```
+
+The Input Parser converts terminal byte sequences ("ESC [ A") into editor events ("Arrow Up", "Character 'a'"), and the Input Engine maps those events to commands. Neither should reason about raw terminal bytes; the conversion from terminal representation to editor events belongs to the platform-facing input path.
+
+The file path is covered below in "The Same Operation Across Different Platforms." The important point is that both the terminal and file paths terminate in the Platform Layer.
+
+## The Same Operation Across Different Platforms
+
+Consider saving a document.
+
+At the Command Engine level:
+
+```text
+SAVE_DOCUMENT
+```
+
+The Command Engine does not need to know whether the underlying implementation uses Linux, macOS, BSD, or Windows APIs.
+
+Conceptually:
+
+```text
+Command Engine
+      │
+      │ SAVE_DOCUMENT
+      ▼
+File Manager
+      │
+      ▼
+Platform File API
+      │
+      ├── POSIX implementation
+      │
+      └── Windows implementation
+```
+
+The editor operation remains stable while the platform implementation can vary.
+
+This is the essential purpose of the boundary.
+
+## Interfaces Hide Platform Details
+
+A platform boundary becomes useful when higher-level components communicate through a stable interface rather than directly through operating-system APIs.
+
+For example, conceptually:
+
+```text
+Application
+     │
+     ▼
+File Manager Interface
+     │
+     ▼
+Platform-specific implementation
+```
+
+The Application Layer should know that it can request a file operation.
+
+It should not need to know whether the implementation internally calls:
+
+```text
+open()
+write()
+rename()
+```
+
+or uses a different platform mechanism.
+
+The interface therefore acts as a contract.
+
+```text
++-------------------+
+|  Higher-Level     |
+|  Editor Logic     |
++-------------------+
+          │
+          │ stable contract
+          ▼
++-------------------+
+| Platform Boundary |
++-------------------+
+          │
+          ▼
++-------------------+
+| Platform API      |
++-------------------+
+```
+
+This is also consistent with the project's existing module rules: public interfaces belong in module headers, while implementation details remain private to source files.
+
+## What Should Not Cross the Boundary?
+
+A good boundary is defined not only by what crosses it, but also by what **must not** cross it.
+
+Platform-specific types and assumptions should not leak unnecessarily into the Core.
+
+For example, the Document should not contain fields whose meaning exists only because of a particular operating system.
+
+Likewise, the Command Engine should not contain operating-system-specific branches merely to perform normal editor operations.
+
+A problematic design might look like:
+
+```text
+Document
+ ├── text
+ ├── Linux file descriptor
+ ├── Windows HANDLE
+ └── terminal-specific state
+```
+
+This would make the Document responsible for concerns that do not belong to it.
+
+A cleaner design is:
+
+```text
+Document
+ └── text
+
+File Manager
+ └── platform-specific file state
+
+Terminal Interface
+ └── platform-specific terminal state
+```
+
+Each subsystem owns the state associated with its responsibility.
+
+This follows the project's existing state-ownership principle: each piece of state should have one responsible owner.
+
+## The Platform Boundary Is Not a Single Module
+
+It is tempting to think of portability as creating one module called `platform`.
+
+That is not necessarily the right abstraction.
+
+The existing architecture already has several components that interact with the environment:
+
+```text
+Platform Layer
+│
+├── Input Handler
+├── Input Parser
+├── Renderer
+├── File Manager
+└── Terminal Interface
+```
+
+Not all of these have the same degree of platform dependence.
+
+For example, the Input Parser understands terminal byte sequences, while the Document does not.
+
+The Terminal Interface has especially strong operating-system dependencies.
+
+The File Manager interacts with filesystem APIs.
+
+The Renderer builds the frame in the Editor Screen Buffer but should remain focused on translating Editor State into a frame rather than embedding operating-system policy; emitting the frame to the terminal belongs to the Terminal Interface.
+
+The boundary therefore exists **around platform-sensitive responsibilities**, rather than being a single universal wrapper around the entire application.
+
+## Platform Dependencies Should Point Outward
+
+A useful mental model is:
+
+```text
+                    Core
+                     │
+                     ▼
+             Stable interfaces
+                     │
+                     ▼
+            Platform mechanisms
+```
+
+The further inward a component is, the less it should know about the operating environment.
+
+This gives the architecture a useful property:
+
+```text
+More platform-specific
+        │
+        ▼
+Terminal Interface
+File Manager
+Input Handler
+        │
+        ▼
+Input Engine
+Command Engine
+        │
+        ▼
+Editor State
+Document
+Cursor
+        │
+        ▼
+More platform-independent
+```
+
+This is not a replacement for the layered architecture established earlier. It is a portability-oriented interpretation of that architecture.
+
+## Platform Boundaries and Testing
+
+A clear boundary also improves testing.
+
+Suppose the Document contains no operating-system dependencies.
+
+A test can then verify:
+
+```text
+Document
+   │
+   ▼
+Insert
+   │
+   ▼
+Expected text
+```
+
+without requiring a particular operating system.
+
+Similarly, platform-specific behavior can be tested separately:
+
+```text
+Terminal Interface
+        │
+        ▼
+Linux terminal behavior
+```
+
+or:
+
+```text
+File Manager
+        │
+        ▼
+Platform filesystem
+```
+
+This keeps platform-specific failures from being confused with failures in the editor's core logic.
+
+Chapter 35 established the general testing strategy; this chapter is concerned specifically with **where platform-dependent behavior should be tested** rather than redefining the testing architecture.
+
+<Aside type="note" title="A Practical Boundary Rule">
+
+For this project, a useful rule is:
+
+> **If a piece of code can express its behavior without mentioning the operating system, it should generally remain outside the platform-specific implementation.**
+
+Conversely:
+
+> **If a piece of code must directly interact with an operating-system or terminal facility, it belongs at or near the Platform Layer.**
+
+This is not an absolute rule. Some components, particularly the Renderer and Input Parser, deal with terminal concepts while still providing higher-level editor functionality.
+
+The purpose is not to eliminate all platform knowledge.
+
+The purpose is to **contain it**.
+
+</Aside>
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Portability is strongest when the architecture makes platform dependence **local rather than invisible**.
+
+Trying to pretend that all platforms are identical usually produces a misleading abstraction. Allowing platform details to spread everywhere produces a tightly coupled application.
+
+The better approach is explicit:
+
+```text
+Platform differences
+        │
+        ▼
++-----------------------+
+| Platform Boundary     |
++-----------------------+
+        │
+        ▼
+Stable editor behavior
+```
+
+The boundary acknowledges that platforms differ while preventing those differences from dominating the editor's architecture.
+
+</Aside>
+
+## Portability as an Architectural Test
+
+Adding a platform is a direct test of how well the boundary has been placed.
+
+If supporting a new operating system requires changes concentrated in the Platform Layer, build configuration, and platform-specific tests, the architecture is behaving as intended.
+
+If the same change instead requires edits throughout the Document, Cursor, Command Engine, Undo/Redo, Search, and Renderer, then platform-specific assumptions have leaked into higher layers.
+
+The cost of adding a platform is therefore a useful indicator of how effectively platform dependencies have been isolated. It is not an absolute metric—platforms can genuinely differ—but widespread changes in platform-independent code are a warning sign.
+
+## Summary
+
+A platform boundary separates editor behavior from environmental mechanisms.
+
+For our editor:
+
+- **Document, Cursor, Viewport, and core state** should remain largely platform-independent.
+- **Terminal, input, and filesystem interactions** belong near the Platform Layer.
+- Stable interfaces allow higher-level components to request operations without knowing their platform-specific implementation.
+- Platform-specific types and assumptions should not leak unnecessarily into the Core Layer.
+- The boundary is distributed across platform-sensitive components rather than being one universal `platform` module.
+- A clear boundary makes both implementation and testing easier.
+
+The next section examines the technologies beneath this boundary: **POSIX, the C standard library, and platform-specific operating-system APIs**, and how they relate to one another.

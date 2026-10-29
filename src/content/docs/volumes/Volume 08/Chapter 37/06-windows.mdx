@@ -1,0 +1,205 @@
+---
+title: "37.6 Windows"
+description: "Explains how native Windows APIs and handles differ from the POSIX model and how the editor isolates them without redesigning its core."
+---
+
+Windows represents the largest platform difference considered in this chapter.
+
+Linux, macOS, and BSD share a substantial POSIX foundation. Windows does not provide the same Unix/POSIX environment as its native system model. Consequently, supporting Windows requires a clearer separation between **portable editor behavior** and **platform-specific implementation**.
+
+The important architectural question is therefore not:
+
+> How can we make Windows behave exactly like Linux?
+
+It is:
+
+> **How can the same editor architecture be implemented on a fundamentally different platform?**
+
+## Windows Changes the Portability Problem
+
+The platform model can now be expanded:
+
+```text
+                     Editor
+                       |
+                       v
+              Platform Boundary
+                       |
+          +------------+------------+
+          |            |            |
+        POSIX        POSIX        Windows
+          |            |            |
+        Linux        macOS         Native
+                     BSD           APIs
+```
+
+Linux, macOS, and BSD can share substantial implementation because of their Unix/POSIX foundations. Windows may require different mechanisms for terminal input, terminal output, terminal mode configuration, filesystem operations, system handles, and console interaction.
+
+The editor's higher-level behavior should nevertheless remain the same. The platform-independent concepts identified in Section 37.2—Document, Cursor, Viewport, Editor State, Commands, Undo/Redo, Search, Buffers, Windows, and rendering decisions—do not change meaning because the operating system changed. "Move Cursor Up" and "Save Document" mean the same thing on Linux or Windows.
+
+This distinction prevents Windows support from becoming a second editor implementation. The Core remains shared (Section 37.3); only the mechanisms required to interact with the environment differ.
+
+## Native Windows APIs
+
+Windows provides its own native system interfaces rather than relying exclusively on POSIX APIs. A Windows implementation may therefore need platform-specific code for operations that the POSIX implementation handles through Unix-oriented interfaces.
+
+Conceptually:
+
+```text
+POSIX implementation:          Windows implementation:
+
+File Manager                   File Manager
+     |                              |
+     v                              v
+POSIX file interface          Windows file interface
+     |                              |
+     v                              v
+Operating System              Operating System
+```
+
+The important point is that both implementations satisfy the same **editor-level responsibility**. The File Manager does not change its purpose merely because the underlying operating-system API changes.
+
+## Handles and File Descriptors
+
+The Unix/POSIX model commonly represents open resources through file descriptors. Windows has its own resource-handle model.
+
+This difference illustrates why operating-system-specific types should not leak into the Core. A poor design might expose platform resource types throughout the application:
+
+```text
+Editor State
+    |
+    +-- POSIX file descriptor
+    |
+    +-- Windows handle
+```
+
+This forces the Core to understand operating-system details. A better design keeps such values inside the platform-facing implementation:
+
+```text
++----------------------+
+|     Editor Core      |
++----------+-----------+
+           |
+           | abstract operation
+           v
++----------------------+
+|     File Manager     |
++----------+-----------+
+           |
+     +-----+-----+
+     |           |
+     v           v
+  POSIX       Windows
+  descriptor   handle
+```
+
+The resource representation is therefore an implementation detail.
+
+## Terminal Interaction
+
+For a terminal editor, terminal interaction is the larger challenge. The editor needs mechanisms for reading keyboard input, configuring input behavior, writing terminal output, obtaining terminal dimensions, and controlling and restoring terminal state.
+
+The Unix implementation can use the POSIX terminal model; a Windows implementation may need different console or terminal mechanisms. The architectural boundary established in Section 37.2 absorbs this difference: the Input Engine and Terminal Interface keep the environmental detail below them, while higher layers remain unchanged.
+
+## ANSI Sequences Are a Separate Concern
+
+Windows also illustrates why terminal protocols and operating-system APIs should not be confused.
+
+The editor may generate terminal control sequences as part of rendering. That is conceptually separate from the mechanism used to communicate with the terminal:
+
+```text
+Renderer
+   |
+   | terminal output
+   v
+Terminal Interface
+   |
+   | platform-specific output mechanism
+   v
+Terminal Environment
+```
+
+The Renderer should not need to know whether the underlying platform uses a Unix file descriptor or a Windows-specific handle. Likewise, the Terminal Interface should not decide what the editor should render. This preserves the separation between **rendering decisions** and **terminal interaction**.
+
+## Conditional Compilation Becomes More Important
+
+Windows is one of the situations in which conditional compilation can become necessary, because a POSIX implementation and a native Windows implementation may require different headers, types, and APIs.
+
+The important issue is **where this conditional code exists**. It is acceptable in the platform-facing module (for example, `terminal.c` with a Windows and a POSIX implementation); it becomes problematic when platform checks appear throughout `document.c`, `cursor.c`, `command.c`, `search.c`, `undo.c`, `renderer.c`, and `editor.c`.
+
+Section 37.8 examines conditional compilation in detail, so this section establishes only its architectural role.
+
+## Native Windows vs. POSIX Compatibility Layers
+
+Windows can also host environments that provide Unix-like or POSIX-oriented behavior:
+
+```text
+Windows
+ |
+ +---- Native Windows environment
+ |
+ +---- Unix-like compatibility environment
+```
+
+The native Windows implementation and a POSIX compatibility environment may expose different interfaces to the editor. The editor should therefore distinguish between the **operating system** and the **execution environment / compatibility layer**.
+
+This distinction becomes especially important when we discuss WSL in the next section. For the architecture, the key principle remains:
+
+> **Target the interfaces actually available to the running environment rather than assuming that the underlying machine determines the entire programming model.**
+
+## Windows Support and Project Scope
+
+The existence of Windows in the portability discussion does not mean that the first implementation must support Windows. The project already establishes Linux/POSIX as the primary target.
+
+The appropriate engineering strategy is:
+
+```text
+Phase 1
+Linux / POSIX
+    |
+    v
+Validate architecture
+    |
+    v
+Phase 2
+Additional POSIX systems
+    |
+    v
+macOS / BSD
+    |
+    v
+Phase 3
+Windows
+```
+
+This allows portability to influence the architecture from the beginning without forcing every platform to be implemented simultaneously. **Designing for portability and implementing every platform are different tasks.**
+
+## Summary
+
+Windows demonstrates why portability must be based on explicit architectural boundaries. The important principles are:
+
+1. **Windows does not share the same native POSIX environment as Linux, macOS, and BSD.**
+2. **The editor's Core should nevertheless remain shared.**
+3. **Native Windows APIs can be isolated behind platform-facing components.**
+4. **Resource representations such as Windows handles should not leak into the Core.**
+5. **Rendering decisions should remain independent of the mechanism used to communicate with the terminal.**
+6. **File-safety policies remain editor-level requirements even when filesystem mechanisms differ.**
+7. **Conditional compilation should be localized to platform-sensitive components.**
+8. **Designing for Windows does not require implementing Windows in the initial Linux-focused version.**
+
+The resulting model is:
+
+```text
+                    Editor Core
+                        |
+                        v
+               Stable Interfaces
+                        |
+              +---------+---------+
+              |                   |
+          POSIX Platform     Windows Platform
+              |                   |
+       Linux/macOS/BSD        Windows APIs
+```
+
+The next section addresses **WSL**, which is particularly interesting because Windows can host a Linux environment. This forces us to distinguish the **host operating system**, the **execution environment**, and the **interfaces actually used by the editor**.

@@ -1,0 +1,723 @@
+---
+title: "37.8 Conditional Compilation"
+description: "Explains how conditional compilation selects platform implementations, where those branches belong, and how to keep platform types out of the Core."
+---
+
+Supporting multiple platforms often requires different implementations of the same low-level operation. In C, **conditional compilation** provides a mechanism for selecting platform-specific code at compile time.
+
+However, conditional compilation must be used carefully.
+
+The problem is not the existence of `#ifdef`. The problem is allowing platform decisions to spread throughout the architecture.
+
+The goal is:
+
+> **Use conditional compilation at well-defined platform boundaries rather than turning the entire editor into a collection of platform-specific branches.**
+
+## Why Conditional Compilation Is Needed
+
+Some platform differences cannot be expressed through ordinary runtime logic.
+
+For example, a POSIX implementation and a native Windows implementation may require different headers, types, and APIs.
+
+Conceptually:
+
+```text
+              Platform Interface
+                     |
+             +-------+-------+
+             |               |
+           POSIX            Windows
+             |               |
+         POSIX APIs       Windows APIs
+```
+
+The compiler must select the appropriate implementation for the target platform.
+
+C's preprocessor can provide that selection.
+
+A simplified example is:
+
+```c
+#if defined(PLATFORM_WINDOWS)
+    /* Windows implementation */
+#else
+    /* POSIX implementation */
+#endif
+```
+
+The exact platform checks used by the project should be defined deliberately rather than scattered arbitrarily throughout the source tree. `PLATFORM_WINDOWS` is the project's canonical platform macro; compiler-provided macros such as `_WIN32` should be mapped to it at a single authoritative location rather than used directly throughout the code.
+
+## Compile-Time Selection
+
+Conditional compilation differs from ordinary `if` statements.
+
+An ordinary conditional executes at runtime:
+
+```c
+if (condition) {
+    ...
+}
+```
+
+Both branches are part of the compiled program.
+
+A preprocessor conditional selects source code before compilation:
+
+```c
+#if defined(PLATFORM_WINDOWS)
+    /* Windows code */
+#else
+    /* POSIX code */
+#endif
+```
+
+Only the selected source is passed to the compiler.
+
+Conceptually:
+
+```text
+Source Code
+     |
+     v
+Preprocessor
+     |
+     +------ Windows ------> Windows source
+     |
+     +------ POSIX --------> POSIX source
+     |
+     v
+Compiler
+     |
+     v
+Executable
+```
+
+This is particularly useful when the alternative implementations require different headers or incompatible types.
+
+## The Wrong Way: Scattered Platform Checks
+
+Conditional compilation becomes problematic when every module begins making its own platform decisions.
+
+For example:
+
+```text
+document.c
+    #ifdef WINDOWS
+    ...
+    #endif
+
+cursor.c
+    #ifdef WINDOWS
+    ...
+    #endif
+
+command.c
+    #ifdef WINDOWS
+    ...
+    #endif
+
+renderer.c
+    #ifdef WINDOWS
+    ...
+    #endif
+
+editor.c
+    #ifdef WINDOWS
+    ...
+    #endif
+```
+
+This creates a second architecture hidden inside the source code.
+
+Instead of:
+
+```text
+Editor
+    |
+    v
+Platform Interface
+    |
+    +---- POSIX
+    |
+    +---- Windows
+```
+
+we end up with:
+
+```text
+Editor
+ ├── Windows?
+ ├── POSIX?
+ ├── Windows?
+ ├── POSIX?
+ └── Windows?
+```
+
+Platform knowledge has escaped into unrelated components.
+
+This is exactly what the platform boundary is intended to prevent.
+
+## Conditional Compilation at the Boundary
+
+A better structure is:
+
+```text
+             Core
+               |
+               v
+       Stable interface
+               |
+               v
+       Platform module
+          /         \
+         /           \
+     POSIX          Windows
+```
+
+The conditional compilation is concentrated in the platform implementation.
+
+For example:
+
+```c
+/* terminal.c */
+
+#if defined(PLATFORM_WINDOWS)
+
+int terminal_enable_raw_mode(void)
+{
+    /* Windows implementation */
+    return 0;
+}
+
+#else
+
+int terminal_enable_raw_mode(void)
+{
+    /* POSIX implementation */
+    return 0;
+}
+
+#endif
+```
+
+The higher-level code can call:
+
+```c
+terminal_enable_raw_mode();
+```
+
+without knowing which implementation was selected.
+
+This is the essential architectural use of conditional compilation.
+
+---
+
+## Headers Should Also Respect the Boundary
+
+Platform-specific headers can create problems if they are exposed unnecessarily.
+
+Consider:
+
+```c
+#include <windows.h>
+```
+
+If this appears in a Core header, the Core has now acquired a Windows dependency.
+
+That can spread rapidly:
+
+```text
+Core Header
+     |
+     v
+windows.h
+     |
+     +---- platform types
+     +---- macros
+     +---- API declarations
+     |
+     v
+Many dependent modules
+```
+
+A better design keeps platform-specific headers inside platform implementation files whenever possible.
+
+```text
+Core
+ |
+ | stable interface
+ v
+Platform Header
+ |
+ +---- implementation
+       |
+       +---- Windows headers
+       |
+       +---- POSIX headers
+```
+
+This follows the project's existing rule that public headers should expose the module's interface while implementation details remain private to the source file.
+
+## Platform Types Should Not Leak
+
+Conditional compilation often introduces different platform-specific types.
+
+For example, one implementation might internally use a POSIX file descriptor while another uses a Windows handle.
+
+The interface should not require the Core to understand either representation.
+
+Bad:
+
+```c
+typedef struct {
+    int fd;
+#if defined(PLATFORM_WINDOWS)
+    HANDLE handle;   /* requires <windows.h> in the Core */
+#endif
+} file_t;
+```
+
+when `file_t` is exposed throughout the Core.
+
+Better:
+
+```text
+Core
+  |
+  | file operations
+  v
+File Manager
+  |
+  +---- POSIX descriptor
+  |
+  +---- Windows handle
+```
+
+The platform-specific representation remains an implementation detail.
+
+This is particularly important for maintaining the ownership and dependency rules already established in the architecture.
+
+## Prefer Interfaces Over Preprocessor Branches
+
+Suppose the editor needs to obtain terminal dimensions.
+
+A poor design might make the Renderer itself select the platform:
+
+```c
+#if defined(PLATFORM_WINDOWS)
+    /* obtain dimensions using Windows API */
+#else
+    /* obtain dimensions using POSIX mechanism */
+#endif
+```
+
+A better design is:
+
+```text
+Renderer
+    |
+    v
+Terminal Interface
+    |
+    +---- POSIX implementation
+    |
+    +---- Windows implementation
+```
+
+The Renderer asks for:
+
+```text
+terminal_get_size()
+```
+
+The platform implementation determines how the dimensions are obtained.
+
+This is a recurring principle throughout the chapter:
+
+> **Conditional compilation should select implementations, not define application behavior.**
+
+## Platform Selection Should Be Centralized
+
+The project should have a clear strategy for determining the target platform.
+
+Conceptually:
+
+```text
+Compiler / Build Configuration
+              |
+              v
+       Platform Selection
+              |
+       +------+------+
+       |             |
+     POSIX        Windows
+       |             |
+       v             v
+ Platform Impl.  Platform Impl.
+```
+
+The exact build-system mechanism is an implementation detail, but the architectural principle is important:
+
+> **Platform identification should have a small number of authoritative locations.**
+
+This prevents different modules from inventing incompatible definitions such as:
+
+```text
+LINUX
+UNIX
+POSIX
+WINDOWS
+WIN32
+WSL
+```
+
+with different meanings.
+
+The project should therefore settle on one canonical set of platform macros—for example, `PLATFORM_POSIX` and `PLATFORM_WINDOWS`—and map compiler-provided macros such as `_WIN32` to them in that single authoritative location.
+
+## Do Not Treat WSL as a Separate C Platform
+
+The WSL discussion in Section 37.7 provides an important example.
+
+If the editor is compiled as a Linux/POSIX program inside WSL, it should generally follow the Linux/POSIX implementation path:
+
+```text
+Windows Host
+     |
+     v
+WSL
+     |
+     v
+Linux/POSIX build
+     |
+     v
+POSIX implementation
+```
+
+It should not automatically become:
+
+```text
+#ifdef WINDOWS
+```
+
+merely because the physical machine is running Windows.
+
+This reinforces the distinction between the **host system** and the **compilation/runtime environment**.
+
+## Keep Conditional Blocks Small
+
+Even inside a platform-specific module, large conditional regions can become difficult to maintain.
+
+Prefer:
+
+```c
+#if defined(PLATFORM_WINDOWS)
+static int terminal_setup(void)
+{
+    /* ... */
+    return 0;
+}
+#else
+static int terminal_setup(void)
+{
+    /* ... */
+    return 0;
+}
+#endif
+```
+
+over:
+
+```c
+#if defined(PLATFORM_WINDOWS)
+
+/* hundreds of lines */
+
+#else
+
+/* hundreds of lines */
+
+#endif
+```
+
+Small, focused conditional sections make it easier to compare implementations and identify what actually differs.
+
+Where differences are substantial, separate source files within the responsible module may be clearer:
+
+```text
+terminal/
+├── posix.c
+└── windows.c
+```
+
+Then the build configuration selects the appropriate source file.
+
+This can be cleaner than maintaining a single source file containing large amounts of unrelated conditional code.
+
+## Shared vs. Separate Implementation
+
+Not every platform-facing module needs a separate implementation. There are three reasonable possibilities:
+
+```text
+1. Completely shared code
+       |
+       +---- relies only on common interfaces
+       |
+       +---- behaves correctly everywhere
+
+2. Shared code with small platform differences
+       |
+       +---- a small amount of isolated conditional code
+
+3. Separate platform implementations
+       |
+       +---- substantially different mechanisms
+```
+
+A single `terminal.c` used on both Linux and macOS is the first case. A module with a small isolated `#if` block is the second. Separate platform source files within the same module—for example, `posix.c` and `windows.c`—are the third.
+
+The choice should be based on actual behavior and interface requirements, not on a desire to maximize the number of shared source files:
+
+> **Share code where the abstraction is genuinely common; isolate code where platform behavior genuinely differs.**
+
+This avoids both unnecessary duplication and overly complicated abstractions. The architectural objective is not to force all platforms into one implementation, but to prevent implementation differences from propagating into unrelated editor components.
+
+## Conditional Compilation Is Not an Abstraction
+
+A critical distinction is:
+
+```text
+Conditional compilation
+        ≠
+Platform abstraction
+```
+
+Conditional compilation is a **mechanism**.
+
+The abstraction is the interface between the higher-level component and the platform implementation.
+
+For example:
+
+```text
+              Abstraction
+                   |
+                   v
+        terminal_get_size()
+                   |
+          +--------+--------+
+          |                 |
+       POSIX             Windows
+    implementation     implementation
+          |                 |
+     #if / build        #if / build
+     selection          selection
+```
+
+The preprocessor helps select the implementation.
+
+It does not define the architectural boundary itself.
+
+## When Conditional Compilation Is Appropriate
+
+Conditional compilation is appropriate when platform differences are genuinely compile-time differences.
+
+Examples include:
+
+- different system headers,
+- incompatible platform types,
+- different operating-system APIs,
+- different platform-specific implementations,
+- platform-specific constants,
+- source files that cannot be compiled on another platform.
+
+For example:
+
+```c
+#if defined(PLATFORM_WINDOWS)
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+```
+
+may be appropriate in a platform implementation.
+
+The same technique inside `document.c` merely because one platform has a different terminal API would be a warning sign.
+
+## When It Is Not Appropriate
+
+Conditional compilation should not be used simply because different platforms exist.
+
+For example, this is unnecessary:
+
+```c
+#if defined(PLATFORM_WINDOWS)
+    cursor_move_up();
+#else
+    cursor_move_up();
+#endif
+```
+
+There is no meaningful platform difference.
+
+Likewise:
+
+```c
+#if defined(PLATFORM_WINDOWS)
+    document_insert(/* ... */);
+#else
+    document_insert(/* ... */);
+#endif
+```
+
+should not exist if the operation is genuinely platform-independent.
+
+Such code adds noise without providing portability.
+
+A useful rule is:
+
+> **Only introduce a platform branch when the underlying implementation actually differs.**
+
+## Conditional Compilation and Testing
+
+Conditional compilation creates another testing requirement.
+
+A source file that contains:
+
+```text
+POSIX implementation
+Windows implementation
+```
+
+contains two possible implementations, but compiling one does not validate the other.
+
+Therefore:
+
+```text
+Build on Linux
+     |
+     v
+Tests Linux path
+
+Build on Windows
+     |
+     v
+Tests Windows path
+```
+
+A platform branch that has not been compiled and tested is effectively unverified code. The next section returns to this theme when it discusses portability mistakes such as testing only compilation.
+
+## A Practical Structure
+
+For the editor, a platform-aware implementation fits within the module layout established in Chapter 10:
+
+```text
+editor/
+|
++-- command/        Command Engine
++-- cursor/         Cursor
++-- document/       Document
++-- file/           File Manager
++-- input/          Input Handler, Input Parser, Input Engine
++-- renderer/       Renderer
++-- state/          Editor State
++-- terminal/       Terminal Interface
++-- viewport/       Viewport
+```
+
+Platform-specific behavior is isolated inside the module that owns the responsibility. For example, the Terminal Interface may keep its platform implementations as separate source files:
+
+```text
+terminal/
++-- terminal.h      stable interface used by higher layers
++-- terminal.c      shared implementation
++-- posix.c         POSIX terminal mechanisms
++-- windows.c       Windows terminal mechanisms
+```
+
+The File Manager may likewise contain POSIX and Windows filesystem implementations.
+
+The exact project structure should follow the project's established directory decisions rather than being changed merely for this chapter.
+
+The important principle is the separation:
+
+```text
+Core
+ |
+ v
+Interface
+ |
+ +---- POSIX implementation
+ |
+ +---- Windows implementation
+```
+
+The preprocessor or build system chooses which implementation participates in a particular build.
+
+## The Rule for This Project
+
+For this editor, conditional compilation should follow four rules:
+
+```text
+1. Keep platform checks near platform code.
+
+2. Do not expose platform-specific types to the Core.
+
+3. Prefer stable interfaces over repeated #ifdef blocks.
+
+4. Test every supported platform implementation.
+```
+
+This gives us:
+
+```text
+              Editor Core
+                   |
+                   v
+           Stable Interface
+                   |
+        +----------+----------+
+        |                     |
+     POSIX                 Windows
+        |                     |
+   implementation        implementation
+        |                     |
+    platform code        platform code
+```
+
+This is substantially easier to maintain than distributing platform branches throughout the application.
+
+## Summary
+
+Conditional compilation is a necessary C mechanism for some portability differences, but it must remain subordinate to the architecture.
+
+The key principles are:
+
+1. Conditional compilation selects code at compile time.
+2. It is useful when platform implementations genuinely differ.
+3. Platform checks should remain near platform-specific code.
+4. Platform-specific headers and types should not leak into the Core.
+5. Stable interfaces are preferable to repeated `#ifdef` blocks.
+6. Platform selection should be centralized.
+7. WSL should follow the compilation environment rather than the physical host.
+8. Large conditional blocks may be better represented by separate platform-specific source files.
+9. Implementation sharing should be based on genuine common behavior, not on maximizing shared files.
+10. Conditional compilation is a mechanism, not the abstraction itself.
+11. Every compiled platform path must be tested.
+
+The desired architecture remains:
+
+```text
+                 Core
+                  |
+                  v
+          Stable Interface
+                  |
+          +-------+-------+
+          |               |
+        POSIX          Windows
+          |               |
+     implementation  implementation
+```
+
+The next section addresses **common portability mistakes**: the specific assumptions and shortcuts that break the boundaries established throughout this chapter.

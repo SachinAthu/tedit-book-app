@@ -1,0 +1,286 @@
+---
+title: "37.1 Why Portability Matters"
+description: "Explains why a terminal editor is tightly coupled to its platform and why containing those dependencies stabilizes core editing behavior."
+---
+
+A terminal text editor interacts with two very different worlds.
+
+The first is the **editor itself**: the Document, Cursor, Viewport, Editor State, Command Engine, and other components that implement editing behavior.
+
+The second is the **platform on which the editor runs**: the operating system, terminal interface, filesystem, input mechanisms, and system APIs.
+
+These two worlds should not become unnecessarily dependent on one another.
+
+Portability is the engineering discipline of allowing software to operate correctly across different platforms without requiring the core design to be rewritten for each one.
+
+For our editor, portability does **not** mean that every operating system must behave identically internally. It means that platform differences should be contained so that the editor's core behavior remains stable.
+
+The project already establishes Linux as the primary platform while identifying macOS, BSD, Windows, and WSL as portability targets.
+
+## The Problem of Platform Dependence
+
+Consider a simple operation such as reading a key.
+
+At the conceptual level, the editor needs to know:
+
+```text
+The user pressed the Up Arrow.
+```
+
+But the operating system and terminal environment do not necessarily provide the editor with that high-level concept.
+
+The editor may instead receive bytes:
+
+```text
+Escape
+[
+A
+```
+
+The exact mechanisms involved depend on the terminal environment and platform.
+
+Similarly, saving a document appears simple at the application level:
+
+```text
+Save Document
+```
+
+but eventually requires interaction with operating-system facilities for:
+
+```text
+Open File
+Write Bytes
+Close File
+Rename File
+```
+
+The important distinction is therefore:
+
+```text
+Application Concept
+        │
+        ▼
+Platform Interface
+        │
+        ▼
+Operating System
+```
+
+The application should not need to understand every detail of the operating system merely to perform an editor operation.
+
+## Portability Is Not the Same as Identical Behavior
+
+A common misconception is that portable software must behave identically on every operating system.
+
+That is too strong.
+
+Different platforms may provide different mechanisms while still supporting the same editor behavior.
+
+For example:
+
+```text
+                Save Document
+                     │
+          ┌──────────┴──────────┐
+          ▼                     ▼
+       POSIX                  Windows
+       APIs                    APIs
+          │                     │
+          ▼                     ▼
+      File System           File System
+```
+
+The underlying APIs may differ, but the editor's intended operation remains the same.
+
+This distinction is particularly important for our project because the baseline implementation is designed around POSIX-compatible systems, with Linux as the reference platform.
+
+Portability therefore concerns **preserving the application's contracts while allowing their platform-specific implementation to differ**.
+
+## Why Portability Matters for This Editor
+
+A terminal editor is especially sensitive to its environment.
+
+It depends on facilities such as:
+
+- terminal input
+- raw input mode
+- terminal dimensions
+- terminal output
+- file descriptors
+- filesystem operations
+- terminal restoration
+- platform-specific system interfaces
+
+These are precisely the areas where operating systems can differ.
+
+The existing architecture recognizes this by placing low-level environmental responsibilities in the Platform Layer. The Platform Layer contains components such as the Input Handler, Input Parser, Renderer, File Manager, and Terminal Interface, while the Core Layer contains the editor's fundamental state and data.
+
+This separation gives us an important architectural property:
+
+```text
+                    Editor
+                       │
+          ┌────────────┴────────────┐
+          │                         │
+     Core behavior             Platform behavior
+          │                         │
+          │                    Linux / macOS /
+          │                    BSD / Windows
+          │                         │
+          └────────────┬────────────┘
+                       │
+                  Editor behavior
+```
+
+The core editing model should remain understandable independently of the operating system.
+
+## Portability Reduces Architectural Coupling
+
+Without deliberate boundaries, platform-specific code tends to spread.
+
+For example, imagine the Command Engine directly checking which operating system is running:
+
+```c
+if (running_on_linux)
+{
+    /* Linux-specific operation */
+}
+else
+{
+    /* Windows-specific operation */
+}
+```
+
+If this approach spreads throughout the application, platform knowledge becomes mixed with editor logic.
+
+Eventually the architecture might look like:
+
+```text
+Command Engine
+ ├── Linux code
+ ├── macOS code
+ ├── Windows code
+ └── BSD code
+
+Renderer
+ ├── Linux code
+ ├── macOS code
+ └── Windows code
+
+Document
+ ├── platform-specific code
+ └── editor logic
+```
+
+This creates several problems.
+
+First, every platform addition requires changes to many unrelated modules.
+
+Second, platform-specific behavior becomes difficult to test independently.
+
+Third, the boundaries between editor logic and operating-system logic become unclear.
+
+Finally, the application becomes harder to reason about because a change to one platform can unexpectedly affect unrelated editor behavior.
+
+The purpose of portability architecture is therefore not merely to support more operating systems.
+
+It is also to **control coupling**.
+
+## Portability as a Boundary
+
+The most useful way to think about portability is as a boundary between two kinds of knowledge.
+
+```text
++----------------------------------+
+|        Editor Knowledge          |
+|                                  |
+| Document                         |
+| Cursor                           |
+| Viewport                         |
+| Commands                         |
+| Editor State                     |
++----------------------------------+
+                 │
+                 │ Platform Boundary
+                 ▼
++----------------------------------+
+|       Platform Knowledge         |
+|                                  |
+| Terminal APIs                    |
+| File APIs                        |
+| Raw Mode                         |
+| Operating System Interfaces      |
+| Platform-specific behavior      |
++----------------------------------+
+```
+
+The upper layer asks:
+
+> **What does the editor need to accomplish?**
+
+The lower layer answers:
+
+> **How does this platform provide the required capability?**
+
+This is consistent with the project's existing architectural principle that dependencies should remain controlled and that the Core Layer should not depend on other layers.
+
+## Portability Has a Cost
+
+Portability is not free.
+
+Supporting additional platforms introduces:
+
+- more implementations
+- more testing environments
+- more platform-specific edge cases
+- more build configurations
+- more documentation
+- more opportunities for behavioral differences
+
+A project that supports only one platform can often make stronger assumptions.
+
+A portable project must deliberately avoid assumptions that are not universally valid.
+
+Therefore, portability should not be treated as:
+
+> "Support every platform."
+
+Instead, it should be treated as:
+
+> **"Make platform assumptions explicit, isolate them, and support additional platforms where the architecture and project requirements justify doing so."**
+
+This distinction is important for our editor.
+
+The project does not need to become a universally portable application before implementation begins. Linux remains the reference platform. Portability is introduced as an architectural property so that platform-specific behavior does not become deeply embedded in the editor's core.
+
+## Portability and the Existing Architecture
+
+The architecture already provides much of the foundation required for portability.
+
+The Platform Layer contains the components responsible for interacting with the environment, while the Application and Core Layers operate at higher levels of abstraction.
+
+The project directory structure also reflects this modular approach, with separate modules for components such as `terminal/`, `file/`, `input/`, and `renderer/`.
+
+Chapter 37 therefore does **not introduce portability as a completely new architectural idea**.
+
+Instead, it makes an existing principle explicit:
+
+> **Platform-specific behavior belongs at the platform boundary.**
+
+The remainder of this chapter examines what that boundary contains, how different operating systems affect the editor, and how the implementation can preserve the boundary as platform support grows.
+
+## Summary
+
+Portability matters because a terminal editor interacts directly with operating-system and terminal facilities that are not identical across platforms.
+
+The important principles are:
+
+- Portability does not require identical implementations.
+- Platform differences should be isolated.
+- Editor logic should not depend directly on operating-system details.
+- Portability reduces unnecessary architectural coupling.
+- Supporting additional platforms introduces real engineering costs.
+- Linux remains the reference platform for this project.
+- The Platform Layer provides the architectural boundary for platform-specific behavior.
+
+The next section examines that boundary in more detail and identifies exactly **which parts of the editor belong to the platform and which should remain platform-independent**.

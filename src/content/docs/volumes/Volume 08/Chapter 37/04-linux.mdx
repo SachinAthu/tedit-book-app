@@ -1,0 +1,144 @@
+---
+title: "37.4 Linux"
+description: "Explains why Linux serves as the reference platform and which Linux facilities—descriptors, terminal modes, dimensions—must stay behind the platform boundary."
+---
+
+Linux is the reference platform for this project. The editor is designed first against a Linux/POSIX environment, while macOS, BSD, Windows, and WSL are considered portability targets.
+
+This distinction is important. The goal is not to make Linux behavior disappear behind an abstract layer. Linux is the **primary implementation environment** against which the architecture is developed and validated. Portability means that platform-specific assumptions remain isolated enough that other implementations can be introduced later. The Software Requirements Specification (SRS, Chapter 7) explicitly identifies Linux as the primary platform and POSIX-compatible systems as the target environment.
+
+## Why Linux Is the Reference Platform
+
+A project needs a concrete environment against which its behavior can be defined and tested. For this editor, that environment is Linux.
+
+```text
+                 Editor Design
+                       |
+                       v
+               +---------------+
+               |     Linux     |
+               | Reference OS  |
+               +---------------+
+                       |
+           +-----------+-----------+
+           |           |           |
+         macOS        BSD       Windows
+        portability  portability portability
+```
+
+Linux therefore provides the baseline for:
+
+- terminal interaction,
+- POSIX APIs,
+- file operations,
+- terminal mode management,
+- process and descriptor behavior,
+- development and testing.
+
+The reference platform establishes the initial implementation. The architecture determines how much of that implementation remains reusable elsewhere.
+
+## Linux and POSIX
+
+Most of the system-level facilities required by the editor can be expressed through interfaces commonly available on POSIX systems (Section 37.3). The application does not normally need to know the internal implementation of those facilities.
+
+For example, the File Manager needs reliable file operations. It does not need the Document model to understand how Linux implements those operations. Likewise, the Terminal Interface needs to configure and communicate with the terminal environment; the Cursor Engine should not need to know how Linux represents terminal devices.
+
+## File Descriptors
+
+Linux exposes many resources through **file descriptors**: integers identifying an open resource within a process.
+
+For a terminal editor, descriptors are relevant because terminal input and output are commonly accessed through standard streams or their underlying descriptors.
+
+```text
+             Editor Process
+                   |
+        +----------+----------+
+        |          |          |
+       stdin     stdout     stderr
+        |          |          |
+        v          v          v
+      input      output     diagnostics
+```
+
+The editor's normal runtime therefore has separate paths for input, terminal output, and diagnostic output. This separation is important for debugging: the Renderer should produce terminal output through the normal terminal-output path, while diagnostics should not accidentally become part of the rendered screen.
+
+## The Terminal as a Device Interface
+
+From the editor's perspective, the terminal is not simply a screen; it is an interactive input/output environment. The editor receives input bytes and sequences and sends output bytes and escape sequences back.
+
+This explains why terminal operation belongs in the Platform Layer. The Core should reason about editor concepts ("Arrow Up", "Character 'a'") rather than raw terminal sequences. The conversion from terminal representation to editor-level events belongs to the input path established in Section 37.2.
+
+## Terminal Modes on Linux
+
+Interactive terminal applications need control over how terminal input is delivered. Raw terminal operation was selected earlier as an architectural decision, and Chapter 5 explains raw mode and terminal state management; this section does not repeat that mechanism.
+
+The portability observation is **where that mechanism belongs**: the Input Engine should not directly manipulate Linux terminal configuration. The Terminal Interface owns the platform interaction, following the component responsibilities already defined by the architecture.
+
+## Terminal Dimensions
+
+A full-screen editor must know the dimensions of the terminal. Those dimensions affect viewport size, status bar and message bar placement, rendering, cursor visibility, and scrolling.
+
+The important principle is that the **mechanism used to obtain the dimensions is platform-facing**, while the dimensions themselves are editor data. Once obtained, the Core does not need to know how they were discovered. This is another example of the platform boundary introduced in Section 37.2.
+
+## Linux Filesystem Interaction
+
+The editor depends on the operating system for persistent files. Linux provides the underlying filesystem operations, but the editor's persistence policy is higher-level: the File Manager turns the editor's save request into filesystem operations, and the safe-save policy (Chapter 23) is an editor requirement rather than a Linux system call.
+
+The policy should not become tied to a particular Linux system call merely because Linux is the reference platform.
+
+## Linux-Specific Code Should Have a Home
+
+A common portability problem is allowing Linux-specific code to appear wherever it happens to be convenient. `document.c`, `cursor.c`, `renderer.c`, `command.c`, `input.c`, and `terminal.c` should not gradually become filled with Linux-specific branches.
+
+Instead, platform-sensitive code should have an identifiable home, following the module-oriented organization established in Chapter 10, in which responsibilities are separated into modules (`command/`, `cursor/`, `document/`, `file/`, `input/`, `renderer/`, `state/`, `terminal/`, and `viewport/`). The exact directory organization is defined by the project's project-structure decisions; the principle is that platform-sensitive responsibilities remain identifiable.
+
+## Linux as a Baseline, Not a Shortcut
+
+Because Linux is the development target, it is tempting to write code according to whatever Linux behavior happens to work. "It works on my Linux terminal" is not sufficient evidence of portability.
+
+The stronger question is:
+
+> **Is this behavior part of the editor's contract, part of POSIX, or merely an observed property of this particular environment?**
+
+```text
+Editor contract
+      |
+      +---- must preserve
+
+POSIX behavior
+      |
+      +---- preferred common interface
+
+Linux behavior
+      |
+      +---- isolate when platform-specific
+
+Terminal emulator behavior
+      |
+      +---- validate rather than assume
+```
+
+This distinction prevents accidental dependencies from becoming architectural assumptions.
+
+## Linux-Specific Assumptions
+
+Some assumptions are reasonable for the reference implementation: the primary development environment is Linux, POSIX interfaces are available, terminal operation follows the Unix/POSIX model, and the editor can use the platform facilities defined by the project architecture.
+
+However, assumptions should remain **explicit**. An assumption hidden inside a Core component is difficult to replace; an assumption isolated inside the Platform Layer is easy to replace.
+
+> **The problem is not having platform assumptions. The problem is allowing platform assumptions to become invisible dependencies throughout the system.**
+
+## Summary
+
+Linux is the reference platform for the editor, but it should not become an implicit dependency of the entire system. The important principles are:
+
+1. **Linux provides the primary development and execution environment.**
+2. **POSIX provides the principal common system interface.**
+3. **File descriptors and filesystem operations are platform-facing mechanisms.**
+4. **Linux-specific assumptions should remain explicit and localized.**
+5. **The Core should remain independent of Linux even though Linux is the reference platform.**
+6. **Linux behavior must not automatically be treated as portable behavior.**
+
+The architecture does not attempt to eliminate Linux dependencies. It **contains them**.
+
+The next section examines **macOS and BSD**, the other POSIX-based targets. They demonstrate what remains identical because of the POSIX foundation and what must still be treated as platform-specific rather than assumed to be identical to Linux.

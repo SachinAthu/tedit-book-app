@@ -1,0 +1,149 @@
+---
+title: "37.5 macOS and BSD"
+description: "Shows what macOS and BSD share with Linux through POSIX, where their behavior still differs, and why a single broad Unix abstraction is a mistake."
+---
+
+macOS and BSD are useful portability targets because they demonstrate an important property of the architecture: **a platform can be different from Linux while still sharing the POSIX foundation used by the editor.**
+
+The purpose of this section is not to teach macOS or BSD programming. The editor does not need separate macOS- or BSD-oriented architectures. Instead, these systems help identify which parts of the Linux implementation are genuinely portable and which parts are merely Linux-specific assumptions.
+
+## Shared POSIX, Different Systems
+
+macOS, BSD, and Linux can share substantial portions of the platform-facing implementation because they expose common Unix/POSIX interfaces:
+
+```text
+                  Editor
+                    |
+                    v
+           Platform Boundary
+                    |
+                    v
+             POSIX Interfaces
+                    |
+          +---------+---------+
+          |         |         |
+        Linux     macOS      BSD
+```
+
+However, shared interfaces do not imply identical platforms:
+
+```text
+POSIX compatibility
+        ≠
+identical operating system
+```
+
+macOS and Linux have different operating-system implementations, system environments, and surrounding tooling. The common interface provides a portability foundation; it does not erase platform differences. Code should not assume that "POSIX-compatible" means "Linux-compatible" or "identical behavior."
+
+This is the central lesson these two targets teach.
+
+## The Danger of Linux Extensions
+
+One of the most important portability risks is accidentally depending on an extension provided by Linux rather than by the common interface being targeted.
+
+If a higher-level component directly depends on a Linux-specific interface, the dependency becomes difficult to remove later. The better structure is:
+
+```text
+             Application
+                  |
+                  v
+        Platform Interface
+                  |
+        +---------+---------+
+        |                   |
+      POSIX             Linux-specific
+   implementation       implementation
+        |                   |
+        v                   v
+   Linux/macOS/BSD        Linux
+```
+
+The second structure makes the dependency explicit and local. Testing on macOS or BSD helps expose assumptions that are accidentally Linux-specific, even though these systems are all Unix-like.
+
+## What Should Not Be Assumed
+
+The following assumptions should be avoided:
+
+```text
+"macOS is Unix-like, therefore everything behaves like Linux."
+
+"POSIX means every terminal behaves identically."
+
+"If it works on Linux, the same terminal behavior is guaranteed on macOS."
+
+"Every system exposes the same extensions."
+
+"Platform-specific behavior can be ignored because the APIs look similar."
+```
+
+A better approach is:
+
+```text
+Common requirement
+       |
+       v
+Common interface where possible
+       |
+       v
+Platform-specific implementation where necessary
+       |
+       v
+Platform-specific validation
+```
+
+This is the same strategy used throughout the architecture: define the responsibility first, then isolate the mechanism used to fulfill it.
+
+## The Terminal Emulator Still Matters
+
+Operating-system portability is only part of terminal portability. Even on the same operating system, the editor can run inside different terminal environments.
+
+The operating system and terminal emulator are separate components of the runtime environment. A successful macOS or BSD implementation does not mean that every terminal environment will behave identically.
+
+> **The Platform Layer must isolate operating-system dependencies, while the terminal-facing components must also avoid unnecessary assumptions about a particular terminal emulator.**
+
+## Avoiding a "Unix Layer" That Is Too Broad
+
+After recognizing that Linux, macOS, and BSD share many interfaces, it is tempting to create a giant abstraction called `UnixPlatform` and put every Unix-specific concern into it.
+
+That can become too broad: a single `UnixPlatform` containing Terminal, Files, Input, Processes, Signals, Environment, Configuration, Rendering, and Editor State recreates the coupling the Platform Layer was intended to prevent.
+
+The better approach is to keep abstractions aligned with **actual responsibilities**. Terminal interaction and file interaction are distinct concerns even when both use POSIX interfaces:
+
+```text
+Platform
+├── Terminal Interface
+├── Input Handler
+└── File Manager
+```
+
+The fact that multiple components use POSIX does not mean they must become one component.
+
+## A Stable Core Across POSIX Systems
+
+The strongest portability test remains the Core Layer. If the Document implementation contains no operating-system dependencies, it should not matter whether the program is running on Linux, macOS, or BSD. The Document still represents the same logical text, the Cursor the same logical position, and the Viewport the same visible region.
+
+The platform changes the **mechanism of interaction with the environment**, not the meaning of the editor's fundamental data structures.
+
+This is why the project does not need a separate `MacDocument`, `MacCursor`, or `MacCommandEngine`. There is one editor model, with platform-specific implementations only where the environment actually differs.
+
+## The Main Lesson
+
+macOS and BSD demonstrate why portability should be based on **boundaries rather than assumptions**.
+
+The editor does not need to ask "Am I running on Linux, macOS, or BSD?" for every operation. The relevant platform-facing component knows how to perform its responsibility in the current environment, while the higher-level editor continues to reason in terms of `Read Input`, `Execute Command`, `Save Document`, `Render Frame`, and `Move Cursor`.
+
+## Summary
+
+macOS and BSD reinforce the distinction between a portable POSIX-oriented design and assumptions specifically tied to Linux. The key principles are:
+
+1. **macOS and BSD share important POSIX foundations with Linux.**
+2. **Shared interfaces allow substantial implementation reuse.**
+3. **POSIX compatibility does not imply identical behavior.**
+4. **Linux-specific extensions should remain isolated when they are required.**
+5. **The terminal emulator remains a separate concern from the operating system.**
+6. **The Platform Layer should stay organized around actual responsibilities rather than one giant "Unix" abstraction.**
+7. **The Core should remain unchanged by the choice among Linux, macOS, and BSD wherever the editor's semantics are identical.**
+
+The goal is therefore not **Linux code versus macOS code versus BSD code**. It is a stable editor over stable interfaces, with platform implementations beneath them.
+
+The next section moves outside the Unix/POSIX family to **Windows**, where the platform boundary becomes much more significant.

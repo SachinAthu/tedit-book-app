@@ -1,0 +1,433 @@
+---
+title: "37.3 POSIX and Platform APIs"
+description: "Describes the C standard library, POSIX, and native platform APIs as layered interfaces and explains when each dependency level is appropriate."
+---
+
+The platform boundary established in the previous section becomes useful only when we understand what lies on each side of it. A terminal editor does not communicate with an operating system through one universal interface. It uses several layers of APIs, each providing a different level of portability.
+
+For this project, the important distinction is between:
+
+- the **C standard library**,
+- **POSIX APIs**,
+- **platform-specific APIs**, and
+- the **terminal interface** exposed through a terminal emulator.
+
+The editor should use the most portable interface that satisfies a requirement and isolate platform-specific interfaces when they are unavoidable.
+
+This follows the project's architectural principle that platform-dependent behavior should be isolated where practical.
+
+## The C Standard Library
+
+C99 provides a standard library intended to be portable across conforming C implementations.
+
+Examples include:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+```
+
+These facilities provide operations such as:
+
+- memory allocation,
+- string manipulation,
+- formatted output,
+- file streams,
+- numeric operations,
+- character handling.
+
+For example:
+
+```c
+char *buffer = malloc(size);
+```
+
+does not inherently depend on Linux, macOS, BSD, or Windows.
+
+The C standard library therefore forms one of the most portable layers available to the editor.
+
+However, the terminal editor cannot be implemented entirely with the C standard library.
+
+Interactive terminal operation requires capabilities such as:
+
+- reading input without waiting for a complete line,
+- controlling terminal modes,
+- working with file descriptors,
+- obtaining terminal characteristics,
+- writing directly to terminal output,
+- interacting with the underlying operating-system environment.
+
+These capabilities lie outside the C language standard itself.
+
+## POSIX as a Common Interface
+
+POSIX provides a standardized set of interfaces commonly available on Unix-like operating systems.
+
+For the editor, POSIX is particularly important because the project targets POSIX-compatible systems and uses Linux as its primary platform. The Software Requirements Specification (SRS, Chapter 7) explicitly establishes C and POSIX as the foundation of the system.
+
+Conceptually:
+
+```text
+              Editor
+                 |
+                 v
+        +------------------+
+        |   POSIX APIs     |
+        +------------------+
+                 |
+       +---------+---------+
+       |         |         |
+     Linux     macOS      BSD
+```
+
+The same source-level operation can therefore often be expressed through the same API on several Unix-like systems.
+
+For example, the editor can conceptually request:
+
+```c
+read(fd, buffer, size);
+```
+
+without needing separate implementations of the basic operation for Linux, macOS, and BSD.
+
+The important point is that **POSIX is an interface contract, not an operating system**.
+
+Each operating system provides its own implementation of that contract.
+
+Therefore:
+
+```text
+POSIX API
+    |
+    +---- Linux implementation
+    |
+    +---- macOS implementation
+    |
+    +---- BSD implementation
+```
+
+The source code can often remain the same even though the underlying implementation is different.
+
+## POSIX Does Not Mean Identical Behavior
+
+Using POSIX APIs greatly improves portability, but it does not mean that every platform behaves identically.
+
+An editor operates at the intersection of several systems:
+
+```text
+C Language
+     |
+     v
+POSIX Interface
+     |
+     v
+Operating System
+     |
+     v
+TTY / PTY
+     |
+     v
+Terminal Emulator
+```
+
+Differences can appear at any of these boundaries.
+
+For example, two systems may provide the same POSIX function while differing in:
+
+- available extensions,
+- terminal configuration behavior,
+- default environment,
+- filesystem characteristics,
+- device behavior,
+- signal behavior,
+- terminal emulator integration.
+
+Consequently, portability cannot be achieved merely by replacing one operating-system API with a POSIX function.
+
+The editor must also avoid assuming behavior that is not guaranteed by its architectural contracts.
+
+## POSIX and the Editor's Platform Layer
+
+The existing architecture already provides a natural location for these dependencies.
+
+The system architecture separates the editor into Application, Core, and Platform layers. The Core is not supposed to depend on the Platform layer, while platform-facing components handle facilities such as terminal interaction and file I/O.
+
+This gives us:
+
+```text
+                Application
+                     |
+                     v
+                  Core
+                     |
+              platform interfaces
+                     |
+                     v
+                 Platform
+                     |
+              +------+------+
+              |             |
+          POSIX APIs   Platform APIs
+```
+
+For example, the File Manager may internally use:
+
+```c
+open()
+read()
+write()
+close()
+rename()
+```
+
+while the rest of the editor does not need to know how those operations are implemented by the operating system.
+
+Likewise, the Terminal Interface can encapsulate terminal-specific operations.
+
+The architectural rule is therefore:
+
+> **POSIX APIs may be used inside platform-facing components without allowing POSIX-specific details to leak into the editor's core model.**
+
+## POSIX APIs Are Not Terminal Protocols
+
+Another important distinction is between an operating-system API and a terminal protocol.
+
+They solve different problems.
+
+A POSIX API might provide a mechanism for writing bytes:
+
+```c
+write(fd, data, length);
+```
+
+The bytes written might contain an ANSI escape sequence:
+
+```text
+ESC [ 2 J
+```
+
+The operating system transports those bytes toward the terminal.
+
+The terminal emulator then interprets the escape sequence according to its terminal behavior.
+
+Conceptually:
+
+```text
+Editor
+  |
+  | write()
+  v
+Operating System
+  |
+  | bytes
+  v
+PTY / Terminal Connection
+  |
+  | bytes
+  v
+Terminal Emulator
+  |
+  | interprets ANSI sequence
+  v
+Screen
+```
+
+Therefore, these are separate concerns:
+
+| Concern                       | Responsible layer     |
+| ----------------------------- | --------------------- |
+| Writing bytes                 | OS/POSIX interface    |
+| Configuring terminal input    | Terminal/OS interface |
+| Transporting terminal data    | TTY/PTY subsystem     |
+| Interpreting escape sequences | Terminal emulator     |
+| Deciding what should appear   | Renderer              |
+
+This distinction is particularly important because ANSI escape sequences were introduced earlier in the book. Chapter 37 should not treat ANSI as an operating-system API.
+
+## When POSIX Is Not Enough
+
+Sometimes the common POSIX interface does not provide everything the editor needs in a sufficiently portable way.
+
+A platform may expose additional APIs or mechanisms that are useful for a particular environment.
+
+The wrong architectural response is to spread those APIs throughout the codebase:
+
+```c
+#ifdef PLATFORM_A
+    /* special behavior */
+#endif
+
+#ifdef PLATFORM_B
+    /* another special behavior */
+#endif
+
+#ifdef PLATFORM_C
+    /* something else */
+#endif
+```
+
+Instead, the platform-specific operation should be isolated.
+
+```text
+                 Core
+                  |
+                  v
+        Stable platform interface
+                  |
+          +-------+-------+
+          |       |       |
+       Linux    macOS    BSD
+       impl.    impl.    impl.
+```
+
+The core asks **what operation is required**.
+
+The platform implementation determines **how that operation is performed**.
+
+This preserves the distinction established in the previous section between editor behavior and platform mechanisms.
+
+## Platform APIs and Windows
+
+Windows is particularly important because its native system interfaces differ substantially from the POSIX environment used by Linux, macOS, and BSD.
+
+This does not mean that the editor's architecture must be redesigned for Windows.
+
+Instead, the architectural question becomes:
+
+```text
+             Editor Core
+                  |
+          Stable interface
+                  |
+        +---------+---------+
+        |                   |
+   POSIX implementation   Windows implementation
+        |                   |
+   Linux/macOS/BSD       Windows APIs
+```
+
+The common editor concepts remain unchanged:
+
+- Document,
+- Cursor,
+- Viewport,
+- Editor State,
+- Commands,
+- buffers,
+- windows,
+- rendering decisions.
+
+Only the mechanisms required to interact with the operating system and terminal environment need to differ.
+
+The project's architecture specifically treats platform-dependent behavior as something that should be isolated so that future portability remains manageable.
+
+## Choosing the Lowest Necessary Dependency
+
+A useful portability rule is to avoid depending on a lower-level or more platform-specific interface unless the editor actually needs it.
+
+Consider three possible levels:
+
+```text
+Most portable
+      |
+      v
+C standard library
+      |
+      v
+POSIX interface
+      |
+      v
+Platform-specific API
+      |
+      v
+Least portable
+```
+
+The editor should generally prefer the highest level that provides the required functionality.
+
+For example:
+
+```text
+Memory allocation
+        |
+        v
+      malloc()
+```
+
+There is no reason to introduce a platform-specific allocator merely to allocate ordinary editor memory.
+
+Similarly:
+
+```text
+Basic file operation
+        |
+        v
+     POSIX API
+```
+
+is preferable to introducing a Linux-specific system interface when the POSIX operation already satisfies the requirement.
+
+A platform-specific API becomes justified when the required behavior cannot reasonably be provided by the common interface.
+
+## Portability Is an Architectural Property
+
+The most important conclusion is that portability should not be treated as a final feature added after implementation.
+
+It should emerge from the architecture.
+
+A portable architecture looks like:
+
+```text
++------------------------------------------------+
+|                Editor Core                    |
+|                                                |
+| Document | Cursor | Viewport | Editor State   |
++-------------------------+----------------------+
+                          |
+                          | stable contracts
+                          v
++------------------------------------------------+
+|              Platform Layer                   |
+|                                                |
+| Terminal | File Manager | Input Handling       |
++-------------------------+----------------------+
+                          |
+                          v
++------------------------------------------------+
+|          OS / POSIX / Platform APIs            |
++-------------------------+----------------------+
+                          |
+                          v
++------------------------------------------------+
+|          Terminal / Filesystem / OS            |
++------------------------------------------------+
+```
+
+The Core remains concerned with **editor semantics**.
+
+The Platform Layer remains concerned with **environmental mechanisms**.
+
+The operating system provides the actual facilities.
+
+This separation allows the project to use POSIX as its primary foundation without making every part of the editor POSIX-dependent.
+
+## Summary
+
+POSIX provides an important portability foundation for the editor, but it is only one layer of the system.
+
+The key distinctions are:
+
+1. **The C standard library** provides broadly portable language-level facilities.
+2. **POSIX** provides common system interfaces across Unix-like platforms.
+3. **Platform-specific APIs** provide capabilities outside the common interface.
+4. **Terminal protocols** such as ANSI escape sequences are distinct from operating-system APIs.
+5. **The Platform Layer** should contain operating-system and terminal dependencies.
+6. **The Core** should depend on stable editor abstractions rather than platform mechanisms.
+7. POSIX improves portability but does not guarantee identical platform behavior.
+8. Portability should be designed into the architecture rather than added through scattered conditional code.
+
+The project's existing layered architecture provides the foundation for this separation.
+
+The next section examines **Linux**, the reference platform for this project. Rather than introducing Linux as a general operating-system tutorial, we will identify the Linux facilities that matter specifically to the editor and establish which assumptions should remain Linux-specific.
