@@ -1,0 +1,196 @@
+---
+title: "41.11 Tree-sitter and the Language Server"
+description: "Explains why Tree-sitter supplies local syntactic structure while LSP supplies external language intelligence, and how the two coexist."
+---
+
+Tree-sitter and the Language Server Protocol (LSP) address different layers of editor functionality. They are therefore complementary rather than competing technologies.
+
+A useful architectural view is:
+
+```text
+                     Document
+                        │
+           ┌────────────┴────────────┐
+           ▼                         ▼
+      Tree-sitter                   LSP
+           │                         │
+           ▼                         ▼
+   Local source structure      External language
+                               intelligence
+           │                         │
+           └────────────┬────────────┘
+                        ▼
+                 Editor Features
+```
+
+Tree-sitter operates primarily on the source text itself. It gives the editor a continuously updated structural representation that can be used for features such as highlighting, folding, structural selection, and syntax-aware navigation.
+
+LSP serves a different purpose. It allows the editor to communicate with a language server that provides higher-level language intelligence such as diagnostics, completion, hover information, and symbol relationships.
+
+The two systems can therefore coexist.
+
+## Different Responsibilities
+
+Consider a C source file:
+
+```c
+int calculate(int value)
+{
+    return value + 10;
+}
+```
+
+Tree-sitter can help the editor determine that:
+
+```text
+calculate
+    │
+    ├── parameter: value
+    └── function body
+```
+
+This information is available locally from parsing the document.
+
+An LSP server, however, may provide information that requires broader knowledge of the program:
+
+```text
+calculate()
+    │
+    ├── declaration
+    ├── references
+    ├── type information
+    └── diagnostics
+```
+
+The distinction can be summarized as:
+
+```text
+Tree-sitter
+    │
+    └── What is the structure of this source text?
+
+LSP
+    │
+    └── What does this source mean within the language/project?
+```
+
+The boundary is not absolute, but it is useful architecturally.
+
+## Why Both Can Be Useful
+
+A modern editor may use Tree-sitter for immediate, local structural operations while using LSP for services that require semantic or project-wide knowledge.
+
+For example:
+
+```text
+User edits source
+       │
+       ├──────────────► Tree-sitter
+       │                    │
+       │                    ├── update syntax structure
+       │                    ├── update highlighting
+       │                    └── update folding
+       │
+       └──────────────► LSP
+                            │
+                            ├── diagnostics
+                            ├── completion
+                            ├── hover
+                            └── symbol information
+```
+
+This separation can also be useful for responsiveness.
+
+A local syntax tree can be updated without waiting for communication with an external language server. Conversely, an LSP request can provide information that would be inappropriate or impractical for the editor to derive solely from its own syntax tree.
+
+## They Can Also Exchange Information Indirectly
+
+The two systems do not have to remain completely isolated.
+
+For example, an editor may use syntax information to determine the context in which an LSP request is being made.
+
+A completion request occurring inside:
+
+```c
+object.
+```
+
+can be associated with a particular syntactic context before the request is sent to the language server.
+
+Likewise, LSP results can be mapped back onto source ranges that the editor already represents in its document and rendering systems.
+
+The architecture therefore becomes:
+
+```text
+                         Document
+                            │
+              ┌─────────────┴─────────────┐
+              │                           │
+              ▼                           ▼
+         Tree-sitter                    LSP
+              │                           │
+       local structure              language services
+              │                           │
+              └─────────────┬─────────────┘
+                            ▼
+                       Editor State
+                            │
+                            ▼
+                        Renderer
+```
+
+The important point is that neither system should become the owner of the Document.
+
+The Document remains the authoritative editable text representation. Tree-sitter maintains derived structural information, while LSP provides external language intelligence.
+
+## Architectural Boundary
+
+This leads to a clean separation of responsibilities:
+
+| Component       | Primary responsibility               |
+| --------------- | ------------------------------------ |
+| Document        | Authoritative editable text          |
+| Tree-sitter     | Local syntactic structure            |
+| LSP client      | Communication with language services |
+| Language server | Language/project intelligence        |
+| Editor State    | Coordinates user-visible state       |
+| Renderer        | Presents the resulting state         |
+
+This boundary is especially important for our architecture because the baseline editor does not depend on either Tree-sitter or LSP.
+
+Both are advanced capabilities that can be integrated later without changing the fundamental ownership model of the editor.
+
+The result is not:
+
+```text
+Document → Tree-sitter → LSP → Renderer
+```
+
+but rather:
+
+```text
+                    Document
+                       │
+          ┌────────────┴────────────┐
+          ▼                         ▼
+     Local analysis            Language services
+          │                         │
+          └────────────┬────────────┘
+                       ▼
+                  Editor State
+                       │
+                       ▼
+                   Renderer
+```
+
+Tree-sitter and LSP therefore occupy **different architectural layers**. One provides local syntactic structure; the other provides language intelligence through an external protocol. Combining them can produce a powerful editor, but neither requires the other.
+
+## Summary
+
+Tree-sitter and LSP operate at different layers. Tree-sitter provides local syntactic structure derived directly from the source, while LSP provides higher-level language intelligence such as diagnostics, completion, and symbol information through an external server.
+
+The two are complementary rather than competing: an editor can use Tree-sitter for immediate local operations and LSP for semantic or project-wide services, and they can exchange information indirectly through source ranges. The Document remains the single authoritative text representation for both.
+
+Because the two systems answer different questions, an editor can adopt either, both, or neither without redesigning its ownership model. The boundary is what allows local structure and external intelligence to evolve independently.
+
+In the next section, we will examine the costs of this richer approach, focusing on complexity and performance.

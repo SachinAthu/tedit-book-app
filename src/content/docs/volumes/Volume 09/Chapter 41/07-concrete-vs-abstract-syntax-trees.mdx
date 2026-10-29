@@ -1,0 +1,468 @@
+---
+title: "41.7 Concrete Syntax Trees vs Abstract Syntax Trees"
+description: "Contrasts source-preserving concrete syntax trees with abstract syntax trees and explains why editors need the concrete details."
+---
+
+A parser can represent source code at different levels of detail. Two important approaches are the **Concrete Syntax Tree (CST)** and the **Abstract Syntax Tree (AST)**.
+
+The distinction matters because an editor has different requirements from a compiler.
+
+A compiler often wants a compact representation of the program's meaning. An editor often needs to preserve detailed information about the original source so that it can relate structural information back to the text being edited.
+
+## Concrete Syntax Trees
+
+A Concrete Syntax Tree represents the source according to the grammar while retaining details of the concrete syntax.
+
+Consider:
+
+```c
+if (condition) {
+    calculate();
+}
+```
+
+A conceptual CST might preserve the syntactic details:
+
+```text
+if_statement
+├── "if"
+├── "("
+├── condition
+├── ")"
+├── "{"
+├── expression_statement
+│   └── call_expression
+│       ├── calculate
+│       ├── "("
+│       └── ")"
+├── ";"
+└── "}"
+```
+
+The punctuation is significant here.
+
+The tree represents not only the larger syntactic constructs but also the concrete pieces that make up the source.
+
+This makes the tree closely connected to the actual text.
+
+## Abstract Syntax Trees
+
+An Abstract Syntax Tree deliberately removes some details of the concrete syntax.
+
+For the same source:
+
+```c
+if (condition) {
+    calculate();
+}
+```
+
+an AST might conceptually look more like:
+
+```text
+if_statement
+├── condition
+└── body
+    └── call_expression
+        └── calculate
+```
+
+The parentheses, braces, and other syntactic details may no longer appear as separate nodes.
+
+The AST focuses on the structure that is useful for understanding the program rather than preserving every detail of how that structure was written.
+
+The distinction can therefore be summarized as:
+
+```text
+Concrete Syntax Tree
+    │
+    ├── structure
+    ├── syntax details
+    └── source-oriented information
+
+Abstract Syntax Tree
+    │
+    ├── structure
+    └── abstracted program representation
+```
+
+## Why Compilers Commonly Prefer ASTs
+
+After parsing, a compiler often needs to perform operations such as semantic analysis, type checking, optimization, and code generation.
+
+For these tasks, many concrete syntax details are unnecessary.
+
+For example, different pieces of concrete syntax may represent the same conceptual operation.
+
+The compiler can therefore benefit from a representation that focuses on the program's structural and semantic organization.
+
+Conceptually:
+
+```text
+Source
+  │
+  ▼
+Concrete Syntax
+  │
+  ▼
+Abstract Representation
+  │
+  ▼
+Semantic Analysis
+  │
+  ▼
+Code Generation
+```
+
+The AST becomes a convenient representation for later compiler stages.
+
+## Why Editors Have Different Requirements
+
+An editor is not primarily trying to compile the source.
+
+It needs to work with the text itself.
+
+The user may care about:
+
+- exact source locations
+- punctuation
+- delimiters
+- comments
+- whitespace
+- ranges of text
+- the relationship between syntax and source positions
+
+Consider:
+
+```c
+if (condition) {
+    calculate();
+}
+```
+
+An editor may need to know exactly where the `{` and `}` occur because those characters define a region that can be folded.
+
+Likewise, matching the opening and closing delimiters requires access to the concrete syntax.
+
+Therefore, removing too much information can make editor features unnecessarily difficult.
+
+## Source Preservation
+
+Consider two pieces of source:
+
+```c
+x = a + b;
+```
+
+and:
+
+```c
+x=a+b;
+```
+
+From a program-structure perspective, they may represent the same assignment expression.
+
+An AST can reasonably represent both using essentially the same abstract structure:
+
+```text
+assignment
+├── x
+└── addition
+    ├── a
+    └── b
+```
+
+But an editor must distinguish the actual source text because the user is editing one specific representation.
+
+The whitespace is part of the document even if it has little or no semantic significance to the compiler.
+
+This leads to an important architectural principle:
+
+> **Program structure and source representation are related, but they are not the same thing.**
+
+The Document owns the actual source text.
+
+The syntax tree provides structural information about that text.
+
+## Comments Illustrate the Difference
+
+Comments provide another useful example.
+
+Consider:
+
+```c
+int value = 10; /* important value */
+```
+
+A compiler's abstract representation may not need the comment when performing semantic analysis.
+
+An editor, however, must preserve it because the comment is part of the user's document.
+
+This distinction reinforces our existing architecture:
+
+```text
+                    Document
+                       │
+                       │ authoritative source
+                       ▼
+                  Parser / Analysis
+                       │
+                       ▼
+                  Syntax Structure
+```
+
+The parser should not become the mechanism through which source text is preserved.
+
+The Document remains responsible for the actual contents of the file.
+
+## Concrete Syntax Is Valuable for Editing
+
+The more closely a syntax representation corresponds to the source, the easier it can be to connect syntax with editing operations.
+
+For example:
+
+```text
+Source
+  │
+  ▼
+Concrete Syntax Tree
+  │
+  ├── node ranges
+  ├── delimiters
+  ├── nested constructs
+  └── source-oriented structure
+```
+
+An editor can use this information to implement features such as:
+
+```text
+Syntax Tree
+    │
+    ├── Code Folding
+    ├── Structural Selection
+    ├── Delimiter Matching
+    ├── Syntax Highlighting
+    └── Structural Navigation
+```
+
+Not every feature requires every part of the tree, but the detailed representation provides useful information from which these features can be derived.
+
+## Why Tree-sitter Fits the Editor Model
+
+This distinction is particularly relevant to Tree-sitter.
+
+Tree-sitter is designed around a concrete, source-oriented syntax representation rather than requiring the editor to reduce the source immediately to a compiler-style abstract representation.
+
+Conceptually:
+
+```text
+Document
+    │
+    ▼
+Tree-sitter
+    │
+    ▼
+Concrete Syntax Tree
+    │
+    ├── source structure
+    ├── node relationships
+    └── source ranges
+```
+
+This makes the resulting tree useful for interactive editor features that need to relate syntax back to the source document.
+
+The important point for our architecture is not that a CST is universally superior to an AST.
+
+It is that **the representation should match the problem being solved**.
+
+## CST and AST Are Not Opposites
+
+It is tempting to treat CST and AST as competing choices:
+
+```text
+CST vs AST
+```
+
+A better way to understand them is as different levels of representation.
+
+```text
+Source Text
+     │
+     ▼
+Concrete Syntax
+     │
+     ▼
+Abstract Structure
+```
+
+A system may use one, the other, or both.
+
+For example:
+
+```text
+Source
+  │
+  ▼
+CST
+  │
+  ▼
+AST
+  │
+  ▼
+Semantic Analysis
+```
+
+A compiler-oriented system may eventually discard much of the concrete representation.
+
+An editor-oriented system may retain the concrete representation because it needs to remain closely connected to the source.
+
+## The Editor's Perspective
+
+From the editor's perspective, the distinction can be summarized like this:
+
+| Representation | Primary concern              |
+| -------------- | ---------------------------- |
+| Document       | Exact source text            |
+| Tokens         | Lexical units                |
+| CST            | Concrete syntactic structure |
+| AST            | Abstract program structure   |
+
+These representations are not necessarily substitutes for one another.
+
+They answer different questions.
+
+```text
+Document:
+"What text exists?"
+
+Tokens:
+"What lexical pieces exist?"
+
+CST:
+"How is the source syntactically structured?"
+
+AST:
+"What abstract program structure does it represent?"
+```
+
+For our editor, the Document remains the authoritative answer to the first question.
+
+Tree-sitter provides useful information for the third.
+
+## Why This Distinction Matters for Incremental Parsing
+
+The distinction also affects incremental parsing.
+
+If the parser maintains a source-oriented tree, edits can be related directly to the syntax nodes and their source ranges.
+
+Conceptually:
+
+```text
+Old Document
+     │
+     ▼
+Old Syntax Tree
+     │
+     │ edit
+     ▼
+New Document
+     │
+     ▼
+Updated Syntax Tree
+```
+
+Because the syntax representation remains closely associated with source positions, the parser can maintain structural information as source text changes.
+
+This fits the interactive editing model more naturally than treating the source as merely an input to a one-time compiler pipeline.
+
+## What We Need From the Tree
+
+For our editor, the important requirements are therefore not:
+
+> Build the smallest possible representation of the program.
+
+Instead, we need a representation that can provide:
+
+```text
+Structural information
+        +
+Source locations
+        +
+Nested relationships
+        +
+Efficient updates
+```
+
+This combination makes a concrete, incremental syntax tree particularly useful.
+
+The tree becomes a bridge between:
+
+```text
+User-visible source text
+          │
+          ▼
+     Syntax structure
+          │
+          ▼
+    Editor features
+```
+
+## Keeping the Responsibilities Separate
+
+Even with a concrete syntax tree, we should not allow the parser to absorb responsibilities belonging to other components.
+
+The architecture remains:
+
+```text
+Document
+   │
+   ▼
+Tree-sitter
+   │
+   ▼
+Syntax Tree
+   │
+   ├── structural analysis
+   ├── highlighting information
+   ├── folding information
+   └── navigation information
+```
+
+The Document still owns:
+
+```text
+actual text
+line representation
+editing state
+dirty state
+```
+
+The syntax tree owns derived structural information.
+
+The Renderer still owns presentation.
+
+This separation prevents the parsing subsystem from becoming an alternative document model.
+
+## The Key Decision for Our Editor
+
+For the purposes of this book, the important conclusion is:
+
+> **An editor benefits from retaining a source-oriented syntax representation because editor features operate on both program structure and the original document.**
+
+This is one reason Tree-sitter is a useful technology to study in the context of our editor.
+
+We are not replacing the Document with a syntax tree.
+
+We are adding a structural representation that can remain associated with the Document while it changes.
+
+The next question is therefore more practical: **how the parser and the editor share the document without introducing unnecessary copies or conflicting sources of truth.**
+
+## Summary
+
+A Concrete Syntax Tree preserves the details of the original source — punctuation, delimiters, whitespace, comments — while an Abstract Syntax Tree removes those details to focus on program meaning. Compilers often prefer the abstract representation, but editors must stay closely connected to the actual text.
+
+Because editor features such as folding, delimiter matching, and highlighting depend on source-oriented information, a source-preserving representation such as Tree-sitter's fits the editor model better. The Document still owns the actual text; the syntax tree provides derived structural information that remains associated with it as it changes.
+
+Choosing a source-oriented representation is therefore a decision about which questions the editor must answer, not a claim that concrete trees are universally superior. Because the tree stays anchored to source positions, it can be updated incrementally as the text changes.
+
+In the next section, we will consider a problem unique to interactive editing: how the parser behaves when the source code is incomplete or invalid.

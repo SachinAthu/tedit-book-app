@@ -1,0 +1,698 @@
+---
+title: "41.8 Error Recovery and Incomplete Code"
+description: "Explains how error recovery lets the parser keep producing useful partial structure while the user types incomplete or invalid code."
+---
+
+An editor operates on source code that is frequently **not valid yet**.
+
+This is one of the most important differences between parsing source code in an editor and parsing a finished source file in a traditional compilation pipeline.
+
+A compiler normally expects to process a program that is intended to be syntactically valid. An editor must analyze the document **while the user is in the middle of writing it**.
+
+Consider:
+
+```c
+if (condition) {
+    calculate(
+```
+
+The user has not finished the statement.
+
+There is an unmatched `(`, the function call is incomplete, and the block has not been closed.
+
+Yet the editor must continue operating normally.
+
+## Incomplete Code Is Normal
+
+During interactive editing, incomplete syntax is unavoidable.
+
+A user may temporarily produce:
+
+```c
+int value =
+```
+
+or:
+
+```c
+if (condition) {
+```
+
+or:
+
+```c
+function(arg1, arg2
+```
+
+or even:
+
+```c
+if (
+```
+
+These are not exceptional conditions from the editor's perspective.
+
+They are normal intermediate document states.
+
+The editing cycle therefore looks like:
+
+```text
+User types
+    │
+    ▼
+Document becomes temporarily incomplete
+    │
+    ▼
+Parser analyzes available structure
+    │
+    ▼
+Editor continues operating
+    │
+    ▼
+User types more text
+    │
+    ▼
+Document becomes more complete
+```
+
+A parser intended for an interactive editor must therefore tolerate incomplete input.
+
+## A Batch Compiler Has a Different Goal
+
+A compiler can treat malformed syntax as an error that prevents later stages from proceeding.
+
+Conceptually:
+
+```text
+Source
+  │
+  ▼
+Parser
+  │
+  ├── valid ──► continue
+  │
+  └── invalid ─► report error
+```
+
+An editor needs a different behavior:
+
+```text
+Source
+  │
+  ▼
+Parser
+  │
+  ├── complete ───────► structural information
+  │
+  └── incomplete ─────► partial structural information
+                              │
+                              ▼
+                         continue editing
+```
+
+The parser should provide as much useful structural information as it can, even when the document is temporarily invalid.
+
+This is the role of **error recovery**.
+
+## What Error Recovery Means
+
+Error recovery is the parser's ability to continue analyzing source after encountering input that does not fit the grammar normally.
+
+The goal is not necessarily to pretend that the source is valid.
+
+Instead, the parser attempts to maintain a useful representation of the document.
+
+Conceptually:
+
+```text
+Invalid or incomplete source
+          │
+          ▼
+     Error recovery
+          │
+          ▼
+Partial syntax structure
+          │
+          ▼
+     Editor features
+```
+
+The resulting tree may contain nodes representing errors or incomplete constructs.
+
+The important property is that the parser does not simply stop at the first problem.
+
+## An Incomplete Example
+
+Consider:
+
+```c
+int value =
+```
+
+A conceptual tree might resemble:
+
+```text
+declaration
+├── type
+│   └── int
+├── identifier
+│   └── value
+└── initializer
+```
+
+The initializer is incomplete.
+
+The exact representation depends on the grammar and parser, but the editor can still understand significant parts of the source:
+
+```text
+int
+value
+=
+```
+
+The parser has therefore recovered useful structure even though the statement is not complete.
+
+## Another Example
+
+Consider:
+
+```c
+if (condition) {
+    calculate();
+```
+
+The closing brace is missing.
+
+The parser can still recognize:
+
+```text
+if_statement
+├── condition
+└── body
+    └── expression_statement
+        └── call_expression
+```
+
+The document is syntactically incomplete, but much of its structure is still understandable.
+
+This is valuable for editor features such as syntax highlighting and folding.
+
+## Error Nodes
+
+A syntax tree may represent portions of source that could not be matched cleanly to the grammar using an error-related node.
+
+Conceptually:
+
+```text
+root
+├── valid construct
+├── valid construct
+└── ERROR
+    └── unexpected source
+```
+
+The exact node representation is parser-specific.
+
+The important idea is that an error becomes part of the parser's structural representation rather than causing the entire analysis to disappear.
+
+This gives the editor a more useful model:
+
+```text
+Valid source
+      +
+Unrecognized source
+      +
+Partial structure
+      =
+Usable syntax tree
+```
+
+## Why This Matters for Syntax Highlighting
+
+Syntax highlighting is especially dependent on the parser remaining useful during incomplete edits.
+
+Suppose the user types:
+
+```c
+if (condition) {
+    printf("hello
+```
+
+The string literal is unfinished.
+
+A simplistic parser might fail to produce a useful representation for everything after the error.
+
+An editor, however, still needs to display the document.
+
+More importantly, the editor should continue responding to input:
+
+```text
+User input
+    │
+    ▼
+Incomplete source
+    │
+    ▼
+Parser
+    │
+    ▼
+Partial tree
+    │
+    ▼
+Highlighting
+    │
+    ▼
+Renderer
+```
+
+The exact highlighting may be imperfect until the source becomes complete, but the editor should remain functional.
+
+## Error Recovery Is Not Error Correction
+
+These terms should not be confused.
+
+**Error recovery** means:
+
+> Continue parsing despite invalid or incomplete input.
+
+It does not necessarily mean:
+
+> Automatically fix the user's source code.
+
+For example:
+
+```c
+if (condition) {
+```
+
+A parser may recognize that the block is incomplete.
+
+It does not need to insert a `}` into the user's Document.
+
+The distinction is important:
+
+```text
+Document
+   │
+   ▼
+Parser
+   │
+   ├── detects incomplete structure
+   │
+   └── recovers analysis
+```
+
+The Document remains unchanged unless the user performs an editing operation.
+
+## The Parser Must Not Modify the Document
+
+This follows directly from our architectural model.
+
+The Document is authoritative:
+
+```text
+Editor
+  │
+  ▼
+Document
+```
+
+The parser is derived analysis:
+
+```text
+Document
+   │
+   ▼
+Parser
+   │
+   ▼
+Syntax Tree
+```
+
+Therefore, encountering invalid syntax must not cause the parser to modify the Document in an attempt to make it valid.
+
+For example:
+
+```text
+Source:
+if (condition) {
+```
+
+must remain exactly that until the user changes it.
+
+The parser can represent:
+
+```text
+incomplete if_statement
+```
+
+but it must not silently transform the source into:
+
+```c
+if (condition) {
+}
+```
+
+This preserves the separation between editing and analysis.
+
+## Error Recovery and Incremental Parsing
+
+Error recovery becomes particularly important when combined with incremental parsing.
+
+Suppose the user is gradually typing:
+
+```text
+if (
+```
+
+then:
+
+```text
+if (condition
+```
+
+then:
+
+```text
+if (condition)
+```
+
+then:
+
+```text
+if (condition) {
+```
+
+then:
+
+```text
+if (condition) {
+    calculate();
+```
+
+The syntax tree changes after every edit.
+
+Conceptually:
+
+```text
+Edit 1
+if (
+ │
+ ▼
+partial tree
+
+Edit 2
+if (condition
+ │
+ ▼
+updated partial tree
+
+Edit 3
+if (condition)
+ │
+ ▼
+updated tree
+
+Edit 4
+if (condition) {
+ │
+ ▼
+updated tree
+
+Edit 5
+if (condition) {
+    calculate();
+ │
+ ▼
+updated tree
+```
+
+The parser must therefore handle two properties simultaneously:
+
+```text
+Frequent edits
+      +
+Incomplete syntax
+      │
+      ▼
+Incremental error-tolerant parsing
+```
+
+This is a major reason why parsing for an editor is different from simply invoking a compiler parser on a completed file.
+
+## Errors Are Local When Possible
+
+A useful parser behavior is to isolate errors rather than allowing one incomplete construct to make the entire document unusable.
+
+Consider:
+
+```c
+int a = 10;
+
+int b =
+
+int c = 30;
+```
+
+The second declaration is incomplete, but the first and third declarations remain understandable.
+
+Conceptually:
+
+```text
+root
+├── declaration a
+├── declaration b
+│   └── incomplete
+└── declaration c
+```
+
+The parser can therefore preserve useful information about unaffected regions.
+
+This works particularly well with incremental parsing:
+
+```text
+Unchanged region
+       │
+       ▼
+preserve structure
+
+Changed region
+       │
+       ▼
+re-analyze
+```
+
+An error in one region should not automatically invalidate every other region of the document.
+
+## Recovery and Tree Stability
+
+For an editor, another important property is that the syntax tree should remain useful as the user makes small changes.
+
+Consider:
+
+```text
+if (
+```
+
+followed by:
+
+```text
+if (condition)
+```
+
+and then:
+
+```text
+if (condition) {
+```
+
+The tree is evolving continuously.
+
+The editor does not need a perfect final representation after every keystroke.
+
+It needs a **useful current representation**.
+
+This leads to an important principle:
+
+> **Interactive parsing prioritizes useful structural information at every document state, not only a perfect tree for syntactically complete programs.**
+
+## What "Correct" Means in an Editor
+
+For a compiler, correctness might be expressed as:
+
+```text
+Valid program
+      │
+      ▼
+Correct syntax tree
+```
+
+For an editor, correctness has an additional dimension:
+
+```text
+Current document
+      │
+      ▼
+Best available structural representation
+      │
+      ▼
+Editor remains responsive
+```
+
+The parser should accurately represent recognized structure while clearly representing regions it cannot fully understand.
+
+It should not fabricate semantic meaning simply to produce a complete-looking tree.
+
+## Error Recovery Does Not Mean Ignoring Errors
+
+An error-tolerant parser still needs to identify that something is wrong.
+
+For example:
+
+```text
+root
+├── function
+├── ERROR
+└── function
+```
+
+The error itself is useful information.
+
+It can potentially support diagnostics or other features.
+
+The important distinction is:
+
+```text
+Encounter error
+      │
+      ├── stop entire analysis
+      │
+      └── recover and represent error
+                         │
+                         ▼
+                    continue
+```
+
+An interactive editor generally benefits from the second behavior.
+
+## Relationship to LSP Diagnostics
+
+Chapter 40 introduced the Language Server Protocol and diagnostics.
+
+It is important not to duplicate that responsibility here.
+
+Tree-sitter's role is primarily to provide syntactic structure.
+
+A diagnostic system may use parser information to help report errors, but:
+
+```text
+Tree-sitter
+    │
+    └── syntax structure
+
+LSP / language tooling
+    │
+    └── diagnostics and language intelligence
+```
+
+These are related but distinct responsibilities.
+
+The parser does not become the entire diagnostic subsystem simply because it can recognize syntax errors.
+
+## The Architectural Flow
+
+The complete relationship is now:
+
+```text
+                 User Input
+                     │
+                     ▼
+                Editor State
+                     │
+                     ▼
+                  Document
+                     │
+                     │ edit
+                     ▼
+              Incremental Parser
+                     │
+              ┌──────┴──────┐
+              │             │
+        valid structure   errors /
+              │           incomplete
+              │             │
+              └──────┬──────┘
+                     ▼
+                Syntax Tree
+                     │
+          ┌──────────┼──────────┐
+          ▼          ▼          ▼
+     Highlighting Folding   Structure
+```
+
+Even when the source is incomplete, the parser can continue providing useful derived information.
+
+## The Important Invariant
+
+This section adds an important invariant to our architecture:
+
+> **Incomplete or syntactically invalid source must not prevent the editor from maintaining a usable Document and continuing its normal editing loop.**
+
+The Document remains authoritative regardless of its syntactic validity.
+
+The syntax tree may contain incomplete or error-related structure, but the editor itself must remain operational.
+
+This gives us:
+
+```text
+Document validity
+      ≠
+Syntax validity
+```
+
+A Document can be perfectly valid **editor state** even when its contents are not valid according to the programming language grammar.
+
+That distinction is fundamental to an interactive editor.
+
+## Summary
+
+Interactive editors constantly encounter incomplete source:
+
+```text
+if (
+if (condition)
+if (condition) {
+```
+
+A useful incremental parser therefore needs to:
+
+```text
+Accept incomplete input
+        │
+        ▼
+Recover from syntax errors
+        │
+        ▼
+Preserve useful structure
+        │
+        ▼
+Continue supporting editor features
+```
+
+The parser does not repair the user's text, and it does not replace the Document.
+
+Instead:
+
+```text
+Document
+   │
+   ▼
+Incremental + error-tolerant parsing
+   │
+   ▼
+Best available syntax tree
+```
+
+Error recovery is not error correction: the parser represents invalid or incomplete regions without altering the Document, and a problem in one region does not invalidate the rest. This tolerance is what lets highlighting, rendering, and input keep working while the user is still mid-thought.
+
+This is what makes syntax analysis practical in an interactive editor, where **temporarily invalid code is the normal state of editing rather than an exceptional failure condition**.

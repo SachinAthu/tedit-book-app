@@ -1,0 +1,375 @@
+---
+title: "41.1 Why Incremental Parsing Matters"
+description: "Explains why rebuilding a full syntax tree after every keystroke wastes work, since most edits are local and leave the surrounding structure valid."
+---
+
+An editor is not a compiler that receives a finished program and analyzes it once. An editor works on source code while that source code is constantly changing.
+
+A user may type one character, delete another, insert a new line, or paste a large block of text. After each operation, the editor may need to update information about the document.
+
+For simple features, this does not necessarily require a sophisticated parser. Chapter 32 showed how a relatively lightweight lexical analysis pipeline can provide syntax highlighting without maintaining a complete syntax tree.
+
+However, as editor features become more advanced, the editor needs to understand the **structure** of the source code.
+
+Consider:
+
+```c
+if (condition) {
+    calculate();
+}
+```
+
+A lexical analysis system can identify individual pieces of text:
+
+```text
+if
+(
+condition
+)
+{
+calculate
+(
+)
+;
+}
+```
+
+This tells us what the pieces are, but not necessarily how they are structurally related.
+
+A parser can instead represent the source as a hierarchy:
+
+```text
+if_statement
+├── condition
+└── body
+    └── expression_statement
+```
+
+This structural representation can support features such as code folding, structural navigation, matching constructs, and more sophisticated syntax highlighting.
+
+The problem is that source code changes constantly.
+
+## The Cost of Rebuilding Everything
+
+Suppose an editor contains a large source file:
+
+```text
+Document
+├── Lines 1–1000
+├── Lines 1001–2000
+├── Lines 2001–3000
+├── ...
+└── Lines 9001–10000
+```
+
+The user changes one character near the beginning:
+
+```text
+                    edit
+                      │
+                      ▼
+Document ──────────────────────────────
+         ▲
+         │
+      changed
+       region
+```
+
+A straightforward parsing strategy could discard the existing analysis and parse the entire document again:
+
+```text
+Edit
+ │
+ ▼
+Parse entire document
+ │
+ ▼
+Build entire syntax tree
+```
+
+This approach has an important advantage: **simplicity**.
+
+The parser only needs to consider the current document. It does not need to maintain relationships between an old tree and a new tree.
+
+But the editor may perform this operation repeatedly:
+
+```text
+Keystroke
+   ↓
+Parse
+   ↓
+Keystroke
+   ↓
+Parse
+   ↓
+Keystroke
+   ↓
+Parse
+   ↓
+...
+```
+
+For a small document, this may be entirely acceptable.
+
+For a large document, repeatedly rebuilding the complete structural representation can become unnecessarily expensive, particularly when most of the document has not changed.
+
+## The Key Observation
+
+Most editing operations are local.
+
+If the user changes:
+
+```c
+int value = 10;
+```
+
+to:
+
+```c
+int value = 100;
+```
+
+the vast majority of the document remains unchanged.
+
+The editor therefore has an opportunity to preserve information that is still valid.
+
+Conceptually:
+
+```text
+Before:
+
+Document
+ ├── Region A
+ ├── Region B
+ ├── Region C
+ └── Region D
+
+
+Small edit in Region C
+
+
+After:
+
+Document
+ ├── Region A   ← unchanged
+ ├── Region B   ← unchanged
+ ├── Region C   ← affected
+ └── Region D   ← unchanged
+```
+
+An incremental parser attempts to take advantage of this locality.
+
+Instead of treating every edit as a completely new document, it updates the existing analysis according to the change.
+
+```text
+Existing Syntax Tree
+        │
+        │ document edit
+        ▼
+Incremental Update
+        │
+        ├── preserve unaffected structure
+        │
+        └── reparse affected structure
+                    │
+                    ▼
+             Updated Tree
+```
+
+The important idea is not that the parser somehow avoids all work.
+
+The important idea is that **unchanged information can remain useful**.
+
+## Incremental Does Not Mean No Work
+
+The term _incremental_ can easily lead to a misleading assumption.
+
+Incremental parsing does **not** mean:
+
+> Only the changed character is parsed.
+
+A single character can affect a larger syntactic region.
+
+For example, inserting or deleting a delimiter may change the structure of surrounding code:
+
+```c
+if (condition) {
+    statement();
+}
+```
+
+A change to `{` or `}` can affect the interpretation of a much larger region.
+
+Therefore, the amount of work required after an edit depends on the nature and location of that edit.
+
+Conceptually:
+
+```text
+Small edit
+    │
+    ▼
+Affected syntax
+    │
+    ▼
+Incremental re-analysis
+```
+
+The affected region may be small, or it may propagate into larger parts of the syntax tree.
+
+This distinction is important when discussing performance. Incremental parsing reduces unnecessary work; it does not guarantee constant-time parsing.
+
+## Why This Matters Specifically to Editors
+
+An interactive editor has a different workload from a traditional batch compiler.
+
+A compiler might perform:
+
+```text
+Source File
+    │
+    ▼
+Parse
+    │
+    ▼
+Analyze
+    │
+    ▼
+Compile
+```
+
+and then stop.
+
+An editor performs a continuous sequence of changes:
+
+```text
+Open Document
+     │
+     ▼
+  Analyze
+     │
+     ▼
+   Edit
+     │
+     ▼
+  Update
+     │
+     ▼
+   Edit
+     │
+     ▼
+  Update
+     │
+     ▼
+   Edit
+     │
+     ▼
+  Update
+     │
+     ▼
+   ...
+```
+
+The analysis therefore becomes part of the editor's **interactive runtime workload**.
+
+Latency matters.
+
+If an analysis operation takes noticeably longer as the document grows, the user can eventually experience that cost directly.
+
+Incremental techniques attempt to keep the amount of work associated with ordinary edits proportional to what actually changed, rather than repeatedly treating the entire document as new.
+
+## From Lexical Information to Structural Information
+
+This also explains why incremental parsing belongs naturally after the discussion of syntax highlighting.
+
+Chapter 32 established a relatively simple analysis model:
+
+```text
+Document
+   │
+   ▼
+Lexical Analysis
+   │
+   ▼
+Tokens / Highlight Information
+   │
+   ▼
+Renderer
+```
+
+Tree-sitter introduces a different level of representation:
+
+```text
+Document
+   │
+   ▼
+Incremental Parser
+   │
+   ▼
+Syntax Tree
+   │
+   ├── Highlighting
+   ├── Folding
+   ├── Structural Navigation
+   └── Other Analysis
+```
+
+The important architectural change is therefore not simply:
+
+> "Tree-sitter makes highlighting faster."
+
+It is:
+
+> **The editor gains a persistent structural representation of the source that can be updated as the document changes.**
+
+That distinction will become important throughout this chapter.
+
+## The Central Idea
+
+Incremental parsing addresses a fundamental mismatch between two facts:
+
+```text
+Editors:
+frequent, small changes
+```
+
+and:
+
+```text
+Traditional parsing:
+analyze the document as a whole
+```
+
+The goal is to bridge that gap:
+
+```text
+             User Edit
+                 │
+                 ▼
+          Document Change
+                 │
+                 ▼
+       Incremental Analysis
+                 │
+       ┌─────────┴─────────┐
+       ▼                   ▼
+ preserve valid       re-analyze
+ existing structure   affected structure
+       │                   │
+       └─────────┬─────────┘
+                 ▼
+          Updated Syntax Tree
+```
+
+This is the fundamental motivation for incremental parsing.
+
+Tree-sitter is one concrete system designed around this idea. Before examining Tree-sitter itself, however, we first need to understand the representation that it maintains: the **syntax tree**. That is the subject of the next section.
+
+## Summary
+
+An editor does not parse a finished program once; it repeatedly updates its analysis as the document changes. Rebuilding a complete syntax tree after every keystroke is simple but can become unnecessarily expensive for large documents, because most edits are local and leave the vast majority of the document unchanged.
+
+Incremental parsing addresses this mismatch by preserving structural information that remains valid and re-analyzing only the affected regions. It does not guarantee constant-time work — a small edit can still have large structural consequences — but it keeps the cost of ordinary edits proportional to what actually changed.
+
+The work therefore scales with the size of the affected region rather than with the size of the whole file, which is what keeps analysis inside an interactive latency budget. This locality is also what makes a persistent tree worth maintaining at all, and it is why the rest of the chapter focuses on updating structure rather than rebuilding it.
+
+In the next section, we will move from the motivation for incremental parsing to the representation it maintains, examining how a syntax tree adds structural information that a token stream cannot express.

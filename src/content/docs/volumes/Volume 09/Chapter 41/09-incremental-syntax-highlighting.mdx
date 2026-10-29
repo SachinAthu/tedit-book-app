@@ -1,0 +1,702 @@
+---
+title: "41.9 Incremental Syntax Highlighting"
+description: "Shows how highlighting is derived from the syntax tree and its ranges, with the Theme mapping classes to styles and updates following structure."
+---
+
+Syntax highlighting was introduced earlier as a lexical analysis problem. The editor can identify tokens such as keywords, identifiers, literals, and comments and then use that information when rendering the document.
+
+Incremental parsing introduces another possibility.
+
+Instead of deriving highlighting only from a stream of lexical tokens, the editor can derive highlighting from the **syntax tree** maintained by the parser.
+
+The important architectural distinction is:
+
+```text
+Document
+   │
+   ▼
+Syntax Analysis
+   │
+   ▼
+Syntax Tree
+   │
+   ▼
+Highlighting Information
+   │
+   ▼
+Theme
+   │
+   ▼
+Visual Styles
+   │
+   ▼
+Renderer
+```
+
+This allows syntax highlighting to take structural context into account.
+
+## Why Lexical Highlighting Has Limits
+
+Consider:
+
+```c
+id = 10;
+```
+
+A lexical highlighter can identify:
+
+```text
+id       identifier
+=        operator
+10       integer
+;        punctuation
+```
+
+This is sufficient for many basic highlighting tasks.
+
+However, some languages contain syntax whose interpretation depends on surrounding structure.
+
+For example, the same sequence of characters may have different roles depending on whether it appears inside:
+
+```text
+a comment
+a string
+a type declaration
+an expression
+a preprocessor construct
+```
+
+A syntax tree provides additional context:
+
+```text
+Syntax Tree
+     │
+     ├── declaration
+     ├── expression
+     ├── string
+     ├── comment
+     └── other constructs
+```
+
+The highlighter can therefore make decisions using structural information rather than relying entirely on local character patterns.
+
+## Highlighting From the Syntax Tree
+
+The conceptual pipeline becomes:
+
+```text
+Document
+    │
+    ▼
+Incremental Parser
+    │
+    ▼
+Syntax Tree
+    │
+    ▼
+Highlight Query / Analysis
+    │
+    ▼
+Highlight Ranges
+    │
+    ▼
+Theme
+    │
+    ▼
+Visual Styles
+    │
+    ▼
+Renderer
+```
+
+The important point is that the syntax tree does not itself determine colors or terminal escape sequences.
+
+It provides structural information.
+
+A separate highlighting stage interprets that structure and produces semantic categories — highlight ranges associated with highlight classes. Those classes still do not decide appearance.
+
+As in Chapter 32, the Theme maps each highlight class to a Visual Style, and the Renderer draws the result.
+
+This preserves the separation established in Chapter 32:
+
+```text
+Parser / Highlighting
+      │
+      └── semantic analysis
+
+Theme
+      │
+      └── visual mapping
+
+Renderer
+      │
+      └── terminal presentation
+```
+
+## Highlight Ranges
+
+A useful representation of highlighting is a collection of source ranges associated with semantic categories.
+
+Conceptually:
+
+```text
+Highlight
+├── range
+└── capture
+```
+
+A **capture** names the nodes a Tree-sitter query matches — labels such as `@keyword` or `@function` in a query file — and each capture name corresponds to a Highlight Class in the Chapter 32 sense: the range records *where* the text occurs, while the capture records *what* semantic category it belongs to.
+
+For example:
+
+```text
+keyword     [0..3]
+identifier  [4..9]
+operator    [10..11]
+number      [12..14]
+```
+
+These categories are highlight classes in the sense established in Chapter 32: they describe what the text is, not how it should appear. The Theme supplies the appearance mapping — turning each highlight class into a Visual Style — and the Renderer draws the result:
+
+```text
+Highlight Range
+      │
+      ▼
+     Theme
+      │
+      ▼
+  Visual Style
+      │
+      ▼
+   Renderer
+      │
+      ▼
+ANSI styling
+```
+
+The parser therefore does not need to know which terminal escape sequence represents a particular visual style — and neither does the Renderer, which receives the final style from the Theme.
+
+## Incremental Highlighting
+
+The advantage of combining highlighting with incremental parsing is that an edit does not necessarily require the editor to reconsider the entire document.
+
+Suppose:
+
+```text
+Document
+├── Region A
+├── Region B
+├── Region C
+└── Region D
+```
+
+An edit occurs in Region C.
+
+The conceptual flow is:
+
+```text
+Edit
+ │
+ ▼
+Updated Syntax Tree
+ │
+ ├── Region A → unchanged
+ ├── Region B → unchanged
+ ├── Region C → affected
+ └── Region D → unchanged
+```
+
+The highlighting system can then update the ranges associated with the affected structure.
+
+Conceptually:
+
+```text
+Changed syntax
+      │
+      ▼
+Recalculate affected highlighting
+      │
+      ▼
+Preserve unaffected highlighting
+```
+
+Again, this does **not** mean that only the changed character is analyzed. Structural changes can affect a larger region.
+
+The important principle is that unchanged analysis does not need to be discarded without reason.
+
+## A Small Edit Can Affect Highlighting Beyond One Character
+
+The principle from Section 41.1 applies to highlighting as well: a small text edit can have a larger syntactic effect.
+
+Consider:
+
+```c
+"hello"
+```
+
+If the closing quotation mark is deleted:
+
+```c
+"hello
+```
+
+the parser may now interpret subsequent source differently because the string has not been closed:
+
+```c
+"hello
+int value = 10;
+```
+
+The affected highlighting region can therefore extend well beyond the changed character. Incremental highlighting should follow the syntax structure rather than assuming that highlighting changes are always character-local.
+
+## Syntax Tree as Shared Information
+
+The syntax tree can support several features simultaneously:
+
+```text
+                    Syntax Tree
+                         │
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+     Highlighting      Folding      Navigation
+```
+
+This is one of the main architectural benefits of maintaining structural analysis.
+
+Without a syntax tree, each feature may need to perform its own independent interpretation of the source.
+
+With a syntax tree, structural information can be shared.
+
+However, the features should still remain separate.
+
+The syntax tree is shared information, not a reason to combine all feature logic into one subsystem.
+
+## Highlighting Is Derived State
+
+As with the syntax tree itself (Section 41.2), highlighting information is derived from the Document rather than being authoritative on its own.
+
+The relationship is:
+
+```text
+Document
+   │
+   ▼
+Syntax Tree
+   │
+   ▼
+Highlight Information
+   │
+   ▼
+Theme
+   │
+   ▼
+Visual Styles
+   │
+   ▼
+Renderer
+```
+
+If the Document changes, the updated state flows down this same path: the syntax tree is updated first, then the highlighting and Visual Styles derived from it. This keeps the ownership model clear.
+
+## Highlighting and the Renderer
+
+The Renderer should not become responsible for understanding the programming language.
+
+Its responsibility remains presentation.
+
+Conceptually:
+
+```text
+Syntax Analysis
+      │
+      ▼
+Highlight Information
+      │
+      ▼
+     Theme
+      │
+      ▼
+  Visual Style
+      │
+      ▼
+   Renderer
+      │
+      ▼
+ANSI Escape Sequences
+      │
+      ▼
+Terminal
+```
+
+The Renderer receives Visual Styles — the appearance the Theme chose for each highlight class — and converts them into terminal output. It never maps highlight classes to specific escape sequences itself, and it does not need to understand what a C function, expression, or declaration means.
+
+This follows the architectural decision to keep language analysis separate from terminal rendering, preserving the Theme boundary established in Section 32.7.
+
+## Syntax Highlighting Does Not Modify Source
+
+The distinction between derived information and document state is especially important here.
+
+Highlighting may visually distinguish:
+
+```text
+keyword
+identifier
+string
+comment
+number
+```
+
+but those categories do not become properties stored inside the Document itself.
+
+The Document remains:
+
+```text
+int value = 10;
+```
+
+The highlighting subsystem derives:
+
+```text
+int       → keyword/type
+value     → identifier
+10        → number
+```
+
+The Renderer turns those classifications into visual output.
+
+This prevents presentation metadata from contaminating the core text model.
+
+## Interaction With the Screen Buffer
+
+The highlighting stage also fits naturally into the rendering pipeline established earlier.
+
+Conceptually:
+
+```text
+Document
+   │
+   ▼
+Syntax Tree
+   │
+   ▼
+Highlight Information
+   │
+   ▼
+Theme
+   │
+   ▼
+Visual Styles
+   │
+   ▼
+Screen Buffer
+   │
+   ▼
+Renderer
+   │
+   ▼
+Terminal
+```
+
+The Screen Buffer represents what should appear on the terminal.
+
+The syntax-analysis subsystem determines how source regions should be classified, and the Theme turns those classes into Visual Styles. The Screen Buffer holds the styled cells, and the Renderer ultimately converts them into terminal output.
+
+The responsibilities therefore remain distinct:
+
+```text
+Document        → source
+Syntax Tree     → structure
+Highlighting    → highlight classes
+Theme           → visual styles
+Screen Buffer   → rendered frame
+Renderer        → terminal output
+```
+
+## Incremental Highlighting and Scrolling
+
+Scrolling does not require re-parsing the document.
+
+The syntax tree represents the document independently of the current viewport:
+
+```text
+Document
+   │
+   ▼
+Syntax Tree
+```
+
+The Viewport determines which portion is visible:
+
+```text
+Syntax / Document
+       │
+       ▼
+Viewport
+       │
+       ▼
+Visible source region
+```
+
+Highlighting information can therefore remain associated with document positions while the viewport moves.
+
+```text
+Syntax Tree
+     │
+     ▼
+Highlight ranges
+     │
+     ▼
+Viewport selects visible ranges
+     │
+     ▼
+Renderer
+```
+
+This preserves the separation between document coordinates and terminal coordinates established earlier.
+
+## Incremental Highlighting vs Full Redraw
+
+Our renderer uses a full-redraw strategy.
+
+That decision does not conflict with incremental syntax highlighting.
+
+These concepts operate at different levels.
+
+**Incremental highlighting** determines how efficiently the editor maintains semantic presentation information.
+
+**Full redraw** determines how the Renderer produces the terminal frame.
+
+The architecture can therefore be:
+
+```text
+             Document
+                 │
+                 ▼
+          Incremental Parser
+                 │
+                 ▼
+            Syntax Tree
+                 │
+                 ▼
+        Highlight Information
+                 │
+                 ▼
+              Theme
+                 │
+                 ▼
+           Visual Styles
+                 │
+                 ▼
+           Screen Buffer
+                 │
+                 ▼
+             Renderer
+                 │
+                 ▼
+        Full Terminal Redraw
+```
+
+The Renderer may still redraw the visible screen completely even though the syntax analysis was updated incrementally.
+
+There is no contradiction.
+
+## Highlighting and Incomplete Code
+
+The previous section established that the parser must tolerate incomplete source.
+
+That behavior is equally important for highlighting.
+
+Consider:
+
+```c
+printf("hello
+```
+
+The user has not finished the string.
+
+The editor should not stop rendering simply because the syntax is incomplete.
+
+Instead, the parser provides the best structural information available, and the highlighting layer derives presentation from that information.
+
+```text
+Incomplete source
+       │
+       ▼
+Error-tolerant parser
+       │
+       ▼
+Partial syntax structure
+       │
+       ▼
+Highlighting
+       │
+       ▼
+Renderer
+```
+
+As the user types the closing quotation mark, the syntax tree and highlighting can be updated again.
+
+## Why This Is Different From Chapter 32
+
+Chapter 32 established syntax highlighting using lexical analysis.
+
+The important distinction here is not that the earlier approach was wrong.
+
+It is that the two approaches operate at different levels.
+
+Earlier:
+
+```text
+Document
+   │
+   ▼
+Lexical Analysis
+   │
+   ▼
+Tokens
+   │
+   ▼
+Highlighting
+```
+
+With incremental syntax analysis:
+
+```text
+Document
+   │
+   ▼
+Incremental Parser
+   │
+   ▼
+Syntax Tree
+   │
+   ▼
+Highlighting
+```
+
+The second approach can use structural context that is not available from a simple token stream.
+
+This chapter therefore extends the earlier design rather than replacing the conceptual foundation introduced in Chapter 32.
+
+## The Performance Goal
+
+The objective is not:
+
+> Make syntax highlighting infinitely fast.
+
+The practical goal is:
+
+> Avoid unnecessarily recomputing highlighting information that remains valid after an edit.
+
+The conceptual comparison is:
+
+```text
+Full recomputation:
+
+Edit
+ │
+ ▼
+Analyze entire document
+ │
+ ▼
+Rebuild all highlighting
+```
+
+versus:
+
+```text
+Incremental:
+
+Edit
+ │
+ ▼
+Update syntax structure
+ │
+ ▼
+Identify affected analysis
+ │
+ ▼
+Update affected highlighting
+```
+
+The second approach can reduce unnecessary work for ordinary local edits.
+
+## The Important Boundary
+
+We should preserve clear boundaries between the parser, the highlighting subsystem, and the Theme:
+
+```text
+Tree-sitter
+    │
+    └── maintains syntax structure
+
+Highlighting
+    │
+    └── assigns highlight classes
+
+Theme
+    │
+    └── maps classes to visual styles
+
+Renderer
+    │
+    └── draws the styled frame
+```
+
+This avoids turning the parser into a presentation system, mixing highlighting with parsing, or turning the Renderer into a programming-language analyzer — the Theme remains the only component that decides how a class looks.
+
+## The Resulting Architecture
+
+The complete flow is now:
+
+```text
+                         Document
+                            │
+                            │ edit
+                            ▼
+                   Incremental Parser
+                            │
+                            ▼
+                       Syntax Tree
+                            │
+                            ▼
+                    Highlight Analysis
+                            │
+                            ▼
+                     Highlight Ranges
+                            │
+                            ▼
+                          Theme
+                            │
+                            ▼
+                       Visual Styles
+                            │
+                            ▼
+                        Screen Buffer
+                            │
+                            ▼
+                          Renderer
+                            │
+                            ▼
+                      ANSI / Terminal
+```
+
+Each stage has a distinct responsibility.
+
+The Document owns the source.
+
+The parser derives structure.
+
+The highlighting subsystem derives highlight classes, and the Theme maps those classes to Visual Styles.
+
+The Screen Buffer and Renderer turn that information into the visible terminal frame.
+
+## Summary
+
+Highlighting can be derived from the syntax tree rather than from a flat token stream, which gives it access to structural context. When the document changes, only the highlighting associated with affected structure needs to be recomputed; unchanged analysis can be preserved.
+
+Highlighting remains derived presentation state: the parser produces structure, a highlighting stage produces highlight ranges, the Theme maps those classes to Visual Styles, and the Renderer draws the result. This is fully compatible with the editor's full-redraw renderer and with error-tolerant parsing of incomplete code.
+
+The highlighting stage therefore consumes structure rather than producing it, and the Theme remains the single place where highlight classes become visual styles. Because the affected region follows syntax rather than characters, incremental highlighting must track structural consequences just as the parser does.
+
+In the next section, we will explore the structural editor features that a syntax tree makes possible beyond highlighting.

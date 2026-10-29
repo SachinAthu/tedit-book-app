@@ -1,0 +1,557 @@
+---
+title: "41.5 Parsing an Edit"
+description: "Shows how an edit is described by a start position, deleted range, and inserted text so the parser can update the tree to match the current document."
+---
+
+An incremental parser needs more than the new contents of a document. It needs to understand **what changed**.
+
+Consider the document:
+
+```c
+int value = 10;
+```
+
+Suppose the user inserts `0` before the semicolon:
+
+```c
+int value = 100;
+```
+
+At the document level, this is a small edit:
+
+```text
+Insert:
+    text: "0"
+    position: ...
+```
+
+The parser, however, needs to relate that edit to the syntax tree it already has.
+
+The fundamental relationship is:
+
+```text
+Previous Document
+       │
+       ▼
+Previous Syntax Tree
+       │
+       │
+       │ edit
+       ▼
+Updated Document
+       │
+       ▼
+Incremental Parser
+       │
+       ▼
+Updated Syntax Tree
+```
+
+The parser therefore participates in a sequence of document states rather than treating every version as completely independent.
+
+## Representing a Document Edit
+
+An edit can conceptually be represented by three pieces of information:
+
+```text
+Edit
+├── Start position
+├── Deleted range
+└── Inserted text
+```
+
+For an insertion, the deleted range may be empty.
+
+For a deletion:
+
+```text
+Edit
+├── Start position
+├── Deleted range
+└── Inserted text: none
+```
+
+For a replacement:
+
+```text
+Edit
+├── Start position
+├── Deleted range
+└── Inserted text
+```
+
+This provides a general model for text modification.
+
+The exact representation used by an implementation can differ, but the conceptual information remains the same.
+
+## Why the Parser Needs Edit Information
+
+Suppose the old source is:
+
+```text
+int value = 10;
+```
+
+and the new source is:
+
+```text
+int value = 100;
+```
+
+If the parser receives only the new text, it has no explicit reason to know that this is a modification of the previous document.
+
+It could simply parse the new source from scratch.
+
+An incremental parser instead benefits from knowing:
+
+```text
+Previous tree
+       +
+Document edit
+       =
+Information about how the tree changed
+```
+
+This gives the parser an opportunity to reuse existing structural information.
+
+Conceptually:
+
+```text
+Old Syntax Tree
+       │
+       │ edit description
+       ▼
+Incremental Parser
+       │
+       ▼
+New Syntax Tree
+```
+
+## Source Positions Matter
+
+To apply an edit correctly, the editor and parser must agree about where that edit occurs.
+
+Consider:
+
+```text
+012345678901234
+int value = 10;
+```
+
+A position can be described using coordinates such as:
+
+```text
+row
+column
+```
+
+or using an offset into the source text.
+
+For example:
+
+```text
+Position
+├── row
+└── column
+```
+
+or:
+
+```text
+Byte / character offset
+```
+
+The specific coordinate representation depends on the parser and editor architecture.
+
+What matters is that the edit location can be mapped consistently between the Document and the syntax-analysis subsystem.
+
+## An Insertion Example
+
+Consider:
+
+```c
+int value = 10;
+```
+
+Suppose the user inserts:
+
+```text
+0
+```
+
+before the final `0`.
+
+The conceptual sequence is:
+
+```text
+1. User input
+       │
+       ▼
+2. Command Engine
+       │
+       ▼
+3. Document modification
+       │
+       ▼
+4. Edit description
+       │
+       ▼
+5. Tree-sitter
+       │
+       ▼
+6. Updated syntax tree
+```
+
+The Document is updated first.
+
+The parser then receives information describing the corresponding change.
+
+This preserves the architectural direction:
+
+```text
+Editor State
+     │
+     ▼
+Document
+     │
+     ▼
+Syntax Analysis
+```
+
+rather than allowing the parser to perform the edit itself.
+
+## A Deletion Example
+
+Suppose the user changes:
+
+```c
+int value = 100;
+```
+
+to:
+
+```c
+int value = 10;
+```
+
+The editor can describe this as a deletion of one character.
+
+Conceptually:
+
+```text
+Existing Document
+       │
+       │ delete "0"
+       ▼
+Updated Document
+       │
+       ▼
+Edit information
+       │
+       ▼
+Incremental Parser
+```
+
+The parser can then determine how the deletion affects the existing syntax tree.
+
+Again, the parser does not need to own the editing operation.
+
+The editor owns the Document mutation.
+
+The parser owns the consequences of that mutation for its derived syntax representation.
+
+## Replacement Is a Combination
+
+A replacement can be understood as deletion followed by insertion.
+
+For example:
+
+```text
+Before:
+int value = 10;
+
+After:
+int value = 100;
+```
+
+Conceptually:
+
+```text
+Delete old range
+       │
+       ▼
+Insert new text
+```
+
+The implementation may represent this as a single edit operation, but the conceptual model remains useful.
+
+It makes clear that an incremental parser must account for both removed and inserted source.
+
+## Why Positions Can Become Difficult
+
+An edit changes the positions of subsequent text.
+
+Consider:
+
+```text
+line 1
+line 2
+line 3
+line 4
+```
+
+If the user inserts a new line after line 2:
+
+```text
+line 1
+line 2
+new line
+line 3
+line 4
+```
+
+Everything after the insertion has shifted.
+
+This does **not** mean that the syntax of every subsequent line has changed.
+
+There are two separate concepts:
+
+```text
+Text position changed
+        ≠
+Syntax changed
+```
+
+This distinction is fundamental to incremental parsing.
+
+The parser must be able to account for changed source positions while recognizing that much of the existing structural information may remain valid.
+
+## Edits and Structural Effects
+
+The relationship can be visualized as:
+
+```text
+Text Edit
+    │
+    ├── changes source positions
+    │
+    └── may change syntax
+             │
+             ▼
+       affected structure
+```
+
+A small textual edit can therefore have different consequences:
+
+```text
+Small edit
+    │
+    ├── positional effects
+    │
+    └── syntactic effects
+```
+
+The incremental parser must handle both.
+
+This is one reason incremental parsing is more sophisticated than simply caching the result of a previous parse.
+
+## The Old Tree Represents an Older Document
+
+An important invariant follows from this discussion:
+
+> A syntax tree corresponds to a particular version of the Document.
+
+Suppose we have:
+
+```text
+Document V1
+     │
+     ▼
+Syntax Tree V1
+```
+
+After an edit:
+
+```text
+Document V2
+     │
+     ▼
+Syntax Tree V2
+```
+
+The parser must maintain correspondence between the two.
+
+During an update, the system may conceptually have:
+
+```text
+Document V1
+Syntax Tree V1
+
+       │
+       │ edit
+       ▼
+
+Document V2
+Syntax Tree V2
+```
+
+The old tree cannot simply be treated as though it already represented the new document.
+
+It must be updated or replaced appropriately.
+
+## Incremental Parsing Is a Synchronization Problem
+
+This leads to a broader architectural observation.
+
+Once an editor maintains derived syntax state, it must keep that state synchronized with the Document.
+
+```text
+                Document
+                    │
+                    │ changes
+                    ▼
+              Syntax Analysis
+                    │
+                    ▼
+               Syntax Tree
+```
+
+If the synchronization is incorrect, the editor could have:
+
+```text
+Document:
+new source
+
+Syntax Tree:
+old structure
+```
+
+That would cause higher-level features to operate on stale information.
+
+For example, syntax highlighting might describe the old source even though the Document contains new text.
+
+Therefore, synchronization between the authoritative Document and derived parser state becomes an important invariant.
+
+## Edit Propagation
+
+The complete conceptual process is:
+
+```text
+             User Input
+                 │
+                 ▼
+          Editing Command
+                 │
+                 ▼
+        Document Modification
+                 │
+                 ├───────────────┐
+                 │               │
+                 ▼               ▼
+          Updated Document    Edit Description
+                                 │
+                                 ▼
+                          Incremental Parser
+                                 │
+                                 ▼
+                           Updated Tree
+```
+
+The edit description does not replace the Document.
+
+It tells the parser how the current Document differs from the previous version represented by its existing syntax state.
+
+## Why This Matters for Our Architecture
+
+This gives us another clear ownership boundary:
+
+```text
++-----------------------------+
+|          Editor             |
+|                             |
+|  owns Document              |
+|  applies edits              |
+|  maintains editor state     |
++--------------+--------------+
+               |
+               | edit information
+               ▼
++-----------------------------+
+|        Tree-sitter          |
+|                             |
+|  maintains parser state     |
+|  maintains syntax tree      |
+|  updates derived structure  |
++-----------------------------+
+```
+
+The editor remains responsible for **what the document contains**.
+
+Tree-sitter becomes responsible for **how that document is structurally represented for parsing purposes**.
+
+That separation prevents the parser from becoming a competing source of truth.
+
+## A Critical Invariant
+
+We can state the relationship as an invariant:
+
+> **The syntax tree must correspond to the current Document version.**
+
+More precisely, after the parser has processed an edit, its syntax tree should represent the current source text rather than the previous version.
+
+This becomes increasingly important as more editor features consume the tree:
+
+```text
+                     Document
+                        │
+                        ▼
+                   Syntax Tree
+                        │
+          ┌─────────────┼─────────────┐
+          ▼             ▼             ▼
+     Highlighting    Folding      Navigation
+```
+
+If the tree is stale, every feature depending on it can become stale.
+
+## The Main Idea
+
+Parsing an edit is therefore not simply:
+
+```text
+"Parse these new characters."
+```
+
+It is a relationship between **two document states**:
+
+```text
+Previous Document
+       │
+       │ edit
+       ▼
+Current Document
+```
+
+and between the corresponding structural states:
+
+```text
+Previous Syntax Tree
+       │
+       │ incremental update
+       ▼
+Current Syntax Tree
+```
+
+The parser's ability to maintain that relationship is the foundation of incremental parsing.
+
+The next question is what exactly is contained inside the resulting syntax tree: its nodes, ranges, positions, and relationships. That leads to the next section.
+
+## Summary
+
+An incremental parser needs more than the new document text: it needs a description of what changed — a start position, a deleted range, and inserted text. This lets the parser relate its existing tree to the previous document version and reuse unaffected structure.
+
+The editor updates the Document first and then sends the edit description to the parser, preserving the ownership boundary. The central invariant is that the syntax tree must correspond to the current document version; keeping that correspondence is fundamentally a synchronization problem.
+
+Because the editor applies the change before forwarding its description, the parser never competes with the Document as a source of truth. Any mismatch between document coordinates and parser coordinates would silently desynchronize the tree, so the edit description must also carry unambiguous position information.
+
+In the next section, we will examine the contents of the resulting tree — its nodes, ranges, positions, and relationships — in more detail.

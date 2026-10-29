@@ -1,0 +1,263 @@
+---
+title: "41.10 Beyond Highlighting - Structural Editor Features"
+description: "Surveys structural editor features a syntax tree enables: folding, structural selection, delimiter matching, navigation, outlines, and indentation."
+---
+
+Syntax highlighting is only one use of a syntax tree.
+
+Once the editor has a structured representation of the source, the same information can support higher-level editing features. These features do not need to store another copy of the document. They derive their behavior from the existing syntax structure.
+
+Conceptually:
+
+```text
+                    Syntax Tree
+                         │
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+     Highlighting     Folding       Navigation
+                         │
+                         ▼
+                Structural Features
+```
+
+The important architectural point is that the syntax tree becomes a reusable source of structural information rather than a component created solely for coloring.
+
+## Code Folding
+
+Code folding allows the user to temporarily hide a syntactic region.
+
+For example:
+
+```c
+int calculate_total(void)
+{
+    int subtotal = 0;
+
+    for (int i = 0; i < count; i++)
+    {
+        subtotal += values[i];
+    }
+
+    return subtotal;
+}
+```
+
+The editor could recognize the function body as a structural region and display it in a folded form:
+
+```text
+int calculate_total(void) { ... }
+```
+
+The folding state is not part of the Document. The Document still contains the complete source text.
+
+Instead, the editor maintains view-related information describing which structural regions are currently collapsed.
+
+This distinction is important:
+
+```text
+Document
+   │
+   ▼
+Syntax Tree ───────► Structural Regions
+                         │
+                         ▼
+                    Folding State
+                         │
+                         ▼
+                     Renderer
+```
+
+The syntax tree identifies _what can be folded_. The editor's view state determines _what is currently folded_.
+
+## Structural Selection
+
+A conventional text editor selects ranges based on character positions. A syntax-aware editor can additionally select according to syntactic structure.
+
+For example, if the cursor is inside:
+
+```c
+calculate_total(value + tax)
+```
+
+repeated selection expansion could move through increasingly larger structural units:
+
+```text
+value
+```
+
+then:
+
+```text
+value + tax
+```
+
+then:
+
+```text
+calculate_total(value + tax)
+```
+
+and eventually the surrounding expression or statement.
+
+The important difference is that the editor is no longer choosing arbitrary character ranges. It is using the boundaries already identified by the syntax tree.
+
+This makes selection expansion useful for operations such as copying, deleting, replacing, or inspecting complete syntactic constructs.
+
+## Matching Delimiters
+
+The syntax tree can also provide more reliable delimiter matching.
+
+Given:
+
+```c
+if (condition)
+{
+    while (running)
+    {
+        process();
+    }
+}
+```
+
+the editor can identify the structural relationship between:
+
+```text
+{
+    ...
+}
+```
+
+rather than merely searching for the next `}` character.
+
+This matters when delimiters are nested or when delimiter-like characters occur inside strings and comments.
+
+A syntax-aware implementation can therefore distinguish structural delimiters from characters that merely look like delimiters.
+
+## Syntax-Aware Navigation
+
+The same structure can support navigation between meaningful source constructs.
+
+Instead of moving only by characters or lines, an editor can navigate between constructs such as:
+
+```text
+function
+class
+method
+struct
+variable declaration
+statement
+block
+```
+
+For example:
+
+```text
+Document
+   │
+   ├── Function A
+   │
+   ├── Function B
+   │
+   └── Function C
+```
+
+A "next function" command can move the cursor directly to the next function node.
+
+The navigation logic does not need to understand the complete language independently. It can use the syntax structure produced by the parser.
+
+## Outline Generation
+
+A syntax tree can also provide the information required for an outline or symbol list.
+
+For example:
+
+```text
+Document
+├── main
+├── initialize_terminal
+├── render
+├── handle_input
+└── save_file
+```
+
+The editor can derive such a list from nodes representing declarations or other significant constructs.
+
+This is another example of derived information:
+
+```text
+Document
+    │
+    ▼
+Syntax Tree
+    │
+    ├── Highlighting
+    ├── Folding
+    ├── Navigation
+    └── Outline
+```
+
+The outline does not become another authoritative representation of the source. If the Document changes, the relevant derived information can be regenerated from the updated syntax structure.
+
+## Indentation Assistance
+
+Structural information can also improve indentation.
+
+Consider:
+
+```c
+if (condition)
+{
+    process();
+}
+```
+
+After the user creates a new line inside the block, the editor can determine that the new position belongs to the block and suggest an appropriate indentation level.
+
+This is different from simply counting `{` and `}` characters. The syntax tree provides contextual information about which constructs actually establish structural nesting.
+
+The same principle can be applied to languages whose indentation rules do not correspond directly to braces.
+
+## The Broader Pattern
+
+These features demonstrate why incremental parsing becomes more valuable as editor functionality grows.
+
+The parser is not producing information that only one subsystem consumes. Instead, several editor features can derive behavior from the same structural representation:
+
+```text
+                         Document
+                            │
+                            ▼
+                       Syntax Tree
+                            │
+          ┌─────────────────┼─────────────────┐
+          │                 │                 │
+          ▼                 ▼                 ▼
+    Highlighting        Structural        Navigation
+                         Features
+          │                 │                 │
+          │        ┌────────┼────────┐        │
+          │        ▼        ▼        ▼        │
+          │     Folding  Selection Outline    │
+          │
+          └──────────────┬───────────────────┘
+                         ▼
+                      Renderer
+```
+
+This does not mean that every editor should implement all of these features. Each additional feature introduces state, interaction rules, testing requirements, and integration work.
+
+The architectural lesson is narrower:
+
+> **A syntax tree can serve as shared structural information for many editor features beyond syntax highlighting.**
+
+For the baseline editor, the existing lightweight lexical and contextual analysis remains sufficient. A syntax-tree-based architecture represents a possible advanced extension when structural editing capabilities justify the additional complexity.
+
+## Summary
+
+A syntax tree supports features well beyond highlighting: code folding, structural selection, delimiter matching, syntax-aware navigation, outline generation, and indentation assistance. Each of these derives its behavior from the same structural representation without storing another copy of the document.
+
+The syntax tree thus becomes shared structural information for many features, though each feature adds its own state and integration cost. For the baseline editor, the lightweight lexical approach remains sufficient, and the syntax tree represents a possible advanced extension.
+
+Each feature keeps its own state — such as which regions are folded — while the Document and the syntax tree remain the shared sources of truth. What changes when a feature is added is the number of consumers, not the ownership model.
+
+In the next section, we will relate Tree-sitter to the other major language subsystem introduced earlier: the Language Server Protocol.

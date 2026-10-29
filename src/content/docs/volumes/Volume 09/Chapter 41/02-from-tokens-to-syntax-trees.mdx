@@ -1,0 +1,429 @@
+---
+title: "41.2 From Tokens to Syntax Trees"
+description: "Contrasts the linear token stream produced by a lexer with the hierarchical, range-bearing syntax tree that parsing adds for editor features."
+---
+
+Chapter 32 introduced lexical analysis as a practical way to understand source text for syntax highlighting. A lexer identifies meaningful pieces of text, such as keywords, identifiers, literals, operators, and punctuation.
+
+For example:
+
+```c
+x = a + b * c;
+```
+
+can be divided into tokens:
+
+```text
+identifier   x
+operator     =
+identifier   a
+operator     +
+identifier   b
+operator     *
+identifier   c
+punctuation  ;
+```
+
+This representation is useful, but it does not fully describe the relationships between those tokens.
+
+A syntax tree adds that missing structural information.
+
+## Tokens Describe Pieces
+
+A token answers a question such as:
+
+> What kind of piece of source text is this?
+
+For:
+
+```c
+x = a + b * c;
+```
+
+we can identify:
+
+```text
+x          identifier
+=          assignment operator
+a          identifier
++          addition operator
+b          identifier
+*          multiplication operator
+c          identifier
+;          statement terminator
+```
+
+The lexer can therefore transform a stream of characters into a stream of structured units:
+
+```text
+Source Text
+     │
+     ▼
+   Lexer
+     │
+     ▼
+  Tokens
+```
+
+This is already more useful than treating the source as an undifferentiated sequence of characters.
+
+However, tokens are fundamentally a **sequence**.
+
+```text
+x   =   a   +   b   *   c   ;
+```
+
+The sequence tells us the order in which the pieces occur. It does not, by itself, express the complete hierarchical structure of the statement.
+
+## Syntax Describes Relationships
+
+Consider the expression:
+
+```c
+a + b * c
+```
+
+The operators do not all have the same precedence.
+
+The expression is interpreted conceptually as:
+
+```text
+a + (b * c)
+```
+
+rather than:
+
+```text
+(a + b) * c
+```
+
+A syntax tree can represent this relationship explicitly:
+
+```text
+addition
+├── a
+└── multiplication
+    ├── b
+    └── c
+```
+
+The tree tells us something that a simple token sequence does not directly express:
+
+```text
+addition
+    │
+    ├── left operand: a
+    │
+    └── right operand:
+            multiplication
+                ├── b
+                └── c
+```
+
+The important transition is therefore:
+
+```text
+Tokens
+   │
+   │ sequence
+   ▼
+Syntax Tree
+   │
+   │ hierarchy
+   ▼
+Structural representation
+```
+
+## A Simple Example
+
+Consider:
+
+```c
+int value = 10;
+```
+
+A conceptual syntax tree might look like:
+
+```text
+declaration
+├── type
+│   └── int
+├── identifier
+│   └── value
+└── initializer
+    └── integer
+        └── 10
+```
+
+The exact node names depend on the grammar and parser implementation. The purpose of this diagram is to illustrate the concept rather than prescribe a particular parser representation.
+
+The source text remains:
+
+```text
+int value = 10;
+```
+
+The tokens describe its individual pieces.
+
+The syntax tree describes how those pieces participate in a larger construct.
+
+## Hierarchy Is the Important Difference
+
+A token stream is naturally linear:
+
+```text
+Token 1 → Token 2 → Token 3 → Token 4 → ...
+```
+
+A syntax tree is hierarchical:
+
+```text
+                    declaration
+                 /       |       \
+              type    identifier  initializer
+               │          │           │
+              int        value         10
+```
+
+This hierarchy allows the editor to ask structural questions.
+
+For example:
+
+- What construct contains this identifier?
+- Which expression contains this operator?
+- What statements are inside this block?
+- Where does this function declaration begin and end?
+- What syntactic construct surrounds the cursor?
+
+These are fundamentally different questions from:
+
+> What token is at this position?
+
+## Parent and Child Relationships
+
+A syntax tree consists of nodes connected through relationships.
+
+For example:
+
+```text
+function
+├── name
+├── parameters
+└── body
+    ├── statement
+    ├── statement
+    └── statement
+```
+
+The `function` node is a parent of several child nodes.
+
+A child can also have a parent:
+
+```text
+function
+   │
+   └── body
+        │
+        └── statement
+```
+
+This relationship allows the editor to move through the structure.
+
+Conceptually:
+
+```text
+             parent
+             /    \
+            /      \
+        child      child
+```
+
+A parser therefore produces more than a collection of recognized tokens. It produces a representation of how those tokens participate in syntactic constructs.
+
+## Source Ranges
+
+Syntax-tree nodes also correspond to regions of the source document.
+
+Consider:
+
+```c
+x = a + b;
+```
+
+A conceptual tree could be:
+
+```text
+assignment [0..10]
+├── identifier [0..1]
+├── operator [2..3]
+├── addition [4..9]
+│   ├── identifier [4..5]
+│   ├── operator [6..7]
+│   └── identifier [8..9]
+└── punctuation [9..10]
+```
+
+The exact indexing convention is implementation-dependent. The important concept is that nodes can be associated with **source ranges**.
+
+This gives the editor a relationship between:
+
+```text
+Document Position
+        │
+        ▼
+Syntax Tree Node
+```
+
+That relationship becomes extremely useful later.
+
+For example, when the cursor is positioned inside an expression, the editor can determine which syntactic construct contains that position.
+
+## Syntax Trees Are Derived State
+
+The syntax tree should not become a second authoritative representation of the document.
+
+Our architecture already treats the Document as the authoritative representation of source text.
+
+The relationship should therefore be:
+
+```text
+                Document
+                    │
+                    │ source text
+                    ▼
+              Syntax Parser
+                    │
+                    ▼
+               Syntax Tree
+```
+
+The tree is **derived information**.
+
+If the document changes:
+
+```text
+Document
+   │
+   │ edit
+   ▼
+new document state
+   │
+   ▼
+updated syntax tree
+```
+
+The syntax tree exists to help the editor understand the document. It does not replace the document itself.
+
+This distinction becomes particularly important when we introduce incremental parsing.
+
+## Tokens and Trees Serve Different Purposes
+
+It is useful to keep the two representations conceptually separate.
+
+```text
+Source Text
+     │
+     ├───────────────► Tokens
+     │
+     │                  sequence of lexical units
+     │
+     └───────────────► Syntax Tree
+                        hierarchical structure
+```
+
+Tokens are useful when we need to know:
+
+- what lexical elements occur
+- where those elements occur
+- what category they belong to
+
+A syntax tree is useful when we need to know:
+
+- how constructs are nested
+- which elements belong together
+- what larger construct contains a particular element
+- where syntactic structures begin and end
+
+Neither representation makes the other universally unnecessary.
+
+In a sophisticated editor, multiple forms of derived information may coexist.
+
+## From Lexical Analysis to Parsing
+
+The progression can therefore be summarized as:
+
+```text
+Characters
+    │
+    ▼
+Lexical Analysis
+    │
+    ▼
+Tokens
+    │
+    ▼
+Parsing
+    │
+    ▼
+Syntax Tree
+```
+
+Each stage adds a different kind of understanding.
+
+```text
+Characters
+   │
+   │ raw representation
+   ▼
+Tokens
+   │
+   │ lexical meaning
+   ▼
+Syntax Tree
+   │
+   │ structural meaning
+   ▼
+Editor Features
+```
+
+This distinction is important because Chapter 32's syntax-highlighting approach can operate with considerably less structural information.
+
+Tree-sitter enters at the next level: maintaining a syntax tree that remains useful as the document changes.
+
+## Why Trees Matter to Editors
+
+Once an editor has structural information, many features become easier to describe.
+
+For example:
+
+```text
+Syntax Tree
+     │
+     ├── Highlighting
+     ├── Folding
+     ├── Structural Navigation
+     ├── Matching Constructs
+     └── Other Analysis
+```
+
+The tree becomes a shared source of structural information for multiple features.
+
+This is one of the major reasons syntax trees are valuable in modern editors.
+
+However, maintaining such a tree introduces a new problem:
+
+> What happens to the tree when the user edits the document?
+
+If the editor rebuilt the entire tree after every keystroke, we would return to the problem described in Section 41.1.
+
+The next step is therefore to understand how a syntax tree can be **updated incrementally** rather than reconstructed from scratch after every edit.
+
+## Summary
+
+Tokens provide lexical information — a linear sequence of meaningful pieces — but they do not describe how those pieces relate to one another. A syntax tree adds hierarchy: parent-child relationships, nesting, and source ranges that connect each construct back to the document.
+
+This structural representation lets the editor ask questions a token stream cannot answer, such as which construct contains the cursor or where a function begins and ends. The syntax tree remains derived state: the Document stays authoritative, and the tree is regenerated or updated whenever the document changes.
+
+Tokens therefore remain useful for lexical questions, so the two representations coexist rather than one superseding the other. What the tree adds is the ability to connect a source position to the construct that contains it, which is the foundation for every structural feature discussed later.
+
+In the next section, we will examine what "incremental" really means when that syntax tree must be kept in step with a continuously changing document.

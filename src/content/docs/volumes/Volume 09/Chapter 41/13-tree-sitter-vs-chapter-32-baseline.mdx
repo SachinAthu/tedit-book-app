@@ -1,0 +1,261 @@
+---
+title: "41.13 Tree-sitter vs the Chapter 32 Baseline"
+description: "Compares the Chapter 32 lexical baseline with Tree-sitter and shows the real difference is structural richness rather than highlighting."
+---
+
+Chapter 32 established the baseline approach for syntax-related editor features: lexical analysis combined with lightweight contextual analysis.
+
+Tree-sitter represents a progression beyond that approach. It provides a structured syntax tree and an incremental parsing framework, allowing the editor to reason about source structure at a much deeper level.
+
+The important question is therefore not:
+
+> Which approach is better?
+
+It is:
+
+> What additional capabilities does the more structured approach provide, and what additional complexity does it introduce?
+
+## Architectural Comparison
+
+| Aspect                 | Chapter 32 Baseline      | Tree-sitter         |
+| ---------------------- | ------------------------ | ------------------- |
+| Primary representation | Tokens                   | Syntax tree         |
+| Structural information | Limited                  | Rich                |
+| Highlighting           | Yes                      | Yes                 |
+| Incremental parsing    | No generalized framework | Yes                 |
+| Folding                | Limited/manual           | Naturally supported |
+| Structural queries     | Limited                  | Strong              |
+| Complexity             | Lower                    | Higher              |
+| Memory                 | Lower                    | Higher              |
+| Language grammar       | Not required             | Required            |
+| Baseline choice        | Yes                      | Deferred            |
+
+## The Chapter 32 Approach
+
+The baseline does not attempt to construct a complete representation of the program's syntactic structure.
+
+Conceptually:
+
+```text
+Document
+   │
+   ▼
+Lexical Analysis
+   │
+   ▼
+Tokens
+   │
+   ▼
+Lightweight Context
+   │
+   ▼
+Editor Features
+```
+
+This is sufficient for capabilities such as basic syntax highlighting without introducing the machinery required to maintain a complete syntax tree.
+
+The approach deliberately keeps the implementation understandable.
+
+## The Tree-sitter Approach
+
+Tree-sitter introduces a substantially richer representation:
+
+```text
+Document
+   │
+   ▼
+Incremental Parser
+   │
+   ▼
+Syntax Tree
+   │
+   ├── Highlighting
+   ├── Folding
+   ├── Navigation
+   ├── Structural Selection
+   └── Other Structural Features
+```
+
+The editor can therefore reason about relationships between syntactic constructs rather than working primarily with token sequences.
+
+This broader representation is what makes many of the structural features discussed earlier in this chapter practical.
+
+## Highlighting Is Not the Main Difference
+
+Both approaches can support syntax highlighting.
+
+Therefore:
+
+```text
+Baseline
+    └── Highlighting ✓
+
+Tree-sitter
+    └── Highlighting ✓
+```
+
+does not explain why Tree-sitter is significantly more capable.
+
+The important difference is the amount of structural information available.
+
+With the baseline approach, the editor may know that a sequence represents a keyword, identifier, string, or comment.
+
+With a syntax tree, the editor can additionally reason about relationships such as:
+
+```text
+function
+ ├── name
+ ├── parameters
+ └── body
+      ├── statement
+      └── expression
+```
+
+That structure can be consumed by multiple higher-level features.
+
+## Incremental Analysis
+
+Another important difference is the availability of a generalized incremental parsing model.
+
+The Chapter 32 architecture should **not** be interpreted as necessarily reparsing the entire document after every edit.
+
+Instead, its analysis can involve stateful re-analysis and invalidation of affected information.
+
+Tree-sitter provides a more explicit framework for maintaining a syntax tree across edits:
+
+```text
+Chapter 32
+    │
+    ▼
+Lexer + lightweight analysis
+    │
+    │ advanced capability
+    ▼
+Chapter 41
+    │
+    ▼
+Incremental parser + syntax tree
+```
+
+The progression is therefore architectural rather than simply an optimization.
+
+## Complexity and Memory
+
+The additional capability comes with additional cost.
+
+The baseline has a relatively small conceptual model:
+
+```text
+Text
+ │
+ ▼
+Tokens
+ │
+ ▼
+Lightweight analysis
+```
+
+Tree-sitter introduces:
+
+```text
+Text
+ │
+ ▼
+Parser
+ │
+ ▼
+Syntax tree
+ │
+ ├── incremental updates
+ ├── structural traversal
+ └── structural consumers
+```
+
+This requires more implementation machinery and additional memory.
+
+The syntax tree itself is another representation derived from the Document, and the parser must keep that representation synchronized with edits.
+
+Thus the comparison is not:
+
+```text
+simple = bad
+Tree-sitter = good
+```
+
+It is:
+
+```text
+Lower complexity
+       │
+       ▼
+   Baseline
+       │
+       │
+       ▼
+Higher structural capability
+       │
+       ▼
+   Tree-sitter
+```
+
+## Language Grammars
+
+The baseline does not require a complete language grammar merely to provide basic syntax-related functionality.
+
+Tree-sitter's structured parsing model depends on language-specific grammar definitions.
+
+This creates another architectural responsibility:
+
+```text
+Tree-sitter
+     │
+     ├── Parser
+     ├── Syntax Tree
+     └── Language Grammar
+```
+
+Supporting more languages therefore involves more than simply recognizing token categories.
+
+## The Architectural Progression
+
+The two approaches can be viewed as levels of capability:
+
+```text
+                 Chapter 32
+                     │
+                     ▼
+          Lexical + lightweight
+              contextual analysis
+                     │
+                     │
+              advanced needs
+                     │
+                     ▼
+                 Chapter 41
+                     │
+                     ▼
+           Incremental parsing
+                     │
+                     ▼
+                Syntax tree
+                     │
+          ┌──────────┼──────────┐
+          ▼          ▼          ▼
+     Highlighting Folding  Navigation
+```
+
+Tree-sitter is therefore **not simply a better version of the Chapter 32 lexer**.
+
+It solves a broader problem: maintaining and exposing rich syntactic structure during interactive editing.
+
+That broader capability is valuable when an editor needs structural features, but it also introduces higher complexity, memory requirements, and implementation responsibilities. The baseline consequently remains a deliberate choice rather than an outdated version of the same architecture.
+
+## Summary
+
+The Chapter 32 baseline works with tokens and lightweight contextual analysis, while Tree-sitter maintains a full syntax tree with incremental updates. Highlighting is not the main difference — both can highlight — the real difference is the richness of the structural information available.
+
+That greater capability comes at a cost: more implementation machinery, more memory, and a dependency on language grammars. Tree-sitter is therefore an architectural progression from the baseline, not merely a faster version of the same lexer.
+
+The baseline's contextual analysis already provides the highlighting the editor needs, so the comparison is about which structural questions each approach can answer rather than which produces colors. Tree-sitter's richer answers require grammars, memory, and synchronization work that the baseline deliberately avoids.
+
+In the next section, we will explain why, despite these capabilities, the baseline editor deliberately does not adopt Tree-sitter.

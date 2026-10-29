@@ -1,0 +1,197 @@
+---
+title: "41.14 Why Our Baseline Does Not Adopt Tree-sitter"
+description: "Explains why the baseline stays with lexical and lightweight contextual analysis instead of adopting Tree-sitter's parser, grammars, and synchronization."
+---
+
+At this point, Tree-sitter provides a clear increase in capability. It offers incremental parsing, a structured syntax tree, and a foundation for features such as structural selection, folding, and syntax-aware navigation.
+
+This raises an important architectural question:
+
+> **If Tree-sitter provides greater capabilities, why did we not use it in our baseline editor?**
+
+The answer is that the baseline is not intended to maximize features. It is intended to provide a simple, understandable, and carefully controlled editor architecture.
+
+## Capability Does Not Automatically Determine the Baseline
+
+Our baseline remains:
+
+```text
+Simple Editor
+     │
+     ▼
+Lexer + Lightweight Analysis
+```
+
+A Tree-sitter-based editor would instead introduce:
+
+```text
+More Capable Editor
+     │
+     ▼
+Incremental Parser
+     │
+     ▼
+Syntax Tree
+```
+
+The second architecture can support more sophisticated features, but it also introduces additional responsibilities.
+
+Therefore:
+
+> **Better capability does not automatically mean better baseline architecture.**
+
+The appropriate architecture depends on the requirements of the system.
+
+## Additional Complexity
+
+Adopting Tree-sitter would introduce several concerns that are unnecessary for the baseline editor:
+
+- parser complexity
+- language grammars
+- parser lifecycle management
+- incremental synchronization
+- additional memory usage
+- derived-state management
+- external dependency management
+
+These costs are justified when the editor requires the capabilities provided by a syntax tree.
+
+They are not automatically justified merely because the technology is more powerful.
+
+For our Nano-like baseline editor, basic lexical and lightweight contextual analysis is sufficient for the intended feature set.
+
+## Architectural Philosophy
+
+The decision also follows the broader philosophy established throughout the project.
+
+The baseline prioritizes:
+
+```text
+Simplicity
+    +
+Understandability
+    +
+Clear ownership
+    +
+Educational value
+    +
+Manageable implementation complexity
+```
+
+This is particularly important because the book is not merely constructing a working editor. It is teaching the reader how the editor's architecture is built from first principles.
+
+Introducing a complete incremental parsing framework into the baseline would obscure some of those fundamentals.
+
+The reader would have to understand another substantial subsystem before the basic editor could be completed.
+
+## Tree-sitter as an Advanced Architecture
+
+Rejecting Tree-sitter from the baseline does not mean rejecting it as a technology.
+
+A more advanced version of the editor could introduce it later:
+
+```text
+                    Editor State
+                         │
+                         ▼
+                      Document
+                         │
+                         ▼
+                  Syntax Analysis
+                         │
+                         ▼
+                    Tree-sitter
+                         │
+                         ▼
+                    Syntax Tree
+                         │
+              ┌──────────┼──────────┐
+              ▼          ▼          ▼
+        Highlighting  Folding  Navigation
+```
+
+This architecture becomes attractive when structural capabilities justify the additional complexity.
+
+The important distinction is:
+
+```text
+Baseline
+    │
+    ▼
+Simple lexical analysis
+```
+
+versus:
+
+```text
+Advanced extension
+    │
+    ▼
+Incremental parser
+    │
+    ▼
+Syntax tree
+    │
+    ▼
+Structural editor features
+```
+
+The second is a valid evolution of the first, not evidence that the first was incorrectly designed.
+
+## Consistency with the Project's Decisions
+
+This choice is consistent with the project's established architectural philosophy and ADR-025.
+
+The baseline should remain small enough that each subsystem has a clear purpose and ownership boundary.
+
+Tree-sitter can therefore be treated as an **optional advanced capability** rather than a mandatory foundation.
+
+This also preserves an important property of the implementation volume: the editor can be built and understood without first introducing a sophisticated parsing framework.
+
+## The Architectural Judgment
+
+The decision can be summarized as follows:
+
+```text
+For the baseline editor:
+
+Lexer
+   +
+Lightweight contextual analysis
+   =
+Sufficient capability
+   +
+Lower complexity
+   +
+Clear architecture
+```
+
+Whereas:
+
+```text
+For an advanced editor:
+
+Incremental parser
+   +
+Syntax tree
+   =
+Greater structural capability
+   +
+Higher implementation cost
+```
+
+The goal is therefore not to choose the most sophisticated technology available.
+
+The goal is to choose the **simplest architecture that adequately satisfies the requirements**.
+
+Tree-sitter remains a valid and powerful extension when those requirements grow beyond the capabilities of the baseline. For the editor built in this book, however, its additional complexity is not necessary.
+
+## Summary
+
+Greater capability does not automatically justify a more complex baseline. Tree-sitter would introduce parser complexity, language grammars, synchronization, and additional memory that are unnecessary for a Nano-like editor whose requirements are already met by lexical and lightweight contextual analysis.
+
+The decision follows the project's educational philosophy and ADR-025: keep each subsystem small, clearly owned, and understandable. Tree-sitter remains a valid advanced extension for when structural capabilities are actually required.
+
+The baseline can therefore stay small enough that every subsystem has a clear purpose and ownership boundary. This is a scope decision rather than a judgment about Tree-sitter's quality, and it keeps the implementation volume buildable on its own.
+
+In the next section, we will look at the common mistakes to avoid when integrating Tree-sitter into an editor.

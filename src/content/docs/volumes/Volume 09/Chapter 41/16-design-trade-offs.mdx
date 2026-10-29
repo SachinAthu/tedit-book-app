@@ -1,0 +1,280 @@
+---
+title: "41.16 Design Trade-offs"
+description: "Weighs simplicity, memory, performance, correctness, capability, effort, and dependency cost to show that complexity must match requirements."
+---
+
+Tree-sitter demonstrates an important architectural principle: **additional capability always has a cost**.
+
+A syntax tree can provide richer structural information, better support for incremental analysis, and a foundation for advanced editor features. But these benefits must be weighed against additional memory, implementation complexity, dependencies, and synchronization responsibilities.
+
+The fundamental choice can therefore be viewed as:
+
+```text
+Simple lexical analysis
+        │
+        │ lower complexity
+        ▼
+     Baseline
+
+
+        versus
+
+
+Incremental syntax tree
+        │
+        │ greater capability
+        ▼
+Advanced architecture
+```
+
+## Simplicity
+
+The baseline lexical-analysis approach has fewer moving parts.
+
+```text
+Document
+   │
+   ▼
+Lexer
+   │
+   ▼
+Lightweight analysis
+```
+
+This makes the system easier to understand, implement, debug, and maintain.
+
+Tree-sitter introduces another substantial subsystem:
+
+```text
+Document
+   │
+   ▼
+Incremental Parser
+   │
+   ▼
+Syntax Tree
+```
+
+The additional structure is valuable, but it increases the number of concepts that the implementation must manage.
+
+## Memory
+
+The baseline requires relatively little derived structural state.
+
+A Tree-sitter-based architecture maintains a syntax tree in addition to the Document and other editor state.
+
+```text
+Baseline
+    Document
+        +
+    Editor State
+
+
+Tree-sitter
+    Document
+        +
+    Editor State
+        +
+    Syntax Tree
+        +
+    Related derived information
+```
+
+The richer representation therefore consumes additional memory.
+
+## Performance
+
+Incremental parsing can reduce unnecessary re-analysis after edits, particularly when changes affect relatively small portions of the document.
+
+However, as discussed earlier, incremental parsing is not automatically constant-time and does not eliminate parsing costs.
+
+The trade-off is therefore:
+
+```text
+Incremental analysis
+        +
+Reuse of existing structure
+        │
+        ▼
+Potentially less repeated work
+
+        but
+
+Syntax-tree maintenance
+        +
+Tree traversal
+        +
+Parser processing
+        │
+        ▼
+Additional computational cost
+```
+
+## Correctness
+
+A syntax tree provides stronger structural information, which can improve the correctness of structural editor features.
+
+However, that structure introduces another derived representation that must remain synchronized with the Document.
+
+The architecture must therefore preserve:
+
+```text
+Document
+   │
+   ▼
+Authoritative source
+   │
+   ▼
+Syntax Tree
+   │
+   ▼
+Derived structural information
+```
+
+The more derived state the system maintains, the more synchronization behavior must be designed and tested.
+
+## Feature Capability
+
+This is where Tree-sitter provides its strongest advantage.
+
+A syntax tree can support:
+
+```text
+              Syntax Tree
+                   │
+        ┌──────────┼──────────┐
+        ▼          ▼          ▼
+   Highlighting Folding  Navigation
+        │
+        ├── Structural selection
+        ├── Outline generation
+        └── Other structural features
+```
+
+The baseline can support a smaller feature set with much less machinery.
+
+Thus the trade-off is not simply performance versus complexity. It is also:
+
+```text
+Less structure
+     │
+     ▼
+Fewer capabilities
+
+More structure
+     │
+     ▼
+More capabilities
+```
+
+## Implementation Effort
+
+Introducing Tree-sitter requires additional work around:
+
+- parser integration
+- language grammars
+- parser lifecycle
+- incremental updates
+- syntax-tree management
+- derived-state handling
+- dependency management
+
+That effort is justified when those capabilities are requirements.
+
+For a small Nano-like editor, however, implementing all of this before the core editor is complete would increase the project's scope without providing proportional value.
+
+## Dependency Cost
+
+The baseline can remain comparatively self-contained.
+
+A Tree-sitter architecture introduces an external parsing dependency and language-specific grammar dependencies.
+
+This affects:
+
+```text
+Build
+Deployment
+Versioning
+Compatibility
+Maintenance
+```
+
+Dependency cost is therefore part of architectural cost, even when the dependency itself is technically excellent.
+
+## The Central Trade-off
+
+The overall relationship can be summarized as:
+
+```text
+More structure
+      +
+More capability
+      +
+Better incremental analysis
+      │
+      ▼
+Higher complexity
+      +
+Higher memory
+      +
+More dependencies
+      +
+More synchronization responsibility
+```
+
+For our baseline editor:
+
+```text
+Simple lexical analysis
+        +
+Lightweight contextual analysis
+        │
+        ▼
+Appropriate baseline
+```
+
+For a more advanced editor:
+
+```text
+Incremental parsing
+        +
+Syntax tree
+        │
+        ▼
+Valid advanced architecture
+```
+
+The correct architectural decision is therefore not to maximize capability.
+
+It is to select the level of complexity that the requirements justify.
+
+For this project, the conclusion remains:
+
+```text
+Baseline
+    │
+    ▼
+Simple lexical analysis
+    +
+Lightweight contextual analysis
+
+
+Advanced extension
+    │
+    ▼
+Tree-sitter
+    =
+Valid future architecture
+```
+
+Tree-sitter is therefore neither rejected nor required. It represents a deliberate **advanced extension point** whose additional capabilities become worthwhile when the editor's requirements grow beyond the needs of the baseline.
+
+## Summary
+
+Tree-sitter illustrates the principle that additional capability always has a cost. A syntax tree offers richer structure and better incremental analysis but adds memory, complexity, synchronization responsibility, implementation effort, and dependency cost.
+
+The correct decision is therefore to match complexity to requirements. For this project, the simple lexical baseline remains appropriate, while Tree-sitter is a valid advanced extension point rather than something to be rejected or required.
+
+The cost side is concrete: memory for the tree, effort for grammars and lifecycle, dependencies for build and deployment, and ongoing synchronization between the Document and its derived structure. Matching complexity to requirements keeps the baseline honest while leaving a clear path for an advanced editor.
+
+In the next and final section, we will summarize the chapter, review exercises, and preview the next chapter.

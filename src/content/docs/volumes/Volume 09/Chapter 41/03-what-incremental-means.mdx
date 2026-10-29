@@ -1,0 +1,391 @@
+---
+title: '41.3 What "Incremental" Really Means'
+description: "Defines incremental parsing as reuse of prior analysis, distinguishing it from full re-parsing, incremental lexing, and incremental highlighting."
+---
+
+A syntax tree provides a structural representation of a document. The next problem is maintaining that representation while the document changes.
+
+An editor does not parse a document once and then leave it unchanged. Every editing operation can potentially affect the syntax tree.
+
+Consider:
+
+```c
+int value = 10;
+```
+
+The editor may change it to:
+
+```c
+int value = 100;
+```
+
+The source document has changed, so the syntax representation must also be updated.
+
+The simplest strategy is to discard the existing tree and parse the entire document again:
+
+```text
+Document
+   │
+   ▼
+Parse entire document
+   │
+   ▼
+New Syntax Tree
+```
+
+This is valid, and for a small editor it may even be a reasonable design.
+
+Incremental parsing takes a different approach.
+
+```text
+Existing Syntax Tree
+        │
+        │ edit
+        ▼
+  Incremental Update
+        │
+        ▼
+Updated Syntax Tree
+```
+
+The goal is to preserve as much existing structural information as possible while updating the parts affected by the edit.
+
+## A Document Edit Is More Than a Character Change
+
+To understand incremental parsing, we first need to consider what an edit actually does.
+
+Suppose the document contains:
+
+```text
+line 1
+line 2
+line 3
+line 4
+line 5
+```
+
+The user inserts text into line 3:
+
+```text
+line 1
+line 2
+line 3 changed
+line 4
+line 5
+```
+
+At the document level, the change can be described by information such as:
+
+```text
+Start position
+Deleted range
+Inserted text
+```
+
+Conceptually:
+
+```text
+          Edit
+           │
+     ┌─────┼─────┐
+     ▼     ▼     ▼
+   start deleted inserted
+   point   range    text
+```
+
+The parser can use this information to understand that the previous syntax tree corresponds to an older version of the document.
+
+This is fundamentally different from simply saying:
+
+> Here is a completely unrelated new file. Parse it.
+
+## Reusing Existing Structure
+
+Suppose the syntax tree represents a large document:
+
+```text
+Root
+├── Declaration A
+├── Function A
+├── Function B
+├── Function C
+└── Function D
+```
+
+An edit occurs inside `Function B`.
+
+A conceptual incremental update might look like:
+
+```text
+Root
+├── Declaration A      ← preserved
+├── Function A         ← preserved
+├── Function B         ← affected
+├── Function C         ← preserved
+└── Function D         ← preserved
+```
+
+The exact behavior of a real incremental parser is more complicated than simply replacing one node. Changes can propagate through surrounding syntactic structure.
+
+Nevertheless, this illustrates the central principle:
+
+> **Unchanged structure should not be treated as though it were new.**
+
+## Local Changes Can Have Non-Local Effects
+
+As discussed in Section 41.1, incremental parsing does not mean that the parser only examines the characters directly inserted or deleted. A single edit can alter the structural interpretation of a larger region — removing a closing brace, for example, can force the surrounding construct to be reconsidered.
+
+The parser must therefore determine which existing structural information remains valid and which information must be recalculated.
+
+## Incremental Parsing as State Reuse
+
+A useful way to think about incremental parsing is **reuse of previous analysis**.
+
+Without incremental parsing:
+
+```text
+Old Document
+     │
+     X
+     │
+     ▼
+discard analysis
+
+New Document
+     │
+     ▼
+parse everything
+```
+
+With incremental parsing:
+
+```text
+Old Document
+     │
+     ▼
+Existing Syntax Tree
+     │
+     │ edit information
+     ▼
+Incremental Analysis
+     │
+     ├── reuse valid structure
+     │
+     └── recalculate affected structure
+     │
+     ▼
+Updated Syntax Tree
+```
+
+The previous analysis becomes an input to the next analysis.
+
+This is the defining architectural idea.
+
+## Incremental Parsing vs Full Re-Parsing
+
+The difference can be summarized as follows:
+
+| Approach            | After an edit                                                        |
+| ------------------- | -------------------------------------------------------------------- |
+| Full parsing        | Build a new syntax tree from the current document                    |
+| Incremental parsing | Update an existing syntax tree using the edit and previous structure |
+
+Full parsing has an important advantage:
+
+**It is simpler.**
+
+There is only one document state to consider, and the parser does not need to reason about how an old tree relates to a new one.
+
+Incremental parsing introduces additional state and additional logic, but can avoid unnecessary work.
+
+Therefore, incremental parsing is not automatically the correct choice for every editor.
+
+It is a trade-off between:
+
+```text
+Implementation Simplicity
+        │
+        │
+        ▼
+   Full Parsing
+```
+
+and:
+
+```text
+Interactive Performance
+        │
+        │
+        ▼
+Incremental Parsing
+```
+
+The appropriate choice depends on the requirements of the system.
+
+## Incremental Parsing vs Incremental Highlighting
+
+These terms should also be kept separate.
+
+**Incremental parsing** concerns the syntax representation:
+
+```text
+Document
+   │
+   ▼
+Parser
+   │
+   ▼
+Updated Syntax Tree
+```
+
+**Incremental highlighting** concerns updating the information used to display source text:
+
+```text
+Document / Syntax Tree
+        │
+        ▼
+Highlight Analysis
+        │
+        ▼
+Updated Highlight Information
+```
+
+An editor may use incremental parsing without necessarily implementing sophisticated incremental highlighting.
+
+Likewise, a simpler editor can implement incremental highlighting without maintaining a full syntax tree.
+
+They are related techniques, but they solve different problems.
+
+## Incremental Parsing vs Incremental Lexing
+
+The same distinction applies to lexical analysis.
+
+Incremental lexing attempts to avoid re-lexing source that has not been affected by an edit.
+
+Incremental parsing operates at a higher structural level.
+
+Conceptually:
+
+```text
+Source Text
+     │
+     ▼
+Incremental Lexical Analysis
+     │
+     ▼
+Tokens
+     │
+     ▼
+Incremental Parsing
+     │
+     ▼
+Syntax Tree
+```
+
+The two techniques can work together.
+
+However, the book should not treat them as interchangeable. Lexical analysis answers questions about **individual lexical units**, while parsing establishes **relationships between those units**.
+
+## Why Editors Benefit from Incrementality
+
+The advantage becomes clearer when considering the normal editing workload.
+
+A user might type:
+
+```text
+f
+fu
+fun
+func
+funct
+functi
+function
+```
+
+Each keystroke creates another document state.
+
+A naive architecture could repeatedly perform:
+
+```text
+new document
+    │
+    ▼
+parse entire document
+    │
+    ▼
+new tree
+```
+
+An incremental architecture instead maintains continuity:
+
+```text
+Document State N
+       │
+       │ edit
+       ▼
+Document State N+1
+       │
+       ▼
+update existing analysis
+       │
+       ▼
+Syntax Tree N+1
+```
+
+The editor therefore treats parsing as an ongoing process rather than a sequence of completely independent parsing operations.
+
+## Incrementality Is a General Engineering Technique
+
+Although this chapter focuses on parsing, the underlying idea is broader.
+
+The same principle appears whenever a system can preserve valid results rather than recomputing everything.
+
+For example:
+
+```text
+Full recomputation
+        │
+        ▼
+Recalculate everything
+```
+
+versus:
+
+```text
+Incremental computation
+        │
+        ▼
+Reuse what remains valid
+        │
+        ▼
+Recalculate what changed
+```
+
+In an editor, this principle can apply to:
+
+- syntax trees
+- highlighting information
+- layout information
+- indexes
+- diagnostics
+- other derived state
+
+However, each subsystem has its own correctness requirements.
+
+Incrementality should therefore be introduced deliberately rather than applied simply because it sounds faster.
+
+## The Important Boundary
+
+As established in Section 41.2, our architecture keeps the Document as the source of truth and treats the syntax tree as derived state that must correspond to a particular version of that document.
+
+The purpose of incremental parsing is to make the transition from an old document version and its tree to a new pair efficient while preserving correctness.
+
+## Summary
+
+Incremental parsing means reusing the previous analysis rather than discarding it. The parser receives an edit described by a start position, a deleted range, and inserted text, and updates the existing syntax tree instead of reconstructing it from scratch.
+
+Incremental does not mean that only the changed characters are examined: a small edit can have non-local structural effects. It is also distinct from incremental lexing and incremental highlighting, which operate at different levels. Throughout, the Document remains the authoritative source of truth, and the syntax tree is derived state that must track a particular document version.
+
+The parser therefore treats its previous tree as an input to the next analysis, which is the defining difference from a full re-parse. Because the same reasoning applies to any derived state, incrementality has to be introduced per subsystem with its own correctness argument rather than assumed to be free.
+
+In the next section, we will introduce Tree-sitter as a concrete incremental parser and place it within our editor's architecture.

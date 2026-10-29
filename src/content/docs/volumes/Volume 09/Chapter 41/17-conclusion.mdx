@@ -1,0 +1,37 @@
+---
+title: "41.17 Conclusion"
+description: "Summarizes incremental parsing, the Tree-sitter architecture, the baseline decision, exercises, and previews Chapter 42 on terminal graphics."
+---
+
+The central idea of this chapter is that an editor works on source code that changes with every keystroke, so any structural representation of that source must be **maintained incrementally** rather than rebuilt from scratch after each edit. A syntax tree gives the editor a persistent, source-oriented structure — nodes with parent–child relationships, source ranges, and hierarchy — that a flat token stream cannot express.
+
+Tree-sitter is a concrete incremental parser built around this idea. It consumes the Document and produces a derived syntax tree that is updated as the user edits and shared by many structural features. The Document remains the single authoritative representation of the source; the tree is derived state that must correspond to the current document version, so error recovery keeps the parser useful on incomplete code, and the concrete, source-oriented representation suits editing better than a compiler-style AST.
+
+Incremental does not mean free. Small edits can have non-local structural effects, a tree costs memory and traversal time, and consumers must remain synchronized with the Document. Tree-sitter complements the LSP introduced in Chapter 40 — one provides local structure, the other external language intelligence — and each must respect the same ownership boundary.
+
+The chapter's decision is deliberately conservative: the baseline editor does not adopt Tree-sitter. The lexical and lightweight contextual analysis of the baseline (ADR-025) already satisfies the editor's feature set, and the additional parser, grammars, memory, and synchronization are not justified for a Nano-like editor. Tree-sitter therefore remains an **advanced extension point** — a valid future architecture — rather than a requirement of the core editor.
+
+## Exercises
+
+### Review Questions
+
+1. Explain why an editor cannot simply rebuild a complete syntax tree after every keystroke.
+2. Contrast tokens with a syntax tree. What structural information does a tree add?
+3. Why does "incremental" not mean that only the changed characters are parsed?
+4. Describe the ownership boundary between the Document and Tree-sitter. Why must the tree never become a second source of truth?
+5. What information must an edit description contain, and why must the tree correspond to the current document version?
+6. Why does an editor benefit from a concrete syntax tree rather than a compiler-style abstract syntax tree?
+7. Why must a parser intended for an editor tolerate incomplete and syntactically invalid source?
+8. Compare Tree-sitter with LSP. Why are they complementary rather than competing?
+9. Why does incremental parsing not guarantee constant-time or universally superior performance?
+10. Summarize why the baseline editor deliberately does not adopt Tree-sitter.
+
+### Optional Challenge
+
+Propose the edit information the editor must deliver to Tree-sitter after insertion, deletion, and replacement operations. Define how the editor's own document coordinates should be translated into the parser's coordinate system, and identify at least one case where a coordinate mismatch could silently corrupt the syntax tree. Explain how the editor should detect and recover from such a mismatch.
+
+## Preview of the Next Chapter
+
+**Chapter 42 — Terminal Graphics**
+
+Syntax trees let the editor understand the source it displays, but the terminal still limits how that source is presented. The next chapter turns from parsing to presentation, examining what modern terminals can do beyond plain text. We will study true color, images, mouse input, and the Kitty graphics protocol, and consider which of these capabilities belong in a baseline editor and which should be deferred as advanced extensions.

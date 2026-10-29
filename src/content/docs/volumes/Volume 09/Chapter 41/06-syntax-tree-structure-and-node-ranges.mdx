@@ -1,0 +1,559 @@
+---
+title: "41.6 Syntax Tree Structure and Node Ranges"
+description: "Describes syntax-tree nodes, parent–child and ancestor relationships, source ranges, and why those ranges are distinct from terminal positions."
+---
+
+A syntax tree is useful because it represents relationships within the source document. To use that structure effectively, however, we need to understand what information a syntax tree actually contains.
+
+At a conceptual level, a syntax tree is composed of **nodes**. Nodes represent syntactic constructs and are connected through parent-child relationships.
+
+For example:
+
+```c
+int value = 10;
+```
+
+can be represented conceptually as:
+
+```text
+declaration
+├── type
+│   └── int
+├── identifier
+│   └── value
+└── initializer
+    └── integer
+        └── 10
+```
+
+The exact node names and hierarchy depend on the grammar. The important idea is that the tree provides a structured representation of regions of source text.
+
+## Nodes
+
+A node is a unit within the syntax tree.
+
+Depending on the grammar, nodes may represent constructs such as:
+
+```text
+function
+parameter_list
+block
+statement
+expression
+identifier
+integer
+string
+```
+
+A node can contain other nodes:
+
+```text
+function
+   │
+   ├── name
+   ├── parameters
+   └── body
+```
+
+This creates the hierarchy that distinguishes a syntax tree from a simple token sequence.
+
+A node therefore has at least two important conceptual properties:
+
+```text
+Node
+├── syntactic type
+└── relationship to other nodes
+```
+
+In an actual parser, nodes also have positional information describing where the corresponding construct occurs in the source.
+
+## Parent and Child Relationships
+
+The tree structure allows the editor to move between levels of syntax.
+
+Consider:
+
+```c
+if (condition) {
+    calculate();
+}
+```
+
+A conceptual tree might be:
+
+```text
+if_statement
+├── condition
+│   └── identifier
+└── body
+    └── expression_statement
+        └── call_expression
+```
+
+The relationships can be traversed in both directions conceptually:
+
+```text
+             if_statement
+                  │
+                  ▼
+                body
+                  │
+                  ▼
+        expression_statement
+                  │
+                  ▼
+            call_expression
+```
+
+This allows an editor feature to reason about containment.
+
+For example:
+
+> Which syntactic construct contains the cursor?
+
+The answer can be obtained by locating the corresponding source position in the tree and walking toward its ancestors.
+
+## Ancestors and Descendants
+
+Given a node:
+
+```text
+call_expression
+```
+
+its ancestors might be:
+
+```text
+call_expression
+      │
+      ▼
+expression_statement
+      │
+      ▼
+block
+      │
+      ▼
+function
+      │
+      ▼
+root
+```
+
+The nodes below it are its descendants.
+
+This distinction is useful because different editor operations require different directions of traversal.
+
+For example:
+
+```text
+Current node
+    │
+    ├── ancestors → understand surrounding structure
+    │
+    └── descendants → inspect contained structure
+```
+
+A folding feature may inspect descendants to determine what a block contains.
+
+A structural navigation feature may walk ancestors to determine the larger construct surrounding the cursor.
+
+## Source Ranges
+
+Nodes are associated with regions of the source document.
+
+Consider:
+
+```c
+x = a + b;
+```
+
+A conceptual representation could be:
+
+```text
+assignment
+[0 ........ 10]
+├── identifier
+│   [0 .. 1]
+├── operator
+│   [2 .. 3]
+├── addition
+│   [4 .... 9]
+│   ├── identifier
+│   │   [4 .. 5]
+│   ├── operator
+│   │   [6 .. 7]
+│   └── identifier
+│       [8 .. 9]
+└── punctuation
+    [9 .. 10]
+```
+
+The numbers here are illustrative. The exact indexing convention depends on the representation being used.
+
+The important property is:
+
+> A node corresponds to a particular region of source text.
+
+This establishes a relationship between the Document and the syntax tree:
+
+```text
+Source Text
+    │
+    ├──────────────┐
+    │              │
+    ▼              ▼
+Characters      Syntax Nodes
+```
+
+A syntax node can therefore be used to identify the source region represented by a particular syntactic construct.
+
+## Start and End Positions
+
+A source range can conceptually be described by:
+
+```text
+Node Range
+├── start position
+└── end position
+```
+
+For example:
+
+```text
+start
+  │
+  ▼
+x = a + b;
+          ▲
+          │
+         end
+```
+
+This allows an editor to associate syntax with source locations.
+
+For example, if a node represents a function:
+
+```text
+function
+[start ------------------------ end]
+```
+
+the editor can determine the portion of the document occupied by that function.
+
+This information can support operations such as:
+
+- identifying the construct under the cursor
+- determining folding boundaries
+- selecting a syntactic region
+- locating syntax relevant to highlighting
+
+## Source Positions Are Not Terminal Positions
+
+The distinction introduced in the previous section is especially important here.
+
+A syntax-tree node has a position in the **source document**.
+
+The Renderer has a position on the **terminal screen**.
+
+These are different coordinate systems:
+
+```text
+                 Source
+                   │
+                   ▼
+            Syntax-tree range
+                   │
+                   │
+                   │ separate from
+                   │
+                   ▼
+                Viewport
+                   │
+                   ▼
+             Terminal position
+```
+
+For example, a syntax node may correspond to characters on document line 100, while the terminal may currently display document line 95 at the top of the viewport.
+
+The syntax tree does not need to know where line 100 appears on the screen.
+
+The Viewport and Renderer handle that transformation.
+
+This separation preserves the architecture established earlier in the book.
+
+## Byte, Character, and Line Coordinates
+
+Source positions can be represented in different ways.
+
+Conceptually, an editor may reason about:
+
+```text
+byte offset
+character position
+line + column
+```
+
+These are not necessarily interchangeable.
+
+For example, UTF-8 represents many characters using multiple bytes:
+
+```text
+Character
+   │
+   └── one or more UTF-8 bytes
+```
+
+Therefore:
+
+```text
+byte offset ≠ character index
+```
+
+in the general case.
+
+This is especially important when an editor combines its own document coordinate model with a parser that uses source offsets.
+
+The editor and parser must agree on how positions are represented and converted.
+
+The implementation should therefore establish a clear coordinate boundary rather than silently assuming that every position is a simple character count.
+
+## Named and Unnamed Structure
+
+A parser may distinguish between structurally significant nodes and syntactic details such as punctuation.
+
+For example:
+
+```c
+if (condition) {
+    statement();
+}
+```
+
+contains both meaningful language constructs and punctuation:
+
+```text
+if
+(
+condition
+)
+{
+statement
+(
+)
+;
+}
+```
+
+A syntax tree can represent the structural constructs while also retaining information about concrete syntax.
+
+This distinction becomes important when using the tree for editor features.
+
+A feature interested in the structure of an `if` statement may care primarily about:
+
+```text
+if_statement
+├── condition
+└── body
+```
+
+while another feature may need precise information about delimiters.
+
+The exact treatment depends on the parser and grammar.
+
+## The Root Node
+
+At the top of the hierarchy is the root of the syntax tree.
+
+Conceptually:
+
+```text
+root
+├── declaration
+├── function
+├── function
+└── declaration
+```
+
+The root represents the syntactic structure of the document as a whole.
+
+From it, the editor can traverse downward:
+
+```text
+root
+  │
+  ├── construct
+  │     │
+  │     └── nested construct
+  │
+  └── another construct
+```
+
+This gives the parser a single structural entry point for the source document.
+
+## Locating a Node from a Source Position
+
+One particularly useful operation is determining which node corresponds to a particular location.
+
+Suppose the cursor is inside:
+
+```c
+calculate(a + b);
+```
+
+The source position may be contained by several nested nodes:
+
+```text
+call_expression
+└── arguments
+    └── binary_expression
+        ├── identifier: a
+        └── identifier: b
+```
+
+The same source position may therefore belong to several nested constructs.
+
+Conceptually:
+
+```text
+source position
+      │
+      ▼
+smallest containing node
+      │
+      ▼
+parent
+      │
+      ▼
+larger construct
+      │
+      ▼
+root
+```
+
+This hierarchy allows features to choose the level of structure they need.
+
+## Ranges Change When the Document Changes
+
+As discussed in Section 41.5, an edit changes source positions even when the underlying syntax does not change.
+
+If a new line is inserted before a construct, the node representing that construct shifts to a different source position, but its syntactic structure may remain entirely valid.
+
+An incremental parser must therefore maintain both:
+
+1. structural correctness
+2. correct source ranges
+
+This is one of the reasons incremental parsing requires more than simply caching old results.
+
+## Syntax Trees Are Derived Representations
+
+As established in Section 41.2, the Document remains authoritative and the syntax tree provides a derived interpretation of it.
+
+This means the tree can be discarded and reconstructed without changing what the Document actually contains:
+
+```text
+Document
+   │
+   ├── Syntax Tree A
+   │
+   └── Syntax Tree B
+```
+
+Both trees are derived representations of the same underlying source state, assuming they correspond to the same grammar and document version.
+
+## Why Node Ranges Matter to Editor Features
+
+Node ranges make the syntax tree actionable.
+
+Without source locations, the tree would describe structure but would be difficult to connect back to actual text.
+
+With ranges:
+
+```text
+Syntax Node
+     │
+     ▼
+Source Range
+     │
+     ▼
+Document Text
+```
+
+the editor can associate structure with actual source locations.
+
+This enables a feature such as code folding to reason about:
+
+```text
+block
+[start ........ end]
+```
+
+and a structural-selection feature to reason about:
+
+```text
+expression
+[start ..... end]
+```
+
+The tree therefore becomes a bridge between **syntactic structure** and **source locations**.
+
+## A Useful Mental Model
+
+It is helpful to think of each syntax-tree node as answering two questions:
+
+```text
+1. What is this?
+
+2. Where is it?
+```
+
+For example:
+
+```text
+Node
+├── Type: function
+└── Range: source positions A → B
+```
+
+The first provides structural meaning.
+
+The second connects that meaning to the Document.
+
+Together they allow the editor to reason about source code structurally while still operating on the original document.
+
+## Summary
+
+A syntax tree is more than a collection of tokens.
+
+It provides:
+
+```text
+Nodes
+  +
+Parent/child relationships
+  +
+Source ranges
+  +
+Structural hierarchy
+```
+
+The Document remains authoritative, while the syntax tree remains derived state:
+
+```text
+Document
+    │
+    ▼
+Syntax Tree
+    │
+    ├── structure
+    ├── relationships
+    └── source ranges
+```
+
+Node ranges are what make the tree actionable: they connect syntactic structure to concrete document locations, while the Viewport and Renderer remain solely responsible for mapping those locations onto the terminal. Keeping ranges current as text shifts is a separate obligation from keeping the structure correct, and both must hold for the tree to stay usable during editing.
+
+Understanding these properties is necessary before examining a more subtle distinction: **the kind of syntax tree an editor needs**.
+
+A compiler may construct an abstract representation that deliberately removes many details of the original source. An editor often benefits from preserving much more of that source structure.
+
+That distinction leads to the next section: **Concrete Syntax Trees vs Abstract Syntax Trees**.

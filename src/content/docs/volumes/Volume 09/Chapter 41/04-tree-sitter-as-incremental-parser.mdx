@@ -1,0 +1,425 @@
+---
+title: "41.4 Tree-sitter as an Incremental Parser"
+description: "Positions Tree-sitter as a grammar-driven parsing component that consumes the Document and produces a persistent derived syntax tree."
+---
+
+The previous sections established two important ideas.
+
+First, tokens provide lexical information, while a syntax tree provides hierarchical information.
+
+Second, an editor should not necessarily reconstruct that entire syntax tree from the beginning after every small edit.
+
+Tree-sitter provides a concrete system built around these ideas. It is an incremental parsing system designed for maintaining syntax trees as source code changes.
+
+The important point for our architecture is that Tree-sitter is **not the editor itself**. It is a parsing component that can provide structural information to the editor.
+
+## Tree-sitter's Role
+
+Conceptually, the relationship is:
+
+```text
+                    Document
+                       │
+                       │ source text
+                       ▼
+                Tree-sitter Parser
+                       │
+                       ▼
+                  Syntax Tree
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+     Highlighting   Folding     Navigation
+```
+
+The Document remains part of the editor's own state.
+
+Tree-sitter operates on that document and produces a derived representation of its syntactic structure.
+
+This gives us a clear boundary:
+
+```text
++-------------------------+
+|       Editor            |
+|                         |
+|  Document               |
+|  Cursor                 |
+|  Viewport               |
+|  Editor State           |
++------------+------------+
+             |
+             | source text / edits
+             v
++-------------------------+
+|      Tree-sitter        |
+|                         |
+|      Parser             |
+|      Syntax Tree        |
++-------------------------+
+```
+
+Tree-sitter therefore becomes a **consumer of document state and a producer of structural information**.
+
+## Why Tree-sitter Is Different from a Traditional Parser
+
+A traditional parser is often introduced as a function:
+
+```text
+Source Text
+     │
+     ▼
+   Parser
+     │
+     ▼
+ Syntax Tree
+```
+
+The parser receives source text and produces a result.
+
+An incremental parser introduces a relationship with the previous parsing state:
+
+```text
+             Previous Tree
+                   │
+                   │
+Source Edit ───────┼───────► Incremental Parser
+                   │
+                   ▼
+             Updated Tree
+```
+
+The previous tree is useful information.
+
+The parser can use the previous structural representation together with information about the edit to update its result.
+
+This is what makes the parser suitable for an interactive environment.
+
+## Grammars Define Structure
+
+Tree-sitter does not magically understand every programming language.
+
+A language needs a grammar describing its syntax.
+
+Conceptually:
+
+```text
+Language Grammar
+       │
+       ▼
+    Parser
+       │
+       ▼
+Syntax Tree
+```
+
+The grammar describes which structures are valid for the language and how those structures relate to one another.
+
+For example, a grammar can describe that an assignment consists conceptually of:
+
+```text
+assignment
+├── left-hand side
+├── assignment operator
+└── right-hand side
+```
+
+The parser uses these grammar rules to recognize source text and construct the corresponding syntax tree.
+
+This is an important distinction from the lexical analysis introduced earlier.
+
+A lexer can recognize:
+
+```text
+identifier
+operator
+literal
+```
+
+A parser uses language grammar to determine how those pieces form larger constructs.
+
+## Parser and Grammar
+
+The relationship can therefore be represented as:
+
+```text
+              Grammar
+                 │
+                 │ defines language structure
+                 ▼
+              Parser
+                 │
+                 │ analyzes source
+                 ▼
+             Syntax Tree
+```
+
+The grammar is associated with a particular language.
+
+For example, an editor supporting several programming languages may conceptually have:
+
+```text
+                 Tree-sitter
+                     │
+        ┌────────────┼────────────┐
+        ▼            ▼            ▼
+    C grammar    Python grammar  Rust grammar
+        │            │            │
+        ▼            ▼            ▼
+      Parser        Parser        Parser
+```
+
+The editor can select the appropriate language grammar for the document being edited.
+
+The important architectural point is that language-specific parsing knowledge remains inside the parsing subsystem rather than being embedded throughout the rest of the editor.
+
+## The Parser Is Not the Document
+
+A common architectural mistake would be to treat the parser's syntax tree as another version of the document. As established in Section 41.2, the two representations serve different purposes.
+
+The Document answers:
+
+> What text does the user currently have?
+
+The syntax tree answers:
+
+> How does that text appear to be structured according to the selected grammar?
+
+The syntax tree therefore always derives from the Document; the reverse relationship should never make the tree authoritative.
+
+## Tree-sitter in an Editing Cycle
+
+Consider a simplified editing cycle.
+
+The user modifies the Document:
+
+```text
+User Input
+    │
+    ▼
+Input Handler
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Document Edit
+```
+
+The syntax-analysis subsystem can then receive the relevant change:
+
+```text
+Document Edit
+     │
+     ▼
+Tree-sitter
+     │
+     ▼
+Updated Syntax Tree
+```
+
+The resulting structure can then be consumed by other editor features:
+
+```text
+                    Updated
+                  Syntax Tree
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+     Highlighting   Folding    Navigation
+```
+
+This is a **derived-state update**, not a second editing operation.
+
+The user edits the Document.
+
+Tree-sitter updates its representation of that Document.
+
+## The Tree Is Useful Because It Persists
+
+One of the important characteristics of this architecture is that the syntax tree can persist between edits.
+
+Instead of:
+
+```text
+Edit 1 → parse → discard
+Edit 2 → parse → discard
+Edit 3 → parse → discard
+```
+
+the conceptual model is:
+
+```text
+Edit 1
+  │
+  ▼
+Syntax Tree 1
+  │
+  │ edit
+  ▼
+Syntax Tree 2
+  │
+  │ edit
+  ▼
+Syntax Tree 3
+```
+
+Each new tree is related to the previous parsing state.
+
+This continuity is what allows incremental parsing techniques to reuse previous work.
+
+## Syntax Trees as Shared Structural Information
+
+A particularly useful consequence is that multiple editor features can consume the same structural representation.
+
+Without a shared syntax tree, each feature might need its own analysis:
+
+```text
+Document
+ ├── Highlighting analysis
+ ├── Folding analysis
+ ├── Navigation analysis
+ └── Other analysis
+```
+
+With a syntax tree:
+
+```text
+                    Document
+                       │
+                       ▼
+                  Syntax Tree
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+     Highlighting   Folding    Navigation
+```
+
+This does not mean every feature must use Tree-sitter directly.
+
+It means the syntax tree provides a common structural representation from which multiple features can derive useful information.
+
+## Tree-sitter Does Not Replace the Editor Architecture
+
+It is important not to let the introduction of Tree-sitter obscure the architecture developed throughout the book.
+
+The editor still contains its existing responsibilities:
+
+```text
+Input Handler
+      │
+      ▼
+Input Parser
+      │
+      ▼
+Command Engine
+      │
+      ▼
+Editor State
+      │
+      ▼
+Document
+```
+
+Tree-sitter introduces an additional analysis path:
+
+```text
+Document
+    │
+    ▼
+Tree-sitter
+    │
+    ▼
+Syntax Tree
+    │
+    ▼
+Structural Features
+```
+
+The parser does not replace:
+
+- the Input Handler
+- the Input Parser
+- the Command Engine
+- the Document
+- the Cursor
+- the Viewport
+- the Renderer
+
+It provides a new form of **derived analysis**.
+
+## A More Complete View
+
+Combining these relationships gives us:
+
+```text
+                         User Input
+                             │
+                             ▼
+                       Input Handler
+                             │
+                             ▼
+                       Input Parser
+                             │
+                             ▼
+                       Command Engine
+                             │
+                             ▼
+                        Editor State
+                             │
+                             ▼
+                          Document
+                             │
+                             │ edit
+                             ▼
+                      Tree-sitter Parser
+                             │
+                             ▼
+                        Syntax Tree
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+         Highlighting     Folding      Navigation
+              │
+              ▼
+           Renderer
+```
+
+The important architectural boundary is now visible:
+
+> **Tree-sitter analyzes the Document; it does not own the Document.**
+
+That principle will prevent several classes of synchronization and state-ownership problems when integrating an incremental parser into an editor.
+
+## Why This Makes Tree-sitter Relevant
+
+Tree-sitter is useful to our discussion because it provides a concrete example of a larger engineering principle:
+
+> **A complex interactive system can maintain sophisticated derived state incrementally instead of recomputing everything from scratch after every change.**
+
+For our purposes, the most important concepts are therefore not the names of individual Tree-sitter APIs.
+
+They are:
+
+```text
+Grammar
+   ↓
+Parser
+   ↓
+Syntax Tree
+   ↓
+Incremental Updates
+   ↓
+Structural Editor Features
+```
+
+The next section examines the critical transition between an editor edit and an updated syntax tree: **how an edit is represented and propagated to the parser**.
+
+## Summary
+
+Tree-sitter is an incremental parsing component, not the editor itself. It consumes document state and produces a persistent syntax tree according to a language grammar, updating that tree incrementally as the document changes.
+
+Because the tree persists between edits, it can serve as shared structural information for several features at once, and it does not replace any existing part of the editor architecture. The Document remains authoritative; Tree-sitter only provides a new layer of derived analysis.
+
+Keeping language-specific parsing knowledge inside a grammar-driven subsystem also keeps the parser replaceable and keeps the rest of the editor unchanged. The persistent tree is what makes incremental reuse possible: each new version is derived from the previous one rather than built in isolation.
+
+In the next section, we will look at the crucial transition point: how an individual edit is represented and passed to the parser so the existing tree can be updated.

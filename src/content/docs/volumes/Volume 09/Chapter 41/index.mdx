@@ -1,0 +1,52 @@
+---
+title: "Chapter 41 — Tree-sitter and Incremental Parsing"
+description: "Explains how an editor maintains a persistent syntax tree through incremental parsing with Tree-sitter, and why the baseline deliberately defers it."
+---
+
+## Introduction
+
+Chapter 40 examined how an editor obtains language intelligence from an external process. This chapter addresses a complementary problem: how the editor itself understands the **structure** of the source code it displays. A compiler parses a finished program once, but an editor works on source that changes with every keystroke. Maintaining a structural representation of that code requires a parser that can update its analysis incrementally. The central question is:
+
+> **How can an editor maintain a structural representation of its source code that stays useful while the document changes continuously under the cursor?**
+
+Tree-sitter is a concrete system built around this idea. It is an incremental parser that produces a syntax tree — a persistent, source-oriented structure that highlighting, folding, navigation, and other editor features can share.
+
+We begin by explaining why incremental parsing matters and how a syntax tree differs from a token stream. We then define what "incremental" really means, introduce Tree-sitter as an incremental parser, and follow how a single edit is represented and propagated through the tree. We examine the structure and ranges of syntax-tree nodes, contrast concrete and abstract syntax trees, and see how error recovery keeps the parser useful while code is incomplete. From there we consider incremental syntax highlighting and the structural features a tree enables, relate Tree-sitter to the Language Server Protocol, and weigh complexity and performance, review the common mistakes to avoid when integrating an incremental parser, and weigh the design trade-offs before deciding why our baseline editor deliberately does not adopt Tree-sitter.
+
+## Learning Objectives
+
+Readers should be able to:
+
+- Explain why incremental parsing matters for an interactive editor and why rebuilding the entire tree after every edit is unnecessary
+- Contrast tokens with syntax trees and describe the structural information a tree adds
+- Explain what "incremental" really means, including why local changes can have non-local effects
+- Describe Tree-sitter as an incremental parsing component and define the boundary between it and the Document
+- Explain how an edit is represented and why the syntax tree must correspond to the current document version
+- Describe syntax-tree nodes, parent–child relationships, and source ranges
+- Contrast concrete and abstract syntax trees and explain why editors benefit from a source-oriented representation
+- Explain how error recovery lets a parser handle incomplete and syntactically invalid code
+- Describe how highlighting can be derived incrementally from a syntax tree
+- Identify structural editor features enabled by a syntax tree
+- Compare Tree-sitter with the Language Server Protocol and explain how the two coexist
+- Evaluate the complexity, performance, and design trade-offs of adopting Tree-sitter
+- Explain why the baseline editor deliberately does not adopt Tree-sitter
+
+## Sections
+
+- [41.1 Why Incremental Parsing Matters](/volumes/volume-09/chapter-41/01-why-incremental-parsing-matters/)
+- [41.2 From Tokens to Syntax Trees](/volumes/volume-09/chapter-41/02-from-tokens-to-syntax-trees/)
+- [41.3 What "Incremental" Really Means](/volumes/volume-09/chapter-41/03-what-incremental-means/)
+- [41.4 Tree-sitter as an Incremental Parser](/volumes/volume-09/chapter-41/04-tree-sitter-as-incremental-parser/)
+- [41.5 Parsing an Edit](/volumes/volume-09/chapter-41/05-parsing-an-edit/)
+- [41.6 Syntax Tree Structure and Node Ranges](/volumes/volume-09/chapter-41/06-syntax-tree-structure-and-node-ranges/)
+- [41.7 Concrete Syntax Trees vs Abstract Syntax Trees](/volumes/volume-09/chapter-41/07-concrete-vs-abstract-syntax-trees/)
+- [41.8 Error Recovery and Incomplete Code](/volumes/volume-09/chapter-41/08-error-recovery-and-incomplete-code/)
+- [41.9 Incremental Syntax Highlighting](/volumes/volume-09/chapter-41/09-incremental-syntax-highlighting/)
+- [41.10 Beyond Highlighting - Structural Editor Features](/volumes/volume-09/chapter-41/10-beyond-highlighting-structural-editor-features/)
+- [41.11 Tree-sitter and the Language Server](/volumes/volume-09/chapter-41/11-tree-sitter-and-language-server/)
+- [41.12 Complexity and Performance](/volumes/volume-09/chapter-41/12-complexity-and-performance/)
+- [41.13 Tree-sitter vs the Chapter 32 Baseline](/volumes/volume-09/chapter-41/13-tree-sitter-vs-chapter-32-baseline/)
+- [41.14 Why Our Baseline Does Not Adopt Tree-sitter](/volumes/volume-09/chapter-41/14-why-baseline-not-adopt-tree-sitter/)
+- [41.15 Common Tree-sitter Integration Mistakes](/volumes/volume-09/chapter-41/15-common-tree-sitter-integration-mistakes/)
+- [41.16 Design Trade-offs](/volumes/volume-09/chapter-41/16-design-trade-offs/)
+- [41.17 Conclusion](/volumes/volume-09/chapter-41/17-conclusion/)
