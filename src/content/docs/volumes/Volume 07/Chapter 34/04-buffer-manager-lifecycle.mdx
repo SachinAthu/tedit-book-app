@@ -1,0 +1,258 @@
+---
+title: "34.4 The Buffer Manager and Buffer Lifecycle"
+description: "Describes the Buffer Manager as a narrow ownership boundary for the buffer collection and explains creation, identity, activity, visibility, and destruction."
+---
+
+Once an editor can contain multiple buffers, something must keep track of them. The editor should not require every command, input handler, renderer, and file operation to maintain its own list of buffers — doing so would distribute ownership of the same collection across unrelated modules and quickly create inconsistent state. The multi-buffer architecture introduces a dedicated **Buffer Manager**:
+
+```text
+Editor
+  │
+  └── Buffer Manager
+       ├── Buffer A
+       ├── Buffer B
+       └── Buffer C
+```
+
+The manager does not own the contents of the documents in the conceptual sense; each buffer remains responsible for its own editing context. The manager owns the **collection and organization of those buffers** and, with it, their lifetime.
+
+## Why a Separate Manager?
+
+A collection of buffers creates responsibilities that did not exist in a single-document editor: creating, registering, locating, identifying the active buffer, switching, removing, and eventually coordinating lifecycle decisions. Without a dedicated boundary, these responsibilities spread throughout the application — a command might directly manipulate an array of buffers, and several modules would each understand how buffers are stored, so a change to the representation would ripple through all of them.
+
+A manager provides a narrower boundary:
+
+```text
+Command Engine
+      │
+      ▼
+Buffer Manager
+      │
+      ├── Buffer A
+      ├── Buffer B
+      └── Buffer C
+```
+
+The rest of the architecture asks for buffer operations without needing to know how the collection itself is represented.
+
+## Managing a Collection, Not Editing Text
+
+The Buffer Manager should not become another version of the Command Engine. It should not decide what inserting a character means, implement cursor movement, perform rendering, or contain file-parsing logic. Its concern is the **existence and organization of buffers**:
+
+```text
+Buffer Manager  → "Which buffers exist?"
+Command Engine  → "What operation should be performed?"
+Buffer          → "What editing context does this document have?"
+Document        → "What text exists?"
+```
+
+These questions are related, but they are different responsibilities.
+
+## Buffer Identity and Lookup
+
+Each buffer needs a stable identity within the editor. A filename is not sufficient: an unnamed buffer has no file path yet remains distinct, and a filename describes file association rather than necessarily serving as internal identity. The manager can therefore maintain an identity mapping:
+
+```text
+Buffer ID 1 → Buffer A
+Buffer ID 2 → Buffer B
+Buffer ID 3 → Buffer C
+```
+
+The exact identifier could be an integer, pointer, handle, or another mechanism; the architectural requirement is simply that buffers can be distinguished reliably.
+
+The manager may also need to locate a buffer by ID, file association, or index. The exact strategy depends on the chosen collection structure; the important point is that lookup belongs behind the Buffer Manager boundary. A command should conceptually request "find buffer X" rather than know whether buffers are stored in an array, linked list, hash table, or another structure.
+
+## The Active Buffer
+
+At any moment, commands normally operate on one active editing context. The active buffer is a relationship between the editor and its buffer collection, not a separately stored pointer: as established in Section 34.3, it is the buffer referenced by the active Window in the active Tab, and the manager reports this value on request rather than maintaining a separate selection.
+
+Changing the active buffer does not destroy the previous one; it changes which buffer subsequent editing commands target. Buffer A remains alive after the switch.
+
+**Switching is not creation. Switching is not destruction.** It is a change in which existing editing context is currently selected.
+
+## Creating a Buffer
+
+Creating a buffer is a lifecycle operation. A new buffer might start with an empty document, or it might be created as part of opening a file:
+
+```text
+Open File
+    │
+    ▼
+Create Buffer
+    │
+    ▼
+Load Document
+    │
+    ▼
+Associate File
+```
+
+The File Manager remains responsible for persistence operations; the Buffer Manager is responsible for the existence of the editing context that receives the loaded document. This distinction prevents file I/O responsibilities from leaking into buffer collection management.
+
+## The Buffer Lifecycle
+
+A buffer is not created only when a file is opened, nor destroyed when the user switches away from it. Its lifecycle begins when the editing context is created and ends only when it is explicitly closed and no longer needed:
+
+```text
+New → Empty Buffer → Editing → Modified → Saved → Closed
+```
+
+A file-backed buffer follows a slightly different creation path (`Open File → Create Buffer → Load Document → Associate File → Buffer Ready`). The lifecycle is about the **editing context**, not merely the file.
+
+### Empty and Initial States
+
+A newly created buffer begins in a clean state. An unnamed buffer has an empty Document, no file, and is not dirty; a file-backed buffer has loaded contents, an associated file, and is not dirty. Both are ready for editing. Once the user changes its Document, the buffer becomes modified:
+
+```text
+Editing
+   │
+   ▼
+Document changes
+   │
+   ▼
+Buffer becomes dirty
+```
+
+The dirty state belongs to the buffer because it describes whether that context contains unpersisted changes. Different buffers keep independent states, and switching between them does not change those states.
+
+### Editing and Modification
+
+A buffer enters the modified state when an editing operation changes its Document, and remains modified until the relevant persistence operation **succeeds**. A command that *attempts* to save a buffer is not a command that *successfully* saves it; a failed save must leave the buffer modified.
+
+### Switching Does Not End the Lifecycle
+
+A buffer can stop being displayed in the active window without being closed:
+
+```text
+Not currently displayed
+        ≠
+Closed
+```
+
+A buffer may pass through periods of not being the active editing context while continuing to exist in the collection. When the user returns to it, the existing editing context is restored rather than reconstructed from the file system.
+
+## Closing a Buffer
+
+Closing a buffer is different from switching away from it:
+
+```text
+Active Buffer
+      │
+      ▼
+Close Request
+      │
+      ▼
+Check Buffer State
+      │
+      ├── Clean ──────► Close
+      │
+      └── Modified ──► Protect / Confirm
+```
+
+A clean buffer can normally be closed without additional persistence work. A modified buffer requires protection because closing it could discard changes that have not been saved:
+
+```text
+Clean Buffer    → safe to destroy
+Modified Buffer → must not be silently destroyed
+```
+
+The exact user interaction belongs to the command and user-interface design. The architectural requirement is that the buffer's modified state must be consulted before destruction; the Buffer Manager should not silently discard information merely because a destruction request was received.
+
+## Buffer Destruction
+
+Once a buffer has been safely closed, its resources can be released — the Document, undo history, file association, and derived state — and the buffer destroyed. The exact order and implementation details depend on the ownership relationships established by the architecture. The principle is that destruction belongs to the lifecycle owner, while each component remains responsible for its own internal resources.
+
+## The Last Buffer
+
+The editor needs a defined policy for what happens when the user attempts to close the final remaining buffer. It could maintain an invariant such as "at least one buffer always exists" (in which case closing the last buffer creates or retains an empty unnamed one), or it could permit an empty collection and handle the empty-editor state separately. The important point is that this is an explicit **lifecycle policy**, not an accidental consequence — a well-defined rule prevents commands from encountering ambiguous states such as `Active Window → no Buffer` when the rest of the editor assumes an active context always exists.
+
+## Buffers That Are No Longer Displayed
+
+A buffer may remain alive even when no window currently displays it, because organizational structures and editing contexts are separate from visual presentation. A buffer should be destroyed because its lifecycle has ended — not merely because no window references it. If the architecture later introduces automatic cleanup of unused buffers, that would be a separate lifecycle policy accounting for unsaved changes and other retained state.
+
+## Lifecycle Ownership
+
+The lifecycle can be understood in terms of ownership:
+
+```text
+Editor
+  │
+  └── Buffer Manager
+        ├── Buffer A
+        ├── Buffer B
+        └── Buffer C
+```
+
+Windows *reference* buffers, the renderer *reads* buffer state, the command engine *requests* operations, and the file manager *persists* a buffer's document — but none of these relationships make those components the owner of the buffer's lifecycle:
+
+> **One owner, many readers.**
+
+There should be one authoritative mechanism responsible for deciding when a buffer exists and when it is destroyed.
+
+## The Manager Should Remain Small
+
+A common architectural mistake is to make a manager responsible for everything related to the objects it manages — file loading and saving, cursor movement, undo, search, syntax highlighting, rendering, and configuration. The name has changed, but the architectural problem remains. A manager should not absorb unrelated responsibilities merely because it has access to the objects involved. The Buffer Manager should remain focused on **buffer collection and lifecycle management**, and it should not reach into a buffer's internal fields (such as its undo history) merely because it can.
+
+## Collection Representation Is an Implementation Detail
+
+The manager also provides an architectural opportunity: the editor does not need to commit to one particular collection structure. A dynamic array, a linked structure, or an indexed structure may all be appropriate; the choice depends on the number of buffers, lookup frequency, insertion and removal patterns, memory behavior, cache locality, and implementation complexity. Other modules should depend on the **Buffer Manager interface**, rather than the representation, so the underlying data structure can evolve independently.
+
+The manager can ultimately be summarized by four questions:
+
+```text
+1. Which buffers exist?
+2. How are buffers identified?
+3. Which buffer is active?
+4. How are buffers created and destroyed?
+```
+
+Everything else should be evaluated carefully before being added to its responsibility.
+
+## A Complete Lifecycle
+
+Putting the stages together gives the complete picture:
+
+```text
+                 ┌──────────────┐
+                 │ Create Buffer│
+                 └──────┬───────┘
+                        ▼
+                 ┌──────────────┐
+                 │     Ready    │
+                 └──────┬───────┘
+                   edit │
+                        ▼
+                 ┌──────────────┐
+                 │   Modified   │
+                 └──────┬───────┘
+                   save │
+                        ▼
+                 ┌──────────────┐
+                 │ Clean/Saved  │
+                 └──────┬───────┘
+                   close│
+                        ▼
+                 ┌──────────────┐
+                 │    Closed    │
+                 └──────┬───────┘
+                        ▼
+                 ┌──────────────┐
+                 │   Destroyed  │
+                 └──────────────┘
+```
+
+A buffer can move repeatedly between the clean and modified states. Switching between buffers does not appear as a lifecycle transition because it does not change whether the buffer exists. That distinction keeps three separate concepts from becoming accidentally coupled:
+
+```text
+Activity   → Is this Buffer currently being edited?
+Visibility → Is this Buffer currently displayed?
+Lifetime   → Does this Buffer still exist?
+```
+
+## Summary
+
+The Buffer Manager is a narrow ownership boundary around the buffer collection and its lifecycle: which buffers exist, how they are identified, which is active, and how they are created, protected, and destroyed. It owns the collection, not each buffer's internal editing state, and it must not absorb unrelated responsibilities such as file I/O, rendering, or undo. A buffer is a persistent editing context whose activity, visibility, and lifetime are separate concerns.
+
+Because windows reference buffers and other components only read or request operations, the lifecycle has one owner and many readers. Keeping the manager small also lets the underlying collection representation change without affecting the rest of the architecture.
+
+The next section examines the operation that gives those buffers their value: **Section 34.5, Switching Between Buffers**.

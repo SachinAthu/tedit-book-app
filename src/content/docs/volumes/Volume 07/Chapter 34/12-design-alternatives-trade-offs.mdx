@@ -1,0 +1,446 @@
+---
+title: "34.12 Design Alternatives and Trade-offs"
+description: "Compares one global document, flat versus indexed collections, buffer- versus window-owned cursor state, and tabs as buffers against the chosen architecture."
+---
+
+There is more than one way to introduce multiple editing contexts into a text editor.
+
+The important architectural question is not whether several designs can work. They can.
+
+The question is:
+
+> **Which design provides useful behavior while keeping ownership, state, and responsibilities clear?**
+
+The following alternatives compare the major decisions involved in the multi-buffer model.
+
+## One Document vs. Multiple Buffers
+
+The simplest design is to keep one global Document and associate several files or editing contexts with it.
+
+Conceptually:
+
+```text
+Editor
+  │
+  └── Document
+       ├── File A
+       ├── File B
+       └── File C
+```
+
+This appears simple because there is only one Document object.
+
+However, it creates a fundamental problem: different files are different logical text contents.
+
+The model would eventually need additional state to distinguish which contents, cursor, dirty state, undo history, and file association belong to which editing context.
+
+The alternative is:
+
+```text
+Editor
+  │
+  ├── Buffer A ──► Document A
+  ├── Buffer B ──► Document B
+  └── Buffer C ──► Document C
+```
+
+Each Buffer provides a clear boundary around one editing context.
+
+This makes independent state natural rather than something that must be reconstructed inside one global Document.
+
+### Trade-off
+
+| Design              | Advantage                          | Disadvantage                          |
+| ------------------- | ---------------------------------- | ------------------------------------- |
+| One global Document | Fewer top-level objects            | State boundaries become ambiguous     |
+| Multiple Buffers    | Clear independent editing contexts | More objects and lifecycle management |
+
+The multi-buffer model is preferable because the additional object reflects a real conceptual distinction rather than introducing unnecessary abstraction.
+
+## Flat Buffer Collection vs. More Sophisticated Lookup
+
+Once multiple Buffers exist, the editor needs a collection that can find and manage them.
+
+A straightforward design is a flat collection:
+
+```text
+Buffer Manager
+     │
+     ├── Buffer A
+     ├── Buffer B
+     ├── Buffer C
+     └── Buffer D
+```
+
+A more sophisticated implementation could introduce specialized indexing or lookup structures.
+
+Such structures may improve particular operations, especially when the number of Buffers becomes large.
+
+However, they also introduce additional complexity.
+
+The baseline architecture does not require a complicated lookup mechanism merely because multiple Buffers exist.
+
+The collection should first satisfy the fundamental responsibilities:
+
+- maintain Buffer membership
+- support Buffer creation
+- support Buffer lookup
+- support Buffer removal
+- maintain Buffer lifetime
+
+The underlying collection strategy can be improved later if actual requirements justify it.
+
+### Trade-off
+
+```text
+Simple collection
+    │
+    ├── easier to understand
+    ├── easier to debug
+    └── sufficient for baseline scale
+
+Sophisticated lookup
+    │
+    ├── potentially faster lookup
+    ├── additional implementation complexity
+    └── additional invariants
+```
+
+The architectural boundary should therefore not depend on a particular collection algorithm.
+
+The Buffer Manager owns the collection; the implementation of that collection can evolve independently.
+
+## One Buffer → One Window
+
+Another possible design is to require every Buffer to have exactly one Window.
+
+Conceptually:
+
+```text
+Buffer A ──► Window A
+Buffer B ──► Window B
+Buffer C ──► Window C
+```
+
+This is easy to understand, but it unnecessarily couples the editing context to its visual representation.
+
+It prevents the same Buffer from being shown in multiple places simultaneously.
+
+A more flexible model is:
+
+```text
+Window A ──► Buffer A
+Window B ──► Buffer A
+```
+
+The same Buffer can therefore be displayed through several Windows.
+
+This becomes particularly useful when a user wants to inspect or edit different regions of the same Document simultaneously.
+
+### Trade-off
+
+| Design                    | Advantage               | Disadvantage                      |
+| ------------------------- | ----------------------- | --------------------------------- |
+| One Buffer → one Window   | Simple relationship     | Prevents multiple views           |
+| Many Windows → one Buffer | Supports multiple views | Requires independent Window state |
+
+The second model provides greater flexibility while preserving a simple ownership relationship: the Window references the Buffer; it does not own it.
+
+## Buffer-Specific Cursor vs. Window-Specific Cursor
+
+A particularly important design decision concerns cursor position.
+
+One option is:
+
+```text
+Buffer
+ ├── Document
+ └── Cursor
+```
+
+This works if a Buffer can only ever have one editing position.
+
+But consider two Windows showing the same Buffer:
+
+```text
+Window A ──► Buffer A
+   │
+   └── Cursor A
+
+Window B ──► Buffer A
+   │
+   └── Cursor B
+```
+
+The two Windows may need to show different positions in the same Document.
+
+If the Cursor belongs to the Buffer, the two Windows are forced to share it.
+
+The alternative is:
+
+```text
+Buffer A
+   ▲       ▲
+   │       │
+Window A  Window B
+   │       │
+Cursor A  Cursor B
+```
+
+Now each Window can maintain an independent editing position.
+
+The same reasoning applies to Viewport state.
+
+### Trade-off
+
+| Design           | Advantage                  | Disadvantage                               |
+| ---------------- | -------------------------- | ------------------------------------------ |
+| Cursor in Buffer | Simpler state model        | Cannot naturally support independent views |
+| Cursor in Window | Supports independent views | Window owns more editing-context state     |
+
+The chosen architecture uses **Window-specific Cursor and Viewport state** because visual context belongs to the Window.
+
+## Tabs as Buffer Containers
+
+A tempting model is to make a Tab directly contain a Buffer:
+
+```text
+Tab A ──► Buffer A
+Tab B ──► Buffer B
+Tab C ──► Buffer C
+```
+
+This corresponds closely to how many simple editors initially present tabs to users.
+
+The problem is that a Tab then becomes tightly coupled to one editing context.
+
+It becomes difficult to represent a workspace containing several Windows:
+
+```text
+Tab
+ ├── Window A
+ └── Window B
+```
+
+where each Window can independently reference a Buffer.
+
+The alternative is:
+
+```text
+Tab
+ ├── Window A ──► Buffer A
+ └── Window B ──► Buffer B
+```
+
+Now the Tab represents an organizational or workspace context, while Windows provide the visual editing contexts.
+
+This gives the architecture a clean hierarchy:
+
+```text
+Tab
+  │
+  └── Windows
+        │
+        └── Buffers
+              │
+              └── Documents
+```
+
+The relationship is therefore:
+
+> **Tabs organize Windows; Windows reference Buffers.**
+
+A Tab does not become the owner of the Document merely because the Buffer is displayed inside one of its Windows.
+
+## Tabs as Window and Workspace Containers
+
+Treating Tabs as containers for Windows provides another useful property: the same Buffer can participate in different visual arrangements without changing its identity.
+
+For example:
+
+```text
+Tab A
+ ├── Window 1 ──► Buffer A
+ └── Window 2 ──► Buffer B
+
+Tab B
+ └── Window 3 ──► Buffer A
+```
+
+Buffer A can therefore appear in more than one Tab if the architecture permits such usage.
+
+Whether every editor operation allows this is a separate policy question.
+
+The important architectural distinction is that the Tab represents organization, while the Buffer represents editing state.
+
+This avoids making the meaning of a Buffer dependent on how it happens to be arranged on screen.
+
+## Comparing the Complete Models
+
+The major alternatives can be summarized together:
+
+| Decision                   | Alternative                  | Chosen Model                      |
+| -------------------------- | ---------------------------- | --------------------------------- |
+| Document model             | One global Document          | One Document per Buffer           |
+| Buffer collection          | Highly specialized structure | Simple Buffer collection boundary |
+| Buffer/Window relationship | One Buffer → one Window      | Many Windows → one Buffer         |
+| Cursor ownership           | Buffer                       | Window                            |
+| Viewport ownership         | Buffer                       | Window                            |
+| Tab relationship           | Tab → Buffer                 | Tab → Windows → Buffers           |
+
+These choices reinforce one another.
+
+A Buffer provides the stable editing context.
+
+A Window provides the visual context through which that Buffer is displayed.
+
+A Tab organizes one or more Windows.
+
+This produces:
+
+```text
+Editor
+  │
+  ├── Buffers
+  │     ├── Buffer A ──► Document A
+  │     ├── Buffer B ──► Document B
+  │     └── Buffer C ──► Document C
+  │
+  └── Tabs
+        ├── Tab A
+        │    ├── Window A ──► Buffer A
+        │    └── Window B ──► Buffer B
+        │
+        └── Tab B
+             └── Window C ──► Buffer A
+```
+
+The important feature of this design is not the number of objects.
+
+It is the direction of the relationships.
+
+## Why the Chosen Model Works
+
+The chosen model separates three questions:
+
+```text
+What editing state exists?
+        │
+        ▼
+      Buffer
+
+Where is it being viewed?
+        │
+        ▼
+      Window
+
+How are views organized?
+        │
+        ▼
+       Tab
+```
+
+This separation prevents one object from accumulating unrelated responsibilities.
+
+For example, a Buffer does not need to know:
+
+- where it is displayed
+- how large its Window is
+- which Tab contains that Window
+- where another Window is viewing the same Buffer
+
+Likewise, a Window does not need to own the Document.
+
+It only needs to reference the Buffer whose contents it displays and maintain its own visual state.
+
+## Engineering Trade-off
+
+The chosen architecture is not necessarily the smallest possible implementation.
+
+A single object containing document contents, cursor, viewport, filename, and display information could be implemented with fewer conceptual types.
+
+But that apparent simplicity would move complexity elsewhere.
+
+As features accumulate, unrelated state would become coupled:
+
+```text
+Document
+ ├── text
+ ├── filename
+ ├── cursor
+ ├── viewport
+ ├── window geometry
+ └── tab information
+```
+
+Changing one concern could then affect several others.
+
+The multi-buffer model accepts a larger object graph in exchange for stronger boundaries:
+
+```text
+Document
+   ↑
+Buffer
+   ↑
+Window
+   ↑
+Tab
+```
+
+The additional structure is therefore justified by the distinctions it represents.
+
+## Final Architectural Choice
+
+The multi-buffer architecture adopts the following model:
+
+```text
+Document
+    │
+    │ contained by / associated with
+    ▼
+Buffer
+    ▲
+    │ referenced by
+    │
+Window
+    ▲
+    │ organized by
+    │
+Tab
+```
+
+More precisely:
+
+```text
+Tab
+ │
+ └── Windows
+       │
+       ├── reference Buffer A ──► Document A
+       │
+       └── reference Buffer B ──► Document B
+```
+
+And because multiple Windows may reference the same Buffer:
+
+```text
+Window A ──┐
+           ├──► Buffer A ──► Document A
+Window B ──┘
+```
+
+This model gives each layer a clear purpose without requiring the implementation of sophisticated behavior prematurely.
+
+The architecture can therefore grow from the baseline editor toward richer layouts and workflows while preserving the fundamental ownership boundaries.
+
+> **Tabs organize Windows. Windows reference Buffers. Buffers provide editing contexts. Documents contain logical text.**
+
+That relationship is the central structural decision of the multi-buffer architecture.
+
+## Summary
+
+The alternatives show why the chosen model separates responsibilities rather than merging them: one document per buffer, a simple collection behind the Buffer Manager, many windows referencing one buffer, window-owned cursor and viewport, and tabs that organize windows rather than buffers. The result is a larger object graph whose boundaries each reflect a real distinction.
+
+Each rejected alternative appears simpler only by collapsing a boundary that the editor would later have to reconstruct, whether in cursor ownership, tab structure, or document identity. The chosen relationships let layouts and workflows grow without changing what a buffer or document means.
+
+The final section collects the mistakes that arise when those boundaries are ignored: **Section 34.13, Common Multiple-Buffer Mistakes**.

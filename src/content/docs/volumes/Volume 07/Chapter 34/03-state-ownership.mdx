@@ -1,0 +1,331 @@
+---
+title: "34.3 State Ownership - What Belongs Where"
+description: "Classifies editor-wide, buffer-specific, and window-specific state, placing document, dirty state, undo history, viewport, and cursor in their proper owners."
+---
+
+The vocabulary is now clear: a Document holds text, a Buffer is the editing context around it, a View binds that context to a presentation, a Window displays the view, and a Tab organizes windows. The next question is more important than deciding where to store a few pointers:
+
+> **What information must remain associated with a particular editing context?**
+
+The answer determines whether independent contexts stay truly independent, and it is where most multi-buffer bugs originate.
+
+## What Belongs to a Buffer
+
+A buffer should preserve everything necessary for the editor to continue working with one document as an independent editing context. Switching from one buffer to another must not destroy the state of either one.
+
+Conceptually, a buffer is a container around a document and the state that belongs to editing that document:
+
+```text
+Buffer
+├── Document
+├── File association
+├── Modified / saved state
+├── Undo history
+├── Search-related state
+├── Syntax-analysis state
+└── Other document-specific editing state
+```
+
+The exact implementation can evolve, but the ownership principle matters.
+
+### The Document
+
+The most obvious component is the Document — the actual editable text. The buffer provides the larger context in which that text is edited, and it has an identity independent of the text currently stored in it. Two buffers may contain similar, or even identical, text while remaining different editing contexts; buffer identity should not be derived from document contents.
+
+### File Association
+
+A buffer needs to know whether its document is associated with a file:
+
+```text
+Buffer A
+    Document: main.c
+    File: /project/src/main.c
+
+Buffer B
+    Document: untitled
+    File: none
+```
+
+An unnamed document is still a valid buffer. Creating a new document does not necessarily mean creating a file immediately; a user can begin editing and decide later where to save. The file association therefore describes the relationship between the buffer and persistent storage, not the identity of the buffer itself.
+
+### Modified State
+
+The modified, or dirty, state must belong to the individual buffer. (The canonical term is the **Dirty Flag**, introduced in Volume III, Chapter 12; "dirty" and "modified" are used interchangeably to mean a buffer whose Document no longer matches its saved version.)
+
+A single editor-wide flag would be insufficient:
+
+```text
+Editor
+└── dirty = true
+```
+
+There would be no way to determine which document needs saving. The state must exist per buffer:
+
+```text
+Buffer A → dirty = true
+Buffer B → dirty = false
+Buffer C → dirty = true
+```
+
+This is an example of a broader rule:
+
+> **State that describes whether a particular document has changed belongs to that document's editing context.**
+
+The definition of the dirty state is unchanged from earlier chapters. Chapter 34 changes its **scope**, not its meaning.
+
+### Undo History
+
+Undo history cannot be shared between buffers. If the user switches from Buffer A to Buffer B and presses Undo, the editor must undo an operation belonging to Buffer B — not the most recent operation performed on Buffer A. Undo history is therefore associated with the buffer's editing context:
+
+```text
+Buffer A → Undo History A
+Buffer B → Undo History B
+```
+
+The internal undo mechanism does not need to be redesigned here; its lifetime simply follows the buffer.
+
+### Search-Related State
+
+Search state that describes a document-specific session — the query, direction, and current match — is meaningful relative to a particular document. A match position in `main.c` has no meaning applied directly to `editor.c`. Any search information that describes a document-specific context must have an appropriate association with that buffer. This does not mean every search feature must live inside the buffer; it means its ownership must respect the scope of the information it represents.
+
+### Syntax-Analysis State
+
+Derived syntax information must correspond to its document and never become part of the text itself:
+
+```text
+Buffer A
+    Document A
+        Syntax Analysis A
+
+Buffer B
+    Document B
+        Syntax Analysis B
+```
+
+If Buffer A is modified, its derived syntax information may need to be updated or invalidated; Buffer B should not be affected merely because Buffer A changed. Chapter 34 does not redefine how syntax highlighting works. It establishes where the lifetime of its document-specific state belongs.
+
+## Buffer Identity Is Not File Identity
+
+It is tempting to assume that one file corresponds to one buffer, and that is often a useful convention — but it is not the definition of a buffer:
+
+```text
+File path      → identifies persistent storage
+Document       → represents editable text
+Buffer         → represents an editing context
+```
+
+These concepts are related, but not interchangeable. Whether two buffers may refer to the same file is a separate architectural decision; the abstraction should not make it impossible.
+
+## A Buffer Is Not a Dumping Ground
+
+Defining a buffer too broadly invites every piece of editor state inside it:
+
+```text
+Buffer
+├── Document
+├── Cursor
+├── Viewport
+├── Terminal dimensions
+├── Window position
+├── Theme
+├── Key bindings
+├── Global configuration
+└── ...
+```
+
+This is poor ownership. Terminal dimensions describe the terminal, key bindings describe editor policy, and window position describes where something is displayed — not what document exists. The purpose of the buffer boundary is the opposite:
+
+> **A buffer should contain state because that state belongs to the editing context, not merely because the state is needed while editing.**
+
+## Three Scopes of State
+
+The multi-buffer editor can be divided into three primary scopes with distinct lifetimes:
+
+| Scope           | Meaning                        | Examples                                              |
+| --------------- | ------------------------------ | ----------------------------------------------------- |
+| Editor-wide     | Shared by the editor session   | Configuration, terminal dimensions, buffer collection |
+| Buffer-specific | Belongs to one editing context | Document, file association, dirty state, undo history |
+| Window-specific | Describes one visual view      | Viewport, window geometry, cursor                     |
+
+This classification is more important than the exact structures used to implement it. The same principle that applies elsewhere in the architecture still holds:
+
+> **State should have one clear owner.**
+
+## Editor-Wide State
+
+Editor-wide state describes the session as a whole and should not change merely because the user switches buffers:
+
+```text
+Editor-wide State
+├── Buffer collection
+├── Active tab
+├── Tab collection
+├── Window/layout structure
+├── Terminal dimensions
+└── Configuration
+```
+
+The **Window/layout structure** is the entire tree of tabs, their layouts, and their windows. A tab's remembered window arrangement — its layout and active window — is a **region of** that editor-wide structure, not a fourth scope. This mirrors the buffer collection: the collection is editor-wide, while each buffer's contents are buffer-scoped. The **Active Window**, like the Active Buffer below, is therefore a derived value — a pointer within the active tab — rather than a separately stored scope.
+
+Note that no **Active Buffer** appears here. The active buffer is not an editor-wide field: it is derived from the window structure — the buffer referenced by the active Window in the active Tab. Storing it as an editor-wide value would create a second source of truth that could fall out of sync with what the active Window displays.
+
+A key binding such as Save should mean the same thing regardless of which buffer is active, so configuration belongs to the editor rather than to an individual buffer. Terminal dimensions describe the available surface, not `main.c` or `editor.c`. The buffer collection is also editor-wide, because it describes which editing contexts currently exist.
+
+## Window-Specific State
+
+A window describes **where and how a buffer is being displayed**:
+
+```text
+Window A
+├── position
+├── width
+├── height
+├── viewport
+└── displayed Buffer
+```
+
+The viewport is particularly important. With multiple windows there can be several visible regions at once, so viewport state cannot remain a single editor-wide object:
+
+```text
+Window A → Viewport A
+Window B → Viewport B
+```
+
+This lets two windows display different portions of the same buffer without interfering.
+
+## The Cursor Requires a Careful Decision
+
+The cursor is more subtle. In the original single-document editor there was one cursor. A simple extension would make it buffer-specific, which works when each buffer has one editing position. But two windows displaying the same buffer may need different editing positions. The document remains shared, while the way the user is currently viewing and interacting with it can differ:
+
+```text
+Document position
+        ≠
+Window viewing position
+```
+
+For the multi-window architecture, cursor state is therefore associated with the **view/window editing context**, rather than treated as an intrinsic property of the document. This is an architectural evolution from the single-document model.
+
+## Buffer and Window Form a Relationship
+
+The distinction can be summarized as questions:
+
+```text
+Buffer  answers: "What am I editing?"
+Window answers: "Where and from what position am I viewing it?"
+```
+
+```text
+Window
+├── Geometry
+├── Viewport
+├── Cursor
+└── Buffer reference
+          │
+          ▼
+       Buffer
+       ├── Document
+       ├── File association
+       ├── Dirty state
+       ├── Undo history
+       └── Derived document state
+```
+
+Taken together, the Window-specific values constitute the Window's **View** of its Buffer: the Buffer reference binds the presentation to an editing context, while the Viewport and Cursor are the view state (Section 34.2). This separation prevents visual state from leaking into the document itself.
+
+## Scope of Existing Features
+
+Most existing features already have a natural owner; the main task is to give each a precise scope rather than redesign it:
+
+| Feature         | Scope                               |
+| --------------- | ----------------------------------- |
+| Document        | Buffer                              |
+| Dirty state     | Buffer                              |
+| Undo history    | Buffer                              |
+| Search context  | Appropriate document/Buffer context |
+| Syntax analysis | Buffer/Document                     |
+| Configuration   | Editor-wide                         |
+| Cursor          | Window                              |
+| Viewport        | Window                              |
+| Terminal size   | Editor-wide                         |
+
+Document, dirty state, undo history, search, and syntax analysis are buffer-scoped (as above). Cursor and viewport are window-scoped because two windows may display the same buffer with independent positions. Configuration and terminal size remain editor-wide: a command may use configuration, and the renderer may use terminal size, but that does not transfer ownership. Terminal size is editor-wide, while window geometry is window-specific.
+
+### Scope Determines Command Behavior
+
+Once ownership is established, commands are classified by the state they modify. A window-scoped command changes the cursor or viewport; a buffer-scoped command changes the document, dirty state, or undo history; an editor-wide command changes the active tab, active window, or configuration.
+
+The Active Buffer is absent from this list because it is not a stored field — it is derived from the Active Window. Commands that change the editing target therefore alter the navigational selection (the Active Tab or Active Window) rather than a separate buffer pointer. The command needs no separate implementation per buffer; the scope determines the target.
+
+### Rendering Follows the Same Scope Model
+
+The renderer combines state from several scopes when producing a frame — editor-wide terminal dimensions, window geometry, viewport, and cursor, and the buffer's document and derived state. It reads these relationships without moving any of that state into a single object. This is another reason the multi-buffer architecture does not require a fundamentally different rendering mechanism.
+
+## Why Ownership Matters
+
+Poor ownership produces subtle bugs. A global viewport forces all windows to share one viewing position; a global dirty flag cannot say which buffer is unsaved; per-buffer configuration could give different key bindings depending on which buffer is active. Each of these gives a state object the wrong lifetime.
+
+## The Lifetime Test
+
+A simple test helps identify the correct scope:
+
+- **If the user switches buffers, should this state change?** If not, it is probably not buffer-specific.
+- **If the user opens another window showing the same buffer, should this state be independent?** If yes, it is probably window-specific.
+- **If neither switching buffers nor changing windows should alter it, it may be editor-wide.**
+
+```text
+                    Does it describe
+                    the whole session?
+                         │
+                    ┌────┴────┐
+                   Yes       No
+                    │         │
+              Editor-wide     ▼
+                         Does each window
+                         need its own value?
+                              │
+                         ┌────┴────┐
+                        Yes       No
+                         │         │
+                    Window-specific ▼
+                                  Buffer-specific
+```
+
+This is a useful starting point, not a replacement for architectural judgment.
+
+## The Resulting Mental Model
+
+The multi-buffer editor is therefore no longer best understood as one flat `Editor State` containing a Document, Cursor, and Viewport. It becomes a set of related scopes:
+
+```text
+Editor
+│
+├── Editor-wide State
+│
+├── Buffer Collection
+│   ├── Buffer A
+│   │   └── Document A
+│   ├── Buffer B
+│   │   └── Document B
+│   └── Buffer C
+│       └── Document C
+│
+└── Window Collection
+    ├── Window A
+    │   ├── Buffer reference
+    │   ├── Cursor
+    │   └── Viewport
+    └── Window B
+        ├── Buffer reference
+        ├── Cursor
+        └── Viewport
+```
+
+The important change is not that there are now more objects. It is that **state is organized according to ownership and lifetime**. Once that boundary is clear, the editor can create buffers, switch them, display one buffer in several windows, and manage tabs without turning the entire system into shared mutable state.
+
+## Summary
+
+A buffer owns the state that describes one editing context — Document, file association, dirty state, undo history, and document-derived state — while editor-wide state (configuration, terminal dimensions, collections) belongs to the session and window-specific state (geometry, viewport, cursor) describes one visual view. The active buffer is derived from the active window, not stored; cursor and viewport belong to the window, not the buffer; and buffer identity is not file identity. The lifetime test decides each value's scope.
+
+Applying the same classification to commands and rendering shows why the change is one of ownership rather than mechanism: commands target the scope they modify, and the renderer reads several scopes without merging them. A buffer is therefore a boundary for editing context, not a container for every value needed while editing.
+
+The next section introduces the component responsible for the buffer collection itself: **Section 34.4, The Buffer Manager and Buffer Lifecycle**.

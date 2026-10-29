@@ -1,0 +1,665 @@
+---
+title: "34.7 Window Layout and Arrangement"
+description: "Explains how window geometry is derived from a layout structure under terminal-size and minimum-size constraints, separately from viewport and cursor state."
+---
+
+Once a tab can contain multiple windows, the editor must answer a practical question:
+
+> **How are those windows arranged within the available terminal space?**
+
+A window is not merely a reference to a buffer. It also occupies a rectangular region of the terminal.
+
+For example:
+
+```text
+┌──────────────────────────────────────────────┐
+│                  Window A                    │
+│                                              │
+│                  main.c                      │
+│                                              │
+├───────────────────────────┬──────────────────┤
+│                           │                  │
+│         Window B          │    Window C     │
+│                           │                  │
+│         editor.c          │    editor.h     │
+│                           │                  │
+└───────────────────────────┴──────────────────┘
+```
+
+The layout determines the position and dimensions of each window.
+
+This is a different problem from deciding which buffer a window displays.
+
+## Window Geometry
+
+Every window needs a rectangular geometry.
+
+Conceptually:
+
+```text
+Window
+├── row
+├── column
+├── width
+└── height
+```
+
+The coordinates describe the window's position within the terminal, while its dimensions determine the region available for rendering.
+
+For example:
+
+```text
+┌───────────────────────────────┐
+│                               │
+│         Window A              │
+│                               │
+└───────────────────────────────┘
+        ↑               ↑
+      width           height
+```
+
+The exact coordinate system follows the terminal's row-and-column model established by the rendering architecture.
+
+The important point here is ownership:
+
+> **Window geometry describes the visual arrangement of the interface, not the document being edited.**
+
+A document should not need to know whether it is currently displayed in a region that is 40 or 80 columns wide.
+
+## The Terminal Is a Finite Surface
+
+A terminal provides a finite number of rows and columns.
+
+Suppose the terminal has:
+
+```text
+80 columns × 24 rows
+```
+
+The editor cannot assign arbitrary dimensions to windows.
+
+Their combined regions must fit within the available screen.
+
+For two vertically arranged windows:
+
+```text
+┌──────────────────────────────────────────────┐
+│                  Window A                    │
+│                                              │
+├──────────────────────────────────────────────┤
+│                  Window B                    │
+│                                              │
+└──────────────────────────────────────────────┘
+```
+
+their heights must satisfy the available vertical space.
+
+For horizontally arranged windows:
+
+```text
+┌───────────────────────┬──────────────────────┐
+│                       │                      │
+│       Window A        │      Window B        │
+│                       │                      │
+└───────────────────────┴──────────────────────┘
+```
+
+their widths must fit within the available horizontal space.
+
+The layout system therefore has a resource constraint:
+
+```text
+Total window area
+    ≤
+Available terminal area
+```
+
+This constraint becomes important when windows are created, removed, or resized.
+
+## Simple Layouts
+
+The simplest layout is a single window:
+
+```text
+┌──────────────────────────────────────────────┐
+│                                              │
+│                  Window A                    │
+│                                              │
+└──────────────────────────────────────────────┘
+```
+
+A split can then divide that region.
+
+For example, a horizontal split:
+
+```text
+┌──────────────────────────────────────────────┐
+│                  Window A                    │
+├──────────────────────────────────────────────┤
+│                  Window B                    │
+└──────────────────────────────────────────────┘
+```
+
+Or a vertical split:
+
+```text
+┌───────────────────────┬──────────────────────┐
+│                       │                      │
+│       Window A        │      Window B        │
+│                       │                      │
+└───────────────────────┴──────────────────────┘
+```
+
+These operations do not create documents.
+
+They create or modify **visual regions**.
+
+## Layout Is Separate from Buffer Selection
+
+Consider:
+
+```text
+Window A → Buffer A
+Window B → Buffer B
+```
+
+The layout determines where Window A and Window B appear.
+
+The buffer references determine what they display.
+
+Therefore, changing the layout should not inherently change the buffer associations.
+
+For example:
+
+```text
+Before:
+
+┌───────────────────────┬──────────────────────┐
+│ Window A → Buffer A   │ Window B → Buffer B │
+└───────────────────────┴──────────────────────┘
+```
+
+After resizing:
+
+```text
+┌──────────────────────────────┬────────────────┐
+│ Window A → Buffer A          │ Window B       │
+│                              │ → Buffer B     │
+└──────────────────────────────┴────────────────┘
+```
+
+The documents did not change.
+
+Only the available visual space changed.
+
+This separation is important because it allows layout commands to remain independent of document-editing commands.
+
+## Layout Hierarchies
+
+With more than two windows, simply storing a flat list of rectangles can become difficult to reason about.
+
+Consider:
+
+```text
+┌───────────────────────┬──────────────────────┐
+│                       │                      │
+│       Window A        │       Window B       │
+│                       │                      │
+├───────────────────────┤                      │
+│                       │                      │
+│       Window C        │                      │
+│                       │                      │
+└───────────────────────┴──────────────────────┘
+```
+
+This arrangement can be understood as a hierarchy of splits:
+
+```text
+Root
+├── Left
+│   ├── Window A
+│   └── Window C
+│
+└── Window B
+```
+
+The exact representation is an implementation decision, but the hierarchical model is useful because it describes **how the layout was divided**, rather than merely recording the final rectangles.
+
+A layout tree can therefore conceptually look like:
+
+```text
+Layout
+├── Split
+│   ├── Split
+│   │   ├── Window A
+│   │   └── Window C
+│   │
+│   └── Window B
+```
+
+The split nodes describe relationships between regions.
+
+The leaf nodes represent actual windows.
+
+## Why a Layout Structure Helps
+
+A hierarchical representation provides a natural place to express operations such as:
+
+- split a window,
+- remove a window,
+- resize a region,
+- divide space proportionally,
+- restore an arrangement.
+
+For example, splitting Window A can conceptually transform:
+
+```text
+Window A
+```
+
+into:
+
+```text
+Split
+├── Window A
+└── Window C
+```
+
+The surrounding layout does not need to be reconstructed from scratch.
+
+This becomes increasingly valuable as the number of windows grows.
+
+## Geometry Is Derived from Layout
+
+A useful architectural distinction is between **layout relationships** and **final geometry**.
+
+The layout might say:
+
+```text
+Split vertically
+    60% / 40%
+```
+
+The layout engine can then derive:
+
+```text
+Window A
+    x = 0
+    width = 48
+
+Window B
+    x = 48
+    width = 32
+```
+
+for an 80-column terminal, subject to borders, separators, minimum sizes, and other constraints.
+
+This means that geometry can be treated as the result of layout calculation rather than arbitrary values independently modified by every component.
+
+Conceptually:
+
+```text
+Terminal Size
+      │
+      ▼
+Layout Structure
+      │
+      ▼
+Layout Calculation
+      │
+      ▼
+Window Geometry
+      │
+      ▼
+Renderer
+```
+
+The renderer consumes the resulting geometry.
+
+It should not decide the layout itself.
+
+## Minimum Window Sizes
+
+A layout also has practical constraints.
+
+A window that is only one column wide may technically fit inside the terminal, but it may not provide meaningful space for the editor's content.
+
+Similarly, a window with too few rows may not have enough room for its Document Area, Status Bar, or Message Bar.
+
+The layout system may therefore need minimum dimensions:
+
+```text
+minimum_width
+minimum_height
+```
+
+These constraints prevent layout operations from producing unusable regions.
+
+The exact values and policies are implementation details, but the architectural principle is general:
+
+> **Layout must respect the minimum viable geometry required by its windows.**
+
+## Resizing
+
+Terminal size can change during an editor session.
+
+For example:
+
+```text
+Before:
+
+80 × 24
+```
+
+might become:
+
+```text
+After:
+
+120 × 40
+```
+
+The available space has changed, but the documents have not.
+
+The layout must therefore be recalculated:
+
+```text
+Terminal resize
+      │
+      ▼
+New terminal dimensions
+      │
+      ▼
+Recalculate layout
+      │
+      ▼
+Update window geometry
+      │
+      ▼
+Render new frame
+```
+
+This follows the existing architecture in which terminal dimensions are editor-level information and rendering derives its output from current state.
+
+A resize should not require modifying the document merely because more or less of it is visible.
+
+## Layout and Viewport Are Different
+
+It is also important not to confuse **window geometry** with the **viewport**.
+
+Suppose:
+
+```text
+Window A
+    position = (0, 0)
+    size = 40 × 20
+    viewport = document row 100
+```
+
+The geometry answers:
+
+> Where is the window and how large is it?
+
+The viewport answers:
+
+> Which portion of the buffer is being displayed there?
+
+These are separate concerns.
+
+A resize might change:
+
+```text
+width = 40 → 60
+```
+
+without changing the logical document position.
+
+Conversely, scrolling might change:
+
+```text
+viewport_row = 100 → 120
+```
+
+without changing the window's geometry.
+
+Keeping these concepts separate prevents layout operations from becoming entangled with document navigation.
+
+## Layout and Cursor State Are Also Different
+
+The same distinction applies to the cursor.
+
+A window may have:
+
+```text
+geometry
+viewport
+cursor position
+buffer reference
+```
+
+These describe different things.
+
+For example:
+
+```text
+Window A
+├── geometry  → terminal rows 2–20
+├── viewport  → document rows 100–118
+├── cursor    → document row 110
+└── buffer    → Buffer A
+```
+
+Changing the window width does not mean moving the document cursor.
+
+Changing the viewport does not mean changing the window's physical position.
+
+Each state has a different responsibility.
+
+## Active Window and Layout
+
+The layout also needs to coexist with the concept of an active window.
+
+For example:
+
+```text
+┌───────────────────────┬──────────────────────┐
+│                       │                      │
+│       Window A        │      Window B        │
+│                       │                      │
+└───────────────────────┴──────────────────────┘
+
+Active Window → Window B
+```
+
+The active window determines where commands such as insertion and cursor movement apply.
+
+The layout determines where that window appears.
+
+Changing the active window therefore does not necessarily change the layout.
+
+Similarly, rearranging windows does not inherently change which buffer contains which text.
+
+This separation keeps navigation and layout as distinct operations.
+
+## Layout Belongs Above the Window
+
+The architectural relationship can be represented as:
+
+```text
+Tab
+ │
+ ▼
+Layout
+ │
+ ├── Window A
+ ├── Window B
+ └── Window C
+```
+
+This layout tree is a region of the editor-wide **Window/layout structure** described in Section 34.3: the whole structure spans every tab, and each tab carries the layout for its windows. Representing the whole tree at the editor level keeps layout a single editor-wide mechanism, while each tab uses the slice it owns.
+
+Each window then maintains its own view-related state:
+
+```text
+Window
+├── geometry
+├── viewport
+├── cursor
+└── buffer reference
+```
+
+This gives the tab a structural responsibility while keeping the window responsible for its own visual and interaction context.
+
+The layout does not need to understand the internal representation of a buffer or document.
+
+## A Useful Separation of Questions
+
+The multi-window architecture can now answer several different questions independently:
+
+```text
+Which buffers exist?
+    → Buffer Manager
+
+Which buffer is displayed?
+    → Window
+
+Where is the window?
+    → Layout
+
+Which part of the buffer is visible?
+    → Viewport
+
+Where is the editing position?
+    → Cursor
+
+Which workspace is active?
+    → Tab
+```
+
+This separation is valuable because a single user action may affect one of these without affecting the others.
+
+For example:
+
+```text
+Split Window
+    → layout changes
+
+Scroll
+    → viewport changes
+
+Move Cursor
+    → cursor changes
+
+Switch Buffer
+    → window's buffer reference changes
+
+Switch Tab
+    → active workspace changes
+```
+
+The editor remains easier to reason about because each operation has a clear target.
+
+## The Layout Is a Constraint System
+
+It is tempting to think of layout as simply assigning coordinates to windows.
+
+A better mental model is to treat it as a small constraint system.
+
+The layout must satisfy conditions such as:
+
+```text
+Windows fit inside the terminal
+Windows do not overlap
+Windows maintain required minimum sizes
+Splits preserve their relationships
+Geometry remains consistent after resizing
+```
+
+For example:
+
+```text
+Terminal
+┌──────────────────────────────────────────────┐
+│ ┌──────────────────────┐ ┌─────────────────┐ │
+│ │      Window A        │ │    Window B     │ │
+│ │                      │ │                 │ │
+│ └──────────────────────┘ └─────────────────┘ │
+└──────────────────────────────────────────────┘
+```
+
+The layout engine's job is to produce geometry satisfying these constraints.
+
+The renderer's job is then to render those regions.
+
+This separation becomes increasingly important as the editor gains more sophisticated layouts.
+
+## Keeping Layout Independent
+
+The layout system should not need to know:
+
+- how documents store their text,
+- how undo operations are represented,
+- how files are encoded,
+- how key sequences are parsed,
+- or how syntax highlighting works.
+
+It needs only enough information to arrange windows.
+
+This gives a clean boundary:
+
+```text
+Layout System
+      │
+      └── Window Geometry
+              │
+              ▼
+          Renderer
+              │
+              ▼
+           Terminal
+```
+
+The rest of the editor remains insulated from the details of spatial arrangement.
+
+## The Resulting Model
+
+The architecture now has a clear progression:
+
+```text
+Editor
+ │
+ ├── Buffers
+ │    ├── Buffer A → Document A
+ │    ├── Buffer B → Document B
+ │    └── Buffer C → Document C
+ │
+ └── Tabs
+      ├── Tab A
+      │    └── Layout
+      │         ├── Window A → Buffer A
+      │         └── Window B → Buffer B
+      │
+      └── Tab B
+           └── Layout
+                └── Window C → Buffer C
+```
+
+The layout determines **where windows exist**.
+
+The windows determine **which buffers they display and how they are viewed**.
+
+The buffers preserve **independent editing contexts**.
+
+The documents preserve **the actual text**.
+
+Each layer has a distinct responsibility.
+
+With these boundaries established, the next question is how the renderer turns this multi-window state into a terminal frame. The renderer must now render several regions while preserving the existing rule that rendering is derived from state rather than being responsible for modifying it.
+
+## Summary
+
+Window layout decides where each window sits and how large it is, independently of the buffer it displays. Geometry is derived from a layout structure under terminal-size and minimum-size constraints, and it remains distinct from both the viewport and the cursor. The layout can be treated as a small constraint system whose computed output the renderer consumes.
+
+A hierarchical split tree describes how the space was divided, so operations such as splitting, resizing, and restoring an arrangement do not require reconstructing the whole layout from scratch. Terminal resizing recalculates geometry without touching document content or logical positions.
+
+The next section examines how several window regions become one terminal frame: **Section 34.8, Rendering Multiple Windows**.

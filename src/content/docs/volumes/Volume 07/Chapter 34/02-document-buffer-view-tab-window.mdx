@@ -1,0 +1,516 @@
+---
+title: "34.2 Document, Buffer, View, Tab, and Window"
+description: "Defines Document, Buffer, View, Window, and Tab, explaining how content, editing context, and presentation remain separate while several windows can share one buffer."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Once an editor can work with multiple documents and multiple views, terminology becomes important.
+
+In a single-document editor, it is easy to use words such as _document_, _buffer_, and _window_ almost interchangeably because there is only one of each. Once several editing contexts exist, that ambiguity becomes a source of architectural mistakes.
+
+Consider the following situation:
+
+```text
++----------------------+----------------------+
+|       main.c         |       main.c         |
+|                      |                      |
+|     lines 1–20       |     lines 80–100     |
+|                      |                      |
++----------------------+----------------------+
+```
+
+There is one underlying document but two visible regions.
+
+Now consider:
+
+```text
++----------------------+----------------------+
+|       main.c         |       editor.c       |
+|                      |                      |
+|     Buffer A         |     Buffer B         |
+|                      |                      |
++----------------------+----------------------+
+```
+
+There are two different documents and two different editing contexts.
+
+The editor therefore needs separate concepts for **content**, **editing context**, and **presentation**.
+
+## A Note on Terminology
+
+The word _buffer_ already appears in this book with two meanings, and this chapter adds a third.
+
+```text
+Buffer (generic)
+    Temporary storage that accumulates data before it is transmitted
+    or processed.                            Volume I, Chapter 2
+
+Text Buffer
+    The in-memory data structure that represents a Document as a
+    collection of lines.                     Volume III, Chapter 13
+
+Buffer (this chapter)
+    An editing context: a Document together with its file
+    association, modified state, and undo history.
+```
+
+Throughout this chapter, **Buffer** means the third: the editor's in-memory editing context. A Buffer contains a Document, and the Document is represented internally by a Text Buffer, so "Text Buffer" is the name of the data structure rather than a synonym for the editing context. The generic I/O meaning of "buffer" from Chapter 2 is unrelated.
+
+## Document
+
+A **Document** is the logical text being edited.
+
+It represents the actual contents of a file or an unnamed piece of text:
+
+```text
+Document
+    │
+    └── Lines
+         ├── Line 0
+         ├── Line 1
+         ├── Line 2
+         └── ...
+```
+
+The Document is concerned with text.
+
+It does not need to know:
+
+- which window displays it
+- which tab contains that window
+- where the window appears on the terminal
+- how the terminal renders it
+- which keyboard shortcut selected it
+
+This preserves the responsibility established earlier: the Document owns the editable text rather than the user interface surrounding it.
+
+A Document can therefore exist independently of any particular visual presentation.
+
+---
+
+## Buffer
+
+A **Buffer** is the editor's in-memory editing context associated with a Document.
+
+The distinction can be visualized as:
+
+```text
+Buffer
+   │
+   └── Document
+```
+
+The Buffer provides the context in which that Document is being edited.
+
+For example:
+
+```text
+Buffer A
+├── Document: main.c
+├── Modified: yes
+└── Editing state
+
+Buffer B
+├── Document: editor.c
+├── Modified: no
+└── Editing state
+```
+
+This distinction becomes particularly useful because a document may have associated state that should persist while the user switches to another buffer.
+
+For example, after editing `main.c`, the user might switch to `editor.c`. When they later return to `main.c`, the editor should still know that `main.c` has unsaved changes.
+
+The important relationship is therefore:
+
+```text
+Document
+    = the text
+
+Buffer
+    = the editing context around that text
+```
+
+The exact division of state between Buffer and other components will be refined later in this chapter.
+
+---
+
+## View
+
+A **View** is the presentation binding between a Buffer and the way it is displayed.
+
+It answers:
+
+> Which Buffer is presented, and from what position?
+
+A View is composed of a reference to the Buffer plus the view state that describes the presentation — the Viewport and the Cursor:
+
+```text
+View
+├── Buffer reference ──► Buffer A ──► Document: main.c
+├── Viewport → lines 80–100
+└── Cursor   → line 92, column 5
+```
+
+The **Viewport** is the scroll-offset component of a View: it identifies the portion of the Document currently visible. The **Cursor** identifies the editing position within it.
+
+A view does not own another copy of the Document.
+
+It observes the existing buffer and determines which part of it is visible.
+
+This distinction prevents an important design error:
+
+```text
+Buffer A
+    │
+    ├── Document copy 1
+    │
+    └── Document copy 2
+```
+
+Such a design would create two independent versions of the text that could diverge.
+
+Instead:
+
+```text
+Buffer A
+    │
+    └── Document
+         ▲
+         │
+    ┌────┴────┐
+    │         │
+  View 1    View 2
+```
+
+Both views refer to the same underlying editing context.
+
+---
+
+## Window
+
+A **Window** is a region of the terminal assigned to a view.
+
+For example:
+
+```text
++----------------------+----------------------+
+|                      |                      |
+|      Window 1        |      Window 2        |
+|                      |                      |
++----------------------+----------------------+
+```
+
+The window determines where the view appears on the screen and how much terminal space is available to it.
+
+A window therefore has visual properties such as:
+
+- position
+- width
+- height
+- associated view
+- active/inactive status
+
+The important relationship is:
+
+```text
+Window
+   │
+   └── View
+         │
+         └── Buffer
+               │
+               └── Document
+```
+
+In a simplified implementation, View and Window may be represented by the same structure or closely coupled structures. Architecturally, however, the concepts are useful to distinguish.
+
+The Window owns the View's state — its Viewport and Cursor — while the View binds that presentation to a Buffer.
+
+The **Buffer** answers:
+
+> What are we editing?
+
+The **Window** answers:
+
+> Where are we displaying it?
+
+---
+
+## Tab
+
+A **Tab** is an organizational container for one or more windows.
+
+A simple tab may contain one window:
+
+```text
+Tab
+ │
+ └── Window
+       │
+       └── Buffer
+```
+
+But a tab can also contain multiple windows:
+
+```text
+Tab
+ │
+ ├── Window 1 ──> Buffer A
+ │
+ └── Window 2 ──> Buffer B
+```
+
+This means a tab should not automatically be treated as another name for a buffer.
+
+A tab is primarily a way of organizing views.
+
+For example:
+
+```text
+[ main.c ] [ editor.c ] [ README.md ]
+```
+
+could represent three tabs, each containing one window.
+
+But a more sophisticated interface could have:
+
+```text
+[ Project ]
+      │
+      ├── Window 1 ──> main.c
+      └── Window 2 ──> editor.c
+
+[ Documentation ]
+      │
+      └── Window 3 ──> README.md
+```
+
+The tab organizes the windows, while the windows refer to buffers.
+
+---
+
+## Putting the Concepts Together
+
+The complete conceptual hierarchy is:
+
+```text
+Editor
+ │
+ ├── Tabs
+ │    │
+ │    ├── Window
+ │    │     │
+ │    │     └── Buffer
+ │    │           │
+ │    │           └── Document
+ │    │
+ │    └── Window
+ │          │
+ │          └── Buffer
+ │                │
+ │                └── Document
+ │
+ └── Buffer Collection
+```
+
+The relationship between these concepts is easier to understand when expressed as questions:
+
+| Concept  | Main question                                      |
+| -------- | -------------------------------------------------- |
+| Document | What text exists?                                  |
+| Buffer   | What editing context represents that text?         |
+| View     | Which buffer is presented, and from what position? |
+| Window   | Where is that view displayed?                      |
+| Tab      | How are one or more windows organized?             |
+
+A View is the presentation binding: a Buffer reference together with view state (the Viewport and Cursor). The Window owns that view state and supplies the terminal region in which it appears. In a simple implementation, the two may be represented by one structure.
+
+These distinctions are architectural rather than merely terminological.
+
+---
+
+## One Buffer, Multiple Windows
+
+One of the most important consequences of this model is that multiple windows can refer to the same buffer.
+
+For example:
+
+```text
+              Buffer A
+              main.c
+                 ▲
+                / \
+               /   \
+              /     \
+             /       \
+       Window 1    Window 2
+```
+
+The two windows can display different regions:
+
+```text
++----------------------+----------------------+
+| main.c               | main.c               |
+|                      |                      |
+| lines 1–20           | lines 80–100         |
+|                      |                      |
++----------------------+----------------------+
+```
+
+There is still only one copy of the document.
+
+If the user edits `main.c` through Window 1, Window 2 should observe the same underlying document after the state changes.
+
+This is fundamentally different from opening the same file twice as two unrelated documents.
+
+---
+
+## One Buffer, One Window
+
+The simplest case remains:
+
+```text
+Window
+   │
+   └── Buffer
+         │
+         └── Document
+```
+
+This is likely to be the most common arrangement in a small editor.
+
+Multiple buffers do not require multiple windows:
+
+```text
+Buffer A ──> main.c
+Buffer B ──> editor.c
+
+Window ──> Buffer A
+```
+
+The user can switch the window's active buffer:
+
+```text
+Window ──> Buffer B
+```
+
+without destroying either buffer.
+
+This is why buffer management and window management should remain conceptually separate.
+
+---
+
+## Multiple Buffers, Multiple Windows
+
+The complete system can therefore represent:
+
+```text
+Editor
+ │
+ ├── Buffer A ──> main.c
+ ├── Buffer B ──> editor.c
+ └── Buffer C ──> README.md
+       ▲
+       │
+   ┌───┴─────────────┐
+   │                 │
+Window 1          Window 2
+   │                 │
+   ▼                 ▼
+Buffer A          Buffer B
+```
+
+Another arrangement could be:
+
+```text
+Editor
+ │
+ ├── Buffer A ──> main.c
+ └── Buffer B ──> editor.c
+       ▲
+       │
+   ┌───┴─────────────┐
+   │                 │
+Window 1          Window 2
+   │                 │
+   ▼                 ▼
+Buffer A          Buffer A
+```
+
+The second arrangement demonstrates why the distinction matters:
+
+**Two windows do not necessarily mean two buffers.**
+
+---
+
+## Why the Distinction Matters
+
+Without these distinctions, it becomes tempting to build an architecture such as:
+
+```text
+Tab = Document
+Window = Document
+Buffer = Document
+```
+
+This may appear convenient initially, but it makes the model ambiguous as soon as the same document can be displayed in multiple places.
+
+A cleaner model separates the responsibilities:
+
+```text
+                 Content
+                    │
+                    ▼
+                Document
+                    │
+                    ▼
+                 Buffer
+                    │
+                    ▼
+                  View
+                    │
+                    ▼
+                 Window
+                    │
+                    ▼
+                   Tab
+```
+
+Not every implementation needs a separate object for every box. The purpose of the model is to establish clear responsibilities and relationships.
+
+The implementation can remain simpler where the requirements do not justify additional abstraction.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The distinction between **buffer** and **window** is one of the most important concepts introduced in this chapter.
+
+A buffer is about **what is being edited**.
+
+A window is about **how and where that content is being viewed**.
+
+Keeping those concepts separate allows the editor to support both:
+
+```text
+Multiple documents
+```
+
+and:
+
+```text
+Multiple views of one document
+```
+
+without duplicating the underlying text.
+
+The next section examines what information should actually belong to a Buffer. This is where the concepts introduced in earlier chapters—Document, Cursor, Viewport, Undo History, Search State, and syntax information—must be classified according to their ownership and lifetime.
+
+</Aside>
+
+## Summary
+
+The model separates content from presentation: a Document holds the logical text, a Buffer is the editing context around it, a View determines which portion is visible, a Window is the terminal region displaying that view, and a Tab organizes one or more windows. These distinctions let the editor support both multiple documents and multiple views of one document without duplicating text.
+
+A buffer answers what is being edited, while a window answers where and how it is viewed; the viewport and cursor are window state, not buffer state. Keeping those questions separate is what prevents a two-window layout from turning into two copies of the same document.
+
+The next section asks which state actually belongs to a Buffer: **Section 34.3, State Ownership: What Belongs Where**.

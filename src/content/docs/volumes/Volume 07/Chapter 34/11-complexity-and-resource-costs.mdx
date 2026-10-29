@@ -1,0 +1,422 @@
+---
+title: "34.11 Complexity and Resource Costs"
+description: "Quantifies the memory and rendering costs of multiple buffers, distinguishing logical scale from visual scale and showing why switching remains inexpensive."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Multiple Buffers make the editor more capable, but that capability has a cost.
+
+In a single-document editor, much of the editor's memory and processing is associated with one Document. Once multiple Buffers can remain alive simultaneously, the amount of state retained by the editor grows with the number and size of those Buffers.
+
+The important question is therefore not simply whether multiple Buffers work, but:
+
+> **What does the editor have to keep in memory and process as the number of Buffers grows?**
+
+## Memory Grows with the Number of Buffers
+
+Each Buffer may retain a Document, file association, dirty state, undo history, and other Buffer-specific state.
+
+Conceptually:
+
+```text
+Editor
+  │
+  ├── Buffer A
+  │     ├── Document
+  │     └── Undo history
+  │
+  ├── Buffer B
+  │     ├── Document
+  │     └── Undo history
+  │
+  └── Buffer C
+        ├── Document
+        └── Undo history
+```
+
+If there are `N` Buffers, the editor potentially retains the state of all `N` editing contexts.
+
+The total memory consumption can therefore be viewed approximately as:
+
+```text
+Total memory
+    ≈
+    Editor-wide state
+    +
+    Σ Buffer state
+```
+
+The Document contents are usually the dominant component.
+
+If Buffer `i` contains a Document requiring `Dᵢ` bytes of memory, then the memory used by all Documents is approximately:
+
+```text
+D₁ + D₂ + ... + Dₙ
+```
+
+This means that opening many large files can consume substantially more memory than editing a single large file.
+
+## Document Size Matters
+
+The number of Buffers alone does not determine memory usage.
+
+Consider two situations:
+
+```text
+10 Buffers × small Documents
+```
+
+and:
+
+```text
+10 Buffers × very large Documents
+```
+
+The second case may require vastly more memory even though both contain the same number of Buffers.
+
+The architecture therefore scales along at least two dimensions:
+
+```text
+Number of Buffers
+        ×
+Size of each Document
+```
+
+This is one reason the baseline architecture intentionally uses an in-memory Document model. It makes the runtime model straightforward, but the amount of open document data is correspondingly tied to available memory.
+
+## Undo History Adds Additional Cost
+
+Document contents are not the only significant memory consumer.
+
+Each Buffer may also retain its own undo history:
+
+```text
+Buffer
+ ├── Document
+ └── Undo history
+```
+
+Undo operations contain information necessary to restore previous editing states.
+
+As editing continues, the history may therefore grow independently of the current Document size.
+
+For multiple Buffers:
+
+```text
+Total undo memory
+    ≈
+    History A
+    +
+    History B
+    +
+    ...
+    +
+    History N
+```
+
+A user who edits several Buffers extensively can therefore consume substantially more memory than a user who edits only one Buffer.
+
+This is a natural consequence of preserving independent editing histories.
+
+## Derived State Also Has a Cost
+
+Some features maintain state derived from the Document.
+
+Syntax analysis is one example:
+
+```text
+Document
+   │
+   ▼
+Syntax analysis
+   │
+   ▼
+Derived state
+```
+
+With several Buffers, derived state may exist for several Documents:
+
+```text
+Buffer A → Document A → Derived state A
+Buffer B → Document B → Derived state B
+Buffer C → Document C → Derived state C
+```
+
+The exact amount of memory depends on the implementation and the feature.
+
+The important architectural observation is that adding Buffers can multiply not only primary document storage, but also the supporting state associated with those documents.
+
+The same principle applies to other features that maintain Buffer-specific state.
+
+## Window State Is Relatively Small
+
+Window state generally does not dominate memory usage.
+
+A Window primarily contains information such as:
+
+```text
+Window
+ ├── Geometry
+ ├── Viewport
+ ├── Cursor
+ └── Buffer reference
+```
+
+Compared with a large Document or extensive undo history, these values are usually small.
+
+However, the number of Windows still matters because every Window requires its own visual state.
+
+For example:
+
+```text
+Buffer A
+   ▲       ▲
+   │       │
+Window A  Window B
+```
+
+Two Windows referencing the same Buffer do not require two copies of the Document.
+
+They only require two sets of Window-specific state.
+
+This is an important benefit of separating Buffers from Windows.
+
+## Buffer Switching Is Cheap
+
+Switching between Buffers does not require copying the Document.
+
+Suppose:
+
+```text
+Window
+   │
+   └── Buffer A
+```
+
+becomes:
+
+```text
+Window
+   │
+   └── Buffer B
+```
+
+The operation primarily changes the reference from one Buffer to another.
+
+Conceptually:
+
+```text
+Switch
+   │
+   ├── identify target Buffer
+   └── update active context
+```
+
+The editor does not need to perform:
+
+```text
+copy Document A
+copy Document B
+rebuild Buffer B
+reload Buffer B from disk
+```
+
+This makes switching potentially inexpensive even when the Documents themselves are large.
+
+The cost is therefore largely related to resolving the new context and rendering it, rather than duplicating its contents.
+
+## Rendering Cost Depends on Visible Windows
+
+Multiple Buffers do not necessarily make rendering proportional to the total number of Buffers.
+
+A Buffer can exist without currently being displayed:
+
+```text
+Buffer A → visible
+Buffer B → visible
+Buffer C → not visible
+Buffer D → not visible
+```
+
+The Renderer primarily needs to process the Windows that participate in the current frame.
+
+If there are `W` visible Windows, rendering work is related to those Windows and the visible regions they occupy.
+
+Conceptually:
+
+```text
+Visible rendering work
+    ≈
+    Σ visible cells across all Windows
+```
+
+A Buffer containing millions of lines does not require all those lines to be rendered merely because the Buffer is open.
+
+Only the portions visible through its Windows need to contribute to the current frame.
+
+This distinction keeps the rendering cost tied primarily to the terminal's visible area rather than to the total amount of text stored in all open Buffers.
+
+## Full Redraw and Multiple Windows
+
+The baseline renderer uses a full-frame redraw model.
+
+With multiple Windows, the Renderer still constructs one complete terminal frame:
+
+```text
+Editor State
+    │
+    ▼
+Renderer
+    │
+    ├── Window A
+    ├── Window B
+    └── Window C
+    │
+    ▼
+Complete Screen Buffer
+    │
+    ▼
+Terminal
+```
+
+The presence of multiple Buffers therefore does not require one renderer per Buffer.
+
+The same Renderer processes each visible Window and obtains the corresponding Buffer state.
+
+This keeps the rendering mechanism centralized while allowing the number of visible editing contexts to vary.
+
+## Buffer Count and Responsiveness
+
+As the number of Buffers grows, some operations may become more expensive.
+
+For example, an operation that examines every Buffer has a cost proportional to the number of Buffers:
+
+```text
+N Buffers
+   │
+   ▼
+Inspect each Buffer
+   │
+   ▼
+O(N)
+```
+
+Examples might include operations that enumerate Buffers or search for a Buffer matching some editor-defined criterion.
+
+By contrast, switching directly to a known Buffer need not require processing every Document.
+
+The important point is that complexity depends on the operation.
+
+Multiple Buffers do not automatically make every command `O(N)`.
+
+## Resource Retention
+
+Keeping a Buffer open means keeping its associated state available.
+
+This provides an important user benefit:
+
+```text
+Switch away
+    ↓
+Return later
+    ↓
+Continue editing
+```
+
+The editor does not need to reconstruct the entire editing context each time.
+
+The trade-off is resource retention:
+
+```text
+More open Buffers
+       ↓
+More retained state
+       ↓
+Higher memory usage
+```
+
+This is a deliberate trade-off rather than an architectural mistake.
+
+A multi-buffer editor is useful precisely because editing contexts can remain available simultaneously.
+
+## Scalability Considerations
+
+The baseline architecture is designed for practical use without prematurely introducing more complicated storage mechanisms.
+
+Its scalability characteristics can be summarized as:
+
+| Resource                | Growth                                             |
+| ----------------------- | -------------------------------------------------- |
+| Document memory         | Grows with total open document data                |
+| Undo history            | Grows with retained editing history                |
+| Derived Buffer state    | Grows with the number and size of relevant Buffers |
+| Window state            | Grows with number of Windows                       |
+| Rendering work          | Grows with visible Windows and visible cells       |
+| Direct Buffer switching | Generally independent of Document size             |
+
+This makes the important trade-off visible.
+
+The editor can keep many editing contexts alive, but memory usage increases as those contexts accumulate state.
+
+For the baseline implementation, this is acceptable because simplicity and clear ownership are more important than solving every possible scalability problem.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Multiple Buffers introduce a useful distinction between **logical scale** and **visual scale**.
+
+Logical scale concerns how much editing state the editor retains:
+
+```text
+Buffers
+Documents
+Undo histories
+Derived state
+```
+
+Visual scale concerns how much the Renderer must display:
+
+```text
+Windows
+Visible rows
+Visible columns
+Screen cells
+```
+
+These scales are related but not identical.
+
+An editor may have:
+
+```text
+100 Buffers
+2 visible Windows
+```
+
+In that situation, memory usage may be substantial, while rendering remains focused on only two visible regions.
+
+Conversely:
+
+```text
+2 Buffers
+20 visible Windows
+```
+
+would retain relatively little document state but require the Renderer to compose many visible regions.
+
+This separation is one of the benefits of the Buffer–Window architecture.
+
+The central trade-off is therefore straightforward:
+
+> **Keeping more editing contexts available improves usability, but retaining those contexts consumes resources.**
+
+The architecture accepts that cost deliberately while avoiding unnecessary duplication of Documents, Renderers, or command implementations.
+
+</Aside>
+
+## Summary
+
+Memory grows with the number and size of open buffers and with their undo histories and derived state, while rendering work depends on visible windows rather than the total number of buffers. Switching is cheap because it changes a reference instead of copying documents, so resource retention is a deliberate trade-off between usability and memory.
+
+The distinction between logical scale and visual scale explains why a hundred open buffers can coexist with only two visible windows, or why many windows can share a small amount of text. Operations that enumerate every buffer still cost O(N), but direct switching does not.
+
+The next section compares the design choices behind this model: **Section 34.12, Design Alternatives and Trade-offs**.

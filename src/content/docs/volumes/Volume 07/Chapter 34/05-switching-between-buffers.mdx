@@ -1,0 +1,533 @@
+---
+title: "34.5 Switching Between Buffers"
+description: "Explains buffer switching as a selection operation that changes the active context while preserving each buffer's document, dirty state, and undo history."
+---
+
+A collection of buffers becomes useful only when the user can move between them.
+
+In a single-document editor, there is no switching operation. The editor has one document, one editing context, and one active target.
+
+With multiple buffers, the active editing context becomes something that can change during the session:
+
+```text
+Before:
+
+Active → Buffer A
+
+
+Switch to Buffer B
+
+
+After:
+
+Active → Buffer B
+```
+
+The important part is that Buffer A still exists after the switch.
+
+Switching changes the **active context**. It does not recreate the context.
+
+## Switching Is a Selection Operation
+
+A buffer switch can be understood as changing a reference:
+
+```text
+Buffer Manager
+├── Buffer A
+├── Buffer B
+└── Buffer C
+
+Active Buffer → Buffer A
+```
+
+After the user switches:
+
+```text
+Buffer Manager
+├── Buffer A
+├── Buffer B
+└── Buffer C
+
+Active Buffer → Buffer B
+```
+
+Nothing about Buffer A's document has been destroyed.
+
+Its dirty state, undo history, file association, and other buffer-specific state remain attached to it.
+
+This is one of the fundamental properties of multiple-buffer editing:
+
+> **Leaving a buffer does not mean leaving its state behind.**
+
+## What Happens During a Switch?
+
+A buffer switch is conceptually a small state transition:
+
+```text
+Current active buffer
+        │
+        ▼
+Select another buffer
+        │
+        ▼
+Update active context
+        │
+        ▼
+Render the selected buffer
+```
+
+The editor does not need to copy the entire document from one buffer to another.
+
+It does not need to save the previous buffer automatically merely because the user switched away.
+
+It changes which existing buffer is the target of subsequent commands and rendering.
+
+For example:
+
+```text
+Buffer A
+    Document = main.c
+    Dirty = true
+
+Buffer B
+    Document = editor.c
+    Dirty = false
+
+Active = Buffer A
+```
+
+After switching:
+
+```text
+Buffer A
+    Document = main.c
+    Dirty = true
+
+Buffer B
+    Document = editor.c
+    Dirty = false
+
+Active = Buffer B
+```
+
+The contents and state of both buffers remain unchanged.
+
+Only the active selection has changed.
+
+## Preserving Editing State
+
+Switching must preserve the state associated with the context being left.
+
+Suppose the user is editing `main.c`:
+
+```text
+Buffer A
+    Document → main.c
+    Dirty → true
+    Undo history → present
+```
+
+The user switches to another buffer:
+
+```text
+Active → Buffer B
+```
+
+Later, the user returns:
+
+```text
+Active → Buffer A
+```
+
+The expected result is that Buffer A can continue from its previous editing context.
+
+Its Document contents, file association, modified state, and undo history should not have been reset simply because another buffer became active.
+
+This is particularly important for long editing sessions. A user may alternate between several source files repeatedly. Losing the Document contents, undo history, or modified state every time would make the feature frustrating rather than useful.
+
+The cursor and viewport are deliberately absent from this list: they belong to the **Window**, not to the Buffer (Section 34.3). Switching a Window to another Buffer changes which content its view state describes — a Buffer does not carry a cursor or viewport with it.
+
+## Switching Does Not Copy Documents
+
+A poor implementation might conceptually perform:
+
+```text
+Switch A → B
+
+Copy Document B
+        ↓
+Replace current Document
+```
+
+This makes the editor appear to have multiple files while still maintaining only one actual editing context.
+
+It also creates unnecessary work.
+
+The multi-buffer model instead keeps the contexts alive independently:
+
+```text
+Buffer A ── Document A
+Buffer B ── Document B
+Buffer C ── Document C
+```
+
+Switching simply selects one of them.
+
+This is both conceptually cleaner and more scalable.
+
+## The Active Buffer Is Not the Same as the Buffer Collection
+
+The collection and the active buffer represent different pieces of state.
+
+The collection answers:
+
+> Which buffers currently exist?
+
+The active buffer answers:
+
+> Which one is currently being edited?
+
+For example:
+
+```text
+Buffer Collection
+├── Buffer A
+├── Buffer B
+├── Buffer C
+└── Buffer D
+
+Active Buffer → Buffer C
+```
+
+The active buffer is not stored as a separate editor-level pointer; it is derived from the window structure (Section 34.3).
+
+Changing the active buffer should not modify the collection itself.
+
+This distinction becomes useful when later implementing operations such as creating and closing buffers.
+
+## Commands Operate on the Active Context
+
+Most editing commands do not need to know which specific buffer the user selected.
+
+Consider an insertion command.
+
+Conceptually:
+
+```text
+Key Event
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Insert Command
+    │
+    ▼
+Active Editing Context
+    │
+    ▼
+Active Buffer
+```
+
+If Buffer A is active, the insertion affects Buffer A.
+
+If Buffer B is active, the same command affects Buffer B.
+
+The command does not need separate versions such as:
+
+```text
+insert_into_buffer_a()
+insert_into_buffer_b()
+insert_into_buffer_c()
+```
+
+The active-context relationship provides the target.
+
+This keeps commands independent of the number of buffers currently open.
+
+## Switching and the Cursor
+
+Because the multi-window architecture separates window-specific state from buffer state, switching must also be understood in terms of the active window.
+
+Consider:
+
+```text
+Window A
+    └── Buffer A
+
+Window B
+    └── Buffer B
+```
+
+If Window A is active and the user switches its buffer:
+
+```text
+Window A
+    └── Buffer B
+```
+
+Window A now displays Buffer B.
+
+Its window-specific state, such as its viewport and cursor position, remains associated with the window.
+
+This distinction becomes particularly important when a buffer is displayed by more than one window.
+
+For example:
+
+```text
+Window A ──┐
+           ├── Buffer A
+Window B ──┘
+```
+
+The two windows may have different viewports and cursor positions while sharing the same underlying buffer.
+
+Switching a window to another buffer therefore changes the **window-to-buffer relationship** without changing the identity of the buffers themselves.
+
+## Switching Does Not Automatically Save
+
+Another important distinction is between switching buffers and saving buffers.
+
+Suppose:
+
+```text
+Buffer A → dirty
+Buffer B → clean
+```
+
+The user switches from A to B.
+
+The switch itself does not imply:
+
+```text
+Buffer A → save automatically
+```
+
+Nor does it imply:
+
+```text
+Buffer A → discard changes
+```
+
+Those are separate operations.
+
+The buffer remains in its current state until an explicit command or lifecycle policy changes it.
+
+This preserves the independence of editing and navigation.
+
+## Switching Does Not Clear Undo History
+
+The same principle applies to undo.
+
+Suppose the user performs several edits in Buffer A:
+
+```text
+Buffer A
+    Undo History A
+        edit 1
+        edit 2
+        edit 3
+```
+
+After switching to Buffer B:
+
+```text
+Active → Buffer B
+```
+
+Buffer A's history remains intact.
+
+When the user returns:
+
+```text
+Active → Buffer A
+```
+
+its history is still associated with that buffer.
+
+This is essential because undo describes the history of a particular editing context, not merely the most recent operations performed anywhere in the editor.
+
+## Switching May Require Validation
+
+Although switching is conceptually simple, the editor may need to validate whether the transition is allowed.
+
+The most obvious example is an operation that would remove a buffer containing unsaved changes.
+
+However, ordinary switching between buffers should generally not require destruction or persistence decisions.
+
+The distinction is:
+
+```text
+Switch
+    → change active context
+
+Close
+    → remove a context
+
+Save
+    → persist a context
+
+Discard
+    → intentionally abandon changes
+```
+
+These operations should not be conflated.
+
+Keeping them separate makes the command model easier to reason about.
+
+## Buffer Switching and Rendering
+
+After the active context changes, the renderer must display the newly selected context.
+
+Conceptually:
+
+```text
+Switch Buffer
+      │
+      ▼
+Update active context
+      │
+      ▼
+Render Frame
+      │
+      ▼
+Terminal displays new buffer
+```
+
+The renderer does not perform the switch.
+
+It reads the resulting editor state and derives the next frame.
+
+This preserves the existing rendering boundary:
+
+```text
+State Change
+    │
+    ▼
+Editor State
+    │
+    ▼
+Renderer
+    │
+    ▼
+Terminal
+```
+
+The multi-buffer feature therefore extends the state being rendered without changing the renderer's fundamental responsibility.
+
+## A Complete Example
+
+Consider an editor containing three buffers:
+
+```text
+Buffer A → main.c
+Buffer B → editor.c
+Buffer C → README.md
+```
+
+The user begins in Buffer A:
+
+```text
+Active → Buffer A
+```
+
+They edit the file:
+
+```text
+Buffer A → dirty
+```
+
+They switch to Buffer B:
+
+```text
+Active → Buffer B
+```
+
+They make several edits:
+
+```text
+Buffer B → dirty
+```
+
+They then return to Buffer A:
+
+```text
+Active → Buffer A
+```
+
+Buffer A still knows:
+
+```text
+main.c
+dirty = true
+```
+
+Buffer B still knows:
+
+```text
+editor.c
+dirty = true
+```
+
+Nothing was lost simply because the active context changed.
+
+This is the essential behavior users expect from multiple buffers.
+
+## Switching as a State Transition
+
+The operation can therefore be summarized as:
+
+```text
+┌───────────────────────┐
+│ Active = Buffer A     │
+└───────────┬───────────┘
+            │
+       switch to B
+            │
+            ▼
+┌───────────────────────┐
+│ Active = Buffer B     │
+└───────────────────────┘
+```
+
+The buffers themselves remain:
+
+```text
+Buffer A ── remains alive
+Buffer B ── remains alive
+Buffer C ── remains alive
+```
+
+The operation changes selection, not ownership or lifetime.
+
+That simple distinction is what allows a multi-buffer editor to remain predictable.
+
+## The Architectural Principle
+
+Buffer switching demonstrates a broader architectural rule:
+
+> **Navigation between contexts should not destroy the contexts being navigated between.**
+
+The user should be able to move from one document to another and return later without losing the state that belongs to either editing context.
+
+This requires the architecture to keep three concepts separate:
+
+```text
+Buffer existence
+        ≠
+Active buffer selection
+        ≠
+Buffer modification
+```
+
+Once these concepts are separated, switching becomes a straightforward state transition rather than a special case scattered throughout the editor.
+
+The next step is to consider how users organize these editing contexts beyond simple switching. A flat list of buffers works, but users often need a higher-level concept that groups one or more windows into a navigable editing workspace: the **tab**.
+
+## Summary
+
+Switching buffers is a selection operation, not creation or destruction: it changes which existing editing context is active while preserving each buffer's own state — its Document contents, file association, dirty state, and undo history. The cursor and viewport are not part of that preserved state because they belong to the Window, not the Buffer. The collection and the active selection remain separate pieces of state, and switching implies neither saving nor discarding changes.
+
+The same operation can be understood at the window level: changing a window's buffer reference changes what it displays without changing the identity of either buffer. This is why switching can remain a small state transition even when the editor holds many large documents.
+
+The next section introduces a higher-level way to organize those contexts: **Section 34.6, Tabs - Organizing Editing Contexts**.

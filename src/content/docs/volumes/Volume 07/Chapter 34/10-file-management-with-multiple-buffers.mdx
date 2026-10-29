@@ -1,0 +1,358 @@
+---
+title: "34.10 File Management with Multiple Buffers"
+description: "Shows how file association and persistence move to individual buffers, so several files stay open and a failed save affects only the buffer involved."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Multiple Buffers change the relationship between the editor and the file system.
+
+In the single-document editor, there was effectively one relationship:
+
+```text
+Document
+    │
+    ▼
+Current File
+```
+
+With multiple Buffers, each Buffer can have its own file association:
+
+```text
+Buffer A ──► main.c
+Buffer B ──► editor.c
+Buffer C ──► unnamed
+```
+
+The File Manager still performs the same file operations as before. What changes is the **scope of the operation**.
+
+## Per-Buffer File Association
+
+A file association belongs to a Buffer rather than to the editor as a whole.
+
+For example:
+
+```text
+Buffer A
+    │
+    ├── Document
+    └── File → main.c
+
+
+Buffer B
+    │
+    ├── Document
+    └── File → editor.c
+```
+
+This allows both files to remain open simultaneously.
+
+The editor therefore no longer needs one global `current_file` that represents the entire editing session. Instead, each Buffer knows which file, if any, its Document represents.
+
+This distinction is important because a Buffer is an editing context, while a file is a persistent resource.
+
+A Buffer may have:
+
+```text
+File association
+    or
+No file association
+```
+
+The absence of a file does not make the Buffer invalid.
+
+## Unnamed Buffers
+
+A newly created Buffer may not have an associated file:
+
+```text
+Buffer C
+    │
+    ├── Document
+    └── File → none
+```
+
+Such a Buffer is an **unnamed Buffer**.
+
+The user can edit it normally. Its Document exists entirely in memory until the user chooses to save it and provides a destination file.
+
+The distinction is therefore:
+
+```text
+Buffer identity
+    ≠
+File identity
+```
+
+A Buffer can exist without a file, and a Buffer's association with a file can change during its lifetime.
+
+## Saving the Active Buffer
+
+When the user invokes Save, the editor first determines which Buffer is the current editing context.
+
+For example:
+
+```text
+Window A ──► Buffer A ──► main.c
+Window B ──► Buffer B ──► editor.c
+```
+
+If Window B is active:
+
+```text
+Save
+ │
+ ▼
+Active Window
+ │
+ ▼
+Buffer B
+ │
+ ▼
+File Manager
+ │
+ ▼
+editor.c
+```
+
+The File Manager then performs the existing save procedure for that Buffer's Document.
+
+The important change is therefore not in the persistence mechanism itself. It is in **which Buffer supplies the Document and file association**.
+
+## Failed Saves
+
+A failed save affects only the Buffer involved in that operation.
+
+Suppose:
+
+```text
+Buffer A → main.c
+Buffer B → editor.c
+```
+
+and saving Buffer B fails.
+
+The result is:
+
+```text
+Buffer A → unchanged
+Buffer B → still modified
+```
+
+The editor must not mark Buffer B as clean merely because a save was attempted.
+
+The existing safe-save rule remains unchanged:
+
+```text
+Prepare
+   │
+   ▼
+Write temporary file
+   │
+   ▼
+Replace destination
+   │
+   ├── success → Buffer becomes clean
+   │
+   └── failure → Buffer remains modified
+```
+
+The File Manager continues to own the persistence operation, while the relevant Buffer retains the correct state.
+
+## Opening a File
+
+Opening a file creates a new editing context rather than replacing an unrelated Buffer.
+
+Conceptually:
+
+```text
+File
+ │
+ ▼
+File Manager
+ │
+ ▼
+Create Buffer
+ │
+ ▼
+Load Document
+ │
+ ▼
+Associate File
+ │
+ ▼
+Buffer Ready
+```
+
+For example:
+
+```text
+Before:
+
+Buffer A → main.c
+
+
+Open editor.c
+
+
+After:
+
+Buffer A → main.c
+Buffer B → editor.c
+```
+
+The existing Buffer remains available.
+
+This is one of the fundamental differences between the original single-document architecture and the multi-buffer architecture.
+
+## One File and Buffer Identity
+
+The simplest model is often:
+
+```text
+Buffer A → main.c
+Buffer B → editor.c
+```
+
+However, the concepts should not be treated as identical.
+
+A Buffer represents an in-memory editing context.
+
+A File represents persistent data on disk.
+
+Therefore:
+
+```text
+Buffer ≠ File
+```
+
+The distinction leaves room for situations such as:
+
+- an unnamed Buffer
+- a Buffer whose file association changes
+- multiple editing contexts referring to the same underlying file, if such behavior is permitted by a future design
+
+The baseline architecture should not accidentally encode the assumption that a filename _is_ the identity of a Buffer.
+
+## File Manager Responsibilities Remain Narrow
+
+Multiple Buffers do not make the File Manager responsible for managing the entire Buffer collection.
+
+The File Manager continues to handle persistence:
+
+```text
+File Manager
+    │
+    ├── Load file
+    └── Save file
+```
+
+It should not become responsible for:
+
+```text
+Buffer creation
+Window layout
+Cursor movement
+Viewport management
+Rendering
+Input parsing
+```
+
+Those responsibilities belong to other parts of the architecture.
+
+The Command Engine coordinates the operation using the appropriate Buffer, while the File Manager performs the actual file-system work.
+
+This preserves the existing module boundaries rather than allowing multiple Buffers to turn the File Manager into a general-purpose editor manager.
+
+## The Persistence Model Does Not Change
+
+The introduction of multiple Buffers does not require a new persistence algorithm.
+
+The existing model remains:
+
+```text
+Buffer
+   │
+   ▼
+Document
+   │
+   ▼
+File Manager
+   │
+   ▼
+Temporary File
+   │
+   ▼
+Atomic Replacement
+   │
+   ▼
+File
+```
+
+Likewise, the existing encoding boundary remains intact:
+
+```text
+File
+   │
+   ▼
+UTF-8 bytes
+   │
+   ▼
+File Manager
+   │
+   ▼
+Document
+```
+
+Multiple Buffers simply mean that this relationship can exist several times simultaneously.
+
+```text
+Buffer A ──► Document A ──► File A
+
+Buffer B ──► Document B ──► File B
+
+Buffer C ──► Document C ──► no file
+```
+
+The file format, encoding strategy, and safe-save procedure do not need to know that other Buffers exist.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Multiple Buffers demonstrate an important architectural principle:
+
+> **Multiplicity should normally change ownership and targeting before it changes mechanism.**
+
+The editor does not need three different save implementations for three Buffers.
+
+It needs one File Manager that can save whichever Buffer is supplied as the current context.
+
+The same principle applies throughout the architecture:
+
+```text
+Many Buffers
+     │
+     ├── share the same persistence mechanism
+     ├── share the same rendering mechanism
+     ├── share the same command vocabulary
+     └── maintain independent state
+```
+
+This keeps the architecture scalable without multiplying implementations.
+
+The Buffer determines **what editing context exists**.
+
+The File Manager determines **how that context is persisted**.
+
+The active Window determines **which context ordinary user commands currently target**.
+
+That separation allows multiple open files without turning file management into a special case for every Buffer.
+
+</Aside>
+
+## Summary
+
+File association belongs to each buffer, so several files can stay open at once and unnamed buffers remain valid editing contexts. The persistence mechanism is unchanged — the File Manager still loads and saves documents through the same safe-save and encoding rules — but it now acts on whichever buffer supplies the document, and a failed save affects only that buffer.
+
+Opening a file creates a buffer rather than replacing one, and the File Manager stays limited to loading and saving rather than managing the collection. Multiplicity changes ownership and targeting, not the file format, encoding, or atomic-save procedure.
+
+The next section examines what this additional retained state costs: **Section 34.11, Complexity and Resource Costs**.

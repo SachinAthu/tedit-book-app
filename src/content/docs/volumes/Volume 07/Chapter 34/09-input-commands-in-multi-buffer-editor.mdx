@@ -1,0 +1,800 @@
+---
+title: "34.9 Input and Commands in a Multi-Buffer Editor"
+description: "Explains how commands resolve their target through the active window to its referenced buffer, keeping input parsing and command implementations context-independent."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Multiple Buffers and Windows introduce a new question for the input system:
+
+> When a command is received, which editing context should it affect?
+
+In the single-document editor, there was only one possible target. A command such as Insert Character could operate on the one Document maintained by Editor State.
+
+With multiple Windows and Buffers, that assumption is no longer valid.
+
+The input architecture therefore needs a way to resolve the command's target without changing the responsibilities of the Input Handler, Input Parser, Input Engine, or Command Engine.
+
+The conceptual pipeline becomes:
+
+```text
+Key Event
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command
+    │
+    ▼
+Active Window
+    │
+    ▼
+Referenced Buffer
+    │
+    ▼
+Document
+```
+
+The important point is that the pipeline itself has not fundamentally changed. The additional step is determining **which Window and Buffer are the current editing context**.
+
+## The Active Window
+
+When several Windows are visible, one of them must normally be designated as the **active Window**.
+
+For example:
+
+```text
++----------------------+----------------------+
+| Window A             | Window B             |
+|                      |                      |
+| main.c               | editor.c             |
+|                      |                      |
+|                      |                      |
+|                      |                      |
++----------------------+----------------------+
+             ▲
+             │
+        Active Window
+```
+
+The active Window is the destination for ordinary keyboard-driven editing commands.
+
+If the user types a character:
+
+```text
+a
+```
+
+the editor must determine:
+
+```text
+Which Window is active?
+        │
+        ▼
+Which Buffer does it reference?
+        │
+        ▼
+Which Document should be modified?
+```
+
+The command does not need to know how the terminal produced the character. It only needs the appropriate editing context.
+
+## Resolving the Active Context
+
+The relationship can be expressed as:
+
+```text
+Editor
+  │
+  ▼
+Active Window
+  │
+  ▼
+Referenced Buffer
+  │
+  ▼
+Document
+```
+
+This is what earlier sections meant by "the active buffer": shorthand for the Referenced Buffer at the end of this chain (Section 34.3). Commands target it by resolving this relationship rather than by reading a separate editor-level selection.
+
+Suppose the editor contains:
+
+```text
+Buffer A → main.c
+Buffer B → editor.c
+Buffer C → notes.txt
+```
+
+and the active Window references Buffer B.
+
+An insertion therefore follows:
+
+```text
+Insert Character
+       │
+       ▼
+Active Window
+       │
+       ▼
+Buffer B
+       │
+       ▼
+Document: editor.c
+```
+
+The other Buffers remain unchanged.
+
+This is the essential difference from the single-document model: **commands now operate through the active editing context rather than directly against one global Document**.
+
+## The Input Parser Does Not Change
+
+The Input Parser remains responsible for interpreting the terminal's byte stream.
+
+For example:
+
+```text
+Terminal bytes
+      │
+      ▼
+Input Parser
+      │
+      ├── KEY_CHARACTER('a')
+      ├── KEY_ARROW_LEFT
+      ├── KEY_ARROW_UP
+      └── KEY_CTRL_S
+```
+
+The parser does not need to know:
+
+- which Buffer is active
+- which Window is active
+- which Document is being edited
+- whether the editor contains one Buffer or fifty
+
+That information belongs at a higher level.
+
+This preserves the abstraction established when the Input Parser was separated from editor behavior: terminal-specific details remain isolated from application logic. The parser produces abstract key events; it does not decide what those events mean to the current editing context.
+
+## The Input Engine Still Maps Events to Commands
+
+The Input Engine also retains its existing responsibility.
+
+For example:
+
+```text
+KEY_ARROW_LEFT
+        │
+        ▼
+MOVE_CURSOR_LEFT
+```
+
+and:
+
+```text
+KEY_CTRL_S
+        │
+        ▼
+SAVE_BUFFER
+```
+
+The Input Engine should not need separate versions of commands for different Buffers:
+
+```text
+SAVE_BUFFER_A
+SAVE_BUFFER_B
+SAVE_BUFFER_C
+```
+
+That would be the wrong abstraction.
+
+Instead, there is one command:
+
+```text
+SAVE_BUFFER
+```
+
+and its target is determined by the current editing context.
+
+Conceptually:
+
+```text
+Key Event
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command
+    │
+    └── target = active context
+```
+
+This keeps key bindings independent from the number of Buffers currently open.
+
+## Commands Operate on Context, Not Copies
+
+Consider two Windows:
+
+```text
++----------------------+----------------------+
+| Window A             | Window B             |
+|                      |                      |
+| Buffer A             | Buffer B             |
+|                      |                      |
++----------------------+----------------------+
+```
+
+The user activates Window A and types:
+
+```text
+hello
+```
+
+The Command Engine executes the corresponding editing commands against Buffer A.
+
+Later, the user activates Window B and types:
+
+```text
+world
+```
+
+The same commands are used again:
+
+```text
+INSERT_CHARACTER
+```
+
+There is no separate implementation for Window A or Window B.
+
+The command is context-sensitive because it resolves its target through the active Window.
+
+```text
+                 INSERT_CHARACTER
+                         │
+               ┌─────────┴─────────┐
+               │                   │
+          Active Window A      Active Window B
+               │                   │
+            Buffer A             Buffer B
+               │                   │
+            Document A          Document B
+```
+
+The command itself remains reusable.
+
+## Buffer Switching
+
+Buffer switching provides a useful example of how commands and context interact.
+
+Suppose:
+
+```text
+Active Window
+      │
+      ▼
+Buffer A
+```
+
+The user invokes a command that changes the Buffer displayed by the active Window.
+
+After the command:
+
+```text
+Active Window
+      │
+      ▼
+Buffer B
+```
+
+The Window has not been destroyed.
+
+The Document represented by Buffer A has not been copied.
+
+Buffer A has not been saved or closed.
+
+Only the relationship between the Window and its Buffer has changed.
+
+```text
+Before:
+
+Window A ─────► Buffer A
+
+
+After:
+
+Window A ─────► Buffer B
+```
+
+This distinction is important because buffer switching is fundamentally a **context-selection operation**, not a document-editing operation.
+
+## Editing After a Buffer Switch
+
+Once the active Window references another Buffer, ordinary editing commands naturally target the new context.
+
+For example:
+
+```text
+Before switching:
+
+Active Window
+     │
+     ▼
+Buffer A
+     │
+     ▼
+Document A
+```
+
+After switching:
+
+```text
+Active Window
+     │
+     ▼
+Buffer B
+     │
+     ▼
+Document B
+```
+
+A subsequent insertion therefore modifies Document B.
+
+Nothing about the Input Parser changes.
+
+Nothing about the key binding changes.
+
+Nothing about the basic Insert Character command changes.
+
+Only the target context has changed.
+
+This is an important architectural property:
+
+> Changing the active context should not require changing the command implementation.
+
+## Window-Specific Commands
+
+Not every command targets the Document.
+
+Some commands primarily affect Window state.
+
+Examples include:
+
+- moving the Cursor
+- changing the Viewport
+- switching the active Window
+- changing Window focus
+
+Consider cursor movement:
+
+```text
+MOVE_CURSOR_LEFT
+        │
+        ▼
+Active Window
+        │
+        ▼
+Window-specific Cursor
+```
+
+The command does not need to modify the Document.
+
+Similarly, scrolling changes the Viewport associated with the active Window:
+
+```text
+SCROLL
+   │
+   ▼
+Active Window
+   │
+   ▼
+Viewport
+```
+
+The Buffer remains unchanged.
+
+This reinforces the distinction between Buffer-specific state and Window-specific state.
+
+## Buffer-Specific Commands
+
+Other commands target the Buffer associated with the active Window.
+
+For example:
+
+```text
+INSERT_CHARACTER
+DELETE_CHARACTER
+SAVE_BUFFER
+```
+
+A simplified conceptual flow is:
+
+```text
+Command
+   │
+   ▼
+Active Window
+   │
+   ▼
+Referenced Buffer
+   │
+   ▼
+Document
+```
+
+The command therefore uses the Window as the path to the Buffer.
+
+This avoids maintaining a separate global "current Document" that could become inconsistent with what the active Window actually displays.
+
+## Commands That Explicitly Target Another Buffer
+
+Not every future command necessarily needs to operate on the active Buffer.
+
+For example, a buffer-management command might explicitly identify another Buffer:
+
+```text
+Close Buffer
+      │
+      ▼
+Buffer identity
+      │
+      ▼
+Buffer Manager
+```
+
+Similarly, a command that presents a list of open Buffers may inspect the Buffer collection rather than modifying the active Buffer.
+
+The distinction is:
+
+```text
+Contextual command
+    → operates on the active Window/Buffer
+
+Buffer-management command
+    → operates on an explicitly selected Buffer
+
+Editor-wide command
+    → operates on Editor-wide State
+```
+
+This classification prevents the active context from becoming an artificial requirement for every operation.
+
+## Saving Uses the Active Buffer
+
+Saving illustrates the interaction between context and the existing File Manager.
+
+Suppose:
+
+```text
+Window A → Buffer A → main.c
+Window B → Buffer B → editor.c
+```
+
+and Window B is active.
+
+When the user invokes Save:
+
+```text
+SAVE_BUFFER
+      │
+      ▼
+Active Window
+      │
+      ▼
+Buffer B
+      │
+      ▼
+File Manager
+      │
+      ▼
+editor.c
+```
+
+The File Manager does not need to understand keyboard input or Window selection.
+
+The Command Engine resolves the appropriate Buffer and coordinates the operation.
+
+This preserves the existing module boundary: file-system interaction remains inside the File Manager rather than spreading into the input system.
+
+## Dirty State and Undo History Are Contextual
+
+Each buffer carries its own modification state and undo history (Section 34.3). If Buffer B is active and the user edits it, Buffer B becomes dirty while Buffer A remains clean — a global dirty flag is no longer sufficient. The same holds for undo: editing Buffer A or Buffer B changes that buffer's history, and switching between them does not merge their histories into one global stack.
+
+The multi-buffer architecture therefore does not require new dirty-flag or undo mechanisms; it requires the existing ones to be associated with the correct buffer. This illustrates the broader purpose of Chapter 34:
+
+> Multiple Buffers primarily change the ownership and scope of existing state; they do not require every existing feature to be redesigned.
+
+## Why Commands Should Not Be Duplicated Per Buffer
+
+A tempting design would be to create commands such as:
+
+```text
+INSERT_IN_BUFFER_A
+INSERT_IN_BUFFER_B
+INSERT_IN_BUFFER_C
+```
+
+This does not scale.
+
+Buffers can be created and destroyed dynamically, so the number of possible targets is not known when the program is compiled.
+
+More importantly, the command's meaning is not:
+
+> Insert into Buffer A.
+
+Its meaning is:
+
+> Insert at the current editing position in the active editing context.
+
+Therefore:
+
+```text
+INSERT_CHARACTER
+```
+
+is the correct abstraction.
+
+The target is supplied by runtime state.
+
+## The Active Context as a Boundary
+
+The active Window provides a clean boundary between command meaning and command target.
+
+The Command Engine can conceptually perform:
+
+```text
+Command
+   │
+   ▼
+Resolve active context
+   │
+   ├── Window state
+   │
+   └── Buffer state
+          │
+          ▼
+      Execute operation
+```
+
+This keeps the command representation simple.
+
+The command does not contain a copy of the Buffer.
+
+It does not contain a copy of the Document.
+
+It does not contain a copy of the Cursor.
+
+It uses the authoritative state already maintained by the editor.
+
+This follows the centralized-state and single-owner principles established by the architecture.
+
+## What Does Not Change
+
+It is useful to identify what multiple Buffers do **not** change.
+
+The following responsibilities remain intact:
+
+| Component      | Responsibility                       |
+| -------------- | ------------------------------------ |
+| Input Handler  | Reads raw terminal input             |
+| Input Parser   | Converts bytes into key events       |
+| Input Engine   | Maps key events to commands          |
+| Command Engine | Executes commands                    |
+| Renderer       | Reads state and constructs the frame |
+| File Manager   | Performs file I/O                    |
+
+The new requirement is that commands now operate against the correct scope of state.
+
+Conceptually:
+
+```text
+Before:
+
+Command
+   │
+   ▼
+Document
+
+
+After:
+
+Command
+   │
+   ▼
+Active Window
+   │
+   ▼
+Buffer
+   │
+   ▼
+Document
+```
+
+The additional relationship is small, but architecturally significant.
+
+## A Complete Example
+
+Consider an editor containing:
+
+```text
+Buffer A → main.c
+Buffer B → editor.c
+```
+
+with two Windows:
+
+```text
++----------------------+----------------------+
+| Window A             | Window B             |
+|                      |                      |
+| Buffer A             | Buffer B             |
+|                      |                      |
++----------------------+----------------------+
+```
+
+Window A is active.
+
+The user presses:
+
+```text
+Ctrl+S
+```
+
+The complete flow is:
+
+```text
+Keyboard
+   │
+   ▼
+Input Handler
+   │
+   ▼
+Input Parser
+   │
+   ▼
+KEY_CTRL_S
+   │
+   ▼
+Input Engine
+   │
+   ▼
+SAVE_BUFFER
+   │
+   ▼
+Active Window
+   │
+   ▼
+Buffer A
+   │
+   ▼
+File Manager
+   │
+   ▼
+main.c
+```
+
+Now Window B becomes active.
+
+The user presses the same key:
+
+```text
+Ctrl+S
+```
+
+The input path is unchanged:
+
+```text
+Keyboard
+   │
+   ▼
+Input Parser
+   │
+   ▼
+Input Engine
+   │
+   ▼
+SAVE_BUFFER
+```
+
+Only the resolved target changes:
+
+```text
+SAVE_BUFFER
+     │
+     ▼
+Active Window B
+     │
+     ▼
+Buffer B
+     │
+     ▼
+File Manager
+     │
+     ▼
+editor.c
+```
+
+This is exactly the kind of reuse the architecture is intended to provide.
+
+## Architectural Principle
+
+The introduction of multiple Buffers and Windows should therefore be understood as a **context-resolution problem**.
+
+The input pipeline continues to answer three separate questions:
+
+```text
+Input Handler
+    "What bytes arrived?"
+
+Input Parser
+    "What key event do those bytes represent?"
+
+Input Engine
+    "What command does this event invoke?"
+```
+
+The Command Engine then operates in the current editing context:
+
+```text
+Command Engine
+    "What should this command do to the current state?"
+```
+
+For document-oriented commands, the current state is reached through:
+
+```text
+Active Window
+      │
+      ▼
+Buffer
+      │
+      ▼
+Document
+```
+
+For window-oriented commands:
+
+```text
+Active Window
+      │
+      ▼
+Cursor / Viewport / Window State
+```
+
+For editor-wide commands:
+
+```text
+Editor-wide State
+```
+
+The architecture therefore preserves the separation established in the earlier chapters while adding the missing concept of **scope-aware command targeting**.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Multiple Buffers do not make the input system fundamentally more complicated.
+
+They make an implicit assumption explicit.
+
+In a single-document editor, the target of every editing command was obvious because only one target existed. Once multiple contexts exist, that target must be resolved deliberately.
+
+The clean solution is not to make input handling aware of Buffers. It is to let the existing command architecture operate against the active editing context.
+
+That gives the editor a simple rule:
+
+> **Input determines the command; the active context determines the target.**
+
+This rule scales naturally as the editor gains more Buffers, more Windows, and more commands without requiring separate command implementations for each editing context.
+
+</Aside>
+
+## Summary
+
+The input pipeline keeps its existing responsibilities; what changes is that a command's target is now resolved through the active window to its referenced buffer and document. Commands are not duplicated per buffer, and each operation targets the correct scope — window, buffer, or editor-wide — so key bindings and command implementations stay context-independent.
+
+Saving, dirty state, and undo all follow the same rule: the command is reused, while the active context supplies the buffer whose state is read or changed. Buffer-management commands and editor-wide commands remain the exceptions that name their target explicitly.
+
+The next section applies that scope-aware targeting to persistence: **Section 34.10, File Management with Multiple Buffers**.

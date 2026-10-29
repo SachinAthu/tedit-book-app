@@ -1,0 +1,489 @@
+---
+title: "34.13 Common Multiple-Buffer Mistakes"
+description: "Catalogues common multiple-buffer mistakes, showing that most are ownership bugs caused by assigning state to the wrong scope."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Adding multiple Buffers is not difficult because the editor suddenly needs fundamentally new mechanisms. It is difficult because state that was previously global must now be assigned to the correct scope.
+
+Many multi-buffer bugs are therefore ownership bugs.
+
+The following mistakes are particularly important to avoid.
+
+## One Global Document with Many File Names
+
+A common first attempt is to keep the original single Document and add several filenames:
+
+```text
+Editor
+ ├── Document
+ ├── File A
+ ├── File B
+ └── File C
+```
+
+This does not actually represent multiple documents.
+
+There is still only one text representation, so the architecture has no natural place to store the independent contents of each editing context.
+
+The correct model is:
+
+```text
+Buffer A ──► Document A ──► File A
+Buffer B ──► Document B ──► File B
+Buffer C ──► Document C ──► File C
+```
+
+The Buffer provides the boundary that separates one editing context from another.
+
+## One Global Dirty Flag
+
+A single Dirty Flag worked when there was only one editing context:
+
+```text
+Editor
+ └── Dirty
+```
+
+With multiple Buffers, this creates incorrect behavior.
+
+For example:
+
+```text
+Buffer A → clean
+Buffer B → modified
+```
+
+A single global flag cannot accurately represent both states.
+
+Dirty state must therefore belong to each Buffer:
+
+```text
+Buffer A → Dirty = false
+Buffer B → Dirty = true
+```
+
+Saving or modifying one Buffer must not change the state of another.
+
+## One Global Undo History
+
+The same mistake can occur with undo and redo.
+
+A global history creates ambiguity:
+
+```text
+Undo History
+   │
+   ├── edits from Buffer A
+   ├── edits from Buffer B
+   └── edits from Buffer A
+```
+
+An undo command could then accidentally operate on an editing context other than the one the user is currently working in.
+
+Undo history must instead remain associated with the relevant Buffer:
+
+```text
+Buffer A ──► History A
+Buffer B ──► History B
+```
+
+The command does not need a different implementation for each Buffer. It needs to resolve the correct Buffer before performing the operation.
+
+## Storing Viewport Inside the Document
+
+The Document describes logical text.
+
+The Viewport describes which portion of that text is currently visible.
+
+Those are different responsibilities.
+
+Consider two Windows showing the same Buffer:
+
+```text
+Window A ──► Buffer A
+    │
+    └── Viewport A
+
+Window B ──► Buffer A
+    │
+    └── Viewport B
+```
+
+If the Viewport were stored inside the Document, both Windows would be forced to share it.
+
+That prevents them from independently displaying different portions of the same Buffer.
+
+The Viewport therefore remains Window-specific.
+
+## Storing Window Geometry Inside the Document
+
+The same problem appears with geometry.
+
+A Document should not know whether it is displayed:
+
+```text
+Full screen
+Half screen
+Top pane
+Bottom pane
+```
+
+Geometry belongs to the Window:
+
+```text
+Window A
+ └── Geometry A
+
+Window B
+ └── Geometry B
+```
+
+The Document remains independent of the terminal layout.
+
+This separation also allows the same Buffer to move between different layouts without changing its contents.
+
+## Treating Tabs as Buffers
+
+A tab is an organizational container for Windows.
+
+It is not simply another name for a Buffer.
+
+An incorrect model might look like:
+
+```text
+Tab A → Buffer A
+Tab B → Buffer B
+```
+
+This becomes restrictive as soon as a Tab needs multiple Windows.
+
+The chosen model is:
+
+```text
+Tab A
+ ├── Window A ──► Buffer A
+ └── Window B ──► Buffer B
+```
+
+This distinction keeps organization separate from editing state.
+
+A Buffer can exist independently of which Tab currently displays it.
+
+## Copying Documents When Switching Buffers
+
+Another unnecessary approach is to copy the Document when the user switches Buffers:
+
+```text
+Switch
+  │
+  ├── copy current Document
+  ├── destroy temporary state
+  └── load target Document
+```
+
+This defeats one of the main benefits of keeping Buffers alive.
+
+The existing Buffer already contains the editing context.
+
+Switching should instead change the active reference:
+
+```text
+Before:
+
+Window ──► Buffer A
+
+
+After:
+
+Window ──► Buffer B
+```
+
+No Document needs to be copied.
+
+No previous Buffer needs to be recreated.
+
+No file needs to be reloaded merely because the user changed the active editing context.
+
+## Commands Bypassing the Active-Context Model
+
+A command should operate on the context selected by the editor's state model.
+
+An incorrect command path might directly access some global Document:
+
+```text
+Command
+   │
+   ▼
+Global Document
+```
+
+That effectively recreates the old single-document architecture inside a multi-buffer editor.
+
+The correct relationship is:
+
+```text
+Command
+   │
+   ▼
+Active Window
+   │
+   ▼
+Referenced Buffer
+   │
+   ▼
+Document
+```
+
+This ensures that ordinary editing commands target the editing context currently selected by the user.
+
+## Destroying a Modified Buffer Without Protection
+
+Closing a Buffer is a lifecycle operation, not merely a collection operation.
+
+An implementation must not do this blindly:
+
+```text
+Close Buffer
+    ↓
+Remove from collection
+    ↓
+Free memory
+```
+
+If the Buffer is modified, this could silently discard user changes.
+
+The close operation must first account for the Buffer's dirty state:
+
+```text
+Close Request
+     │
+     ▼
+Modified?
+     │
+     ├── No  → close
+     │
+     └── Yes → protect changes
+```
+
+The exact user interaction can vary, but destruction must not silently discard unsaved work.
+
+## Making the Buffer Manager Responsible for Everything
+
+Once a Buffer Manager exists, it can become tempting to place every multi-buffer operation inside it.
+
+For example:
+
+```text
+Buffer Manager
+ ├── create buffers
+ ├── edit documents
+ ├── render buffers
+ ├── save files
+ ├── perform undo
+ ├── search text
+ └── manage windows
+```
+
+This creates a new central dependency rather than solving the original architectural problem.
+
+The Buffer Manager should remain focused on Buffer collection and lifecycle.
+
+Other components retain their established responsibilities:
+
+```text
+Buffer Manager → Buffer lifecycle
+
+File Manager   → File persistence
+
+Renderer       → Visual output
+
+Command Engine → Command coordination
+
+Document       → Logical text
+```
+
+Multiple Buffers increase the number of contexts, not the number of responsibilities assigned to the Buffer Manager.
+
+## Letting the Renderer Modify Buffers
+
+The Renderer reads state to construct the visual frame.
+
+It should not modify the Buffer simply because multiple Buffers exist.
+
+An incorrect flow would be:
+
+```text
+Renderer
+   │
+   └── modifies Buffer
+```
+
+The established architecture remains:
+
+```text
+Editor State
+     │
+     ▼
+Renderer
+     │
+     ▼
+Frame
+```
+
+The Renderer may read the active Window, its Buffer, and the relevant document and derived state.
+
+It does not become an editing component.
+
+This is especially important with multiple Windows because the same Buffer may be rendered more than once.
+
+## Confusing Buffer Identity with File Identity
+
+A filename is not the same thing as a Buffer identity.
+
+For example:
+
+```text
+Buffer A ──► main.c
+```
+
+does not mean:
+
+```text
+Buffer A == main.c
+```
+
+The Buffer is an in-memory editing context.
+
+The file is a persistent resource associated with that context.
+
+This distinction is necessary for unnamed Buffers and also prevents the architecture from accidentally assuming that filenames uniquely define all editing state.
+
+## Assuming One File Must Always Equal One Buffer
+
+A simple editor may commonly have:
+
+```text
+main.c → Buffer A
+```
+
+But the architectural concepts should not be defined by this coincidence.
+
+A Buffer and a file have different identities and lifetimes.
+
+A future design might permit more than one editing context to refer to the same underlying file, for example:
+
+```text
+Buffer A ──► main.c
+Buffer B ──► main.c
+```
+
+Whether that behavior is allowed is a separate policy decision.
+
+The important point is that the Buffer abstraction should not make such a relationship impossible merely because the baseline use case normally has one Buffer per opened file.
+
+## Accidentally Sharing Window-Specific State
+
+Two Windows may reference the same Buffer:
+
+```text
+Window A ──┐
+           ├──► Buffer A
+Window B ──┘
+```
+
+This does **not** mean they should share every piece of state.
+
+Window-specific values remain independent:
+
+```text
+Window A
+ ├── Cursor A
+ ├── Viewport A
+ └── Geometry A
+
+Window B
+ ├── Cursor B
+ ├── Viewport B
+ └── Geometry B
+```
+
+Accidentally sharing these values can produce subtle bugs.
+
+Moving the Cursor in one Window could unexpectedly move it in another. Scrolling one Window could cause another Window to jump to the same location.
+
+The Buffer is shared; the visual context is not.
+
+## The Common Pattern Behind These Mistakes
+
+Although these mistakes look different, most have the same underlying cause:
+
+> **State has been assigned to the wrong scope.**
+
+The incorrect designs tend to collapse several concepts into one:
+
+```text
+Editor
+ └── Everything
+```
+
+The correct model preserves the boundaries:
+
+```text
+Editor-wide State
+     │
+     ├── Buffers
+     ├── Tabs
+     └── Terminal configuration
+
+Buffer
+     │
+     ├── Document
+     ├── File association
+     ├── Dirty state
+     └── Undo history
+
+Window
+     │
+     ├── Geometry
+     ├── Viewport
+     ├── Cursor
+     └── Buffer reference
+```
+
+The more carefully these scopes are maintained, the less special-case logic the rest of the editor needs.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Most multi-buffer bugs are not caused by the existence of multiple Buffers themselves.
+
+They are caused by pretending that the editor is still fundamentally single-context while adding multiple objects around the edges.
+
+A reliable implementation should repeatedly ask:
+
+```text
+Who owns this state?
+Who may modify it?
+Which editing context does it describe?
+Does it survive Buffer switching?
+Does it survive Window switching?
+```
+
+These questions expose many architectural mistakes before they become implementation bugs.
+
+The central rule is simple:
+
+> **When state describes an editing context, keep it with the Buffer. When it describes a visual context, keep it with the Window. When it applies to the entire application, keep it editor-wide.**
+
+Once those boundaries are respected, multiple Buffers become an extension of the existing architecture rather than a collection of exceptions.
+
+</Aside>
+
+## Summary
+
+Most multi-buffer mistakes share one cause: state assigned to the wrong scope. Global documents, dirty flags, undo histories, and viewports; windows that own documents or renderers that modify buffers; and tabs treated as buffers all collapse boundaries that should stay distinct. The recurring rule is to keep editing-context state with the buffer, visual state with the window, and application-wide state at the editor level.
+
+The same ownership questions — who owns this state, who may modify it, and which context it describes — expose these mistakes before they become implementation bugs. A multi-buffer editor remains an extension of the existing architecture only while those boundaries are respected.
+
+Continue to the **Chapter Summary**, which consolidates the multiple-buffer design, followed by exercises and a preview of the next chapter.

@@ -1,0 +1,212 @@
+---
+title: "34.1 Why One Document Is No Longer Enough"
+description: "Argues that realistic workflows need several independent editing contexts and shows why adding documents without per-buffer state ownership is not enough."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The editor we have designed so far has a deliberately simple model: one editor session works with one editable document at a time.
+
+Conceptually, the relationship is straightforward:
+
+```text
+Editor State
+     │
+     └── Document
+```
+
+The Document contains the text being edited, while the surrounding components manage the cursor, viewport, rendering, input, commands, and persistence.
+
+This model is sufficient for learning the fundamental architecture of a text editor. It is also sufficient for the baseline editor defined by our requirements, which intentionally limits the application to a single editable document at any given time.
+
+However, the limitation becomes apparent as soon as we consider a more realistic editing workflow.
+
+Imagine working on a source file while referring to another source file:
+
+```text
+main.c
+editor.c
+```
+
+With a single-document model, the user must leave `main.c`, open `editor.c`, inspect it, and then return to `main.c`. The editor can only maintain one editing context at a time.
+
+A more capable editor should instead be able to keep both documents in memory:
+
+```text
+Editor
+  │
+  ├── Document A
+  │
+  └── Document B
+```
+
+The user could switch between them without repeatedly loading and unloading files.
+
+But this immediately raises an architectural question:
+
+> Where should the additional documents live?
+
+Simply adding another `Document` field to `EditorState` does not solve the general problem. What happens when there are three documents? Ten? Fifty?
+
+We need a collection of independently managed editing contexts.
+
+The architecture therefore begins to evolve from:
+
+```text
+Editor
+  │
+  └── One Document
+```
+
+toward:
+
+```text
+Editor
+  │
+  └── Buffers
+       ├── Buffer A
+       ├── Buffer B
+       └── Buffer C
+```
+
+Each buffer represents an independent editing context.
+
+The important change is not merely that there are now multiple documents. Each document must retain its own state.
+
+For example, suppose the user has two buffers:
+
+```text
+Buffer A
+    Document: main.c
+    Modified: yes
+    Cursor:   line 12, column 8
+
+Buffer B
+    Document: editor.c
+    Modified: no
+    Cursor:   line 4, column 15
+```
+
+Switching from Buffer A to Buffer B must not destroy Buffer A's cursor position or modified state.
+
+When the user returns:
+
+```text
+Buffer A
+    Document: main.c
+    Modified: yes
+    Cursor:   line 12, column 8
+```
+
+the previous editing context should still exist.
+
+For now, the cursor appears as part of the buffer. That placement is a simplification; Section 34.3 shows that the cursor actually belongs to the **Window** that views the buffer. The principle illustrated here — that the editing context survives switching — holds regardless of the refinement.
+
+This introduces a fundamental principle for multi-buffer editors:
+
+> **State associated with a document must remain associated with that document while the user works on another document.**
+
+The same principle applies to features introduced in earlier chapters. Undo history, syntax analysis, and other document-specific information cannot accidentally become global state shared by unrelated documents.
+
+At the same time, not everything should be duplicated for every buffer.
+
+Configuration, for example, represents editor-wide policy. A setting such as tab width or a keyboard binding normally applies to the editor as a whole rather than belonging to one particular document.
+
+We therefore have to distinguish between different kinds of state:
+
+```text
+Editor-wide state
+       │
+       ├── Buffer-specific state
+       │
+       └── Window-specific state
+```
+
+This distinction will become increasingly important throughout this chapter.
+
+## The Problem Is Larger Than Multiple Files
+
+There is another reason why simply thinking in terms of "multiple documents" is insufficient.
+
+Consider a user who wants to see two different parts of the same file simultaneously:
+
+```text
++----------------------+----------------------+
+|                      |                      |
+|       main.c         |       main.c         |
+|                      |                      |
+|     lines 1–20       |     lines 80–100     |
+|                      |                      |
++----------------------+----------------------+
+```
+
+There is only **one document** here.
+
+Yet there are two different views of that document.
+
+This means that the editor must distinguish between the content being edited and the visual region through which that content is viewed.
+
+We therefore need a richer relationship:
+
+```text
+Editor
+  │
+  ├── Buffers
+  │     ├── Buffer A ──> Document A
+  │     └── Buffer B ──> Document B
+  │
+  └── Windows
+        ├── Window 1 ──> Buffer A
+        └── Window 2 ──> Buffer A
+```
+
+Now the architecture can represent both situations:
+
+```text
+Two documents:
+
+Window 1 ──> Buffer A ──> Document A
+Window 2 ──> Buffer B ──> Document B
+```
+
+This distinction is the foundation of multiple-buffer and multiple-window architectures.
+
+A **Buffer** represents an editable context.
+
+A **Window** represents a view of that context.
+
+A **Document** represents the text itself.
+
+A **Tab** provides another level of organization for those views.
+
+These concepts — Buffer, Window, Document, and Tab — are closely related but not interchangeable. The next section establishes their precise meanings before we change the architecture further.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Adding multiple documents is deceptively simple at first.
+
+An inexperienced design might start with:
+
+```text
+Document documents[10];
+```
+
+and consider the problem solved.
+
+But the real architectural question is not how to store more text. It is how to preserve the ownership, lifetime, cursor state, viewport state, undo history, file association, and other information belonging to each independent editing context.
+
+**Multiplicity exposes hidden assumptions in a single-document architecture.**
+
+A design that works perfectly when there is only one document may contain global state that was never intentionally designed to be global.
+
+Chapter 34 makes those assumptions explicit and establishes a model that can support multiple buffers without abandoning the architectural principles developed throughout the earlier chapters.
+
+</Aside>
+
+## Summary
+
+A single-document editor cannot support realistic workflows, and simply storing more documents does not solve the underlying problem. What is needed is a collection of independently managed editing contexts, each preserving its own contents, modified state, and history, with state then classified according to scope — editor-wide, buffer-specific, or window-specific. This reframing is the foundation for everything else in the chapter.
+
+Two views of one file also show that multiplicity is about contexts, not merely files: the editor must distinguish the content being edited from the region displaying it. The rest of the chapter therefore works from ownership and scope before it introduces any collection structure.
+
+The next section defines the concepts this classification depends on: **Section 34.2, Document, Buffer, View, Tab, and Window**.

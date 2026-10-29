@@ -1,0 +1,562 @@
+---
+title: "34.8 Rendering Multiple Windows"
+description: "Describes how the renderer composes one clipped terminal frame from several window regions, each with its own buffer, viewport, and cursor."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Introducing multiple windows changes the rendering problem in one important way: the terminal no longer represents a single document view.
+
+Previously, the Renderer could conceptually map the current document and its viewport onto the available terminal area:
+
+```text
+Document
+   │
+   ▼
+Viewport
+   │
+   ▼
+Terminal Frame
+```
+
+With multiple windows, the terminal becomes a collection of independent visual regions:
+
+```text
+Editor
+   │
+   ▼
+Window Layout
+   │
+   ├───────────────┐
+   │               │
+   ▼               ▼
+Window A         Window B
+   │               │
+   ▼               ▼
+Buffer A         Buffer B
+   │               │
+   └───────┬───────┘
+           ▼
+      Terminal Frame
+```
+
+The Renderer therefore has to render several views into different regions of the same screen.
+
+The underlying rendering architecture does not need to be redesigned. The Renderer still derives a complete frame from the current application state, writes that frame through the existing Screen Buffer, and produces terminal output only after frame construction is complete. The new responsibility is primarily one of **coordination and spatial isolation**.
+
+## Rendering a Window as a Region
+
+A Window now has geometry describing the portion of the terminal it occupies.
+
+For example:
+
+```text
++----------------------------------------+
+| Window A             | Window B        |
+|                      |                 |
+| main.c               | editor.c        |
+|                      |                 |
+| line 1               | line 1          |
+| line 2               | line 2          |
+| line 3               | line 3          |
+|                      |                 |
++----------------------------------------+
+```
+
+The Renderer must respect those boundaries.
+
+A Window's rendering operation can therefore be understood conceptually as:
+
+```text
+Window
+  │
+  ├── Geometry
+  ├── Buffer reference
+  ├── Viewport
+  └── Cursor
+        │
+        ▼
+   Render within
+   window bounds
+```
+
+The Window does not contain a copy of the text. It identifies which Buffer should be displayed and provides the window-specific state needed to determine what portion of that Buffer is visible.
+
+This distinction is important because two windows may refer to the same Buffer:
+
+```text
+             Buffer A
+                ▲
+                │
+        ┌───────┴───────┐
+        │               │
+        │               │
+     Window A         Window B
+        │               │
+     Viewport A      Viewport B
+     Cursor A        Cursor B
+```
+
+The Renderer must therefore render the same underlying Document twice, potentially showing different portions of it.
+
+## Clipping Each Window
+
+A multi-window renderer must prevent one Window from drawing into another Window's region.
+
+Consider:
+
+```text
++-------------------+-------------------+
+|       Window A    |     Window B      |
+|                   |                   |
+|                   |                   |
+|                   |                   |
++-------------------+-------------------+
+```
+
+If Window A contains enough document content to fill its entire terminal width, it must still stop at its right boundary.
+
+Likewise, Window B must begin drawing only within its own region.
+
+Conceptually:
+
+```text
+Window A
++-------------------+
+| draw only here    |
+|                   |
++-------------------+
+
+Window B
+                    +-------------------+
+                    | draw only here    |
+                    |                   |
+                    +-------------------+
+```
+
+This is **clipping**.
+
+Clipping is especially important when the Screen Buffer is shared by all windows. Each rendering operation writes only to the cells belonging to its assigned region.
+
+The geometry therefore becomes a rendering boundary:
+
+```text
+Window Geometry
+      │
+      ▼
++----------------------+
+| Allowed Screen Cells |
++----------------------+
+      │
+      ▼
+Render Buffer Contents
+```
+
+The Renderer does not need a separate Screen Buffer for every Window. The existing application-wide Screen Buffer can contain the complete terminal frame. Each Window simply contributes its portion of that frame.
+
+This preserves the design established in the rendering chapters: the Screen Buffer represents the complete visible terminal rather than an individual document.
+
+## Each Window Has Its Own Viewport
+
+A Window has its own visual position in the terminal, but it also has its own viewport into its Buffer.
+
+This matters when different windows display the same Buffer.
+
+For example:
+
+```text
+                 Buffer A
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+          ▼                   ▼
+      Window A             Window B
+      viewport_row = 0     viewport_row = 20
+```
+
+Window A may show the beginning of the document while Window B shows a later section.
+
+The Renderer therefore cannot maintain one global viewport for the Buffer.
+
+Instead:
+
+```text
+Window A
+    ├── Buffer → A
+    └── Viewport → A
+
+Window B
+    ├── Buffer → A
+    └── Viewport → B
+```
+
+The same Buffer supplies the document contents, while each Window determines which portion is visible.
+
+This is one of the central consequences of separating Buffer state from Window state.
+
+## Independent Cursor Positions
+
+The same principle applies to the Cursor.
+
+Two windows displaying the same Buffer may have different editing positions:
+
+```text
+             Buffer A
+                ▲
+          ┌─────┴─────┐
+          │           │
+          ▼           ▼
+       Window A     Window B
+          │           │
+       Cursor A     Cursor B
+```
+
+For example, Window A might position its cursor near the beginning of the document while Window B positions its cursor near a later section.
+
+The Renderer must therefore use the cursor belonging to the Window it is currently rendering.
+
+It must not assume that a Buffer has one universal cursor.
+
+This allows the visual state of each window to remain independent even though the underlying text is shared.
+
+## Rendering Different Buffers
+
+The more straightforward case is when windows reference different Buffers:
+
+```text
++----------------------+----------------------+
+| Window A             | Window B             |
+|                      |                      |
+| Buffer A             | Buffer B             |
+| main.c               | editor.c             |
+|                      |                      |
+| int main(void)       | void render(void)    |
+| {                    | {                    |
+|     ...              |     ...              |
++----------------------+----------------------+
+```
+
+The Renderer performs essentially the same document rendering operation for each Window.
+
+The difference is the context supplied to that operation:
+
+```text
+Window A
+    │
+    ├── geometry
+    ├── viewport
+    ├── cursor
+    └── Buffer A
+           │
+           ▼
+       Document A
+
+
+Window B
+    │
+    ├── geometry
+    ├── viewport
+    ├── cursor
+    └── Buffer B
+           │
+           ▼
+       Document B
+```
+
+The renderer does not need separate rendering implementations for different buffers.
+
+It applies the same rendering rules to whichever Buffer a Window references.
+
+## Rendering the Same Buffer Multiple Times
+
+Sharing a Buffer introduces a useful consequence: the Renderer must treat Buffer contents as reusable input rather than as a visual object belonging to one Window.
+
+Consider:
+
+```text
+              Buffer A
+                 │
+        ┌────────┴────────┐
+        │                 │
+        ▼                 ▼
+    Window A           Window B
+        │                 │
+        ▼                 ▼
+   Terminal region   Terminal region
+```
+
+The Renderer reads Buffer A for both windows.
+
+The two windows can nevertheless differ in:
+
+- visible document position
+- cursor position
+- geometry
+- amount of available space
+
+This is precisely why the architecture separates document data from visual state.
+
+The Buffer answers:
+
+> What text exists?
+
+The Window answers:
+
+> Where and how is that text currently being viewed?
+
+## Rendering Order
+
+Multiple windows introduce another concern: **rendering order**.
+
+A complete frame can be thought of as being assembled in stages:
+
+```text
+Clear / initialize frame
+        │
+        ▼
+Render Window A
+        │
+        ▼
+Render Window B
+        │
+        ▼
+Render shared UI
+        │
+        ▼
+Render active cursor
+        │
+        ▼
+Output complete frame
+```
+
+The exact ordering depends on how the user interface allocates the Status Bar and Message Bar, but the important principle is that the final frame must be deterministic.
+
+A later rendering operation must not accidentally overwrite content belonging to another component.
+
+Window geometry and reserved interface regions therefore need to be established before their contents are rendered.
+
+For example:
+
+```text
++----------------------------------------+
+|                                        |
+|             Window Area                |
+|                                        |
+|----------------------------------------|
+| Status Bar                             |
+|----------------------------------------|
+| Message Bar                             |
++----------------------------------------+
+```
+
+Windows render only within the Window Area. The Status Bar and Message Bar retain their own reserved regions.
+
+## Window-Local Status Information
+
+A multi-window interface may also introduce status information that is meaningful to an individual Window.
+
+For example, a window might need to identify:
+
+- the Buffer it displays
+- its current cursor position
+- its local view state
+
+The important architectural distinction is between **global interface information** and **window-local information**.
+
+Conceptually:
+
+```text
+Editor-wide UI
+    │
+    ├── terminal dimensions
+    └── global messages
+
+Window-local UI
+    │
+    ├── buffer identity
+    ├── cursor position
+    └── local view information
+```
+
+A status area associated with a particular Window must therefore be derived from that Window's state rather than from some global cursor or document.
+
+The introduction of multiple windows does not require a second rendering architecture. It simply requires the existing Renderer to use the correct state scope when constructing each region.
+
+## The Active Window and the Cursor
+
+Only one Window is normally the active editing context at a time.
+
+This affects cursor rendering.
+
+For example:
+
+```text
++----------------------+----------------------+
+| Window A             | Window B             |
+|                      |                      |
+| Buffer A             | Buffer B             |
+|                      |                      |
+|       cursor         |                      |
+|          ^           |                      |
++----------------------+----------------------+
+```
+
+The Renderer must know which Window is active so that it can present the editing cursor appropriately.
+
+An inactive Window may still display its contents, but it does not become the destination of keyboard-driven editing simply because it is visible.
+
+This distinction will become especially important when the input and command pipeline is extended to multiple windows in the next section.
+
+## The Renderer Remains Read-Only
+
+Multiple windows do not change one of the most important rendering rules:
+
+> The Renderer observes state; it does not own editing behavior.
+
+The Renderer may read:
+
+```text
+Editor State
+    │
+    ├── Windows
+    ├── Buffers
+    ├── Documents
+    ├── Viewports
+    ├── Cursors
+    └── Configuration
+```
+
+It uses those values to construct the visual frame.
+
+It must not:
+
+- modify a Buffer
+- move a Cursor
+- change a Viewport
+- switch the active Window
+- change the active Buffer
+- mark a Buffer dirty
+
+For example, if a cursor would be outside a Window's visible area, the Renderer should not scroll the Window itself. Cursor visibility and viewport adjustment belong to the state-update side of the architecture. The Renderer simply renders the resulting state.
+
+This preserves the established runtime sequence:
+
+```text
+Event
+  │
+  ▼
+Command
+  │
+  ▼
+Update State
+  │
+  ▼
+Render
+```
+
+The presence of several Windows changes what the Renderer reads, not when or how it is allowed to modify state.
+
+## One Frame, Many Windows
+
+The most useful way to think about multi-window rendering is that the editor still produces **one terminal frame**.
+
+That frame is composed from multiple Window views:
+
+```text
+                    Editor State
+                         │
+             ┌───────────┼───────────┐
+             │           │           │
+             ▼           ▼           ▼
+          Window A    Window B    Interface
+             │           │           │
+             ▼           ▼           ▼
+          Region A    Region B    Shared UI
+             │           │           │
+             └───────────┼───────────┘
+                         ▼
+                  Screen Buffer
+                         │
+                         ▼
+                    Terminal
+```
+
+This is an extension of the existing rendering model rather than a replacement for it.
+
+The Renderer still constructs a complete visual representation before it reaches the terminal. The difference is that the Document Area is no longer one undivided region.
+
+## Architectural Consequence
+
+The introduction of Windows therefore adds a new level of iteration to frame construction:
+
+```text
+Render Frame
+    │
+    ├── Render Window A
+    │      ├── Read Buffer
+    │      ├── Read Viewport
+    │      └── Read Cursor
+    │
+    ├── Render Window B
+    │      ├── Read Buffer
+    │      ├── Read Viewport
+    │      └── Read Cursor
+    │
+    └── Render shared interface
+```
+
+The renderer remains a single component.
+
+There is no need for:
+
+```text
+Renderer A
+Renderer B
+Renderer C
+```
+
+Instead, one Renderer understands the common rules for rendering a Window and applies them repeatedly.
+
+This keeps the architecture consistent with the project's principle of one responsibility per component and avoids duplicating rendering logic.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+The important architectural change is not that the editor now has "more screens."
+
+It is that **the terminal frame has become a composition of views**.
+
+A Buffer is no longer inherently tied to a particular screen region. A Window provides that relationship.
+
+This distinction gives the architecture considerable flexibility:
+
+```text
+One Buffer
+    │
+    ├── Window A
+    ├── Window B
+    └── Window C
+```
+
+or:
+
+```text
+Buffer A ──► Window A
+
+Buffer B ──► Window B
+
+Buffer C ──► Window C
+```
+
+The Renderer treats both cases uniformly.
+
+That is the real benefit of separating Buffer and Window: the rendering system can display the same underlying document in multiple independent contexts without duplicating the document itself.
+
+</Aside>
+
+## Summary
+
+The renderer still produces a single terminal frame, but that frame is now a composition of clipped window regions, each rendered from its own buffer, viewport, and cursor. Windows sharing a buffer share the document while keeping independent visual state, and the renderer remains read-only no matter how many windows exist.
+
+Rendering order and reserved interface regions keep window output deterministic, and the active window determines which cursor is presented as the editing cursor. One renderer applies the same rules repeatedly, so multiple windows add coordination rather than a second rendering architecture.
+
+The next section shows how input and commands resolve their target in this multi-window world: **Section 34.9, Input and Commands in a Multi-Buffer Editor**.

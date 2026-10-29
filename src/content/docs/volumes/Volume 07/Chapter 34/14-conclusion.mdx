@@ -1,0 +1,81 @@
+---
+title: "34.14 Conclusion"
+description: "Consolidates the multiple-buffer model, exercises, and lessons, and previews testing, where interacting state and lifetimes become the focus."
+---
+
+Multiple buffers turn the editor from a single-context tool into a system that holds several editing contexts at once. The unifying idea of the chapter is that each context keeps its own state while the surrounding architecture stays the same: a **Document** holds the text, a **Buffer** is the editing context around it, a **Window** presents part of it, and a **Tab** organizes windows.
+
+The model follows a single progression:
+
+```text
+Vocabulary → Ownership → Management → Windows → Integration → Costs
+```
+
+The important lessons are:
+
+- A single document is no longer enough; the editor needs a collection of independent editing contexts.
+- State follows its scope: editing-context state belongs to the Buffer, visual state to the Window, and policy to the editor.
+- The Buffer Manager owns the collection and lifecycle, not each buffer's internal state.
+- Switching buffers is a selection operation that preserves every editing context.
+- Windows are views, not copies of documents, and several windows can display the same buffer.
+- Tabs organize windows; they are not another name for buffers.
+- Existing features are not redesigned — each is assigned a precise scope.
+- Most multi-buffer mistakes are ownership mistakes: state assigned to the wrong scope.
+
+The baseline multiple-buffer architecture — Document, Buffer, View, Window, and Tab, with a Buffer Manager owning only the collection and the active buffer derived from the active Window — is recorded as **ADR-027: Multiple Buffer Architecture**.
+
+## Exercises
+
+### Review Questions
+
+1. What is the difference between a Buffer and a Document?
+2. Why should a Window not contain its own copy of a Document?
+3. Can two Windows display the same Buffer?
+4. Which state belongs to a Buffer?
+5. Which state belongs to a Window?
+6. Why should undo history normally be buffer-specific?
+
+### Thought Experiment
+
+Given:
+
+```text
+Buffer A → main.c
+Buffer B → editor.c
+
+Window 1 → Buffer A
+Window 2 → Buffer A
+Window 3 → Buffer B
+```
+
+Ask the reader:
+
+> How many Documents, Buffers, Windows, Cursors, and Viewports exist?
+
+This forces them to reason about identity and ownership rather than memorize definitions.
+
+### Optional Challenge
+
+Design the `EditorState` relationship diagram for a three-buffer, two-window editor without writing implementation code.
+
+## Preview of the Next Chapter
+
+Chapter 35 moves into **Testing**, where the book transitions from adding professional features to validating the system.
+
+Multiple buffers provide an especially useful testing target because they create interactions between previously independent components:
+
+```text
+Buffer
+   ×
+Undo
+   ×
+File I/O
+   ×
+Cursor
+   ×
+Viewport
+   ×
+Renderer
+```
+
+Testing therefore becomes less about asking whether an individual function works and more about verifying that **components remain correct when their state and lifetimes interact**.

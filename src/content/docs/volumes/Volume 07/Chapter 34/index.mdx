@@ -1,0 +1,61 @@
+---
+title: "Chapter 34 — Multiple Buffers"
+description: "Explains how the editor evolves from one document to several buffers and windows, showing how document, buffer, view, window, and tab split state and responsibility."
+---
+
+## Introduction
+
+The editor we have built so far works with one editable document at a time. A realistic editing session, however, rarely stays inside a single file. Programmers consult `main.c` while editing `editor.c`, writers move between several documents, and users often want to view two parts of the same file side by side.
+
+Supporting these workflows is not just a matter of storing more text. Once several documents exist, the editor must answer harder questions. Which state belongs to which document? How does the user move between them? When two windows display the same buffer, where does the cursor live? The answers evolve the single-document architecture into a multi-buffer, multi-window one.
+
+Multiple buffers are therefore a **system feature**, not a data structure. This chapter builds the model progressively:
+
+```text
+Vocabulary — Document, Buffer, View, Window, Tab
+    ↓
+Ownership — editor-wide, buffer, and window state
+    ↓
+Management — the Buffer Manager and lifecycle, switching, and tabs
+    ↓
+Windows — layout, rendering, and commands
+    ↓
+Integration — file management
+    ↓
+Reflection — costs, alternatives, and mistakes
+```
+
+We begin by distinguishing the five core concepts, then assign every piece of state — including each existing feature — to the scope that owns it. We design the Buffer Manager and the buffer lifecycle, examine switching and tab organization, and extend layout, rendering, and input to multiple windows. We then apply the model to file management and quantify the costs. We close with the design alternatives and the common mistakes to avoid.
+
+## Learning Objectives
+
+By the end of this chapter, you should be able to:
+
+- Explain why a single-document model cannot support realistic editing workflows.
+- Distinguish a Document, Buffer, View, Window, and Tab, and state what each one answers.
+- Classify state as editor-wide, buffer-specific, or window-specific.
+- Describe the Buffer Manager's role in the collection and lifecycle of buffers.
+- Explain why switching buffers is a selection operation that preserves each editing context.
+- Describe how tabs organize windows without becoming buffers.
+- Explain how layout, rendering, and commands operate across multiple windows.
+- Describe how file management and the buffer lifecycle work with multiple buffers.
+- Assign every existing editor feature a precise scope.
+- Evaluate the complexity and resource costs of multiple buffers.
+- Compare the design alternatives and recognize common multiple-buffer mistakes.
+
+## Sections
+
+- [34.1 Why One Document Is No Longer Enough](/volumes/volume-07/chapter-34/01-why-one-document-not-enough/)
+- [34.2 Document, Buffer, View, Tab, and Window](/volumes/volume-07/chapter-34/02-document-buffer-view-tab-window/)
+- [34.3 State Ownership - What Belongs Where](/volumes/volume-07/chapter-34/03-state-ownership/)
+- [34.4 The Buffer Manager and Buffer Lifecycle](/volumes/volume-07/chapter-34/04-buffer-manager-lifecycle/)
+- [34.5 Switching Between Buffers](/volumes/volume-07/chapter-34/05-switching-between-buffers/)
+- [34.6 Tabs - Organizing Editing Contexts](/volumes/volume-07/chapter-34/06-tabs-organizing-editing-contexts/)
+- [34.7 Window Layout and Arrangement](/volumes/volume-07/chapter-34/07-window-layout-and-arrangement/)
+- [34.8 Rendering Multiple Windows](/volumes/volume-07/chapter-34/08-rendering-multiple-windows/)
+- [34.9 Input and Commands in a Multi-Buffer Editor](/volumes/volume-07/chapter-34/09-input-commands-in-multi-buffer-editor/)
+- [34.10 File Management with Multiple Buffers](/volumes/volume-07/chapter-34/10-file-management-with-multiple-buffers/)
+- [34.11 Complexity and Resource Costs](/volumes/volume-07/chapter-34/11-complexity-and-resource-costs/)
+- [34.12 Design Alternatives and Trade-offs](/volumes/volume-07/chapter-34/12-design-alternatives-trade-offs/)
+- [34.13 Common Multiple-Buffer Mistakes](/volumes/volume-07/chapter-34/13-common-multiple-buffer-mistakes/)
+- [34.14 Conclusion](/volumes/volume-07/chapter-34/14-conclusion/)
