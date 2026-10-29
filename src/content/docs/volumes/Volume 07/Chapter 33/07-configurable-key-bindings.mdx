@@ -1,0 +1,422 @@
+---
+title: "33.7 Configurable Key Bindings"
+description: "Explains how configurable key bindings map input events to commands rather than implementations, preserving command semantics and deterministic dispatch."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Key bindings are one of the most visible forms of editor configuration. They allow users to choose which keyboard inputs invoke particular editor commands without changing the implementation of those commands.
+
+The important distinction is that a **key binding does not define what a command does**. It only defines **which input event selects that command**.
+
+The Input Engine already provides the separation between input events and editor commands. Configuration extends that separation by allowing the mapping to be changed.
+
+## From Fixed Shortcuts to Configurable Bindings
+
+Without configuration, an editor might contain fixed mappings such as:
+
+```text
+Ctrl-S  → Save
+Ctrl-Q  → Quit
+Ctrl-F  → Find
+```
+
+These mappings work, but they are embedded in the editor's policy.
+
+A configurable design moves the mapping into the configuration:
+
+```text
+Configuration
+└── Key Bindings
+    ├── Ctrl-S → Save
+    ├── Ctrl-Q → Quit
+    └── Ctrl-F → Find
+```
+
+The Input Engine then uses the resulting configuration rather than depending on a particular shortcut.
+
+The overall flow becomes:
+
+```text
+Keyboard Input
+      │
+      ▼
+Input Parser
+      │
+      ▼
+Input Event
+      │
+      ▼
+Key Binding Lookup
+      │
+      ▼
+Editor Command
+      │
+      ▼
+Command Engine
+```
+
+The important architectural boundary remains unchanged. The Input Engine is still responsible for translating input into commands. Configuration only changes the mapping used by that translation.
+
+## Bind Inputs to Commands, Not Implementations
+
+A key binding should refer to an **editor command**, rather than directly referring to a function or implementation detail.
+
+For example:
+
+```text
+Ctrl-S → Save
+```
+
+is preferable to a configuration concept such as:
+
+```text
+Ctrl-S → save_document_function()
+```
+
+The first describes editor policy. The second exposes implementation details.
+
+This distinction matters because command implementations can change without requiring configuration changes.
+
+For example:
+
+```text
+Key Binding
+    │
+    ▼
+   Save
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Save implementation
+```
+
+The binding only needs to know about `Save`.
+
+This follows the same separation established by the Input Engine and Command Engine: **input selects a command; the command determines behavior**.
+
+## A Simple Binding Representation
+
+Conceptually, key bindings can be represented as pairs:
+
+```text
+KeyBinding
+├── Input Event
+└── Command
+```
+
+A collection of bindings might look like:
+
+```text
+Key Bindings
+├── Ctrl-S → Save
+├── Ctrl-Q → Quit
+├── Ctrl-F → Find
+└── Ctrl-Z → Undo
+```
+
+The actual implementation can use a suitable C data structure, but the conceptual model should remain simple.
+
+For a small editor, an array of bindings may be sufficient:
+
+```text
+Binding 0: Ctrl-S → Save
+Binding 1: Ctrl-Q → Quit
+Binding 2: Ctrl-F → Find
+Binding 3: Ctrl-Z → Undo
+```
+
+When an input event arrives, the Input Engine searches for a matching binding and obtains the corresponding command.
+
+For a small number of bindings, a linear search is often perfectly adequate:
+
+```text
+event
+  │
+  ▼
+compare with binding 0
+  │
+  ├── match ──► command
+  │
+  ▼
+compare with binding 1
+  │
+  ├── match ──► command
+  │
+  ▼
+...
+```
+
+There is no need to introduce a complicated lookup structure simply because configuration is involved.
+
+## What About the Same Command Having Multiple Bindings?
+
+A command can have more than one binding.
+
+For example:
+
+```text
+Ctrl-S       → Save
+F2           → Save
+```
+
+Both inputs can select the same command.
+
+This is different from allowing one input to select multiple commands:
+
+```text
+Ctrl-S → Save
+Ctrl-S → Quit
+```
+
+That creates ambiguity.
+
+The normal invariant should therefore be:
+
+> **One input event should resolve to at most one command.**
+
+Multiple inputs may resolve to the same command.
+
+Conceptually:
+
+```text
+Ctrl-S ─────┐
+            ├──► Save
+F2 ─────────┘
+```
+
+This allows users to create alternative shortcuts while keeping command dispatch deterministic.
+
+## Conflicting Bindings
+
+Configuration introduces a new class of error: conflicting bindings.
+
+Suppose a configuration contains:
+
+```text
+Ctrl-S → Save
+Ctrl-S → Search
+```
+
+The editor cannot interpret this mapping unambiguously.
+
+The problem should be detected during configuration processing rather than left for the Input Engine to resolve arbitrarily.
+
+A useful rule is:
+
+```text
+Input Event
+     │
+     ▼
+Exactly zero or one command
+```
+
+If there is no binding, the editor can treat the input as unbound.
+
+If there is exactly one binding, the associated command is selected.
+
+If there are multiple bindings, the configuration is invalid.
+
+```text
+          ┌── 0 matches ──► Unbound
+Input ────┼── 1 match ────► Command
+          └── 2+ matches ─► Configuration Error
+```
+
+This keeps configuration errors out of normal command execution.
+
+## Unbound Commands
+
+Not every command needs to have a keyboard shortcut.
+
+A command may exist in the command system without having a default key binding.
+
+For example:
+
+```text
+Commands
+├── Save
+├── Quit
+├── Find
+├── Undo
+└── Redo
+
+Bindings
+├── Ctrl-S → Save
+├── Ctrl-Q → Quit
+└── Ctrl-F → Find
+```
+
+`Undo` and `Redo` could remain unbound until the user explicitly assigns shortcuts.
+
+This is another reason to keep **commands** and **key bindings** separate.
+
+The existence of a command does not imply the existence of a particular input mechanism for invoking it.
+
+## Configuration Should Not Change Command Semantics
+
+Changing a key binding should not change what the command means.
+
+For example:
+
+```text
+Ctrl-S → Save
+```
+
+can be changed to:
+
+```text
+F2 → Save
+```
+
+The `Save` command itself remains unchanged.
+
+The command still operates according to the same editor rules, updates the same state, and follows the same command execution path.
+
+Only the route used to invoke it has changed.
+
+This gives the architecture a useful property:
+
+```text
+              Configuration
+                    │
+                    ▼
+Input Event ──► Command Selection
+                    │
+                    ▼
+               Command Engine
+                    │
+                    ▼
+              Command Behavior
+```
+
+Configuration affects the **selection policy**, not the command's internal behavior.
+
+## Why This Design Scales
+
+The separation becomes increasingly valuable as the editor gains commands.
+
+Imagine the editor eventually contains:
+
+```text
+Save
+Save As
+Quit
+Find
+Replace
+Undo
+Redo
+Go To Line
+Next Buffer
+Previous Buffer
+...
+```
+
+Hard-coding every possible shortcut throughout the Input Engine would make the input system increasingly difficult to maintain.
+
+With configurable bindings, the Input Engine remains conceptually stable:
+
+```text
+Input Event
+     ↓
+Find Binding
+     ↓
+Get Command
+     ↓
+Execute Command
+```
+
+New commands can be added without redesigning the binding mechanism.
+
+New shortcuts can be introduced through configuration without changing command implementations.
+
+This is exactly the kind of separation configuration should provide: **policy can change while architecture remains stable**.
+
+## Key Sequences Are a More Advanced Problem
+
+A simple key-binding system can initially support individual input events:
+
+```text
+Ctrl-S → Save
+Ctrl-Q → Quit
+```
+
+More advanced editors may support sequences such as:
+
+```text
+Ctrl-X Ctrl-S → Save
+```
+
+or modes in which the same key has different meanings depending on context.
+
+These features introduce additional concepts:
+
+- key sequence recognition,
+- prefix keys,
+- binding states,
+- context-sensitive bindings,
+- ambiguity between prefixes and complete bindings.
+
+They should not be introduced merely because the configuration system exists.
+
+The baseline design can remain intentionally simple:
+
+> **One input event maps directly to one command.**
+
+More sophisticated binding systems can be introduced later if the editor's requirements justify them.
+
+## Configuration Example
+
+A conceptual configuration might therefore contain:
+
+```text
+tab_width = 4
+theme = "default"
+
+[keybindings]
+save = "Ctrl-S"
+quit = "Ctrl-Q"
+find = "Ctrl-F"
+undo = "Ctrl-Z"
+redo = "Ctrl-Y"
+```
+
+The configuration file describes user policy.
+
+The Input Engine does not need to know where these values came from. By the time normal editing begins, it receives the validated `Configuration` stored in `EditorState`.
+
+```text
+Configuration File
+       │
+       ▼
+Configuration
+       │
+       ▼
+Editor State
+       │
+       ▼
+Input Engine
+       │
+       ▼
+Editor Command
+```
+
+This preserves the architecture established in earlier chapters while making keyboard behavior customizable.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+**A configurable key-binding system should connect inputs to commands, not inputs to implementation details.**
+
+That small distinction keeps configuration declarative, keeps the Input Engine independent of command implementations, and allows users to change editor behavior without changing the architecture of the editor itself.
+
+</Aside>
+
+## Summary
+
+Configurable key bindings connect **input events to commands**, never to implementation details. The Input Engine keeps its role of translating input into commands; configuration simply changes the mapping it uses. One input event resolves to zero or one command, multiple inputs may select the same command, and conflicting or unknown bindings are configuration errors. Commands can be unbound by default, and rebinding a key never changes what a command does. This keeps the selection policy configurable while command behavior and the surrounding architecture stay stable.
+
+Because bindings name commands rather than functions, the set of available commands can grow without invalidating existing user configuration. Treating conflicts as configuration errors also keeps dispatch deterministic, so the Input Engine never has to choose between two equally valid bindings at runtime.
+
+Because configuration now accepts user-supplied values, the next section explains how incorrect input is caught before it reaches the editor: **Section 33.8, Configuration Validation**.

@@ -1,0 +1,178 @@
+---
+title: "33.1 Why Configuration Matters"
+description: "Explains why configuration separates user policy from architecture, allowing one editor to support different tab widths, themes, and key bindings."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+So far, we have designed an editor whose behavior is largely determined by the program itself. The architecture defines where input is processed, where commands are executed, how text is represented, and how the screen is rendered. Those decisions establish the structure of the editor.
+
+But structure is not the same thing as preference.
+
+Consider a few ordinary editing choices:
+
+- How many screen columns should a TAB occupy?
+- Which key should save the document?
+- Which key should exit the editor?
+- Which visual theme should be used?
+- Should the editor display certain optional interface elements?
+
+There is no universally correct answer to these questions.
+
+One developer may prefer:
+
+```text
+TAB = 4 spaces
+Ctrl-S = Save
+Ctrl-Q = Quit
+Theme = Dark
+```
+
+Another may prefer:
+
+```text
+TAB = 2 spaces
+Ctrl-S = Save
+Ctrl-X = Quit
+Theme = Light
+```
+
+Neither configuration changes what the editor fundamentally **is**. Both users are still using the same text buffer, cursor, command system, renderer, and file manager.
+
+This gives us an important distinction:
+
+```text
+                    Editor Design
+                         │
+             ┌───────────┴───────────┐
+             │                       │
+             ▼                       ▼
+        Architecture              Policy
+             │                       │
+             │                       │
+     How the editor works      How it behaves
+             │                       │
+             ▼                       ▼
+       Document model          Tab width
+       Renderer                Key bindings
+       Command Engine          Theme
+       Input Engine            Other settings
+```
+
+## Configuration as Policy
+
+Configuration provides a controlled way to change **policy** without changing the underlying architecture.
+
+A useful mental model is:
+
+```text
+Program Logic
+      │
+      │ defines what is possible
+      ▼
+Configuration
+      │
+      │ selects user preferences
+      ▼
+Editor Behavior
+```
+
+For example, the Renderer already knows how to display a TAB. Configuration can determine whether that TAB should occupy four visual columns or eight. The rendering mechanism does not need to be redesigned.
+
+Similarly, the Input Engine already knows how to map an input event to a command. Configuration can determine which key event is bound to the Save command without changing how the Save command itself works.
+
+This distinction becomes particularly valuable as the editor grows. Without configuration, every preference becomes another hard-coded decision in the source code. Changing a preference then requires modifying, recompiling, and redistributing the program.
+
+With configuration, the same executable can support different preferences:
+
+```text
+                    Same Editor
+                         │
+              ┌──────────┼──────────┐
+              │          │          │
+              ▼          ▼          ▼
+           User A      User B     User C
+              │          │          │
+              ▼          ▼          ▼
+           Config A    Config B   Config C
+```
+
+The architecture remains unchanged. Only the selected policies differ.
+
+## Configuration Is Not a Second Architecture
+
+There is an important boundary here.
+
+Configuration should **not** be allowed to redefine fundamental architectural decisions.
+
+For example, these are reasonable configuration values:
+
+```text
+tab_width = 4
+theme = "dark"
+save = "Ctrl-S"
+```
+
+These are not ordinary configuration settings:
+
+```text
+document_model = "rope"
+renderer = "retained_mode"
+architecture = "microservices"
+```
+
+The first group controls user-facing behavior within the architecture we have already designed. The second group attempts to change how the software itself is constructed.
+
+This distinction can be summarized as:
+
+> **Configuration controls policy; architecture controls structure.**
+
+That principle prevents a configuration system from becoming an uncontrolled mechanism for changing every internal decision in the application.
+
+## Why This Matters for Our Editor
+
+Our requirements already identify several areas where user preferences naturally belong. The editor needs keyboard-driven interaction, a status and message interface, and configurable behavior can be built on top of the existing architecture. The project also already includes `Configuration` as part of the central Editor State.
+
+The architectural design gives us the necessary boundaries:
+
+```text
+Configuration
+      │
+      ├──────────────► Input Engine
+      │
+      ├──────────────► Renderer
+      │
+      └──────────────► Command Engine
+```
+
+The configuration does not replace these components. Instead, each component consumes the small portion of configuration relevant to its responsibility.
+
+The Input Engine might care about key bindings.
+
+The Renderer might care about themes and tab width.
+
+The Command Engine might care about command-related preferences.
+
+This keeps configuration useful without turning it into a global collection of unrelated behavior.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Configuration is often treated as a minor convenience feature. In a well-designed application, it is more than that.
+
+It establishes a boundary between **decisions made by the software developer** and **preferences selected by the user**.
+
+That boundary allows the same architecture to support different workflows without duplicating the application or embedding user preferences directly into its implementation.
+
+For our editor, we will therefore treat configuration as a first-class architectural concern—but a deliberately constrained one.
+
+We will first determine **what should be configurable**, then design how those settings are represented, loaded, validated, and consumed by the existing editor components.
+
+</Aside>
+
+## Summary
+
+Configuration separates **policy** from **architecture**. The same editor can support different tab widths, themes, and key bindings for different users without changing how the Document, Cursor, Renderer, or Command Engine are built. Configuration is therefore a controlled boundary between decisions made by the developer and preferences chosen by the user — but it is deliberately constrained so it never becomes a second architecture.
+
+That constraint has a practical consequence: a configuration value can never redefine module ownership, memory ownership, or rendering strategy. It can only select among policies the existing components were designed to apply.
+
+Now that we know why configuration exists, the next section considers which decisions should be configurable at all: **Section 33.2, What Should Be Configurable?**

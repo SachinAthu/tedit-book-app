@@ -1,0 +1,331 @@
+---
+title: "33.5 Configuration Sources and Precedence"
+description: "Explains how defaults, user configuration, and command-line overrides combine under explicit precedence to produce one validated final configuration."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A default configuration gives the editor a reliable starting point, but real applications often have more than one source of configuration.
+
+A user may have:
+
+- built-in defaults
+- a personal configuration file
+- command-line options
+- temporary runtime preferences
+
+When multiple sources specify the same setting, the editor needs a clear rule for deciding which value wins.
+
+This is the **configuration precedence** problem.
+
+## Multiple Sources
+
+Consider the following conceptual flow:
+
+```text
+Built-in Defaults
+        │
+        ▼
+User Configuration
+        │
+        ▼
+Command-Line Options
+        │
+        ▼
+Final Configuration
+```
+
+Each stage can override values established by the previous stage.
+
+For example, suppose the editor has:
+
+```text
+Default:
+tab_width = 4
+```
+
+The user's configuration file contains:
+
+```text
+tab_width = 2
+```
+
+and the command line specifies:
+
+```text
+--tab-width 8
+```
+
+The final configuration becomes:
+
+```text
+tab_width = 8
+```
+
+The command-line value is more specific, so it takes precedence.
+
+## Why Precedence Must Be Explicit
+
+Without a defined precedence rule, configuration becomes unpredictable.
+
+Imagine that one part of the program assumes:
+
+```text
+configuration file wins
+```
+
+while another assumes:
+
+```text
+command-line options win
+```
+
+The same editor session could then behave differently depending on which component reads the setting.
+
+That is precisely the kind of duplicated decision-making our architecture is designed to avoid.
+
+Instead, all configuration sources should eventually produce **one final Configuration**.
+
+```text
+                 ┌──────────────────┐
+                 │ Built-in Defaults│
+                 └────────┬─────────┘
+                          │
+                          ▼
+                 ┌──────────────────┐
+                 │ User Configuration│
+                 └────────┬─────────┘
+                          │
+                          ▼
+                 ┌──────────────────┐
+                 │ Command-Line     │
+                 │ Overrides        │
+                 └────────┬─────────┘
+                          │
+                          ▼
+                 ┌──────────────────┐
+                 │ Final Configuration│
+                 └──────────────────┘
+```
+
+After this point, the rest of the editor does not need to know where individual values came from.
+
+## A Useful Precedence Rule
+
+For our editor, a simple hierarchy is sufficient:
+
+```text
+Most specific
+      │
+      ▼
+Command-Line Overrides
+User Configuration
+Built-in Defaults
+      ▲
+      │
+Least specific
+```
+
+In other words:
+
+1. Start with defaults.
+2. Apply values from the user's configuration.
+3. Apply explicit command-line overrides.
+4. Validate the resulting configuration.
+5. Give the final configuration to the editor.
+
+This can be expressed as:
+
+```text
+Final Configuration
+    =
+Defaults
+    + User Overrides
+    + Command-Line Overrides
+```
+
+Where later values replace earlier values for the same setting.
+
+## Partial Configuration
+
+An important consequence of this model is that a configuration source does not need to specify every setting.
+
+Suppose the defaults are:
+
+```text
+tab_width = 4
+theme = "default"
+save = Ctrl-S
+quit = Ctrl-Q
+```
+
+The user configuration contains only:
+
+```text
+theme = "dark"
+```
+
+The resulting configuration is:
+
+```text
+tab_width = 4
+theme = "dark"
+save = Ctrl-S
+quit = Ctrl-Q
+```
+
+Only one value was overridden.
+
+This is much more convenient than requiring users to duplicate the entire configuration simply to change one preference.
+
+## Command-Line Overrides
+
+Command-line options are useful for temporary changes.
+
+For example:
+
+```text
+$ editor --tab-width 8 document.txt
+```
+
+The user may normally use:
+
+```text
+tab_width = 4
+```
+
+but temporarily wants a different value for this particular session.
+
+The command-line option can override the configuration file without permanently changing it.
+
+This gives command-line options a useful property:
+
+> **They can change the current invocation without changing persistent user preferences.**
+
+The same model can eventually support other temporary overrides.
+
+## What About Environment Variables?
+
+Environment variables are another possible configuration source:
+
+```text
+Environment
+     │
+     ▼
+Configuration
+```
+
+They can be useful for applications that need deployment-specific behavior.
+
+However, they are not especially valuable for the baseline text editor.
+
+Adding another configuration source would introduce:
+
+- another precedence rule
+- another parsing mechanism
+- another place for configuration errors
+- additional documentation
+
+Our project prioritizes simplicity and educational value. Therefore, environment variables do not need to be part of the baseline configuration model.
+
+They can remain a possible future extension.
+
+## What About Runtime Configuration?
+
+A more advanced editor might allow users to change settings while the application is running.
+
+For example:
+
+```text
+:set tab_width 8
+```
+
+The configuration would then change during an editing session.
+
+This is possible, but it introduces additional questions.
+
+If the theme changes, should the current frame be rendered again?
+
+If the tab width changes, does horizontal cursor positioning need to be recalculated?
+
+If a key binding changes while input is being processed, which binding applies to the current event?
+
+These questions are manageable, but they are unnecessary for the baseline editor.
+
+For now, we will use:
+
+```text
+Startup
+   │
+   ▼
+Load Configuration
+   │
+   ▼
+Validate
+   │
+   ▼
+Freeze Configuration
+   │
+   ▼
+Event Loop
+```
+
+The configuration remains stable throughout the editing session.
+
+## Configuration Sources Should Not Leak Into Components
+
+The Renderer should not know:
+
+```text
+"This tab width came from the configuration file."
+```
+
+The Input Engine should not know:
+
+```text
+"This key binding came from the command line."
+```
+
+They should simply receive the resulting configuration.
+
+```text
+Defaults ───────┐
+                │
+User Config ────┼──► Configuration System ──► Final Configuration
+                │                                  │
+CLI Overrides ──┘                                  │
+                                                   ▼
+                                      ┌────────────┼────────────┐
+                                      ▼            ▼            ▼
+                                   Input        Renderer     Commands
+```
+
+This preserves the separation between **configuration resolution** and **editor behavior**.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+Configuration precedence is ultimately a problem of **authority**.
+
+A default represents the application's baseline preference.
+
+A user configuration represents a persistent user preference.
+
+A command-line option represents an explicit instruction for the current invocation.
+
+The more specific source wins.
+
+That gives us a predictable rule:
+
+> **Specific configuration overrides general configuration.**
+
+Most importantly, the editor should resolve these sources **before** normal operation begins. Once the final configuration has been established and validated, the rest of the system can operate against one consistent set of policies rather than reasoning about multiple configuration sources.
+
+</Aside>
+
+## Summary
+
+Real editors draw configuration from several sources — built-in defaults, a user configuration file, and command-line overrides — so precedence must be explicit rather than left to individual components. Our model starts with defaults, applies persistent user overrides, then applies command-line overrides for temporary changes, producing one validated final `Configuration` before the Event Loop begins. Environment variables and live runtime configuration are deliberately deferred. This turns precedence into a question of authority: the most specific source wins.
+
+Making precedence explicit also means the resolution step has exactly one owner, so no component has to guess which source should win. Because each source may supply only a subset of settings, the layered application of overrides can leave most of the baseline untouched.
+
+The next section introduces the persistent source that makes user preferences survive between sessions: **Section 33.6, Configuration File**.

@@ -1,0 +1,333 @@
+---
+title: "33.6 Configuration File"
+description: "Describes the configuration file as a simple declarative persistence layer for policy, separate from the configuration model and from document I/O."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A configuration model needs a persistent source from which user preferences can be loaded. Without persistence, the editor would return to its defaults every time it starts.
+
+A **configuration file** provides that persistence.
+
+The important distinction is that the configuration file is **not the configuration model itself**. The configuration model is the structured data used by the editor. The file is merely one source from which that data is obtained.
+
+```text
+Configuration File
+       │
+       │ read
+       ▼
+Parsed Configuration
+       │
+       │ apply to defaults
+       ▼
+Final Configuration
+       │
+       ▼
+Editor State
+```
+
+This separation keeps the rest of the editor independent from the physical representation of the configuration.
+
+## Why Use a Configuration File?
+
+Users often develop preferences that should remain consistent between sessions.
+
+For example, a user might prefer:
+
+```text
+tab_width = 4
+theme = "dark"
+save = "Ctrl-S"
+quit = "Ctrl-Q"
+```
+
+If these preferences were specified every time the editor started, configuration would have little practical value.
+
+A configuration file allows the user to specify them once:
+
+```text
+First session
+    │
+    ├── load defaults
+    ├── read configuration file
+    └── use user's preferences
+             │
+             ▼
+       editor session
+             │
+             ▼
+       exit editor
+
+Next session
+    │
+    ├── load defaults
+    ├── read same configuration file
+    └── restore user's preferences
+```
+
+The file therefore provides **persistence for policy**.
+
+## Keep the Format Simple
+
+A configuration file does not need to be a programming language.
+
+For a small terminal editor, a simple human-readable format is preferable to introducing a complex serialization system.
+
+One possible representation is:
+
+```text
+tab_width = 4
+theme = "dark"
+
+[keybindings]
+save = "Ctrl-S"
+quit = "Ctrl-Q"
+```
+
+The exact syntax is an implementation decision. What matters architecturally is that the format can represent the configuration model clearly.
+
+A good configuration format should be:
+
+- easy for users to read;
+- easy for users to modify;
+- deterministic to parse;
+- expressive enough for the supported settings;
+- resistant to ambiguity;
+- independent of the editor's internal data structures.
+
+There is little benefit in supporting a sophisticated format merely because it is capable of representing more data. Complexity in the configuration language eventually becomes complexity that the editor must parse, validate, document, and maintain.
+
+## The Configuration File Should Contain Data, Not Behavior
+
+A configuration file should describe **what the editor should do**, not contain arbitrary instructions for **how the editor should do it**.
+
+For example:
+
+```text
+tab_width = 4
+theme = "dark"
+save = "Ctrl-S"
+```
+
+is configuration.
+
+A system in which the configuration file contains executable code, arbitrary commands, or custom program logic would be fundamentally different. It would turn configuration into a programming environment and introduce an entirely different set of security, parsing, and maintenance concerns.
+
+For this editor, configuration remains declarative:
+
+```text
+Configuration
+      │
+      ▼
+  Policy Data
+      │
+      ▼
+Existing editor behavior
+```
+
+The configuration changes the behavior of existing components; it does not redefine the architecture of those components.
+
+## Where Should the File Live?
+
+A real editor needs a predictable location for its user configuration.
+
+On Linux, a conventional approach is to place application configuration under the user's configuration directory, typically using the XDG configuration convention. A typical arrangement could look like:
+
+```text
+~/.config/
+└── editor/
+    └── config
+```
+
+The exact application name and path are implementation decisions rather than architectural requirements.
+
+This distinction is useful:
+
+```text
+Configuration Location
+        │
+        ▼
+   Configuration File
+        │
+        ▼
+   Configuration Data
+        │
+        ▼
+  Configuration Object
+```
+
+The components that consume configuration should not care whether the data came from `~/.config/editor/config`, another platform-specific location, or a future source.
+
+Only the configuration-loading layer needs to know where the file is located.
+
+## A Missing File Is Not an Error
+
+The configuration file should normally be optional.
+
+A user installing the editor for the first time may have no configuration file at all.
+
+The startup sequence should therefore be able to handle:
+
+```text
+Does configuration file exist?
+          │
+       ┌──┴──┐
+      Yes    No
+       │      │
+       ▼      ▼
+     Read   Keep defaults
+       │      │
+       └──┬───┘
+          ▼
+   Final configuration
+```
+
+This works because the editor already has a complete **Default Configuration**.
+
+A missing configuration file therefore means:
+
+> “The user has not provided persistent overrides.”
+
+It does not mean:
+
+> “The editor has no configuration.”
+
+That distinction makes startup simpler and gives the editor a useful out-of-the-box behavior.
+
+## Do Not Couple Configuration to Document I/O
+
+The editor already has mechanisms for opening and saving documents. Those operations deal with the **document being edited**.
+
+A configuration file has a different role.
+
+```text
+Document File
+    │
+    ▼
+   Document
+    │
+    ▼
+ Editing
+
+Configuration File
+    │
+    ▼
+Configuration
+    │
+    ▼
+ Editor Policy
+```
+
+Although both ultimately involve reading data from a file, they are conceptually different resources.
+
+The configuration file should not become a special kind of document, and the document/file-management subsystem should not become responsible for interpreting editor preferences.
+
+This follows the same ownership principle used throughout the architecture: **each component should own one kind of responsibility**.
+
+## Loading the Configuration
+
+At a high level, configuration loading becomes another stage of startup:
+
+```text
+Built-in Defaults
+       │
+       ▼
+Locate Configuration File
+       │
+       ▼
+Read File
+       │
+       ▼
+Parse Configuration
+       │
+       ▼
+Apply User Overrides
+       │
+       ▼
+Validate Final Configuration
+       │
+       ▼
+Final Configuration
+       │
+       ▼
+Event Loop
+```
+
+The actual file-reading mechanism does not need to be redesigned here. It can use the same underlying operating-system file facilities discussed when document I/O was introduced.
+
+What changes is the **meaning of the data**.
+
+A document file becomes document content.
+
+A configuration file becomes editor policy.
+
+The parsing and validation stages ensure that raw configuration text is transformed into the structured configuration used by the application.
+
+Detailed validation rules will be examined later in **33.8 Configuration Validation**.
+
+## One Configuration File for the Baseline
+
+There are many possible configuration systems:
+
+- one global user configuration;
+- project-local configuration;
+- system-wide configuration;
+- multiple configuration files;
+- language-specific configuration;
+- workspace-specific configuration.
+
+These can be useful in larger editors, but they introduce additional precedence and discovery rules.
+
+The baseline editor does not need that complexity.
+
+A single user configuration file is sufficient:
+
+```text
+Built-in Defaults
+       │
+       ▼
+User Configuration File
+       │
+       ▼
+Final Configuration
+```
+
+Additional configuration scopes can be introduced later if the editor's requirements justify them.
+
+This is an important architectural principle: **do not introduce configuration scopes merely because professional editors have them**. Each additional scope creates another source of state, another precedence rule, and another class of possible conflicts.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A configuration file is a **persistence mechanism for policy**.
+
+It should not become another subsystem that defines editor behavior.
+
+The clean boundary is:
+
+```text
+Configuration File
+       │
+       ▼
+ Configuration Loader
+       │
+       ▼
+ Configuration
+       │
+       ├──────────────► Input Engine
+       ├──────────────► Renderer
+       └──────────────► Command Engine
+```
+
+The loader translates external configuration data into the editor's internal configuration model. After that boundary, the rest of the application works with structured configuration rather than raw file contents.
+
+That separation allows the configuration format to evolve without forcing every editor component to understand it.
+
+</Aside>
+
+## Summary
+
+A configuration file is a **persistence mechanism for policy**: it lets users specify their preferences once and have them restored on every startup. The file is not the configuration model itself — a simple, declarative, human-readable format is parsed and validated into structured configuration by a dedicated loading layer. A missing file is not an error (defaults cover it), and configuration I/O stays cleanly separated from document I/O. For the baseline editor, a single user configuration file is sufficient, with additional scopes deferred until requirements justify them.
+
+Keeping the loader separate also means the file format can change without touching the components that consume configuration values. Because the loader produces the same configuration model regardless of source, a future format or location is an implementation detail rather than an architectural change.
+
+The next section applies these ideas to the most visible form of configuration: **Section 33.7, Configurable Key Bindings**.

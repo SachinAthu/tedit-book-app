@@ -1,0 +1,326 @@
+---
+title: "33.3 The Configuration Model"
+description: "Describes configuration as validated data stored in Editor State, consumed by the Input Engine, Renderer, and Command Engine, with behavior left to components."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Now that we know what belongs in configuration, we need a representation that allows the rest of the editor to consume those preferences cleanly.
+
+The central idea is simple:
+
+> **Configuration is data describing editor policy.**
+
+It should not contain the behavior that implements that policy.
+
+For example, configuration can say:
+
+```text
+tab_width = 4
+theme = "dark"
+save = "Ctrl-S"
+quit = "Ctrl-Q"
+```
+
+But it should not contain code that explains how saving, rendering, or command execution works.
+
+The distinction is:
+
+```text
+Configuration
+    │
+    │ provides values
+    ▼
+Editor Components
+    │
+    │ provide behavior
+    ▼
+Editor
+```
+
+This keeps configuration declarative rather than procedural.
+
+## A Configuration Structure
+
+At the conceptual level, our editor can represent configuration as a structured object:
+
+```text
+Configuration
+│
+├── Editing Settings
+│   └── tab_width
+│
+├── Display Settings
+│   └── theme
+│
+└── Key Bindings
+    ├── save
+    └── quit
+```
+
+In C, this could eventually become a structure similar to:
+
+```c
+typedef struct
+{
+    int tab_width;
+    ThemeId theme;
+    KeyBinding key_bindings;
+} Configuration;
+```
+
+The exact representation is an implementation concern. What matters at this stage is the separation of responsibilities.
+
+The `Configuration` structure stores **what has been selected**.
+
+It does not implement **what happens because of that selection**.
+
+## Configuration and Editor State
+
+Our existing architecture already defines `EditorState` as the central repository for application data. Configuration is one of the categories of information represented there.
+
+Conceptually:
+
+```text
+EditorState
+│
+├── Document
+├── Cursor
+├── Viewport
+├── Current File
+├── Dirty Flag
+├── Screen Size
+├── Status Message
+└── Configuration
+```
+
+This does not mean that every component should freely modify configuration.
+
+The configuration should be established through a controlled configuration lifecycle and then consumed by the components that need it.
+
+For example:
+
+```text
+EditorState
+     │
+     └── Configuration
+             │
+       ┌─────┼─────┐
+       ▼     ▼     ▼
+    Input  Renderer Commands
+```
+
+The components read the policies relevant to their responsibilities.
+
+## Settings Are Data, Not Behavior
+
+Consider the tab width setting.
+
+The configuration might contain:
+
+```text
+tab_width = 4
+```
+
+The configuration does not calculate the visual position of a TAB.
+
+Instead:
+
+```text
+Configuration
+      │
+      │ tab_width = 4
+      ▼
+Renderer
+      │
+      │ applies the policy
+      ▼
+Visual Output
+```
+
+Likewise, a key binding does not execute a command.
+
+```text
+Configuration
+      │
+      │ Ctrl-S → SAVE
+      ▼
+Input Engine
+      │
+      │ maps event to command
+      ▼
+Command Engine
+      │
+      │ executes command
+      ▼
+Document / File Manager
+```
+
+This distinction preserves the boundaries established earlier.
+
+The Input Engine remains responsible for mapping input to commands, while the Command Engine remains responsible for executing those commands.
+
+## Configuration Should Be Validated Data
+
+There is another important property of the configuration model.
+
+Once configuration enters the editor, the rest of the application should be able to assume that it is valid.
+
+Consider:
+
+```text
+tab_width = -10
+```
+
+We do not want the Renderer to discover this invalid value while rendering the document.
+
+Instead, validation should happen earlier:
+
+```text
+Configuration Source
+        │
+        ▼
+    Parse
+        │
+        ▼
+    Validate
+        │
+        ├── Invalid ──► Error
+        │
+        ▼
+ Valid Configuration
+        │
+        ▼
+     Editor
+```
+
+This creates a clean boundary.
+
+Before validation:
+
+> The configuration is untrusted input.
+
+After validation:
+
+> The configuration is application state.
+
+This principle will become especially important when we discuss configuration files later in the chapter.
+
+## Immutable vs Mutable Configuration
+
+We should also distinguish between **loading configuration** and **changing configuration**.
+
+For the baseline editor, configuration is loaded during startup:
+
+```text
+Program Start
+     │
+     ▼
+Load Configuration
+     │
+     ▼
+Validate Configuration
+     │
+     ▼
+Initialize Editor
+     │
+     ▼
+Event Loop
+```
+
+Once the editor enters normal operation, the configuration can remain stable for the duration of the session.
+
+This is intentionally simpler than supporting live configuration reloads.
+
+A live system would introduce additional questions:
+
+- What happens when tab width changes while editing?
+- What happens when a key binding changes while a key sequence is being processed?
+- Should the current theme be redrawn immediately?
+- What happens when a newly loaded configuration is invalid?
+- Which state must be rebuilt?
+
+None of these problems are necessary for our baseline editor.
+
+## Configuration as a Contract
+
+A useful way to think about configuration is as a contract between the outside world and the editor.
+
+```text
+Outside World
+     │
+     ▼
+Configuration
+     │
+     │ validated contract
+     ▼
+Editor Architecture
+```
+
+The outside world may provide preferences.
+
+The configuration system determines whether those preferences are acceptable.
+
+The editor then operates using the resulting valid configuration.
+
+This gives us three distinct responsibilities:
+
+```text
+Configuration Source
+        │
+        ▼
+Configuration System
+        │
+        ├── Parse
+        ├── Validate
+        └── Produce valid Configuration
+                     │
+                     ▼
+              Editor Components
+```
+
+The components do not need to understand where a setting came from.
+
+They only need to understand the validated policy they receive.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A good configuration model makes the rest of the application **less configurable internally**.
+
+That may sound contradictory, but it is an important architectural property.
+
+Without a configuration boundary, components may begin making their own assumptions:
+
+```text
+Renderer → assumes tab width = 4
+Input    → assumes Ctrl-S = Save
+Theme    → assumes "dark"
+```
+
+With a configuration boundary:
+
+```text
+                Configuration
+                /     |      \
+               /      |       \
+              ▼       ▼        ▼
+          Renderer   Input   Commands
+```
+
+Each component consumes explicit policy instead of embedding user preferences in its implementation.
+
+The result is a cleaner system:
+
+> **Configuration centralizes preferences while keeping behavior decentralized.**
+
+That is the model we will use for the remainder of the chapter.
+
+</Aside>
+
+## Summary
+
+Configuration is **data describing editor policy**, not the behavior that implements it. It is represented as a structured object stored in `EditorState`, owned by a controlled lifecycle, and consumed by the Input Engine, Renderer, and Command Engine. Configuration should be validated before it reaches these components, and for the baseline editor it remains fixed once normal operation begins. This centralizes preferences while keeping behavior decentralized: the configuration is a contract between the outside world and the editor architecture.
+
+Because every component can assume a complete, validated configuration, none of them needs defensive checks for missing or malformed settings. The one-way flow from configuration to components also means a policy change never requires a component to know where the value came from.
+
+Since every component assumes a complete, valid configuration, the next section explains where those starting values come from: **Section 33.4, Default Configuration**.

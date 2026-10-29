@@ -1,0 +1,42 @@
+---
+title: "33.11 Conclusion"
+description: "Consolidates the configuration model, exercises, and key lessons, and previews multiple buffers, where the editor must hold more than one Document."
+---
+
+Configuration turns policies into data. The unifying idea of the chapter is that the editor separates **architecture** — how the editor is built — from **policy** — how it behaves. Configuration carries the policy: a small, validated set of preferences such as tab width, theme, and key bindings that different users can change without touching the underlying Document, Cursor, Renderer, or Command Engine.
+
+The chapter develops this idea progressively:
+
+```text
+Scope → Model → Defaults → Sources & Precedence → File → Bindings → Validation → Boundaries
+```
+
+Configuration lives as data inside Editor State, is established from defaults and overrides during startup, is validated before the Event Loop begins, and is consumed by the components that need it. It never becomes a second architecture and never replaces the behavior it controls.
+
+The important lessons are:
+
+- Configuration separates defaults from user preferences.
+- Every setting needs a valid default, so a missing or partial configuration file is never an error.
+- Configuration should be loaded and validated before normal editing begins.
+- Key bindings map input events to commands, not to implementations.
+- Themes select presentation policies without modifying document contents.
+- Tab width affects visual rendering, not logical document storage.
+- Configuration should be centralized rather than parsed independently by modules.
+- Invalid configuration should produce clear diagnostics.
+- Configuration controls policy, not architecture.
+
+The baseline configuration model — built-in defaults overlaid by a user configuration file and optional command-line overrides, resolved by explicit precedence and validated before the Event Loop begins — is recorded as **ADR-026: Configuration Model**.
+
+## Exercises
+
+### Review Questions
+
+1. Why should configuration be separate from the Document?
+2. What is the difference between a key event and a key binding?
+3. Why should a TAB remain a TAB when the configured tab width changes?
+4. Why should configuration be validated before entering the Event Loop?
+5. Why should modules not independently read the configuration file?
+
+## Preview of the Next Chapter
+
+An editor with configurable policies leads naturally to the question of **what** the user is editing. The next chapter turns to **Chapter 34 — Multiple Buffers**, where the editor learns to hold more than one Document at a time and lets users switch, open, and arrange files alongside one another rather than editing a single buffer per session.

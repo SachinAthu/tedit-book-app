@@ -1,0 +1,547 @@
+---
+title: "33.8 Configuration Validation"
+description: "Describes type, range, enum, binding, and cross-setting validation that turns untrusted configuration input into trusted Editor State before the Event Loop."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Configuration introduces a new class of failure: **the program itself may be valid while the user's configuration is not**.
+
+The editor may have been compiled successfully, all of its modules may be functioning correctly, and the executable may start normally. Yet the configuration supplied to it can still contain values that the editor cannot safely or meaningfully use.
+
+For example:
+
+```text
+tab_width = -4
+
+theme = "does-not-exist"
+
+save = "INVALID-KEY"
+```
+
+These are not programming errors in the editor's implementation. They are **configuration errors**.
+
+The configuration system therefore needs a clear boundary where external configuration is transformed from untrusted input into valid Editor State.
+
+## Validation at the Configuration Boundary
+
+The overall process is:
+
+```text
+Configuration File
+       │
+       ▼
+     Parse
+       │
+       ▼
+    Validate
+       │
+       ├── Invalid ──► Message
+       │
+       ▼
+Valid Configuration
+       │
+       ▼
+     Editor
+```
+
+Parsing and validation are related but different operations.
+
+**Parsing** determines what the configuration says.
+
+**Validation** determines whether what it says is acceptable.
+
+For example:
+
+```text
+tab_width = 4
+```
+
+may be successfully parsed into:
+
+```text
+setting: tab_width
+value: 4
+```
+
+Validation then determines whether `4` is an acceptable value for `tab_width`.
+
+This distinction is useful because a syntactically valid configuration is not necessarily a semantically valid configuration.
+
+## Type Validation
+
+Configuration values must have the expected type.
+
+Suppose `tab_width` is defined as an integer setting:
+
+```text
+tab_width = 4
+```
+
+is valid input.
+
+But:
+
+```text
+tab_width = "four"
+```
+
+cannot be interpreted as the required integer value.
+
+Similarly, if `theme` expects a string:
+
+```text
+theme = "dark"
+```
+
+is meaningful, while a completely different value type may not be.
+
+The configuration layer should therefore establish the expected type of every setting.
+
+Conceptually:
+
+```text
+Setting
+├── Name
+├── Expected Type
+└── Value
+```
+
+This prevents invalid values from propagating into unrelated components.
+
+The Renderer should not have to discover that `tab_width` contains an invalid type. The configuration system should reject it first.
+
+## Range Validation
+
+Some values have a valid type but an invalid range.
+
+For example:
+
+```text
+tab_width = -4
+```
+
+is an integer, but it is not a meaningful tab width.
+
+Likewise:
+
+```text
+tab_width = 0
+```
+
+would not provide a usable tab-stop interval.
+
+Range validation answers a different question from type validation:
+
+```text
+Is this an integer?
+        │
+        ▼
+      Yes
+        │
+        ▼
+Is this integer within the allowed range?
+        │
+     ┌──┴──┐
+     ▼     ▼
+    Yes    No
+```
+
+The same principle applies to other numeric configuration values introduced in the future.
+
+A configuration value should not merely have the correct representation. It should also satisfy the constraints of the feature it controls.
+
+## Enum Validation
+
+Some settings can only take one value from a predefined set.
+
+A theme is a simple example.
+
+Suppose the editor supports:
+
+```text
+default
+dark
+light
+```
+
+Then:
+
+```text
+theme = "dark"
+```
+
+is valid.
+
+But:
+
+```text
+theme = "does-not-exist"
+```
+
+is not.
+
+The configuration system can treat such settings as an enumeration:
+
+```text
+theme
+├── default
+├── dark
+└── light
+```
+
+The validation process checks whether the configured value belongs to the supported set.
+
+This is preferable to allowing arbitrary strings to propagate into the rendering system and discovering the problem later.
+
+## Unknown Settings
+
+A configuration file may contain a setting that the current version of the editor does not recognize:
+
+```text
+tab_width = 4
+theme = "dark"
+line_numbers = true
+```
+
+If `line_numbers` is not supported by the current editor, the configuration system must decide how to handle it.
+
+Silently ignoring it may appear convenient, but it can hide mistakes.
+
+For example, the user might believe that:
+
+```text
+line_numbers = true
+```
+
+is supported when it is actually misspelled:
+
+```text
+line_nubmers = true
+```
+
+A clear diagnostic makes the problem visible.
+
+For this editor, the preferred approach is to **report unknown settings clearly** rather than silently discarding them.
+
+A diagnostic might conceptually say:
+
+```text
+Unknown configuration setting: line_nubmers
+```
+
+The exact wording and formatting belong to the implementation, but the principle is important:
+
+> **Configuration mistakes should be visible to the user.**
+
+## Invalid Key Bindings
+
+Key bindings require their own validation because they contain more than one piece of information.
+
+For example:
+
+```text
+save = "Ctrl-S"
+```
+
+contains:
+
+```text
+Input Event → Command
+```
+
+The configuration system must ensure that both sides are meaningful.
+
+An invalid command target could look like:
+
+```text
+save = "Ctrl-Something"
+```
+
+or a binding might refer to a command that does not exist:
+
+```text
+Ctrl-S → UnknownCommand
+```
+
+The configuration should not allow such a binding to reach the Input Engine.
+
+Instead:
+
+```text
+Key Binding
+     │
+     ├── Valid Input Event?
+     │
+     └── Valid Command?
+             │
+             ▼
+        Valid Binding
+```
+
+This keeps the Input Engine focused on processing valid input rather than diagnosing configuration syntax.
+
+## Conflicting Key Bindings
+
+Even when individual bindings are valid, the collection of bindings can still be invalid.
+
+Consider:
+
+```text
+Ctrl-S → Save
+Ctrl-S → Search
+```
+
+Each individual binding may be syntactically correct.
+
+Together, however, they create an ambiguity.
+
+The configuration validator should therefore check relationships between settings, not just individual values.
+
+The desired invariant is:
+
+```text
+One Input Event
+       │
+       ▼
+Zero or One Command
+```
+
+A conflict violates that invariant:
+
+```text
+             ┌──► Save
+Ctrl-S ──────┤
+             └──► Search
+```
+
+This should produce a useful configuration diagnostic rather than allowing the Input Engine to choose arbitrarily.
+
+This distinction is important:
+
+- **Individual validation** asks whether one setting is valid.
+- **Cross-setting validation** asks whether multiple valid settings work together.
+
+Both are necessary for a reliable configuration system.
+
+## Fail-Fast vs Warning-and-Continue
+
+Once an invalid configuration is detected, the editor must decide whether to stop or continue.
+
+There are two common approaches.
+
+### Fail Fast
+
+The editor rejects the configuration and does not start normal editing.
+
+```text
+Invalid Configuration
+        │
+        ▼
+Diagnostic
+        │
+        ▼
+Editor does not start
+```
+
+This provides strong guarantees: the editor never operates with a configuration known to be invalid.
+
+The disadvantage is that one mistake can prevent the editor from starting at all.
+
+### Warning and Continue
+
+The editor reports the problem and continues, perhaps using a default value:
+
+```text
+Invalid Setting
+      │
+      ▼
+Warning
+      │
+      ▼
+Use Default
+      │
+      ▼
+Continue
+```
+
+This can be more forgiving, but it can also produce surprising behavior. A user may see a warning but continue editing without realizing that an important preference was ignored.
+
+For a small educational editor, the safer baseline is to favor **clear validation with useful diagnostics** rather than silently ignoring mistakes.
+
+If a configuration is invalid in a way that affects the editor's operation, rejecting it is preferable to quietly constructing an uncertain runtime state.
+
+## Diagnostics Are Part of the Configuration Interface
+
+Validation is not only about detecting errors. It is also about explaining them.
+
+Compare these two responses:
+
+```text
+Configuration error.
+```
+
+and:
+
+```text
+Invalid value for 'tab_width': -4.
+Expected a positive tab width.
+```
+
+The second is much more useful.
+
+A good diagnostic should identify, when possible:
+
+1. **What** is wrong.
+2. **Where** it is wrong.
+3. **Why** it is invalid.
+4. **What kind of value** is expected.
+
+For example:
+
+```text
+config:3: invalid tab_width: -4
+expected a positive integer
+```
+
+The exact diagnostic format can evolve later, but the principle should be established now.
+
+Configuration is a user-facing interface. Error messages are therefore part of that interface.
+
+## Validate Before Entering the Event Loop
+
+Configuration validation belongs in the startup phase.
+
+The runtime sequence becomes:
+
+```text
+Startup
+  │
+  ├── Initialize Editor State
+  │
+  ├── Load Defaults
+  │
+  ├── Load Configuration
+  │
+  ├── Parse
+  │
+  ├── Validate
+  │
+  ├── Build Final Configuration
+  │
+  ▼
+Event Loop
+```
+
+The Event Loop should receive an already-valid Editor State.
+
+This follows a broader architectural principle used throughout the editor:
+
+> **Establish invariants at system boundaries so that internal components can operate under stronger assumptions.**
+
+Once configuration has passed validation, the Renderer can assume that `tab_width` is usable, the Input Engine can assume that bindings are valid, and theme selection can assume that the selected theme exists.
+
+## Do Not Push Validation Into Every Component
+
+A poor design would distribute configuration validation across the entire application:
+
+```text
+Renderer
+ └── checks tab_width
+
+Input Engine
+ └── checks key bindings
+
+Theme system
+ └── checks theme name
+
+Command Engine
+ └── checks command names
+```
+
+This duplicates responsibility and makes invalid state easier to propagate.
+
+A better design is:
+
+```text
+Configuration Input
+        │
+        ▼
+Configuration Layer
+   ├── Parse
+   ├── Validate
+   └── Produce valid configuration
+        │
+        ▼
+     Editor State
+        │
+   ┌────┼────┐
+   ▼    ▼    ▼
+Renderer Input Commands
+```
+
+The configuration boundary owns configuration validation.
+
+The consuming components own the behavior controlled by that configuration.
+
+> **Load configuration once, validate it once, and let every module consume the resulting state.**
+
+This is another application of the project's broader **single-owner principle**: each responsibility should have a clear owner.
+
+## Configuration Errors Are Different from Runtime Errors
+
+It is useful to distinguish configuration errors from failures that occur during normal editor operation.
+
+For example:
+
+```text
+theme = "does-not-exist"
+```
+
+is a configuration error.
+
+By contrast, a failure while saving a document because the target file cannot be written is a runtime or file-system error.
+
+The distinction matters because they occur at different boundaries:
+
+```text
+Configuration File
+       │
+       ▼
+Configuration Validation
+       │
+       ▼
+Valid Editor State
+       │
+       ▼
+Normal Operation
+       │
+       ▼
+Runtime Operations
+```
+
+Configuration problems should be resolved before normal operation begins whenever possible.
+
+Runtime failures must instead be handled when the relevant operation occurs.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+**Validation turns configuration from external input into a trusted part of Editor State.**
+
+The editor should not silently accept whatever values happen to appear in a configuration file. Types, ranges, enumerations, key bindings, and conflicts should be checked at the configuration boundary.
+
+The goal is not merely to reject bad configuration. It is to make configuration failures **clear, predictable, and actionable**.
+
+A well-designed configuration system therefore follows a simple rule:
+
+> **Parse what the user wrote, validate what it means, and only then allow the editor to use it.**
+
+</Aside>
+
+## Summary
+
+Configuration validation turns **untrusted external input** into trusted Editor State. Parsing determines what the configuration says; validation determines whether that is acceptable. Type, range, and enum checks verify individual settings, while key-binding and cross-setting checks verify that valid values work together. Unknown settings are reported rather than silently ignored, unhelpful errors are replaced with clear diagnostics, and validation happens during startup — in one configuration boundary, not scattered across components — before the Event Loop ever begins.
+
+Performing validation once at startup also means diagnostics can be produced while the editor still has a clean place to report them, before any editing state exists. Components downstream then operate on stronger assumptions: usable numeric ranges, known theme names, and unambiguous bindings.
+
+The next section compares this design to the main alternatives: **Section 33.9, Design Alternatives and Trade-offs**.

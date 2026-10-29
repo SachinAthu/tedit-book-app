@@ -1,0 +1,260 @@
+---
+title: "33.4 Default Configuration"
+description: "Explains why every configurable option needs a valid, conservative default, so the editor always starts with a complete configuration even without a file."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+A configuration system should not require the user to provide a configuration file before the editor can start.
+
+The editor needs a complete set of valid settings even when the user has never customized anything.
+
+This leads to a simple principle:
+
+> **Every configurable option must have a sensible default.**
+
+Without defaults, the editor would have to answer questions such as:
+
+```text
+What happens if tab_width is missing?
+What happens if no theme is specified?
+What happens if the Save key is not configured?
+```
+
+If every component had to answer those questions independently, configuration logic would become scattered throughout the application.
+
+Instead, the configuration system should establish a complete configuration before the rest of the editor begins normal operation.
+
+## Defaults as the Baseline
+
+Consider a newly installed editor.
+
+The user starts it without creating any configuration file:
+
+```bash
+$ editor document.txt
+```
+
+The configuration system can construct:
+
+```text
+Configuration
+│
+├── tab_width = 4
+├── theme = default
+├── save = Ctrl-S
+└── quit = Ctrl-Q
+```
+
+The user did not explicitly choose these values. They are the editor's built-in policies.
+
+The resulting flow is:
+
+```text
+Built-in Defaults
+       │
+       ▼
+Configuration
+       │
+       ▼
+Editor
+```
+
+This means the editor is immediately usable.
+
+A configuration file becomes an **override mechanism**, rather than a requirement for operation.
+
+## Why Defaults Matter
+
+Defaults provide several important properties.
+
+### First, they make configuration optional
+
+A user who is satisfied with the standard behavior does not need to create or maintain a configuration file.
+
+### Second, they simplify component design
+
+The Renderer does not need to ask:
+
+```text
+"Does the user have a tab width?"
+```
+
+It can assume that a valid tab width already exists.
+
+Likewise, the Input Engine can assume that its key bindings have already been established.
+
+### Third, they make the application predictable
+
+Every installation starts from the same known baseline.
+
+```text
+No configuration
+      │
+      ▼
+Default Configuration
+      │
+      ▼
+Predictable Behavior
+```
+
+### Fourth, they provide a fallback
+
+If a configuration file specifies only one setting, the remaining settings do not become undefined.
+
+For example:
+
+```text
+tab_width = 2
+```
+
+can produce:
+
+```text
+Configuration
+│
+├── tab_width = 2        ← user override
+├── theme = default      ← default
+├── save = Ctrl-S        ← default
+└── quit = Ctrl-Q        ← default
+```
+
+Only the explicitly supplied value needs to differ from the baseline.
+
+## Defaults and User Configuration
+
+This gives us the first form of configuration precedence:
+
+```text
+Default
+   │
+   ▼
+User Value
+```
+
+A user-provided setting replaces the corresponding default.
+
+For example:
+
+```text
+Default:
+
+tab_width = 4
+```
+
+User configuration:
+
+```text
+tab_width = 2
+```
+
+Final configuration:
+
+```text
+tab_width = 2
+```
+
+But if the user does not specify a tab width:
+
+```text
+tab_width = default
+```
+
+remains in effect.
+
+The configuration system therefore produces a **fully populated configuration**, regardless of how much configuration the user provides.
+
+## Defaults Should Be Valid
+
+A default is not merely a convenient value. It must satisfy the same validation rules as user-provided values.
+
+For example, if the editor requires:
+
+```text
+tab_width > 0
+```
+
+then the built-in default must satisfy that constraint.
+
+The same applies to enumerated settings such as themes:
+
+```text
+theme = default
+```
+
+must refer to an actual supported theme.
+
+This gives us an important invariant:
+
+> **The editor should never enter normal operation with an invalid Configuration.**
+
+Whether a value came from the program itself or from a configuration file does not change this requirement.
+
+## Defaults Should Be Conservative
+
+A default should generally represent behavior that is:
+
+- predictable
+- widely understandable
+- safe
+- useful without customization
+
+It should not assume that the user has a particular workflow.
+
+For example, choosing a simple default key mapping is preferable to attempting to imitate every possible editor.
+
+Similarly, a standard tab width provides a reasonable starting point without forcing a particular development style.
+
+The exact defaults are ultimately implementation decisions, but their role should remain clear: **they provide the baseline behavior of the editor**.
+
+## Defaults Are Part of the User Experience
+
+Defaults are easy to overlook because they are invisible when everything works correctly.
+
+Yet they are often the most frequently used configuration.
+
+A user who never creates a configuration file interacts entirely with the defaults.
+
+Therefore:
+
+```text
+Configuration File
+        │
+        │ optional
+        ▼
+Configuration System
+        ▲
+        │
+Built-in Defaults
+        │
+        ▼
+Final Configuration
+```
+
+The configuration system should be designed around the assumption that defaults are always available.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A well-designed configuration system does not begin with:
+
+> "What did the user configure?"
+
+It begins with:
+
+> **"What is the editor's complete valid configuration?"**
+
+User preferences then modify that baseline.
+
+This is a subtle but important architectural distinction. It means every component receives a predictable configuration instead of having to handle missing values, and it keeps configuration concerns concentrated in one place.
+
+The next question is therefore not how to write a configuration file, but **where configuration values can come from and which source should take precedence when more than one provides a value**.
+
+</Aside>
+
+## Summary
+
+Every configurable option must have a sensible, valid, conservative default. Defaults make configuration optional, simplify component design, keep behavior predictable, and provide a fallback for settings the user never overrides. Together they guarantee that the editor never enters normal operation with an incomplete or invalid `Configuration`, so a configuration file is an override mechanism rather than a requirement.
+
+A default also documents the editor's intended behavior: it is the first example of the configuration format and the baseline every user starts from. Because defaults pass the same validation as user values, the configuration system can treat an absent setting and an explicitly supplied one through the same path.
+
+The next section examines the sources that can override those defaults and how precedence is decided: **Section 33.5, Configuration Sources and Precedence**.

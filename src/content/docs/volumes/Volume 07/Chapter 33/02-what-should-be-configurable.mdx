@@ -1,0 +1,249 @@
+---
+title: "33.2 What Should Be Configurable?"
+description: "Defines the boundary between legitimate user preferences and internal implementation decisions, and why a small configuration surface avoids creep."
+---
+
+Before designing a configuration file or deciding how settings are represented, we need to answer a more fundamental question:
+
+> **Which decisions should the user actually be allowed to change?**
+
+It is tempting to make everything configurable. A sufficiently complicated configuration system could expose almost every internal behavior of the editor as a setting.
+
+That would be a mistake.
+
+Configuration has a cost. Every configurable option requires:
+
+- a defined value
+- a default
+- validation
+- documentation
+- a place to store it
+- code that consumes it
+- rules for invalid values
+- testing across different configurations
+
+Therefore, a good configuration system is not the one with the most options. It is the one that exposes the **right** options.
+
+## User Preferences vs Internal Design
+
+The most useful distinction is between **user preferences** and **implementation decisions**.
+
+A user preference describes something that different users can reasonably want to change.
+
+An implementation decision describes how the editor is constructed internally.
+
+For example:
+
+| Decision                     | Configurable? | Reason                                       |
+| ---------------------------- | ------------- | -------------------------------------------- |
+| Tab width                    | Yes           | Users have different indentation preferences |
+| Theme                        | Yes           | Visual preference varies between users       |
+| Key bindings                 | Yes           | Keyboard workflows differ                    |
+| Document representation      | No            | Internal implementation detail               |
+| Screen buffer representation | No            | Renderer implementation detail               |
+| Module dependencies          | No            | Architectural decision                       |
+| Memory ownership             | No            | Internal correctness constraint              |
+| Rendering architecture       | No            | System design decision                       |
+
+This distinction gives us a useful rule:
+
+> **If changing a value should change the user's experience without changing the editor's architecture, it is a good candidate for configuration.**
+
+## Three Categories of Configuration
+
+For our editor, configurable behavior can be divided into three broad categories.
+
+```text
+Configuration
+│
+├── Editing
+│
+├── Input
+│
+└── Display
+```
+
+Each category serves a different purpose.
+
+## Editing Preferences
+
+Editing preferences control how text behaves during normal editing.
+
+The clearest example is:
+
+```text
+tab_width = 4
+```
+
+The document still contains a TAB character. The configuration determines how that character is represented visually.
+
+Other editing preferences could eventually include choices such as indentation behavior or automatic insertion rules.
+
+However, we should not add settings simply because they are technically possible. Each option should correspond to a meaningful user requirement.
+
+## Input Preferences
+
+Input configuration controls how users interact with the editor.
+
+For example:
+
+```text
+save = Ctrl-S
+quit = Ctrl-Q
+```
+
+The underlying commands do not change.
+
+The relationship simply becomes configurable:
+
+```text
+Key Event
+    │
+    ▼
+Configured Binding
+    │
+    ▼
+Command
+```
+
+This is particularly valuable because keyboard preferences are highly personal. Some users expect familiar shortcuts from one editor, while others may prefer a different arrangement.
+
+Our architecture already separates input mapping from command execution. The Input Engine maps abstract key events to commands, making key bindings a natural configuration concern rather than something that needs to be embedded inside command implementations.
+
+## Display Preferences
+
+Display preferences control how information is presented.
+
+Examples include:
+
+```text
+theme = "dark"
+```
+
+In the terminology of Chapter 32, a **Theme** is the mapping from highlight classes to visual styles. A `theme` setting does not define that mapping — it selects *which* Theme is active, just as a key binding selects which command an input event triggers.
+
+The Renderer remains responsible for producing the frame. Configuration merely supplies the policy it uses while doing so.
+
+This preserves an important architectural boundary:
+
+```text
+Configuration
+      │
+      ▼
+Rendering Policy
+      │
+      ▼
+Renderer
+      │
+      ▼
+Screen Buffer
+      │
+      ▼
+Terminal
+```
+
+Configuration does not write ANSI escape sequences, construct screen cells, or draw the terminal itself.
+
+## What We Should Not Configure
+
+There are several categories of settings that should remain internal.
+
+### Data Structures
+
+The user should not select:
+
+```text
+vector
+gap buffer
+piece table
+rope
+```
+
+through a normal preference.
+
+Those are implementation strategies. We studied their trade-offs in earlier chapters, and our baseline editor deliberately selected a vector-of-lines representation.
+
+### Architectural Boundaries
+
+Configuration should not allow users to disable the Input Engine, merge the Renderer with the Command Engine, or bypass the Editor State.
+
+Those are architectural constraints.
+
+### Correctness Rules
+
+Configuration should never be able to violate invariants.
+
+For example, a setting should not be able to instruct the editor to:
+
+```text
+modify the Document from the Renderer
+```
+
+or:
+
+```text
+skip terminal restoration
+```
+
+Configuration exists inside the architecture. It does not override the architecture.
+
+## Avoiding Configuration Creep
+
+A common failure mode is **configuration creep**.
+
+It begins innocently:
+
+```text
+tab_width
+theme
+```
+
+Then more options are added:
+
+```text
+show_status_bar
+show_message_bar
+cursor_style
+scroll_margin
+...
+```
+
+Eventually, the configuration file becomes a second programming language capable of controlling almost every aspect of the editor.
+
+This creates complexity without necessarily improving the user's experience.
+
+A useful test is:
+
+> **Would a reasonable user expect to change this?**
+
+If the answer is no, the setting probably belongs in the implementation rather than the configuration.
+
+## Configuration Should Have a Stable Purpose
+
+Our configuration system should therefore focus on a small set of meaningful policies:
+
+```text
+Configuration
+│
+├── Settings
+│   ├── Editing preferences
+│   └── Display preferences
+│
+├── Key Bindings
+│
+└── Theme Selection
+```
+
+This is deliberately small.
+
+The purpose of Chapter 33 is not to turn our editor into an infinitely configurable application. It is to establish a clean mechanism for separating **stable implementation decisions** from **legitimate user preferences**.
+
+That distinction will guide every configuration decision that follows.
+
+## Summary
+
+Configuration has a cost, so a good configuration system exposes the **right** options rather than every option. The key distinction is between user preferences, which different users can reasonably want to change, and implementation decisions, which belong to the architecture. For our editor, that means three categories — editing, input, and display — while data structures, architectural boundaries, and correctness rules stay internal. A deliberately small configuration surface keeps the system useful without suffering from configuration creep.
+
+Applying that test consistently also keeps the precedence and validation rules small, because every option added would need a default, a type, a range, and documentation. The three categories — editing, input, and display — are broad enough to cover real workflows while remaining small enough to reason about completely.
+
+The next section turns this scope into a concrete representation: **Section 33.3, The Configuration Model**.
