@@ -1,0 +1,941 @@
+---
+title: "35.7 Testing Input Parsing"
+description: "Shows how to test the Input Parser as a deterministic byte-stream state machine, covering escape sequences, partial and malformed input, recovery, and state invariants."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The Input Parser sits at the boundary between the terminal and the editor.
+
+Its responsibility is to consume raw terminal bytes and translate them into abstract key events that the rest of the editor can understand.
+
+Conceptually:
+
+```text
+Terminal Bytes
+      │
+      ▼
+Input Parser
+      │
+      ▼
+Key Event
+```
+
+For example:
+
+```text
+ESC [ D
+   │
+   ▼
+KEY_ARROW_LEFT
+```
+
+The Input Parser therefore has a particularly useful property for unit testing: its input and output can be represented as data.
+
+A test does not need a real terminal.
+
+It can provide a known byte sequence and verify the resulting key event.
+
+This makes Input Parser testing highly deterministic and provides a strong boundary between terminal-specific behavior and the rest of the editor.
+
+## What the Input Parser Should Be Tested For
+
+The Input Parser should be tested according to its contract:
+
+```text
+Raw bytes
+    │
+    ▼
+Recognized sequence
+    │
+    ▼
+Abstract key event
+```
+
+The important cases include:
+
+```text
+Ordinary characters
+Control characters
+Recognized escape sequences
+Incomplete escape sequences
+Multiple-byte sequences
+Malformed sequences
+Unknown sequences
+```
+
+The test suite should establish both successful parsing and safe handling of input that cannot immediately be interpreted.
+
+It should not test what the resulting key event causes the editor to do.
+
+For example:
+
+```text
+ESC [ D
+    │
+    ▼
+KEY_ARROW_LEFT
+```
+
+belongs to Input Parser testing.
+
+Whether:
+
+```text
+KEY_ARROW_LEFT
+    │
+    ▼
+MOVE_CURSOR_LEFT
+```
+
+is handled correctly belongs to the Input Engine and Command Engine.
+
+## Testing Ordinary Characters
+
+The simplest parser tests use ordinary printable characters.
+
+For example:
+
+```text
+Input:
+'a'
+
+Expected:
+KEY_CHARACTER('a')
+```
+
+Likewise:
+
+```text
+Input:
+'X'
+
+Expected:
+KEY_CHARACTER('X')
+```
+
+These tests establish the basic mapping from a terminal byte to an abstract key event.
+
+Several characters should be tested rather than assuming that one successful case proves the entire behavior.
+
+For example:
+
+```text
+'a'
+'Z'
+'0'
+'9'
+' '
+```
+
+The important property is that the parser preserves the character value while producing the appropriate event type.
+
+The parser should not interpret ordinary characters as editor commands.
+
+That interpretation belongs to the higher-level input and command layers.
+
+## Testing Control Characters
+
+Control characters should be tested separately from ordinary characters.
+
+Examples include:
+
+```text
+Enter
+Backspace
+Tab
+Escape
+Ctrl-S
+Ctrl-Q
+```
+
+The exact abstract event produced depends on the editor's defined key-event model.
+
+For example, a control byte might produce:
+
+```text
+Ctrl-S
+   │
+   ▼
+KEY_CTRL_S
+```
+
+The test should verify the parser's mapping.
+
+It should not verify that Ctrl-S saves the file.
+
+That would cross the Input Parser boundary.
+
+The distinction can be represented as:
+
+```text
+Raw byte
+   │
+   ▼
+Input Parser
+   │
+   ▼
+KEY_CTRL_S
+   │
+   ▼
+Input Engine
+   │
+   ▼
+SAVE
+```
+
+Only the first transformation belongs to this unit.
+
+## Testing Escape Sequences
+
+Escape sequences are among the most important Input Parser tests because terminal special keys are commonly represented by multiple bytes.
+
+For example:
+
+```text
+ESC [ A
+```
+
+may represent:
+
+```text
+KEY_ARROW_UP
+```
+
+while:
+
+```text
+ESC [ B
+```
+
+may represent:
+
+```text
+KEY_ARROW_DOWN
+```
+
+and:
+
+```text
+ESC [ C
+```
+
+may represent:
+
+```text
+KEY_ARROW_RIGHT
+```
+
+and:
+
+```text
+ESC [ D
+```
+
+may represent:
+
+```text
+KEY_ARROW_LEFT
+```
+
+The exact supported sequences should come from the editor's defined input contract.
+
+The tests should verify each supported sequence independently.
+
+A useful pattern is:
+
+```text
+Input sequence
+      │
+      ▼
+Expected abstract event
+```
+
+This keeps the test focused on translation rather than editor behavior.
+
+## Testing Complete Sequences
+
+A complete escape sequence should produce its event once the parser has received enough bytes to identify it.
+
+For example:
+
+```text
+Input:
+ESC [ D
+
+Expected:
+KEY_ARROW_LEFT
+```
+
+The test should establish that:
+
+1. the complete sequence is recognized,
+2. the correct event is produced,
+3. no unrelated event is produced,
+4. all bytes belonging to the sequence are consumed appropriately.
+
+The fourth point is particularly important when multiple input sequences are processed consecutively.
+
+## Testing Multiple Input Events
+
+The terminal does not necessarily provide one logical key event at a time.
+
+Several bytes may arrive together.
+
+For example:
+
+```text
+ESC [ A
+x
+ESC [ D
+```
+
+may represent:
+
+```text
+KEY_ARROW_UP
+KEY_CHARACTER('x')
+KEY_ARROW_LEFT
+```
+
+A parser test should therefore verify that a sequence of raw bytes can produce the correct sequence of abstract events.
+
+Conceptually:
+
+```text
+Raw Input Stream
+        │
+        ▼
+Input Parser
+        │
+        ├── KEY_ARROW_UP
+        ├── KEY_CHARACTER('x')
+        └── KEY_ARROW_LEFT
+```
+
+This is important because the parser operates on a byte stream rather than on a stream of already-separated key presses.
+
+The test should therefore not assume that one `read()` operation corresponds to one key.
+
+## Testing Partial Escape Sequences
+
+One of the most important parser-specific cases occurs when only part of an escape sequence has arrived.
+
+Consider:
+
+```text
+ESC
+```
+
+followed later by:
+
+```text
+[
+```
+
+and then:
+
+```text
+D
+```
+
+The parser cannot interpret the first byte as a complete arrow-key event.
+
+It must retain enough state to continue parsing.
+
+Conceptually:
+
+```text
+ESC
+ │
+ ▼
+Parser enters sequence state
+ │
+ │ receives "["
+ ▼
+Still waiting
+ │
+ │ receives "D"
+ ▼
+KEY_ARROW_LEFT
+```
+
+This is fundamentally different from a stateless function that receives an entire sequence at once.
+
+The parser is therefore a stateful component.
+
+Unit tests should explicitly exercise this behavior.
+
+## Testing Input Arriving One Byte at a Time
+
+A particularly useful test is to feed a valid escape sequence one byte at a time.
+
+For:
+
+```text
+ESC [ D
+```
+
+the test can perform:
+
+```text
+Feed ESC
+Feed [
+Feed D
+```
+
+and verify that the final result is:
+
+```text
+KEY_ARROW_LEFT
+```
+
+This test demonstrates that the parser does not depend on all bytes arriving simultaneously.
+
+The reverse test is also useful:
+
+```text
+Feed ESC [ D
+```
+
+as one contiguous input sequence.
+
+Both input delivery patterns should produce the same logical event.
+
+This gives an important property:
+
+```text
+Same byte stream
+       │
+       ├── delivered together
+       │
+       └── delivered incrementally
+              │
+              ▼
+        Same key event
+```
+
+The transport boundaries must not change the meaning of the input stream.
+
+## Testing Incomplete Input
+
+A partial sequence is not necessarily an error.
+
+For example:
+
+```text
+ESC
+```
+
+may simply mean that the parser is waiting for more bytes.
+
+A unit test should therefore distinguish:
+
+```text
+Incomplete
+```
+
+from:
+
+```text
+Malformed
+```
+
+These are different conditions.
+
+Conceptually:
+
+```text
+Partial sequence
+      │
+      ▼
+Need more input
+```
+
+whereas:
+
+```text
+Invalid sequence
+      │
+      ▼
+Handle according to parser policy
+```
+
+The parser should not prematurely manufacture an unrelated key event merely because the current input is incomplete.
+
+This distinction becomes particularly important for escape sequences because the first byte, `ESC`, can be both a standalone key and the beginning of a longer sequence.
+
+## Testing the Escape Key
+
+Because `ESC` may begin a sequence, the parser must have a defined policy for distinguishing:
+
+```text
+Standalone Escape
+```
+
+from:
+
+```text
+Beginning of Escape Sequence
+```
+
+The exact mechanism belongs to the Input Parser design, but it should be explicitly tested.
+
+For example:
+
+```text
+Input:
+ESC
+
+Expected:
+standalone escape event
+```
+
+and:
+
+```text
+Input:
+ESC [ D
+
+Expected:
+KEY_ARROW_LEFT
+```
+
+If the parser uses a timeout or another mechanism to distinguish these cases, that behavior should be isolated carefully during testing.
+
+The goal is to avoid making ordinary parser unit tests dependent on real-time terminal timing.
+
+## Testing Malformed Sequences
+
+The parser must also encounter byte sequences that do not correspond to supported input.
+
+For example:
+
+```text
+ESC [ X
+```
+
+may not be a supported sequence in the editor.
+
+The test should establish the defined behavior.
+
+Possible outcomes include:
+
+```text
+Unknown event
+Literal interpretation
+Sequence discarded
+Parser error state
+```
+
+The correct behavior must come from the parser's contract.
+
+The important testing principle is:
+
+> Unsupported input must produce defined behavior rather than corrupting parser state.
+
+A malformed sequence should not cause the parser to remain permanently stuck in an escape-sequence state.
+
+## Testing Recovery After Invalid Input
+
+Malformed input becomes particularly important when valid input follows it.
+
+Consider:
+
+```text
+Invalid sequence
+      │
+      ▼
+Recovery
+      │
+      ▼
+Valid sequence
+```
+
+For example:
+
+```text
+ESC [ X
+ESC [ D
+```
+
+The parser should eventually recover and recognize the second sequence correctly, according to its defined policy.
+
+A test can therefore verify:
+
+```text
+Malformed input
+       │
+       ▼
+Parser recovers
+       │
+       ▼
+Valid input
+       │
+       ▼
+Correct event
+```
+
+This protects against a common class of parser bugs in which an unexpected byte leaves the state machine in an invalid state.
+
+## Testing Parser State
+
+Because the parser may maintain state between reads, the test suite should consider both:
+
+```text
+Input
+```
+
+and:
+
+```text
+Parser State
+```
+
+as part of the test setup.
+
+Conceptually:
+
+```text
+Initial Parser State
+        │
+        ▼
+       Byte
+        │
+        ▼
+   New Parser State
+```
+
+For a multi-byte sequence:
+
+```text
+NORMAL
+  │
+  │ ESC
+  ▼
+ESCAPE
+  │
+  │ [
+  ▼
+CSI
+  │
+  │ D
+  ▼
+NORMAL + KEY_ARROW_LEFT
+```
+
+The exact internal state names are implementation details.
+
+The important point is that the parser's state transitions should be deterministic and testable.
+
+A test should establish not only that the correct event eventually appears, but also that the parser returns to a valid state afterward.
+
+## Testing That Parser State Does Not Leak
+
+A parser must not allow one key sequence to contaminate the interpretation of the next.
+
+For example:
+
+```text
+Valid sequence
+      │
+      ▼
+Event produced
+      │
+      ▼
+Parser returns to normal state
+      │
+      ▼
+Next input parsed independently
+```
+
+A useful test is:
+
+```text
+ESC [ D
+x
+```
+
+Expected:
+
+```text
+KEY_ARROW_LEFT
+KEY_CHARACTER('x')
+```
+
+The second input must not accidentally be interpreted as part of the first sequence.
+
+Likewise, after an invalid sequence, the parser must return to a valid state according to its recovery rules.
+
+These tests are especially useful for state-machine implementations because state leakage can be difficult to detect through isolated single-sequence tests.
+
+## Testing Unicode Input
+
+The parser's treatment of Unicode input must follow the boundary defined by the editor's input architecture.
+
+Terminal input may contain multi-byte UTF-8 sequences representing one Unicode character.
+
+For example:
+
+```text
+UTF-8 bytes
+     │
+     ▼
+Input Parser
+     │
+     ▼
+Character event
+```
+
+If the Input Parser is responsible for recognizing complete UTF-8 character sequences, those sequences should be tested incrementally as well as when delivered together.
+
+For example:
+
+```text
+UTF-8 character
+      │
+      ├── all bytes together
+      │
+      └── bytes separately
+             │
+             ▼
+       same logical character
+```
+
+However, the test should not duplicate the complete Unicode representation logic already defined for the Document.
+
+The boundary must remain explicit: the parser tests input recognition, while the Document tests logical text representation.
+
+If the parser's current contract does not include UTF-8 decoding, then Unicode decoding should instead be tested at the component responsible for that conversion.
+
+## Testing Parser Independence from the Terminal
+
+The Input Parser should be testable without:
+
+- a terminal emulator,
+- raw terminal mode,
+- keyboard hardware,
+- terminal dimensions,
+- ANSI output.
+
+A test should be able to provide input directly:
+
+```text
+Test
+ │
+ │ raw bytes
+ ▼
+Input Parser
+ │
+ ▼
+Key events
+```
+
+This is one of the strongest benefits of isolating terminal parsing from the rest of the editor.
+
+The parser's correctness becomes a deterministic transformation problem rather than an interactive terminal problem.
+
+## Testing Parser Output, Not Commands
+
+The distinction between a key event and a command is especially important here.
+
+Suppose:
+
+```text
+ESC [ D
+```
+
+produces:
+
+```text
+KEY_ARROW_LEFT
+```
+
+The Input Parser test should stop there.
+
+It should not assert:
+
+```text
+KEY_ARROW_LEFT
+      │
+      ▼
+MOVE_CURSOR_LEFT
+```
+
+because that mapping belongs to the Input Engine.
+
+Similarly, it should not assert that the Cursor's column changes.
+
+That belongs to the Command Engine and Cursor tests.
+
+The complete architecture is:
+
+```text
+Raw Bytes
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Key Event
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Editor State
+```
+
+Keeping each test at its own boundary makes failures much easier to localize.
+
+## Testing Parser Invariants
+
+The Input Parser should maintain several important properties.
+
+For example:
+
+```text
+Parser state is always valid.
+Consumed input is not interpreted twice.
+Completed sequences produce the correct event.
+Incomplete sequences can continue when more input arrives.
+Malformed sequences do not permanently corrupt parser state.
+```
+
+These can be tested after individual input operations and sequences.
+
+Conceptually:
+
+```text
+Valid Parser State
+       │
+       ▼
+Process Input
+       │
+       ▼
+Valid Parser State
+```
+
+An event may be produced during the transition, but the parser itself should remain ready to process subsequent input.
+
+These parser-state properties are part of the editor's full invariant set collected in Section 35.14.
+
+## Testing the Same Stream in Different Chunks
+
+One particularly valuable technique for a byte-stream parser is to test different chunk boundaries.
+
+Suppose the input stream is:
+
+```text
+ESC [ D x ESC [ A
+```
+
+The same bytes could arrive as:
+
+```text
+Chunk 1:
+ESC [ D
+
+Chunk 2:
+x
+
+Chunk 3:
+ESC [ A
+```
+
+or:
+
+```text
+Chunk 1:
+ESC
+
+Chunk 2:
+[ D x
+
+Chunk 3:
+ESC [
+
+Chunk 4:
+A
+```
+
+The parser should ultimately produce the same sequence of logical events.
+
+Conceptually:
+
+```text
+Same byte stream
+       │
+       ├── chunked one way ───┐
+       │                      │
+       ├── chunked another ───┤
+       │                      ▼
+       └── chunked differently → Same event sequence
+```
+
+This is one of the most valuable parser-specific tests because terminal input is a stream, not a guarantee of message-sized delivery.
+
+## A Parser Test Matrix
+
+The major Input Parser cases can be organized as:
+
+| Input Type          | Complete | Incremental | Invalid | Recovery |
+| ------------------- | -------: | ----------: | ------: | -------: |
+| Printable character |        ✓ |           — |       — |        — |
+| Control character   |        ✓ |           — |       — |        — |
+| Escape sequence     |        ✓ |           ✓ |       ✓ |        ✓ |
+| Standalone Escape   |        ✓ |           ✓ |       — |        ✓ |
+| Unicode sequence\*  |        ✓ |           ✓ |       ✓ |        ✓ |
+
+\*Only if Unicode decoding is part of the Input Parser's defined responsibility.
+
+The matrix is a coverage tool.
+
+It helps identify whether the parser has been tested only with ideal input or also with the fragmented and malformed input that a real byte stream can produce.
+
+## What Input Parser Tests Establish
+
+A successful Input Parser test suite provides evidence that:
+
+```text
+Raw bytes are interpreted correctly
+          │
+          ▼
+Supported sequences produce correct events
+          │
+          ▼
+Partial sequences are handled correctly
+          │
+          ▼
+Malformed input is handled safely
+          │
+          ▼
+Parser state remains valid
+          │
+          ▼
+Different input chunking produces consistent results
+```
+
+It does **not** establish that a key event maps to the correct command, that a command modifies the correct Editor State, that the Cursor moves correctly, that the Viewport scrolls correctly, or that the Renderer updates the screen correctly—those behaviors belong to higher testing levels or other component tests.
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+> Test the Input Parser as a deterministic byte-stream state machine: verify ordinary input, control characters, escape sequences, partial input, malformed input, recovery, and parser-state invariants without involving the terminal or higher-level editor behavior.
+
+The Input Parser is the editor's boundary between an unreliable stream of terminal bytes and the editor's structured input model. Testing that boundary thoroughly gives the rest of the architecture a reliable source of abstract key events while keeping terminal-specific complexity isolated.
+
+</Aside>
+
+## Summary
+
+Input Parser tests treat the parser as a deterministic byte-stream state machine. They verify ordinary characters, control characters, escape sequences, partial and malformed input, recovery, and parser-state invariants without involving a terminal or higher-level editor behavior.
+
+Because terminal input arrives in arbitrary chunks, the same byte stream should produce identical events whether delivered together or one byte at a time. Tests must also confirm that malformed input leaves the parser usable, so the next valid sequence is still recognized.
+
+The next section moves beyond individual components: **Section 35.8, Integration Testing**.

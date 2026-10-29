@@ -1,0 +1,687 @@
+---
+title: "35.12 Test Organization"
+description: "Describes how to organize tests around responsibilities, architectural boundaries, workflows, meaningful names, controlled fixtures, and test isolation so the suite documents the architecture."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+A growing test suite needs structure.
+
+As the editor gains more components and features, placing every test in one location makes it difficult to understand what is being tested, where a failure belongs, and which architectural boundary a test protects.
+
+The test organization should therefore reflect the organization of the editor itself.
+
+A useful principle is:
+
+```text
+Editor Architecture
+       │
+       ▼
+Test Organization
+```
+
+The test suite should make the architecture visible rather than hiding it.
+
+## Organizing Tests by Responsibility
+
+The primary organization should follow component responsibility.
+
+For example:
+
+```text
+tests/
+├── document/
+├── cursor/
+├── viewport/
+├── input_parser/
+├── input_engine/
+├── command_engine/
+├── buffer/
+├── buffer_manager/
+├── file_manager/
+├── renderer/
+└── integration/
+```
+
+The exact directory names may evolve with the implementation, but the principle should remain.
+
+A developer looking at:
+
+```text
+tests/document/
+```
+
+should immediately understand that these tests protect the Document's behavior.
+
+Likewise:
+
+```text
+tests/input_parser/
+```
+
+should contain tests concerned with converting raw input into abstract key events.
+
+This organization also reduces the chance of accidentally placing unrelated behavior into a single test group.
+
+## Unit Tests and Integration Tests Should Be Distinguishable
+
+The distinction between unit and integration tests should remain visible in the project structure.
+
+One possible arrangement is:
+
+```text
+tests/
+├── unit/
+│   ├── document/
+│   ├── cursor/
+│   ├── viewport/
+│   ├── input_parser/
+│   └── ...
+│
+├── integration/
+│   ├── input/
+│   ├── editing/
+│   ├── buffers/
+│   ├── files/
+│   └── rendering/
+│
+└── e2e/
+    ├── editing/
+    ├── saving/
+    ├── buffers/
+    └── terminal/
+```
+
+This organization communicates the level at which each test operates.
+
+It also makes it possible to run a focused subset of tests during development.
+
+For example:
+
+```text
+unit/document
+```
+
+can be run when working on the Document without requiring the entire editor to start.
+
+## Tests Should Follow Architectural Boundaries
+
+Test organization should reflect the boundaries defined by the architecture.
+
+For example:
+
+```text
+Input Parser
+     │
+     ▼
+Input Engine
+     │
+     ▼
+Command Engine
+     │
+     ▼
+Editor State
+```
+
+The tests for each component should primarily verify its own contract.
+
+Integration tests can then explicitly represent the connections:
+
+```text
+integration/
+├── input_parser_input_engine/
+├── input_engine_command_engine/
+├── command_engine_state/
+└── ...
+```
+
+This makes architectural dependencies easier to recognize.
+
+A test suite organized this way becomes another form of documentation.
+
+## Naming Tests by Behavior
+
+Test names should describe the behavior being protected.
+
+Compare:
+
+```text
+test_17()
+```
+
+with:
+
+```text
+backspace_at_line_start_merges_with_previous_line()
+```
+
+The second name communicates the contract immediately.
+
+Good names should answer:
+
+> What behavior does this test protect?
+
+Examples include:
+
+```text
+insert_character_at_end_of_line
+delete_character_at_beginning_of_line
+vertical_move_preserves_preferred_column
+cursor_remains_visible_after_scroll
+partial_escape_sequence_is_parsed_correctly
+failed_save_keeps_buffer_dirty
+switching_buffers_preserves_document_state
+```
+
+The exact naming convention should follow the project's coding standards, but meaningful names should be preferred over arbitrary numbering.
+
+## Group Related Cases
+
+A single behavior often has several related boundary conditions.
+
+For example, Cursor movement can be organized around:
+
+```text
+cursor/
+├── horizontal_movement
+├── vertical_movement
+├── boundaries
+├── preferred_column
+└── document_changes
+```
+
+The same principle can be applied to the Document:
+
+```text
+document/
+├── creation
+├── insertion
+├── deletion
+├── splitting
+├── merging
+├── unicode
+└── boundaries
+```
+
+This organization makes gaps easier to identify.
+
+If there are tests for insertion and deletion but none for line merging, that absence becomes visible.
+
+## Keep Test Fixtures Controlled
+
+Some tests require initial state.
+
+For example, Document tests may need a known set of lines:
+
+```text
+alpha
+beta
+gamma
+```
+
+Integration tests may need temporary files.
+
+End-to-end tests may require:
+
+- a temporary working directory;
+- controlled input;
+- known terminal dimensions;
+- a pseudo-terminal;
+- predefined configuration.
+
+These fixtures should be created explicitly and kept isolated from the user's real environment.
+
+A useful structure is:
+
+```text
+Test
+ │
+ ├──► Prepare controlled state
+ │
+ ├──► Execute behavior
+ │
+ ├──► Verify result
+ │
+ └──► Clean up
+```
+
+Tests should not depend on whatever files or configuration happen to exist on the developer's machine.
+
+## Separate Test Data From Production Data
+
+Tests should never require the editor's normal user files.
+
+For file-related tests, temporary files or dedicated test fixtures should be used.
+
+For example:
+
+```text
+tests/
+└── fixtures/
+    ├── empty.txt
+    ├── single_line.txt
+    ├── multiple_lines.txt
+    ├── crlf.txt
+    └── unicode.txt
+```
+
+The exact fixture set should remain small and purposeful.
+
+A fixture should exist because it represents a meaningful condition that the test needs.
+
+Large collections of nearly identical files make the suite harder to maintain.
+
+## Test Isolation
+
+A test should ideally be independent of the test that runs before it.
+
+For example:
+
+```text
+Test A
+  │
+  ▼
+creates Document
+  │
+  ▼
+Test A completes
+
+Test B
+  │
+  ▼
+creates its own Document
+```
+
+Test B should not depend on Test A leaving a particular Document in memory.
+
+This is especially important for the editor because much of its state is mutable.
+
+A shared global Editor State can allow one test to accidentally affect another.
+
+Test isolation therefore reinforces an architectural principle already established for the editor:
+
+> State should have explicit ownership.
+
+## Avoid Hidden Global Test State
+
+Tests sometimes become easier to write when they share global objects.
+
+For example:
+
+```text
+global_editor_state
+global_document
+global_buffer
+```
+
+This approach can make individual tests appear simpler, but it introduces hidden dependencies.
+
+One test may modify state that another test assumes is untouched.
+
+Instead, tests should construct the state they need:
+
+```text
+Create test state
+      │
+      ▼
+Run operation
+      │
+      ▼
+Verify result
+      │
+      ▼
+Destroy test state
+```
+
+This mirrors the explicit state ownership used by the editor architecture.
+
+## Organize Regression Tests With Their Protected Behavior
+
+Regression tests do not necessarily need a completely separate directory.
+
+For example, a regression involving Document line merging can live with the other Document tests:
+
+```text
+tests/unit/document/
+    insertion
+    deletion
+    splitting
+    merging
+    regression cases
+```
+
+Alternatively, larger projects may maintain a separate regression collection.
+
+Either approach can work.
+
+The important property is discoverability.
+
+A developer should be able to determine:
+
+```text
+Which behavior failed?
+        │
+        ▼
+Where is that behavior tested?
+        │
+        ▼
+Which test protects it?
+```
+
+Regression tests should not become an invisible collection of unrelated historical cases.
+
+## Organize End-to-End Tests Around User Workflows
+
+End-to-end tests are naturally organized by workflow rather than by individual component.
+
+For example:
+
+```text
+tests/e2e/
+├── editing/
+│   ├── open_edit_save_exit
+│   └── create_edit_save
+│
+├── failure/
+│   ├── failed_save
+│   └── unsaved_exit
+│
+├── buffers/
+│   ├── switch_buffers
+│   └── multiple_views
+│
+└── terminal/
+    ├── startup
+    └── shutdown
+```
+
+This is different from unit-test organization.
+
+A Document unit test asks:
+
+> Does the Document correctly merge two lines?
+
+An end-to-end test asks:
+
+> Can a user perform an editing workflow that ultimately produces the correct saved file?
+
+The organization should reflect that difference.
+
+## Test Helpers Should Not Hide the Behavior
+
+Test helper functions are useful when they remove repetitive setup.
+
+For example:
+
+```c
+Document *create_document_from_lines(const char *lines[]);
+```
+
+may simplify repeated Document setup.
+
+However, helpers should not hide the important action being tested.
+
+A test should remain readable enough to understand:
+
+```text
+Initial state
+    │
+    ▼
+Action
+    │
+    ▼
+Expected result
+```
+
+Excessively abstract test helpers can make failures difficult to understand.
+
+The same rule applies to test fixtures and test drivers.
+
+Abstraction is useful when it removes irrelevant repetition. It is harmful when it hides the behavior that gives the test its meaning.
+
+## Keep Tests Close to the Contracts They Protect
+
+A useful test suite makes the relationship between requirements, architecture, and tests visible.
+
+For example:
+
+```text
+Requirement
+    │
+    ▼
+Component Contract
+    │
+    ▼
+Unit Test
+
+Requirement involving multiple components
+    │
+    ▼
+Architectural Contract
+    │
+    ▼
+Integration Test
+
+User-visible workflow
+    │
+    ▼
+System Behavior
+    │
+    ▼
+End-to-End Test
+```
+
+This mapping is especially valuable in an educational project because the test structure demonstrates how architectural decisions translate into verifiable behavior.
+
+## Running Tests at Different Scopes
+
+A well-organized suite allows tests to be selected according to the change being made.
+
+For example:
+
+```text
+Changed Document
+      │
+      ├──► Document unit tests
+      ├──► Related integration tests
+      └──► Relevant regression tests
+```
+
+A larger architectural change may require:
+
+```text
+Changed architecture
+      │
+      ├──► Unit tests
+      ├──► Integration tests
+      ├──► Regression tests
+      └──► End-to-end workflows
+```
+
+This layered execution reduces development feedback time while still allowing broad verification before a change is considered complete.
+
+## Test Organization Should Evolve With the Editor
+
+The test structure should not be treated as permanently fixed.
+
+As new components are introduced, their tests can be added to the corresponding area.
+
+For example, when Buffer Manager becomes part of the implementation:
+
+```text
+tests/
+├── unit/
+│   └── buffer_manager/
+│
+├── integration/
+│   └── buffers/
+│
+└── e2e/
+    └── buffers/
+```
+
+The three levels correspond to different questions:
+
+```text
+Unit:
+Does Buffer Manager correctly manage its collection?
+
+Integration:
+Does Buffer Manager cooperate correctly with Windows and Tabs?
+
+E2E:
+Can a user switch editing contexts without losing state?
+```
+
+This keeps the testing model aligned with the architecture as the system becomes more capable.
+
+## A Practical Test Layout
+
+A complete organization for the editor might look conceptually like:
+
+```text
+tests/
+├── unit/
+│   ├── document/
+│   ├── cursor/
+│   ├── viewport/
+│   ├── input_parser/
+│   ├── input_engine/
+│   ├── command_engine/
+│   ├── buffer/
+│   ├── buffer_manager/
+│   ├── file_manager/
+│   └── renderer/
+│
+├── integration/
+│   ├── input/
+│   ├── editing/
+│   ├── cursor_viewport/
+│   ├── buffers/
+│   ├── files/
+│   └── rendering/
+│
+├── e2e/
+│   ├── editing/
+│   ├── saving/
+│   ├── failure/
+│   ├── buffers/
+│   └── terminal/
+│
+└── fixtures/
+    ├── text/
+    └── configuration/
+```
+
+This is an organizational model rather than a requirement that every directory must exist immediately.
+
+The implementation can begin with only the areas required by the current feature set.
+
+The structure should grow as the editor grows.
+
+## Test Organization as Architectural Documentation
+
+A well-organized test suite provides information about the system even before reading the implementation.
+
+For example:
+
+```text
+tests/unit/document/
+```
+
+communicates that the Document has independently testable responsibilities.
+
+```text
+tests/integration/cursor_viewport/
+```
+
+communicates that Cursor and Viewport have an important interaction boundary.
+
+```text
+tests/e2e/saving/
+```
+
+communicates that saving is considered an important complete workflow.
+
+This makes the test suite a secondary form of architecture documentation.
+
+It answers not only:
+
+> What is tested?
+
+but also:
+
+> What does the project consider important enough to protect?
+
+## What Test Organization Should Avoid
+
+A test structure can become harmful when it reflects implementation details rather than responsibilities.
+
+Examples include:
+
+- grouping tests according to arbitrary source-file order;
+- placing all tests into one enormous file;
+- mixing unit and end-to-end tests without distinction;
+- sharing mutable state between unrelated tests;
+- creating fixtures that depend on the developer's environment;
+- hiding important behavior behind excessive helpers;
+- keeping regression tests without describing what behavior they protect;
+- duplicating the same scenario at every testing level without purpose.
+
+The objective is not maximum organizational complexity.
+
+The objective is clarity.
+
+## The Role of Test Organization in This Editor
+
+The editor's architecture already separates responsibilities such as:
+
+```text
+Document
+Cursor
+Viewport
+Input Parser
+Input Engine
+Command Engine
+Buffer
+Buffer Manager
+File Manager
+Renderer
+```
+
+The test suite should reinforce those boundaries.
+
+A useful mental model is:
+
+```text
+Production Architecture
+          │
+          ▼
+Responsibilities
+          │
+          ▼
+Contracts
+          │
+          ▼
+Tests
+```
+
+When the architecture changes, the test organization should make the consequences visible.
+
+When a defect is found, the test organization should make the correct place for the new protection obvious.
+
+When a developer wants confidence in a change, the test organization should make the relevant tests easy to locate.
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+Organize the test suite around the editor's responsibilities, architectural boundaries, and user workflows so that every test has a clear purpose, controlled dependencies, and an obvious relationship to the behavior it protects.
+
+</Aside>
+
+## Summary
+
+The test suite should be organized around responsibilities, architectural boundaries, and user workflows. Unit, integration, and end-to-end tests remain distinguishable, names describe protected behavior, related cases are grouped, fixtures are controlled, and tests remain isolated so that the structure itself documents the architecture.
+
+A reader should be able to move from a failed behavior to the test that protects it without searching an undifferentiated collection. The layout may grow with the implementation, but it should continue to mirror the boundaries the architecture defines.
+
+The next section describes the mistakes that undermine a test suite: **Section 35.13, Common Testing Mistakes**.

@@ -1,0 +1,345 @@
+---
+title: "35.2 Testing Strategy"
+description: "Describes a three-level testing strategy—unit, integration, and end-to-end—and explains which questions each level answers and when manual testing still matters."
+---
+
+Testing the editor requires more than writing a collection of individual tests. The editor contains several components with different responsibilities, and each component can fail in different ways.
+
+A useful testing strategy therefore begins by deciding **what should be tested, at which level, and for what purpose**.
+
+Our architecture already provides a natural structure for this.
+
+```text
+                         Editor
+                           │
+             +-------------+-------------+
+             │             │             │
+             ▼             ▼             ▼
+           Unit       Integration     End-to-End
+          Testing       Testing         Testing
+             │             │             │
+             ▼             ▼             ▼
+        Components     Components       Complete
+        in isolation   working together  workflows
+```
+
+The goal is not to choose one testing technique. The goal is to use different levels of testing to answer different questions.
+
+## Testing at Different Levels
+
+For our editor, the main levels are:
+
+```text
+Unit Tests
+    │
+    ├── Document
+    ├── Cursor
+    ├── Viewport
+    └── Input Parser
+          │
+          ▼
+Integration Tests
+    │
+    ├── Input → Command
+    ├── Command → State
+    ├── File Manager → Document
+    └── Renderer → Editor Screen Buffer
+          │
+          ▼
+End-to-End Tests
+    │
+    └── User interaction → complete result
+```
+
+Each level provides a different kind of evidence.
+
+### Unit testing asks:
+
+> Does this component behave correctly by itself?
+
+### Integration testing asks:
+
+> Do these components cooperate correctly?
+
+### End-to-end testing asks:
+
+> Does the editor behave correctly when used as a complete system?
+
+These questions overlap, but they are not interchangeable.
+
+## Unit Tests: Verify Local Behavior
+
+Unit tests should form the foundation of the testing strategy.
+
+A unit test should isolate a small piece of behavior and provide controlled input.
+
+For example:
+
+```text
+Document
+    │
+    │ insert("X", row=0, column=3)
+    ▼
+Expected Document
+```
+
+The test does not need a terminal.
+
+It does not need keyboard input.
+
+It does not need the Renderer.
+
+It only needs to verify the behavior of the Document operation.
+
+This makes the test:
+
+- fast
+- deterministic
+- easy to diagnose
+- independent of unrelated components
+
+The same principle applies to Cursor and Viewport behavior.
+
+## Integration Tests: Verify Boundaries
+
+Individual components can each be correct while their interaction is incorrect.
+
+Consider:
+
+```text
+Input Parser
+     │
+     ▼
+Input Engine
+     │
+     ▼
+Command Engine
+```
+
+Suppose the Input Parser correctly produces:
+
+```text
+KEY_ARROW_LEFT
+```
+
+and the Command Engine correctly handles:
+
+```text
+MOVE_CURSOR_LEFT
+```
+
+The system can still fail if the Input Engine maps the key event to the wrong command.
+
+Unit tests for the individual components might all pass.
+
+An integration test can expose the problem:
+
+```text
+KEY_ARROW_LEFT
+       │
+       ▼
+Input Engine
+       │
+       ▼
+MOVE_CURSOR_LEFT
+       │
+       ▼
+Cursor moves left
+```
+
+Integration testing therefore concentrates on **contracts between components**.
+
+This is particularly important in our architecture because responsibilities are deliberately separated across modules. The architecture defines the Input Handler, Input Parser, Input Engine, Command Engine, Editor State, Renderer, and File Manager as distinct responsibilities.
+
+## End-to-End Tests: Verify Complete Behavior
+
+At the highest level, we want to know whether the editor works as a complete system.
+
+Consider saving a modified document:
+
+```text
+User
+ │
+ ▼
+Ctrl-S
+ │
+ ▼
+Input Handler
+ │
+ ▼
+Input Parser
+ │
+ ▼
+Input Engine
+ │
+ ▼
+Command Engine
+ │
+ ▼
+File Manager
+ │
+ ▼
+File
+```
+
+An end-to-end test can verify the complete outcome:
+
+```text
+Initial file:
+Hello
+
+User edits:
+Hello World
+
+User saves
+
+Expected file:
+Hello World
+```
+
+This test does not care which internal function performed each operation. It verifies the behavior from the perspective of the complete system.
+
+That makes end-to-end tests valuable, but also more expensive and harder to diagnose when they fail.
+
+## Testing the Right Things at the Right Level
+
+A common mistake is to test everything at the highest level.
+
+For example, suppose `document_insert()` is incorrect.
+
+We could discover the problem through a full terminal test:
+
+```text
+Start editor
+    ↓
+Open file
+    ↓
+Move cursor
+    ↓
+Type character
+    ↓
+Save
+    ↓
+Read file
+    ↓
+Failure
+```
+
+The test tells us that something is wrong.
+
+But it does not immediately tell us whether the problem is in:
+
+```text
+Input Parser
+Input Engine
+Command Engine
+Document
+File Manager
+```
+
+A unit test for `document_insert()` would isolate the problem much more quickly.
+
+Therefore:
+
+> Test behavior at the lowest level that can meaningfully verify it, and use higher-level tests to verify the interactions that lower-level tests cannot cover.
+
+## Manual Testing Still Has a Place
+
+Automated tests cannot replace every form of testing.
+
+A terminal editor has behavior that is difficult to completely represent through isolated automated tests.
+
+For example:
+
+- Does the terminal display look correct?
+- Is the cursor visually positioned correctly?
+- Does the status bar remain readable?
+- Does the editor behave correctly after resizing the terminal?
+- Does the terminal return to normal after exit?
+
+Manual testing is useful for these cases.
+
+The distinction is:
+
+```text
+Automated Tests
+    │
+    ├── Repeatable
+    ├── Fast
+    └── Precise
+
+Manual Tests
+    │
+    ├── Visual
+    ├── Interactive
+    └── Exploratory
+```
+
+Manual testing should therefore complement the automated suite rather than replace it.
+
+## The Testing Strategy for Our Editor
+
+Putting everything together:
+
+```text
+                         Testing Strategy
+                                │
+          +---------------------+---------------------+
+          │                     │                     │
+          ▼                     ▼                     ▼
+      Unit Tests          Integration Tests     End-to-End Tests
+          │                     │                     │
+          ▼                     ▼                     ▼
+   Local correctness       Component contracts    User workflows
+          │                     │                     │
+          +---------------------+---------------------+
+                                │
+                                ▼
+                         Manual Testing
+                         Visual / Interactive
+```
+
+And across all levels:
+
+```text
+                  ┌──────────────────────┐
+                  │  Requirements        │
+                  └──────────┬───────────┘
+                             │
+                             ▼
+                  ┌──────────────────────┐
+                  │ Expected Behavior    │
+                  └──────────┬───────────┘
+                             │
+              +--------------+--------------+
+              │              │              │
+              ▼              ▼              ▼
+             Unit       Integration    End-to-End
+              │              │              │
+              +--------------+--------------+
+                             │
+                             ▼
+                    Confidence in System
+```
+
+The strategy is therefore not simply **"write lots of tests."**
+
+It is:
+
+1. Identify important behavior.
+2. Test local behavior at the component level.
+3. Test contracts between components.
+4. Test complete user workflows.
+5. Test failure and boundary conditions.
+6. Preserve discovered bugs as regression tests.
+7. Use manual testing where automated tests cannot adequately represent the terminal experience.
+
+The next sections apply this strategy to the editor's individual components, beginning with **Unit Testing** and then examining the Document, Cursor, Viewport, and Input Parser in detail.
+
+## Summary
+
+The testing strategy combines unit, integration, and end-to-end tests, supported by manual testing where automation cannot represent the terminal experience. The design principles that make those tests reliable—determinism, boundary coverage, state-transition checks, and failure conditions—are the subject of Section 35.3, while the architectural invariants they protect are collected in Section 35.14.
+
+The guiding rule is to test each behavior at the lowest level that can meaningfully verify it, then use higher levels for the interactions that lower levels cannot cover. This keeps failures local and diagnosable while still exercising complete workflows and the terminal experience where necessary.
+
+The next section describes the foundation of this strategy: **Section 35.3, Unit Testing**.

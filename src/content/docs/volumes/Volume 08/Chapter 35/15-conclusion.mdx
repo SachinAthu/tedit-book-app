@@ -1,0 +1,59 @@
+---
+title: "35.15 Conclusion"
+description: "Summarizes the testing model, exercises, and key lessons, and previews debugging as the next step once tests reveal a failure."
+---
+
+Testing changes the editor's correctness from an argued assumption into verifiable evidence. The unifying idea of the chapter is that each component is tested at the boundary that owns its responsibility: the Document and Cursor as logical state, the Viewport as visibility management, the Input Parser as a byte-stream state machine, and the assembled editor as complete workflows.
+
+The chapter follows a single progression:
+
+```text
+Unit
+  ↓
+Module correctness
+  ↓
+Integration
+  ↓
+System behavior
+  ↓
+Regression protection
+  ↓
+Confidence
+```
+
+The important lessons are:
+
+- Correctness is more than compilation; testing connects requirements to observable behavior.
+- The strategy combines unit, integration, and end-to-end tests, with manual testing where automation cannot represent the terminal.
+- Unit tests verify a component in isolation, protecting contracts, boundaries, failure behavior, and invariants.
+- Integration tests verify the contracts and state transitions across architectural boundaries.
+- End-to-end tests verify complete user-visible workflows without depending on internal implementations.
+- Regression tests turn previously established behavior and corrected defects into permanent protection.
+- Failure-case tests confirm that valid state is preserved and user data is never silently treated as safely persisted.
+- Test organization follows the architecture, making every test's purpose and protected behavior visible.
+- The most valuable tests protect the invariants that the ownership model requires each component to maintain.
+
+Testing therefore does not prove the editor is free of defects. It builds confidence based on evidence at every architectural level, so that the editor can grow without silently breaking the behavior established in this chapter.
+
+The testing strategy — unit, integration, and end-to-end tests, supplemented by manual testing, with deterministic tests organized to mirror the architecture — is recorded as **ADR-028: Testing Strategy**, making it an explicit engineering contract rather than an incidental collection of tests.
+
+## Exercises
+
+### Review Questions
+
+1. Why is successful compilation not enough to establish that the editor behaves correctly?
+2. What question does each testing level—unit, integration, and end-to-end—answer?
+3. Why should a Document unit test expect `"HeXllo"` after inserting `'X'` into `"Hello"` at column 2 rather than inspecting an internal array?
+4. Why is the Cursor's preferred column tested separately from its current column?
+5. Why should a failed save never clear the Dirty Flag?
+6. Identify which testing level should cover a malformed arrow-key sequence such as `ESC [ X`.
+
+### Optional Challenge
+
+Design the minimal test matrix for the Cursor's preferred-column behavior across lines of different lengths, using the criteria of determinism, boundary coverage, and state-transition verification introduced in this chapter.
+
+## Preview of the Next Chapter
+
+> Testing tells us **that something is wrong**. Debugging helps us discover **why it is wrong**.
+
+A failing test is only the beginning of the work. Once a test exposes incorrect behavior, the developer still needs to locate the defect, understand its cause, and confirm the fix. The next chapter moves into **Debugging**, where the book transitions from detecting failures to investigating them: using GDB, assertions, logging, and debugging workflows to find and resolve the problems our tests reveal.

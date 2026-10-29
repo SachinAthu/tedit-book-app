@@ -1,0 +1,695 @@
+---
+title: "35.9 End-to-End Testing"
+description: "Describes end-to-end tests for complete user-visible workflows such as open, edit, save, failure handling, buffer switching, and terminal lifecycle, using controlled environments."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Unit tests verify individual components, while integration tests verify the contracts between components. Neither level necessarily proves that the complete editor behaves correctly when all of its parts operate together.
+
+End-to-end testing addresses this final level.
+
+An end-to-end test exercises the editor as an assembled system. It begins with an initial external condition, performs a sequence of user-level actions, and verifies the resulting observable behavior.
+
+For this editor, an end-to-end workflow may involve:
+
+```text
+Terminal
+   │
+   ▼
+Raw Input
+   │
+   ▼
+Input Parser
+   │
+   ▼
+Input Engine
+   │
+   ▼
+Command Engine
+   │
+   ▼
+Editor State
+   │
+   ├──► Buffer / Document
+   ├──► Cursor
+   └──► Viewport
+          │
+          ▼
+Renderer
+           │
+           ▼
+     Editor Screen Buffer
+           │
+           ▼
+      Terminal
+```
+
+A file operation may additionally pass through the File Manager and the operating system's file system.
+
+The purpose of end-to-end testing is not to repeat every unit test through the entire application. It is to verify that the assembled system produces the intended result when the components are used together.
+
+## What Is an End-to-End Test?
+
+An end-to-end test describes a complete user-visible scenario.
+
+For example:
+
+```text
+Start editor
+     │
+     ▼
+Open file
+     │
+     ▼
+Insert text
+     │
+     ▼
+Save
+     │
+     ▼
+Exit
+     │
+     ▼
+Read file from disk
+     │
+     ▼
+Verify contents
+```
+
+The test does not need to know how the Document stores its lines or how the Cursor calculates its position.
+
+Instead, it asks whether the complete workflow produces the correct result.
+
+This distinction is important.
+
+A unit test might verify:
+
+```text
+Document.insert_character(...)
+```
+
+An integration test might verify:
+
+```text
+Command Engine
+      │
+      ▼
+Document.insert_character(...)
+```
+
+An end-to-end test asks:
+
+```text
+User input
+    │
+    ▼
+"insert character"
+    │
+    ▼
+complete editor
+    │
+    ▼
+saved file contains expected text
+```
+
+Each level provides a different kind of evidence.
+
+## Why End-to-End Tests Are Necessary
+
+A collection of passing unit and integration tests can still leave system-level failures undetected.
+
+For example, the following components may each work correctly in isolation:
+
+- Input Parser recognizes `Ctrl-S`.
+- Input Engine maps `Ctrl-S` to a save command.
+- Command Engine executes the save command.
+- File Manager correctly writes a file.
+
+Yet the complete editor could still fail to save because the startup configuration does not connect the relevant components correctly.
+
+An end-to-end test can expose this type of failure because it exercises the actual path through the assembled system.
+
+The same principle applies to startup and shutdown.
+
+A test may verify that Raw Mode can be enabled and restored correctly as an isolated terminal operation. An end-to-end test can verify that:
+
+```text
+Editor starts
+    ↓
+Raw Mode enabled
+    ↓
+Editor runs
+    ↓
+User exits
+    ↓
+Terminal restored
+```
+
+The complete lifecycle matters because the user interacts with the application as one system, not as a collection of independently tested modules.
+
+## Testing Complete Editing Workflows
+
+The most valuable end-to-end tests should represent important editor workflows rather than arbitrary sequences of commands.
+
+A basic editing workflow might be:
+
+```text
+Create or open document
+        │
+        ▼
+Insert text
+        │
+        ▼
+Move Cursor
+        │
+        ▼
+Delete text
+        │
+        ▼
+Save
+        │
+        ▼
+Exit
+```
+
+The test can verify the final file contents and relevant observable state.
+
+For example, a test could start with:
+
+```text
+hello
+```
+
+Then perform an editing sequence that produces:
+
+```text
+hello world
+```
+
+After saving and exiting, the test reads the file independently and verifies:
+
+```text
+hello world
+```
+
+The important observation is that the final file is verified outside the editor.
+
+If the test only inspected an internal Document object, it would no longer represent a complete end-to-end workflow.
+
+## Open → Edit → Save → Exit
+
+Opening an existing file and modifying it is one of the most important complete workflows.
+
+A representative test is:
+
+```text
+Initial file
+    │
+    ▼
+Open editor
+    │
+    ▼
+Load file
+    │
+    ▼
+Modify document
+    │
+    ▼
+Dirty Flag becomes set
+    │
+    ▼
+Save
+    │
+    ▼
+Dirty Flag clears after successful replacement
+    │
+    ▼
+Exit
+    │
+    ▼
+Verify file
+```
+
+This workflow crosses several architectural boundaries.
+
+It exercises:
+
+- File Manager loading
+- Document creation
+- Buffer state
+- Cursor movement
+- editing commands
+- Dirty Flag transitions
+- save behavior
+- file replacement
+- shutdown
+
+The test therefore provides evidence about the interaction of several important parts of the editor.
+
+## Create → Edit → Save
+
+A new document represents a different starting condition.
+
+A representative workflow is:
+
+```text
+Start editor without existing file
+        │
+        ▼
+Create empty editing context
+        │
+        ▼
+Insert text
+        │
+        ▼
+Document becomes modified
+        │
+        ▼
+Save to a new path
+        │
+        ▼
+Verify file exists
+        │
+        ▼
+Verify file contents
+```
+
+This catches problems that an existing-file workflow may not expose.
+
+For example, the editor must correctly handle the absence of an existing file while still producing a valid saved document.
+
+## Testing Unsaved Changes
+
+The Dirty Flag introduces another important system-level workflow.
+
+A representative scenario is:
+
+```text
+Open file
+   │
+   ▼
+Modify document
+   │
+   ▼
+Attempt to exit
+   │
+   ▼
+Editor detects unsaved changes
+   │
+   ├──► Cancel exit
+   │
+   └──► Confirm discard
+```
+
+The exact user interaction depends on the command design, but the important behavior is the state transition.
+
+The editor must not accidentally discard modified content simply because an exit command was requested.
+
+An end-to-end test can verify that the complete system recognizes the unsaved state and follows the intended exit behavior.
+
+## Testing Save Failures
+
+Successful saves are only part of the save workflow.
+
+Failure conditions are equally important.
+
+For example:
+
+```text
+Open file
+   │
+   ▼
+Modify document
+   │
+   ▼
+Save
+   │
+   ▼
+File operation fails
+   │
+   ▼
+Dirty Flag remains set
+   │
+   ▼
+Message Bar reports failure
+```
+
+The test should verify the externally observable consequences of the failure.
+
+In particular, a failed save must not appear to the rest of the editor as a successful save.
+
+This is an example of why end-to-end tests should verify state transitions as well as final output.
+
+The detailed failure-path and recovery treatment lives in Section 35.11; the end-to-end test only verifies the externally observable consequence.
+
+## Testing Cursor and Viewport Behavior Through Editing
+
+Cursor and Viewport behavior can also be tested as part of complete workflows.
+
+Consider a document containing more lines than can fit on the terminal.
+
+A test could:
+
+```text
+Open long document
+      │
+      ▼
+Move Cursor downward
+      │
+      ▼
+Viewport follows Cursor
+      │
+      ▼
+Continue editing
+      │
+      ▼
+Verify edited location
+```
+
+The test can verify that editing remains associated with the correct logical document position even after scrolling occurs.
+
+This is different from the unit tests in Sections 35.5 and 35.6.
+
+Those tests verify the Cursor and Viewport independently.
+
+The end-to-end test verifies that the components cooperate correctly during actual editing.
+
+## Testing Multiple Buffers and Views
+
+The multi-buffer architecture introduces additional workflows.
+
+For example:
+
+```text
+Open File A
+    │
+    ▼
+Edit File A
+    │
+    ▼
+Switch to File B
+    │
+    ▼
+Edit File B
+    │
+    ▼
+Return to File A
+    │
+    ▼
+Verify File A state preserved
+```
+
+A stronger scenario can involve multiple Windows displaying the same Buffer:
+
+```text
+Buffer
+  │
+  ├──► View A ──► Window A
+  │
+  └──► View B ──► Window B
+```
+
+The test should verify the intended separation between shared document state and per-window view state.
+
+For example, modifying the Buffer through one view should affect the shared document, while the independent Cursor and Viewport state of another Window should remain associated with that Window.
+
+These are valuable end-to-end scenarios because they exercise the architecture introduced for multi-buffer and multi-window editing.
+
+## Testing Through a Controlled Terminal Environment
+
+A true terminal editor cannot always be tested effectively by calling functions directly.
+
+Some end-to-end behavior depends on the terminal itself:
+
+- terminal initialization
+- raw input
+- escape sequences
+- terminal dimensions
+- screen output
+- terminal restoration
+
+A controlled pseudo-terminal environment can provide a more deterministic environment for such tests.
+
+Conceptually:
+
+```text
+Test Driver
+    │
+    ▼
+Pseudo-Terminal
+    │
+    ▼
+Editor Process
+    │
+    ├──► stdin
+    └──► stdout
+```
+
+The test driver can provide input and observe the editor's output without requiring a human to operate a real terminal.
+
+This creates a useful boundary between ordinary integration tests and tests involving the actual terminal runtime.
+
+Not every end-to-end test needs a pseudo-terminal. File-oriented workflows can often be tested with controlled input and temporary files, while terminal-specific behavior benefits from an environment that behaves like a real terminal.
+
+## Verify Observable Results
+
+End-to-end tests should primarily verify behavior that can be observed from outside the component boundaries.
+
+Examples include:
+
+- the saved file contains the expected text;
+- the editor refuses to discard protected unsaved changes;
+- a failed save leaves the document dirty;
+- switching buffers preserves their independent contents;
+- editing through one Window changes the shared Buffer;
+- exiting restores the terminal state;
+- expected messages are produced for important failure conditions.
+
+The test should avoid depending unnecessarily on private implementation details.
+
+For example, this is an implementation-level assertion:
+
+```text
+document->lines[0].characters[5] == 'x'
+```
+
+A complete workflow test is more naturally expressed as:
+
+```text
+After the editing workflow,
+the saved file contains the expected text.
+```
+
+The second assertion remains meaningful even if the internal Document representation changes.
+
+## E2E Tests Should Be Few but Significant
+
+End-to-end tests are more expensive than unit tests.
+
+They may require:
+
+- starting the editor process;
+- preparing files;
+- controlling input;
+- waiting for observable states;
+- interacting with a pseudo-terminal;
+- examining output;
+- cleaning up resources.
+
+For that reason, the goal is not to test every possible combination of actions end to end.
+
+Instead, select representative workflows that exercise important system paths.
+
+A practical distribution is:
+
+```text
+Many
+ │
+ ├── Unit Tests
+ │
+ ├── Integration Tests
+ │
+ └── Regression Tests
+ │
+Few
+ │
+ └── End-to-End Tests
+```
+
+If every tiny behavior is tested only through the complete application, failures become harder to diagnose and the test suite becomes unnecessarily expensive.
+
+The lower-level tests should provide detailed coverage, while end-to-end tests confirm that the major pieces work together.
+
+## E2E Tests as Architectural Verification
+
+End-to-end tests also provide evidence that the architecture described throughout the book is actually connected as intended.
+
+For example:
+
+```text
+User Action
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command Engine
+    │
+    ▼
+Editor State
+    │
+    ├──► Buffer
+    │      │
+    │      ▼
+    │   Document
+    │
+    ├──► Cursor
+    │
+    └──► Viewport
+           │
+           ▼
+        Renderer
+           │
+           ▼
+      Editor Screen Buffer
+```
+
+A complete workflow traversing this path provides evidence that the architectural boundaries are not merely theoretical.
+
+However, an end-to-end test should not replace tests at those boundaries.
+
+When an E2E test fails, the lower-level tests help determine where the problem is located.
+
+This produces a useful relationship:
+
+```text
+Unit tests
+    │
+    ▼
+Local correctness
+
+Integration tests
+    │
+    ▼
+Boundary correctness
+
+End-to-end tests
+    │
+    ▼
+System workflow correctness
+```
+
+Together, they provide stronger evidence than any one level alone.
+
+## Representative End-to-End Test Matrix
+
+A small set of high-value workflows can provide broad system coverage.
+
+| Workflow                         | Important behavior                               |
+| -------------------------------- | ------------------------------------------------ |
+| Open → edit → save → exit        | Basic complete editing lifecycle                 |
+| Create → edit → save             | New-document workflow                            |
+| Edit → save failure              | Failure handling and Dirty Flag                  |
+| Edit → exit with unsaved changes | Protection against unintended data loss          |
+| Move through long document       | Cursor and Viewport cooperation                  |
+| Edit → switch buffer → return    | Buffer state preservation                        |
+| Multiple Views of one Buffer     | Shared document state and independent view state |
+| Start → interact → exit          | Terminal lifecycle and restoration               |
+
+This matrix should complement, not replace, lower-level test coverage.
+
+## Avoiding Fragile End-to-End Tests
+
+End-to-end tests become difficult to maintain when they depend on details that are not part of the editor's contract.
+
+For example, a test should avoid requiring an exact screen layout when the behavior being tested is file saving.
+
+Similarly, a save test should not fail merely because an unrelated status-bar message changed.
+
+The test should observe the smallest external result that proves the workflow succeeded.
+
+This principle can be expressed as:
+
+```text
+Test the workflow
+        │
+        ▼
+Observe the contract
+        │
+        ▼
+Avoid unrelated implementation details
+```
+
+This makes E2E tests more stable while keeping them meaningful.
+
+## End-to-End Testing and Regression Protection
+
+When an important system-level bug is discovered, the complete workflow that exposed it can become an end-to-end regression test.
+
+For example:
+
+```text
+Bug:
+Editing a file, saving it, and immediately exiting
+occasionally lost the final modification.
+
+Regression test:
+Open → edit → save → exit → reload → verify contents
+```
+
+The regression test preserves the behavior that previously failed.
+
+This is particularly valuable for failures involving several components because a unit test may not reproduce the original interaction.
+
+## The Role of End-to-End Testing in This Editor
+
+End-to-end testing is the highest automated testing level discussed in this chapter.
+
+It does not attempt to prove that every internal component is correct.
+
+Instead, it answers a different question:
+
+> Does the assembled editor correctly perform important user-visible workflows from beginning to end?
+
+For this editor, those workflows include editing documents, saving files, handling failures, protecting unsaved changes, navigating large documents, switching editing contexts, and interacting with the terminal lifecycle.
+
+The testing strategy therefore forms a progression:
+
+```text
+Unit
+  │
+  ▼
+Component behavior
+
+Integration
+  │
+  ▼
+Component cooperation
+
+End-to-End
+  │
+  ▼
+Complete editor workflows
+```
+
+Each level addresses a different risk.
+
+A reliable editor needs evidence at all three levels.
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+End-to-end testing verifies complete editor workflows from the user's point of view: start with an external state, perform realistic editing actions, and verify the resulting observable state without depending unnecessarily on internal implementation details.
+
+</Aside>
+
+## Summary
+
+End-to-end testing exercises the editor as an assembled system, verifying complete user-visible workflows such as editing, saving, failure handling, buffer switching, and the terminal lifecycle. These tests are few but significant, rely on controlled environments, and verify observable results rather than internal implementation details.
+
+They should check externally observable outcomes—the saved file, the preserved buffer state, the restored terminal—so they remain stable as internal representations change. A controlled pseudo-terminal is useful for terminal-specific paths, while file-oriented workflows can often run with temporary files.
+
+The next section explains how established behavior is protected as the editor evolves: **Section 35.10, Regression Testing**.

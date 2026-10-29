@@ -1,0 +1,452 @@
+---
+title: "35.14 Testing Invariants"
+description: "Collects the editor's invariants across the Document, Cursor, Viewport, parser, commands, Dirty Flag, Renderer, buffers, windows, configuration, and terminal lifecycle."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Throughout this chapter, individual sections have referred to invariants—conditions that must remain true whenever the editor is in a valid state. This section collects them in one place and ties them to the architecture's ownership model, so the forward-references in Sections 35.2, 35.3, 35.4, 35.5, 35.6, and 35.7 resolve here.
+
+For this editor, many important invariants follow directly from the architecture and its ownership boundaries.
+
+A useful summary is:
+
+```text
+Document operations preserve Document validity.
+
+Cursor remains within valid logical bounds.
+
+Viewport remains consistent with Cursor visibility.
+
+Input Parser converts valid terminal input into the correct abstract events.
+
+Input Parser returns to a valid state after malformed or incomplete input is handled.
+
+Commands modify only the state they are responsible for modifying.
+
+Failed saves do not clear the Dirty Flag.
+
+Successful saves clear the Dirty Flag only after the save operation completes successfully.
+
+Renderer does not modify Editor State.
+
+Buffer-specific state remains associated with its Buffer.
+
+Buffer switching does not destroy Buffer-specific state.
+
+Window-specific Cursor and Viewport state remains associated with the Window.
+
+Multiple Views of the same Buffer observe the same underlying Document.
+
+Invalid configuration does not enter validated Editor State.
+
+Terminal state is restored when the editor shuts down.
+```
+
+These invariants can be viewed through the ownership model established throughout the architecture.
+
+```text
+                     Editor State
+                          │
+          ┌───────────────┼────────────────┐
+          │               │                │
+          ▼               ▼                ▼
+       Buffer           Window          Editor-wide
+          │               │
+          ▼               ├──► Cursor
+      Document            ├──► Viewport
+          │               └──► Geometry
+          ├──► Dirty Flag
+          ├──► Undo History
+          └──► Derived State
+```
+
+Each owner is responsible for maintaining the validity of the state it owns.
+
+Testing can therefore verify not only that an operation produces the expected result, but also that the operation does not violate the invariants belonging to another component.
+
+## Document Invariants
+
+The Document is the authoritative logical representation of text.
+
+Its operations must preserve the validity of that representation.
+
+For example:
+
+```text
+Valid Document
+      │
+      ▼
+Insert / Delete / Split / Merge
+      │
+      ▼
+Valid Document
+```
+
+Tests should therefore verify that:
+
+- line structure remains valid;
+- character positions remain valid;
+- empty lines remain representable;
+- unrelated text is preserved;
+- logical Unicode text remains correctly represented;
+- invalid operations do not corrupt the Document.
+
+The exact internal representation may change, but these logical properties must remain true.
+
+## Cursor Invariants
+
+The Cursor represents a logical position within the Document.
+
+Its fundamental bounds are:
+
+```text
+0 <= cursor.row < number_of_lines
+
+0 <= cursor.column <= line_length(cursor.row)
+```
+
+Whenever the Cursor is associated with a valid Document, these conditions must remain satisfied.
+
+Editing operations must therefore be tested not only for their effect on text, but also for their effect on Cursor validity.
+
+For example:
+
+```text
+Document changes
+      │
+      ▼
+Cursor adjusted
+      │
+      ▼
+Cursor remains valid
+```
+
+Preferred-column behavior introduces additional state, but it must not violate the Cursor's fundamental logical bounds.
+
+## Viewport Invariants
+
+The Viewport manages which portion of the Document is visible.
+
+Its state must remain consistent with the terminal dimensions and the Cursor's visibility requirements.
+
+Conceptually:
+
+```text
+Cursor outside visible region
+          │
+          ▼
+      Viewport adjusts
+          │
+          ▼
+Cursor becomes visible
+```
+
+Tests should verify that scrolling does not produce invalid offsets and that the Viewport remains consistent with the Cursor.
+
+Horizontal scrolling must also respect the distinction between logical positions and visual display columns.
+
+## Input Parser Invariants
+
+The Input Parser is a byte-stream state machine.
+
+Its output must represent the meaning of valid terminal input according to the parser contract.
+
+For valid input:
+
+```text
+Raw bytes
+    │
+    ▼
+Input Parser
+    │
+    ▼
+Correct Key Event
+```
+
+For malformed input:
+
+```text
+Malformed bytes
+      │
+      ▼
+Handled safely
+      │
+      ▼
+Valid parser state
+```
+
+A particularly important invariant is that one malformed or incomplete input sequence must not permanently corrupt the parser's state.
+
+The next valid input must still be interpreted correctly.
+
+## Command and State Invariants
+
+The Command Engine coordinates state changes, but commands should respect the ownership boundaries of Editor State.
+
+For example, an editing command may modify:
+
+```text
+Document
+Cursor
+Dirty Flag
+```
+
+because those state transitions belong to the editing operation.
+
+It should not arbitrarily modify unrelated presentation state unless that behavior is explicitly part of the command's contract.
+
+Testing these boundaries helps ensure that commands remain understandable and predictable as the editor grows.
+
+## Dirty Flag Invariants
+
+The Dirty Flag represents whether the Buffer contains modifications that have not been successfully persisted.
+
+Therefore:
+
+```text
+Document modified
+      │
+      ▼
+Dirty = true
+```
+
+A successful save can transition the Buffer to:
+
+```text
+Save succeeds
+      │
+      ▼
+Dirty = false
+```
+
+But a failed save must not do so:
+
+```text
+Save fails
+      │
+      ▼
+Dirty = true
+```
+
+This invariant is especially important because incorrectly clearing the Dirty Flag can cause the editor to treat unsaved user data as safely persisted.
+
+## Renderer Invariants
+
+The Renderer transforms Editor State into a visual representation.
+
+It should not modify the authoritative editing state merely as a consequence of rendering.
+
+The intended direction is:
+
+```text
+Editor State
+     │
+     ▼
+Renderer
+     │
+     ▼
+Editor Screen Buffer
+     │
+     ▼
+Terminal Output
+```
+
+not:
+
+```text
+Renderer
+   │
+   └──► modifies Document / Cursor / Buffer
+```
+
+Tests should therefore protect the separation between state production and state presentation.
+
+## Buffer Invariants
+
+A Buffer owns the editing context associated with a Document.
+
+Buffer-specific state must remain associated with the correct Buffer.
+
+For example:
+
+```text
+Buffer A
+├── Document A
+├── Dirty Flag A
+└── Undo History A
+
+Buffer B
+├── Document B
+├── Dirty Flag B
+└── Undo History B
+```
+
+Switching between them must not accidentally transfer or destroy this state.
+
+A useful invariant is:
+
+```text
+Switch A → B → A
+        │
+        ▼
+Buffer A state is preserved
+```
+
+This becomes particularly important as multi-buffer editing becomes more complex.
+
+## Window and View Invariants
+
+A Window owns the presentation state associated with its View.
+
+Therefore, when multiple Windows display the same Buffer:
+
+```text
+             Buffer
+                │
+        ┌───────┴───────┐
+        ▼               ▼
+      View A          View B
+        │               │
+        ▼               ▼
+     Window A        Window B
+        │               │
+      Cursor A        Cursor B
+      Viewport A      Viewport B
+```
+
+The underlying Document is shared, while Cursor and Viewport state remains associated with each Window.
+
+Tests should protect this distinction.
+
+Changing one Window's Cursor should not unexpectedly replace another Window's Cursor.
+
+## Configuration Invariants
+
+Configuration enters Editor State only after validation.
+
+The intended transition is:
+
+```text
+Built-in Defaults
+       │
+       ▼
+User Configuration
+       │
+       ▼
+Command-Line Overrides
+       │
+       ▼
+Validation
+       │
+       ▼
+Valid Editor State
+```
+
+Invalid values must not silently become active configuration.
+
+Testing this invariant protects the assumption that later components can rely on the configuration they receive.
+
+## Terminal Lifecycle Invariants
+
+The terminal is external to the editor, but the editor temporarily changes its operating state.
+
+The lifecycle should therefore maintain the relationship:
+
+```text
+Normal Terminal
+      │
+      ▼
+Editor starts
+      │
+      ▼
+Raw Mode
+      │
+      ▼
+Editor runs
+      │
+      ▼
+Shutdown
+      │
+      ▼
+Terminal restored
+```
+
+Testing startup and shutdown should verify that the editor does not leave the terminal in an unusable state after normal termination and, where the architecture provides such guarantees, after error-driven termination.
+
+## Invariants Across Components
+
+Some of the most important invariants cross component boundaries.
+
+For example:
+
+```text
+Cursor
+   │
+   ▼
+Viewport
+   │
+   ▼
+Renderer
+```
+
+The Cursor must remain logically valid, the Viewport must keep it visible when required, and the Renderer must represent that resulting state without modifying it.
+
+Similarly:
+
+```text
+Document
+   │
+   ▼
+Buffer
+   │
+   ▼
+File Manager
+```
+
+The Document represents logical text, the Buffer tracks editing state such as Dirty status, and the File Manager handles persistence.
+
+Each boundary has a different responsibility.
+
+Testing these invariants helps prevent one component from silently taking over another component's responsibilities.
+
+## Invariants as Architectural Protection
+
+These invariants demonstrate an important property of the editor's design:
+
+> Ownership defines responsibility, and invariants define what that responsibility must preserve.
+
+This gives testing a direct relationship with architecture.
+
+```text
+Ownership
+    │
+    ▼
+Responsibility
+    │
+    ▼
+Invariant
+    │
+    ▼
+Test
+```
+
+When an architectural boundary changes, its invariants should be reconsidered.
+
+When a bug violates an invariant, the corresponding test should make that violation permanently visible.
+
+This is why invariants are particularly valuable in a stateful system such as a text editor.
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+Testing invariants protects the architectural rules that must remain true as the editor changes: each component must preserve the validity of the state it owns while respecting the boundaries and invariants of the other components.
+
+</Aside>
+
+## Summary
+
+Invariant testing protects the rules that must remain true throughout the editor: Document validity, Cursor bounds, Viewport consistency, parser-state integrity, Dirty Flag behavior, ownership boundaries, and the terminal lifecycle. Because invariants follow the ownership model, testing them gives the architecture a direct relationship with verifiable behavior.
+
+Each owner is responsible for preserving the validity of the state it owns, so a test can assert that an operation changes what it should and leaves everything else intact. When a boundary changes, the corresponding invariants and their tests should be reconsidered together.
+
+The chapter concludes by gathering the whole testing approach in the closing summary.

@@ -1,0 +1,712 @@
+---
+title: "35.13 Common Testing Mistakes"
+description: "Surveys common testing mistakes—happy-path-only coverage, implementation coupling, boundary neglect, shared state, fragile environments, and false confidence from test counts."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+A test suite can contain many tests and still provide weak confidence.
+
+The problem is often not the number of tests, but how they are designed.
+
+A test may verify the wrong behavior, depend on implementation details, ignore failure cases, or exercise too much of the system at once. In an editor, these problems can become particularly difficult because the system combines mutable state, terminal input, rendering, file operations, and multiple editing contexts.
+
+The following mistakes are especially important to avoid.
+
+## Testing Only the Happy Path
+
+One of the most common mistakes is testing only successful operations.
+
+For example:
+
+```text
+Open file
+   │
+   ▼
+Edit file
+   │
+   ▼
+Save succeeds
+   │
+   ▼
+Exit
+```
+
+This verifies an important workflow, but it does not establish what happens when saving fails, input is malformed, a file cannot be opened, or the user exits with unsaved changes.
+
+A stronger test suite covers both:
+
+```text
+Success
+   │
+   ▼
+Expected state
+
+Failure
+   │
+   ▼
+Valid state preserved
+```
+
+Failure behavior is part of the editor's behavior and must therefore be tested.
+
+## Testing Implementation Details Instead of Behavior
+
+A test becomes fragile when it depends unnecessarily on internal implementation details.
+
+For example, a Document test should generally verify the resulting logical text rather than the exact internal memory layout used to store it.
+
+Suppose the Document implementation changes from one representation to another while preserving its public behavior.
+
+A behavior-oriented test should continue to pass:
+
+```text
+Insert character
+      │
+      ▼
+Expected logical text
+```
+
+A representation-oriented test may fail even though the editor remains correct.
+
+Tests should therefore protect contracts rather than incidental implementation details.
+
+## Testing Too Much in One Test
+
+A single test that exercises the entire editor may appear powerful:
+
+```text
+Start editor
+ → open file
+ → move Cursor
+ → edit
+ → scroll
+ → switch Buffer
+ → save
+ → exit
+```
+
+However, when it fails, many possible causes exist.
+
+Was the problem in:
+
+- Input Parser?
+- Input Engine?
+- Command Engine?
+- Cursor?
+- Viewport?
+- Buffer?
+- File Manager?
+- Renderer?
+- terminal handling?
+
+The test provides evidence that something is wrong, but little evidence about where.
+
+Lower-level tests should therefore isolate individual responsibilities, while integration and end-to-end tests should be reserved for interactions and complete workflows that actually require them.
+
+## Testing Too Little in Isolation
+
+The opposite mistake is relying entirely on end-to-end tests.
+
+If every Document operation is tested only by starting the complete editor, a failure in line merging may require:
+
+```text
+Terminal
+ → Input
+ → Parser
+ → Input Engine
+ → Command Engine
+ → Buffer
+ → Document
+ → Renderer
+```
+
+to reproduce.
+
+This makes the test slower and the failure harder to diagnose.
+
+The Document should therefore have direct unit tests.
+
+The same principle applies to the Cursor, Viewport, Input Parser, and other components with independently testable responsibilities.
+
+## Mixing Testing Levels Without a Purpose
+
+A test should have a clear reason for operating at its chosen level.
+
+For example, testing the Document's line-splitting logic through the terminal does not automatically make the test stronger.
+
+Likewise, testing the complete save workflow entirely through isolated mocks does not establish that the real File Manager and file system cooperate correctly.
+
+The appropriate question is:
+
+> What level provides the smallest test that meaningfully verifies this behavior?
+
+The answer may be:
+
+```text
+Unit
+Integration
+or
+End-to-End
+```
+
+depending on the behavior being protected.
+
+## Ignoring Boundary Conditions
+
+Many editor defects occur at boundaries.
+
+Examples include:
+
+```text
+First line
+Last line
+Beginning of line
+End of line
+Empty line
+Empty document
+Shortest terminal
+Smallest visible region
+Longest practical line
+```
+
+A test that verifies only the middle of a normal case can miss the conditions where the implementation is most likely to fail.
+
+For the Cursor, for example:
+
+```text
+column = 0
+column = line_length
+```
+
+are important states.
+
+For the Viewport:
+
+```text
+Cursor at top boundary
+Cursor at bottom boundary
+```
+
+are important transitions.
+
+Boundary testing should therefore be deliberate rather than accidental.
+
+## Assuming Input Arrives in Convenient Chunks
+
+Terminal input is a byte stream.
+
+A common mistake is assuming that an escape sequence always arrives in one read operation.
+
+For example:
+
+```text
+Expected:
+
+ESC [ D
+```
+
+may instead arrive as:
+
+```text
+Read 1: ESC
+Read 2: [
+Read 3: D
+```
+
+or in another grouping.
+
+The Input Parser must therefore be tested with partial input where the parser contract requires it.
+
+A parser that works only when input arrives in convenient chunks is not robust.
+
+## Treating Unicode as UTF-8 Bytes Everywhere
+
+The editor's internal text model uses logical Unicode code points, while UTF-8 is handled at the file boundary.
+
+A test that treats every UTF-8 byte as an independent character can therefore test the wrong abstraction.
+
+For example, a Unicode character may occupy multiple bytes in its UTF-8 representation while still representing one logical character in the Document model.
+
+Tests should respect the layer being tested:
+
+```text
+File Boundary
+    │
+    ▼
+UTF-8 bytes
+    │
+    ▼
+Decoded logical text
+    │
+    ▼
+Document
+```
+
+The test should verify the contract of the relevant layer rather than mixing representations.
+
+## Testing Rendering Through Exact Terminal Output Everywhere
+
+The Renderer produces terminal-oriented output, but not every editor behavior needs to be tested by comparing complete ANSI output.
+
+For example, a Document insertion test does not need to inspect the terminal screen.
+
+Likewise, a Cursor movement test does not need to verify escape sequences.
+
+Doing so unnecessarily couples unrelated behavior to rendering details.
+
+Instead:
+
+```text
+Document test
+    │
+    ▼
+Logical document state
+
+Cursor test
+    │
+    ▼
+Logical cursor state
+
+Renderer test
+    │
+    ▼
+Screen representation
+```
+
+Terminal-specific behavior should be tested where terminal behavior is actually the subject of the test.
+
+## Ignoring State After Failure
+
+A test that checks only that an operation failed may still miss serious bugs.
+
+For example:
+
+```text
+Save fails
+```
+
+is not sufficient as an expected result.
+
+The test should also verify the relevant state:
+
+```text
+Save fails
+    │
+    ├──► Dirty Flag remains set
+    ├──► Document remains valid
+    └──► Failure is reported
+```
+
+The important question is often:
+
+> What did the failure leave behind?
+
+This is especially important for mutable state.
+
+## Assuming an Error Message Means the Operation Is Correct
+
+An error message is not proof that failure handling is correct.
+
+Consider:
+
+```text
+Save fails
+    │
+    ▼
+"Save failed" displayed
+```
+
+The message may be correct while the editor has already incorrectly cleared the Dirty Flag.
+
+A good failure test therefore checks both:
+
+```text
+Failure reporting
++
+State preservation
+```
+
+The user-visible message and the internal state transition are separate aspects of correctness.
+
+## Sharing Mutable State Between Tests
+
+Tests that share mutable Editor State can influence one another.
+
+For example:
+
+```text
+Test A modifies Buffer
+       │
+       ▼
+Test B unexpectedly sees modified Buffer
+```
+
+This creates tests that may pass or fail depending on execution order.
+
+Each test should normally construct and clean up the state it requires.
+
+This is particularly important for:
+
+- Documents;
+- Buffers;
+- Cursor state;
+- Viewport state;
+- configuration;
+- search state;
+- undo/redo history.
+
+Test isolation makes failures reproducible.
+
+## Depending on the Developer's Environment
+
+A test should not depend on whatever happens to exist on the developer's machine.
+
+Fragile tests may accidentally depend on:
+
+- the current working directory;
+- user configuration;
+- terminal dimensions;
+- existing files;
+- environment variables;
+- locale;
+- terminal type;
+- filesystem contents.
+
+Instead, tests should establish their required environment explicitly.
+
+For file tests:
+
+```text
+Create temporary test environment
+        │
+        ▼
+Run operation
+        │
+        ▼
+Verify
+        │
+        ▼
+Clean up
+```
+
+This makes the test reproducible.
+
+## Using Timing as a Substitute for Synchronization
+
+Terminal tests can be tempted to rely on arbitrary delays:
+
+```text
+Send input
+sleep(1)
+check output
+```
+
+Such tests can become unreliable because execution speed varies between systems.
+
+Where possible, tests should synchronize on observable conditions rather than arbitrary time intervals.
+
+The principle is:
+
+```text
+Wait for expected condition
+```
+
+rather than:
+
+```text
+Wait for an assumed amount of time
+```
+
+The exact mechanism depends on the test environment, but deterministic synchronization should be preferred.
+
+## Overusing Mocks
+
+Test doubles can be useful when isolating a boundary.
+
+For example, a File Manager dependency can be replaced when testing a component whose behavior should not depend on the real filesystem.
+
+However, excessive mocking can produce tests that verify only the behavior of the test doubles.
+
+Consider:
+
+```text
+Editor
+   │
+   ▼
+Mock File Manager
+   │
+   ▼
+Mock File System
+```
+
+If every external dependency is replaced, the test may no longer provide evidence that the actual components cooperate correctly.
+
+Mocks should therefore be used to isolate meaningful boundaries, not to avoid testing the real system everywhere.
+
+## Duplicating Every Test at Every Level
+
+It is tempting to test the same behavior:
+
+```text
+Document insertion
+```
+
+as a unit test, integration test, and end-to-end test without distinguishing what each test proves.
+
+This can produce a large and repetitive test suite.
+
+Some overlap is valuable because higher-level tests verify cooperation, but duplication should have a purpose.
+
+For example:
+
+```text
+Unit:
+Does insertion modify the Document correctly?
+
+Integration:
+Does the insert command update the Document and Cursor correctly?
+
+E2E:
+Can the user insert text and ultimately save the expected file?
+```
+
+These tests are related, but they answer different questions.
+
+## Testing Only Final State
+
+A test can miss important incorrect transitions if it checks only the final result.
+
+Consider:
+
+```text
+Initial state
+     │
+     ▼
+Operation A
+     │
+     ▼
+Invalid intermediate state
+     │
+     ▼
+Operation B
+     │
+     ▼
+Correct-looking final state
+```
+
+The final result may hide the defect.
+
+Stateful editor behavior sometimes requires checking intermediate transitions.
+
+Examples include:
+
+- Dirty Flag changes after modification;
+- preferred Cursor column changes after horizontal movement;
+- Viewport offsets change when Cursor leaves the visible region;
+- Buffer switching changes the active editing context;
+- save failure leaves the Buffer dirty.
+
+Tests should verify intermediate state when that state is part of the contract.
+
+## Forgetting to Test Recovery
+
+Handling a failure is only half of the story when recovery is supported.
+
+For example:
+
+```text
+Save
+ │
+ ▼
+Failure
+ │
+ ▼
+Continue editing
+ │
+ ▼
+Save again
+ │
+ ▼
+Success
+```
+
+A test that verifies only the first failure does not prove that the editor remains usable afterward.
+
+Recovery tests are especially useful for:
+
+- malformed input;
+- failed saves;
+- recoverable file errors;
+- invalid commands;
+- temporary resource failures.
+
+## Making Tests Dependent on Test Order
+
+Tests should not require:
+
+```text
+test_a()
+   ↓
+test_b()
+   ↓
+test_c()
+```
+
+unless the test framework explicitly models such a sequence and the sequence itself is the behavior being tested.
+
+A test suite should normally allow individual tests to run independently.
+
+If a test passes only because another test happened to initialize some state first, the suite is providing misleading confidence.
+
+## Ignoring Regression Tests After Fixing a Bug
+
+A bug fix without a permanent test leaves the project vulnerable to recurrence. The pattern—reproduce, fix, test, keep the test—is described in Section 35.10: the test should remain even after the original defect has disappeared from active development, converting a discovered weakness into permanent protection.
+
+## Treating Test Count as a Measure of Quality
+
+A larger number of tests does not automatically mean greater confidence.
+
+One meaningful test can be more valuable than many redundant tests.
+
+For example:
+
+```text
+100 repetitive tests
+```
+
+may provide less useful coverage than:
+
+```text
+A small set covering:
+    boundaries
+    failure cases
+    invariants
+    important workflows
+```
+
+The goal is not to maximize the number of test cases.
+
+The goal is to maximize meaningful evidence of correctness.
+
+## Ignoring Architectural Boundaries
+
+Tests can accidentally encourage poor architecture.
+
+For example, if testing a component requires directly accessing another component's private state, the test may be exposing a boundary problem.
+
+The architecture should make important behavior testable through defined interfaces.
+
+A healthy relationship is:
+
+```text
+Component
+    │
+    ▼
+Public contract
+    │
+    ▼
+Test
+```
+
+rather than:
+
+```text
+Test
+ │
+ ├──► private state
+ ├──► internal helper
+ ├──► unrelated module
+ └──► hidden global
+```
+
+Tests should reinforce the architecture rather than create exceptions to it.
+
+## Confusing Passing Tests With Proof of Correctness
+
+A passing test means that the tested behavior produced the expected result under the conditions exercised by that test.
+
+It does not prove that the editor contains no defects.
+
+For example:
+
+```text
+Test passes
+    │
+    ▼
+This behavior is supported by evidence
+```
+
+It does not mean:
+
+```text
+Test passes
+    │
+    ▼
+The entire editor is proven correct
+```
+
+Testing establishes confidence through accumulated evidence.
+
+This distinction should remain clear throughout the project.
+
+## A Practical Checklist
+
+When adding or reviewing a test, ask:
+
+```text
+1. What behavior is being verified?
+2. Which contract does it protect?
+3. Is this the lowest meaningful testing level?
+4. Are boundary conditions covered?
+5. Are failure conditions relevant?
+6. Are important invariants checked?
+7. Is the test deterministic?
+8. Does it depend on unrelated implementation details?
+9. Is its state isolated from other tests?
+10. If this is a regression, does it protect the actual defect?
+```
+
+These questions are often more valuable than simply asking how many tests exist.
+
+## The Role of Testing Discipline
+
+The purpose of these practices is not to make the test suite complicated.
+
+It is to make the evidence produced by the test suite trustworthy.
+
+For this editor, that means maintaining a clear relationship:
+
+```text
+Requirement
+    │
+    ▼
+Expected behavior
+    │
+    ▼
+Architectural contract
+    │
+    ▼
+Appropriate test
+    │
+    ▼
+Repeatable evidence
+```
+
+Testing becomes useful when the result can be trusted.
+
+Poorly designed tests can create false confidence just as surely as missing tests can create insufficient confidence.
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+Good tests are not defined by their quantity but by the quality of the evidence they provide: they should verify meaningful editor behavior at the appropriate architectural level, cover boundaries and failures, remain deterministic and isolated, and avoid unnecessary dependence on implementation details.
+
+</Aside>
+
+## Summary
+
+A large test suite provides weak confidence when tests are poorly designed. The most important mistakes to avoid include testing only the happy path, depending on implementation details, testing too much or too little at once, ignoring boundaries and failures, sharing state, and confusing passing tests with proof of correctness.
+
+Other traps include assuming terminal input arrives in convenient chunks, treating UTF-8 bytes as logical characters, and relying on timing instead of observable synchronization. Quality comes from the evidence a test provides, not from the number of test functions.
+
+The final section shows how the most valuable tests protect rules that must always hold: **Section 35.14, Testing Invariants**.

@@ -1,0 +1,813 @@
+---
+title: "35.5 Testing the Cursor"
+description: "Explains how to test the Cursor as a logical position state machine, covering horizontal and vertical movement, boundaries, preferred-column behavior, and validity invariants."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The Cursor represents the user's logical editing position within the Document.
+
+Although the Cursor appears visually simple, its behavior depends on several rules:
+
+```text
+Cursor
+ ├── row
+ └── column
+```
+
+The `row` identifies a logical line in the Document, while `column` identifies a logical character position within that line.
+
+Testing the Cursor is therefore primarily about verifying **position transitions**.
+
+A cursor test should answer questions such as:
+
+- Can the Cursor move left and right correctly?
+- Can it move between valid rows?
+- What happens at the beginning or end of a line?
+- What happens when adjacent lines have different lengths?
+- Does vertical movement preserve the intended preferred column?
+- Can the Cursor ever enter an invalid position?
+
+The Cursor should be tested independently from terminal rendering.
+
+The test does not need to draw the cursor on the screen. It needs to establish that the Cursor's logical state is correct.
+
+## The Cursor as a State
+
+A Cursor can be represented conceptually as:
+
+```text
+Cursor
+┌───────────────┐
+│ row    = 2    │
+│ column = 5    │
+└───────────────┘
+```
+
+Given a Document:
+
+```text
+"Hello"
+"World"
+"Terminal"
+```
+
+a Cursor at:
+
+```text
+row    = 1
+column = 3
+```
+
+represents:
+
+```text
+"World"
+   ^
+   column 3
+```
+
+A test can therefore establish an initial Cursor state, perform one movement, and inspect the resulting state.
+
+```text
+Initial
+row    = 1
+column = 3
+
+      │
+      │ move right
+      ▼
+
+Result
+row    = 1
+column = 4
+```
+
+This is the basic pattern used throughout Cursor testing.
+
+## Testing Horizontal Movement
+
+Horizontal movement is the simplest Cursor behavior and should form the foundation of the test suite.
+
+Suppose:
+
+```text
+"Hello"
+```
+
+and:
+
+```text
+row    = 0
+column = 2
+```
+
+Moving right should produce:
+
+```text
+row    = 0
+column = 3
+```
+
+Moving left should produce:
+
+```text
+row    = 0
+column = 1
+```
+
+These tests establish the normal movement rules.
+
+However, the boundaries are more important.
+
+## Testing Movement at the Beginning of a Line
+
+The Cursor must not move to a negative column.
+
+For:
+
+```text
+"Hello"
+^
+column = 0
+```
+
+a left movement should preserve:
+
+```text
+row    = 0
+column = 0
+```
+
+Conceptually:
+
+```text
+column = 0
+    │
+    │ move left
+    ▼
+column = 0
+```
+
+The operation does not produce:
+
+```text
+column = -1
+```
+
+This is a fundamental Cursor invariant.
+
+A unit test should explicitly verify it.
+
+Boundary tests such as this are important because ordinary movement tests may pass even when the implementation incorrectly handles the edge of the line.
+
+## Testing Movement at the End of a Line
+
+The opposite boundary is the end of the logical line.
+
+For:
+
+```text
+"Hello"
+     ^
+     column = 5
+```
+
+the Cursor is at the position immediately after the final character.
+
+A right movement must not move beyond the valid insertion position.
+
+Therefore:
+
+```text
+column = 5
+    │
+    │ move right
+    ▼
+column = 5
+```
+
+The test should establish the distinction between:
+
+```text
+last character position
+```
+
+and:
+
+```text
+position immediately after the last character
+```
+
+This distinction is important because text insertion normally occurs at a logical position between characters.
+
+The Cursor's column therefore does not simply mean "the index of a character currently under the cursor."
+
+It represents an editing position.
+
+## Testing Horizontal Movement with Empty Lines
+
+An empty line is an important boundary condition.
+
+Consider:
+
+```text
+"Hello"
+""
+"World"
+```
+
+When the Cursor is positioned on the empty line:
+
+```text
+row    = 1
+column = 0
+```
+
+both left and right movement should preserve:
+
+```text
+row    = 1
+column = 0
+```
+
+There is no character to move across.
+
+A useful invariant is:
+
+```text
+0 <= column <= line_length
+```
+
+For an empty line:
+
+```text
+line_length = 0
+```
+
+so:
+
+```text
+column = 0
+```
+
+is the only valid horizontal position.
+
+This is a good example of why boundary conditions should be derived from the editor's model rather than from assumptions about typical text.
+
+## Testing Vertical Movement
+
+Vertical movement introduces a more interesting problem because adjacent lines may have different lengths.
+
+Consider:
+
+```text
+"Hello"
+"World"
+"Hi"
+```
+
+with the Cursor at:
+
+```text
+row    = 0
+column = 4
+```
+
+Moving down enters:
+
+```text
+"World"
+    ^
+    column = 4
+```
+
+This is straightforward because the destination line is long enough.
+
+Now consider:
+
+```text
+"HelloWorld"
+"Hi"
+```
+
+with:
+
+```text
+row    = 0
+column = 8
+```
+
+Moving down cannot preserve column `8` literally because the destination line is shorter.
+
+The Cursor must be clamped to a valid position:
+
+```text
+"HelloWorld"
+        ^
+        column = 8
+
+       ↓ move down
+
+"Hi"
+  ^
+  column = 2
+```
+
+A test should verify this behavior.
+
+The important property is:
+
+```text
+destination_column <= destination_line_length
+```
+
+The Cursor must never enter an invalid column merely because the source line was longer.
+
+## Testing Vertical Movement Across Different Line Lengths
+
+Vertical movement should be tested using documents where line lengths vary significantly.
+
+For example:
+
+```text
+"1234567890"
+"abc"
+"abcdefghijklmnop"
+"xy"
+```
+
+Starting at:
+
+```text
+row    = 0
+column = 8
+```
+
+moving down produces a position constrained by the length of `"abc"`.
+
+Moving down again must then use the Cursor's vertical movement rules to determine the next position.
+
+These tests are valuable because they reveal whether the implementation treats each movement independently or preserves the intended vertical navigation state.
+
+The editor's Cursor design includes a preferred column concept for vertical movement. That concept should be tested separately from the immediate `column` value.
+
+## Testing Preferred Column
+
+The preferred column is important when moving vertically through lines of different lengths.
+
+Suppose the user wants to move through a column near the right side of the document:
+
+```text
+"0123456789"
+"abc"
+"0123456789"
+```
+
+Starting at:
+
+```text
+row    = 0
+column = 8
+```
+
+moving down reaches the shorter line:
+
+```text
+"abc"
+   ^
+   column = 3
+```
+
+The immediate column must be clamped because column `8` is invalid on that line.
+
+However, the editor may retain the preferred vertical target:
+
+```text
+preferred_column = 8
+```
+
+so that moving down again can restore:
+
+```text
+"0123456789"
+        ^
+        column = 8
+```
+
+The test therefore needs to distinguish between:
+
+```text
+Current column
+Preferred column
+```
+
+These are not always the same value.
+
+A useful conceptual state transition is:
+
+```text
+Source line
+column = 8
+preferred = 8
+      │
+      │ move down
+      ▼
+Short line
+column = 3
+preferred = 8
+      │
+      │ move down
+      ▼
+Long line
+column = 8
+preferred = 8
+```
+
+This is precisely the kind of stateful behavior that deserves explicit unit tests.
+
+## Testing Preferred Column After Horizontal Movement
+
+Preferred-column behavior should also be tested when horizontal movement occurs.
+
+Suppose the Cursor has:
+
+```text
+column           = 8
+preferred_column = 8
+```
+
+After moving horizontally left:
+
+```text
+column = 7
+```
+
+the preferred column should follow the editor's defined rule rather than remaining stale accidentally.
+
+Likewise, inserting or deleting text may alter the valid range of the Cursor.
+
+The test suite should establish which operations update the preferred column and which operations merely clamp the current position.
+
+The important principle is:
+
+> Preferred-column state must be changed deliberately, not as an accidental side effect of implementation.
+
+This is a good example of why testing state transitions is more useful than testing only final coordinates.
+
+## Testing Cursor Validity
+
+Every valid Cursor state should satisfy a small set of invariants.
+
+For a Document containing `N` lines:
+
+```text
+0 <= cursor.row < N
+```
+
+and for the current line:
+
+```text
+0 <= cursor.column <= line_length
+```
+
+These conditions can be checked after movement operations.
+
+Conceptually:
+
+```text
+Document
+    │
+    ▼
+Cursor movement
+    │
+    ▼
+Check Cursor invariants
+    │
+    ├── valid   → Pass
+    │
+    └── invalid → Fail
+```
+
+These tests are especially valuable because many different operations can potentially modify Cursor state.
+
+Rather than relying only on individual examples, invariant checks can detect an invalid state regardless of which movement path produced it.
+
+These bounds are part of the editor's full invariant set collected in Section 35.14, which ties them to the ownership model.
+
+## Testing Movement at Document Boundaries
+
+The Cursor must also be tested at the beginning and end of the Document.
+
+Consider:
+
+```text
+"First"
+"Second"
+"Third"
+```
+
+At:
+
+```text
+row    = 0
+column = 0
+```
+
+moving up should preserve the row.
+
+Likewise, at:
+
+```text
+row    = 2
+```
+
+moving down should not create:
+
+```text
+row = 3
+```
+
+The boundaries are:
+
+```text
+First line
+    ▲
+    │ move up → remain here
+
+
+Last line
+    │
+    ▼ move down → remain here
+```
+
+These tests are simple but essential.
+
+An implementation that handles ordinary movement correctly can still fail when the Cursor reaches the first or last row.
+
+## Testing Cursor Movement After Document Changes
+
+The Cursor does not exist independently of the Document.
+
+Document operations can change the valid range of a Cursor.
+
+For example:
+
+```text
+"Hello"
+```
+
+with:
+
+```text
+column = 5
+```
+
+may become:
+
+```text
+"Hell"
+```
+
+after deleting the final character.
+
+The old Cursor position is no longer valid.
+
+A higher-level editing operation must therefore ensure that the Cursor is brought back into a valid position.
+
+Tests should establish this relationship without making the Cursor unit tests responsible for the entire editing workflow.
+
+For example:
+
+```text
+Document modification
+        │
+        ▼
+Cursor adjustment
+        │
+        ▼
+Cursor invariant
+```
+
+The exact coordination belongs to the appropriate higher-level component, while the Cursor tests establish the valid movement and positioning rules themselves.
+
+## Testing Cursor State Without Rendering
+
+The Cursor's logical state should be testable without starting the Renderer.
+
+A test should not need to inspect:
+
+```text
+ANSI escape sequences
+terminal coordinates
+screen cells
+```
+
+to determine whether:
+
+```text
+row = 4
+column = 7
+```
+
+is correct.
+
+The Renderer later converts logical editor state into screen coordinates.
+
+Therefore:
+
+```text
+Cursor Unit Test
+       │
+       ▼
+Logical Position
+```
+
+is separate from:
+
+```text
+Renderer Test
+       │
+       ▼
+Visual Position
+```
+
+This separation follows the architecture's distinction between logical cursor state and visual presentation.
+
+It also makes Cursor tests fast and deterministic.
+
+## Testing Logical Columns and Unicode
+
+The Cursor uses logical character positions rather than UTF-8 byte offsets.
+
+Consider:
+
+```text
+"café"
+```
+
+The Cursor should reason about the logical characters:
+
+```text
+c  a  f  é
+0  1  2  3
+```
+
+rather than treating the multi-byte UTF-8 encoding of `é` as multiple cursor positions.
+
+A unit test can therefore verify movement across Unicode characters without requiring the terminal to render them.
+
+For example:
+
+```text
+Initial:
+column = 3
+
+Move right:
+column = 4
+```
+
+The test should not depend on the number of bytes used to encode the character.
+
+This maintains the separation established by the text-encoding architecture: UTF-8 is handled at the file boundary, while the internal editor model works with decoded Unicode code points.
+
+## Testing Sequences of Movement
+
+Individual movement tests are necessary, but movement sequences are also useful.
+
+For example:
+
+```text
+Start
+  │
+  ├── right
+  ├── right
+  ├── left
+  ├── down
+  ├── down
+  └── up
+```
+
+The final Cursor state can then be compared with the expected state.
+
+However, sequence tests should complement rather than replace focused tests.
+
+If a long sequence fails, it may be difficult to determine which operation caused the problem.
+
+Therefore:
+
+```text
+Focused tests
+      +
+Short sequence tests
+```
+
+provide better diagnostic value than relying on long interaction sequences alone.
+
+## Testing Movement Symmetry
+
+Some Cursor operations have useful relationships that can be tested.
+
+For example, where no boundary interferes:
+
+```text
+Move right
+    │
+    ▼
+Move left
+    │
+    ▼
+Original position
+```
+
+Similarly:
+
+```text
+Move down
+    │
+    ▼
+Move up
+    │
+    ▼
+Original position
+```
+
+may hold when the involved lines have compatible lengths and preferred-column state does not introduce a different result.
+
+These tests should therefore be used carefully.
+
+A test should not assume that every pair of opposite movements is perfectly reversible across lines of different lengths.
+
+For example:
+
+```text
+"Long line"
+"Short"
+```
+
+can cause vertical movement to clamp the current column.
+
+The editor's preferred-column behavior exists precisely because vertical movement is not always a simple reversible transformation.
+
+Thus, movement symmetry is useful as a conditional property, not as a universal rule.
+
+## A Cursor Test Matrix
+
+The major Cursor behaviors can be organized as:
+
+| Operation        | Normal | Beginning | End | Empty Line | Different Line Length |
+| ---------------- | -----: | --------: | --: | ---------: | --------------------: |
+| Move left        |      ✓ |         ✓ |   ✓ |          ✓ |                     — |
+| Move right       |      ✓ |         ✓ |   ✓ |          ✓ |                     — |
+| Move up          |      ✓ |         ✓ |   — |          ✓ |                     ✓ |
+| Move down        |      ✓ |         — |   ✓ |          ✓ |                     ✓ |
+| Preferred column |      ✓ |         — |   — |          ✓ |                     ✓ |
+
+Again, the matrix is a coverage aid rather than a requirement that every combination become a separate test.
+
+It helps reveal important missing cases.
+
+For example, a Cursor implementation may have extensive tests for left and right movement but no tests for vertical movement across lines of different lengths.
+
+The matrix makes that omission visible.
+
+## What Cursor Tests Establish
+
+A successful Cursor test suite provides evidence that:
+
+```text
+Cursor remains within valid bounds
+          │
+          ▼
+Horizontal movement is correct
+          │
+          ▼
+Vertical movement is correct
+          │
+          ▼
+Different line lengths are handled
+          │
+          ▼
+Preferred-column behavior is preserved
+          │
+          ▼
+Unicode positions remain logical
+```
+
+It does **not** establish that keyboard input produces the correct movement command, that the Command Engine invokes the correct Cursor operation, that the Viewport scrolls correctly, or that the Renderer draws the cursor correctly—those behaviors cross architectural boundaries and belong to integration or other component-level tests.
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+> Test the Cursor as a logical position state machine: verify movement, boundaries, vertical navigation, preferred-column behavior, and invariants independently of terminal rendering and input handling.
+
+A correct Cursor is necessary for reliable editing, but Cursor correctness alone does not guarantee that the user can reach or see the intended position. The next layer of testing must therefore examine the **Viewport** and its relationship with the Cursor and terminal dimensions.
+
+</Aside>
+
+## Summary
+
+Cursor tests verify the Cursor as a logical position state machine: movement, boundaries, vertical navigation, preferred-column behavior, and invariants are all checked independently of terminal rendering and input handling.
+
+The preferred column must be tested as separate state from the clamped current column, since vertical movement across short lines depends on that distinction. Sequence and symmetry tests are useful supplements, but focused boundary tests remain easier to diagnose when something fails.
+
+The next section tests the component that connects the Cursor's logical position to what is visible on screen: **Section 35.6, Testing the Viewport**.

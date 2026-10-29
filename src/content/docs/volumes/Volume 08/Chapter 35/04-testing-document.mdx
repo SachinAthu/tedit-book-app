@@ -1,0 +1,751 @@
+---
+title: "35.4 Testing the Document"
+description: "Shows how to test the Document as a logical text model, covering insertion, deletion, line splitting and merging, Unicode positions, empty lines, and preserved surrounding text."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The Document is one of the most important components to test because it contains the authoritative in-memory representation of the text being edited.
+
+A rendering error may produce an incorrect screen, and an input error may cause the wrong command to execute, but a Document error can directly corrupt the text itself.
+
+The Document therefore needs tests that establish confidence in its fundamental operations:
+
+```text
+Create
+Insert
+Delete
+Split
+Merge
+Read
+```
+
+The tests should therefore concentrate on the **behavioral contract** of the Document rather than on the details of the vector implementation.
+
+## The Document as a Testable State
+
+A useful way to think about a Document during testing is as a collection of logical lines.
+
+For example:
+
+```text
+Document
+┌───────────────┐
+│ "Hello"       │  row 0
+│ "World"       │  row 1
+│ "Editor"      │  row 2
+└───────────────┘
+```
+
+A test establishes an initial state:
+
+```text
+"Hello"
+"World"
+"Editor"
+```
+
+performs one operation, and then examines the resulting state.
+
+For example:
+
+```text
+Insert 'X' at row 0, column 2
+```
+
+should produce:
+
+```text
+"HeXllo"
+"World"
+"Editor"
+```
+
+The important observation is that the Document test does not need to know how the vector grows, how individual allocations are performed, or how capacity is managed.
+
+Those are implementation details.
+
+The test needs to establish that the Document's externally visible behavior is correct.
+
+## Testing Document Creation
+
+The first tests should establish valid initial states.
+
+An empty Document is particularly important because many later operations depend on what "empty" means.
+
+For example, the tests should distinguish between:
+
+```text
+Document with no lines
+```
+
+and:
+
+```text
+Document containing one empty line
+```
+
+These are not necessarily equivalent states.
+
+The project's text model explicitly defines that a Document with no lines represents a zero-byte file when saved, while a logical line has a line boundary that is serialized during saving.
+
+Therefore, tests should establish the intended behavior of:
+
+```text
+Empty Document
+      │
+      ▼
+Document with one empty line
+```
+
+rather than allowing the distinction to emerge accidentally from implementation details.
+
+A useful collection of initial-state tests includes:
+
+```text
+Create empty Document
+Create Document with one empty line
+Create Document with one non-empty line
+Create Document with multiple lines
+```
+
+The exact construction mechanism is less important than the resulting logical state.
+
+## Testing Character Insertion
+
+Character insertion is one of the fundamental Document operations.
+
+Suppose the initial line is:
+
+```text
+"Hello"
+```
+
+and a character is inserted at logical column `2`.
+
+The expected result is:
+
+```text
+"HeXllo"
+```
+
+The important positions are not limited to the middle of a line.
+
+Insertion should be tested at:
+
+```text
+Beginning
+Middle
+End
+```
+
+For example:
+
+```text
+Initial:  "Hello"
+
+Insert 'X' at 0
+Result:    "XHello"
+```
+
+and:
+
+```text
+Initial:  "Hello"
+
+Insert 'X' at 5
+Result:    "HelloX"
+```
+
+These tests establish the boundary conditions of insertion.
+
+They also verify the meaning of the logical column used by the editor. The Document stores decoded Unicode code points rather than UTF-8 byte sequences, so a logical character position is not a byte offset.
+
+## Testing Multiple Insertions
+
+A single insertion can verify the basic operation, but repeated insertions reveal whether the Document maintains its state correctly.
+
+For example:
+
+```text
+Initial:
+
+"Hello"
+```
+
+Perform:
+
+```text
+Insert 'X' at 5
+Insert 'Y' at 6
+Insert 'Z' at 7
+```
+
+Expected:
+
+```text
+"HelloXYZ"
+```
+
+The test is useful because each operation depends on the state produced by the previous operation.
+
+A Document that works correctly for one insertion but mishandles repeated insertions may contain an indexing, resizing, or state-update error.
+
+However, such a test should remain focused.
+
+It should not become a substitute for testing each insertion boundary independently.
+
+## Testing Character Deletion
+
+Deletion should be tested with the same discipline as insertion.
+
+For:
+
+```text
+"Hello"
+```
+
+deleting the character at column `2` should produce:
+
+```text
+"Helo"
+```
+
+Tests should cover:
+
+```text
+Delete first character
+Delete middle character
+Delete last character
+```
+
+For example:
+
+```text
+"Hello"
+  │
+  └── delete 'H'
+
+"ello"
+```
+
+and:
+
+```text
+"Hello"
+      │
+      └── delete 'o'
+
+"Hell"
+```
+
+The tests should also establish what happens when deletion is requested at a position where no character exists.
+
+The important requirement is that an invalid operation must not corrupt the Document.
+
+For example:
+
+```text
+Valid state
+    │
+    ▼
+Invalid deletion request
+    │
+    ▼
+Document remains structurally valid
+```
+
+The exact error-reporting mechanism belongs to the higher-level command and error-handling architecture. The Document test should primarily establish that its own state remains valid.
+
+## Testing Line Splitting
+
+Pressing Enter is not merely character insertion.
+
+It transforms one logical line into two.
+
+Consider:
+
+```text
+"HelloWorld"
+```
+
+Splitting at column `5` should produce:
+
+```text
+"Hello"
+"World"
+```
+
+The operation can be viewed as:
+
+```text
+Before:
+
+row 0 → "HelloWorld"
+
+             │
+             ▼
+           split
+
+After:
+
+row 0 → "Hello"
+row 1 → "World"
+```
+
+This is an important Document operation because the editor's cursor model and renderer both operate on logical rows.
+
+Tests should cover the major boundary cases.
+
+### Split in the Middle
+
+```text
+"HelloWorld"
+     │
+     ▼
+"Hello"
+"World"
+```
+
+### Split at the Beginning
+
+```text
+"Hello"
+^
+│
+split
+
+""
+"Hello"
+```
+
+### Split at the End
+
+```text
+"Hello"
+     ^
+     │
+   split
+
+"Hello"
+""
+```
+
+These cases are especially valuable because empty lines are valid logical states.
+
+A common implementation mistake is to handle only the middle case and accidentally mishandle one of the boundaries.
+
+## Testing Line Merging
+
+The opposite transformation occurs when a line boundary is removed.
+
+For example:
+
+```text
+"Hello"
+"World"
+```
+
+can become:
+
+```text
+"HelloWorld"
+```
+
+The Document has therefore changed from two lines into one.
+
+This operation is important because it occurs at a fundamental editing boundary: deleting a line break.
+
+Tests should verify:
+
+```text
+Two non-empty lines
+Empty line followed by text
+Text followed by empty line
+Two empty lines
+```
+
+For example:
+
+```text
+"Hello"
+""
+```
+
+merged together should become:
+
+```text
+"Hello"
+```
+
+while:
+
+```text
+""
+"World"
+```
+
+should become:
+
+```text
+"World"
+```
+
+These cases ensure that the operation is defined in terms of logical lines rather than assumptions that every line contains characters.
+
+## Testing Insert and Delete Around Line Boundaries
+
+Line operations become particularly important when character and line behavior interact.
+
+Consider:
+
+```text
+"Hello"
+"World"
+```
+
+Deleting the newline between the lines produces:
+
+```text
+"HelloWorld"
+```
+
+while inserting a newline into:
+
+```text
+"HelloWorld"
+```
+
+can produce:
+
+```text
+"Hello"
+"World"
+```
+
+These two operations should therefore be tested as complementary transformations.
+
+A useful test relationship is:
+
+```text
+Original
+   │
+   ▼
+Split
+   │
+   ▼
+Modified Document
+   │
+   ▼
+Merge
+   │
+   ▼
+Original
+```
+
+When the operations are applied with compatible positions, the final logical text should return to the original state.
+
+This does not prove that every implementation path is correct, but it provides strong evidence that the fundamental transformations agree with one another.
+
+## Testing Unicode Characters
+
+The Document's internal representation stores decoded Unicode code points, not UTF-8 byte sequences. This creates an important testing boundary.
+
+Consider a line containing:
+
+```text
+"café"
+```
+
+The character `é` must be treated as one logical code point by the Document, even though its UTF-8 representation occupies multiple bytes at the file boundary.
+
+Therefore, tests should verify that operations such as:
+
+```text
+Insert
+Delete
+Length
+Position-based access
+```
+
+operate according to the Document's logical character model rather than UTF-8 byte length.
+
+For example, if:
+
+```text
+"café"
+```
+
+contains four logical characters, a test should not treat the encoded byte length of `é` as an additional character position.
+
+This is one of the reasons UTF-8 encoding is kept at the file boundary. The Document operates on decoded code points, while the File Manager handles conversion between UTF-8 bytes and the in-memory representation.
+
+The unit test therefore verifies the Document's contract without testing UTF-8 decoding itself.
+
+## Testing Empty Lines
+
+Empty lines deserve explicit tests because they are valid and common in real documents.
+
+For example:
+
+```text
+"Hello"
+""
+"World"
+```
+
+The middle line has zero characters but still represents a logical document row.
+
+Tests should verify that the Document can:
+
+- contain empty lines,
+- insert text into an empty line,
+- delete the only character from a line,
+- split a line into an empty line and a non-empty line,
+- merge an empty line with an adjacent line.
+
+For example:
+
+```text
+"Hello"
+"X"
+"World"
+```
+
+Delete `X`:
+
+```text
+"Hello"
+""
+"World"
+```
+
+The empty line must remain a valid part of the Document.
+
+## Testing Document Invariants
+
+Beyond individual operations, the Document should be tested for structural invariants: every logical line must be a valid line object, character positions must refer to valid code points, line ordering must be preserved, and operations must not create unintended lines or lose unrelated text. These properties are part of the editor's broader invariant set collected in Section 35.14, so Document tests can verify them directly without re-deriving the ownership model here.
+
+## Testing That Unrelated Text Is Preserved
+
+A useful Document test should verify not only what changed, but also what did **not** change.
+
+Suppose:
+
+```text
+"Alpha"
+"Beta"
+"Gamma"
+```
+
+is modified by inserting a character into `"Beta"`.
+
+The expected result is:
+
+```text
+"Alpha"
+"BeXta"
+"Gamma"
+```
+
+The first and third lines must remain unchanged.
+
+This principle can be generalized:
+
+> An operation should modify only the portion of the Document that its contract says it modifies.
+
+This is especially useful for detecting indexing errors.
+
+For example, a faulty insertion implementation might accidentally modify a neighboring character or line while still producing an apparently plausible result in the target location.
+
+Testing the surrounding state helps expose such errors.
+
+## Testing Long Lines and Many Lines
+
+The Document should also be tested beyond tiny examples.
+
+A test suite that uses only:
+
+```text
+"Hello"
+"World"
+```
+
+may miss problems caused by growth and resizing.
+
+The vector-of-lines representation can require both:
+
+- growth of an individual line's character storage,
+- growth of the collection containing the lines.
+
+Therefore, tests should eventually include:
+
+```text
+Many characters in one line
+Many lines in one Document
+Repeated line insertion
+Repeated line deletion
+Repeated character insertion
+Repeated character deletion
+```
+
+The purpose is not primarily performance measurement.
+
+It is to ensure that capacity changes and repeated modifications preserve logical correctness.
+
+Performance characteristics belong to complexity analysis, covered in Chapter 24 (Volume VI), rather than to unit testing; unit tests should remain focused on behavior.
+
+## Testing Save-Related State Separately
+
+The Document participates in the editor's modified-state model, but the unit boundary must remain clear.
+
+Editing the Document should make the associated editing context dirty.
+
+However, the Dirty Flag is not simply another property of text content that every Document operation must independently manage.
+
+The architecture separates document content from the broader editing context. The File Manager handles persistence, while the Buffer owns editing-related state such as the Dirty Flag and undo history.
+
+Therefore, a Document unit test should primarily establish:
+
+```text
+Document content changed correctly
+```
+
+while a higher-level test should establish:
+
+```text
+Document changed
+       │
+       ▼
+Buffer becomes dirty
+```
+
+Similarly, saving should be tested at the File Manager/Buffer integration level rather than being folded into every Document test.
+
+This separation prevents the Document test suite from becoming coupled to file-system behavior.
+
+## Testing Document Operations as State Transitions
+
+The most useful Document tests can be understood as state-transition tests.
+
+For example:
+
+```text
+State A
+  │
+  │ insert
+  ▼
+State B
+```
+
+or:
+
+```text
+State A
+  │
+  │ split
+  ▼
+State B
+```
+
+or:
+
+```text
+State A
+  │
+  │ merge
+  ▼
+State B
+```
+
+This perspective makes it easier to reason about sequences.
+
+Consider:
+
+```text
+"Hello"
+```
+
+Split:
+
+```text
+"Hel"
+"lo"
+```
+
+Insert:
+
+```text
+"Hel"
+"Xlo"
+```
+
+Merge:
+
+```text
+"HelXlo"
+```
+
+The test is not merely checking individual function return values.
+
+It is checking that each operation transforms one valid Document state into another valid Document state.
+
+## A Document Test Matrix
+
+A practical test suite can organize the major cases into a matrix:
+
+| Operation        | Beginning | Middle | End | Empty | Multiple Lines |
+| ---------------- | --------: | -----: | --: | ----: | -------------: |
+| Insert character |         ✓ |      ✓ |   ✓ |     ✓ |              ✓ |
+| Delete character |         ✓ |      ✓ |   ✓ |     ✓ |              ✓ |
+| Split line       |         ✓ |      ✓ |   ✓ |     ✓ |              ✓ |
+| Merge lines      |         ✓ |      ✓ |   ✓ |     ✓ |              ✓ |
+
+For the Merge row the columns describe where the merged line boundary sits within the document rather than a within-line position; a merge in the middle of a document is a common case and is covered here.
+
+The matrix is not a requirement that every cell be implemented as a separate test.
+
+It is a way to identify missing boundary coverage.
+
+For example, if insertion has tests for the middle and end of a line but none for an empty line, the matrix exposes that gap immediately.
+
+## What These Tests Establish
+
+A successful Document test suite provides evidence for several important properties:
+
+```text
+Text can be represented correctly
+        │
+        ▼
+Text can be modified correctly
+        │
+        ▼
+Line boundaries behave correctly
+        │
+        ▼
+Unicode positions remain logical
+        │
+        ▼
+Invalid operations do not corrupt state
+        │
+        ▼
+Document invariants remain valid
+```
+
+It does **not** establish the correctness of the keyboard, Cursor, Renderer, File Manager, or terminal—those are responsibilities of other components and higher testing levels. A comprehensive set of Document unit tests establishes strong confidence in the Document without claiming that the entire editor is correct.
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+> Test the Document as a logical text model: verify its state transitions, line boundaries, character operations, Unicode model, failure behavior, and invariants while keeping terminal, rendering, input, and file-system concerns outside the unit boundary.
+
+The Document is the authoritative source of editable text in the architecture. Keeping its tests focused on that responsibility makes failures easier to diagnose and allows its internal representation to evolve without changing the meaning of the tests.
+
+</Aside>
+
+## Summary
+
+Document tests treat the Document as a logical text model, verifying its state transitions, line boundaries, character operations, Unicode model, failure behavior, and invariants while keeping terminal, rendering, input, and file-system concerns outside the unit boundary.
+
+Cases should include creation of empty and single-empty-line documents, insertion and deletion at every boundary, split/merge round trips, and the preservation of unrelated lines. A test matrix helps expose missing combinations, and dirty-flag or save behavior belongs to Buffer and File Manager tests rather than to the Document itself.
+
+The next section tests the component that represents the user's editing position in that text: **Section 35.5, Testing the Cursor**.

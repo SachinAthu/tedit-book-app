@@ -1,7 +1,9 @@
 ---
-title: '24.7 Space Complexity'
+title: "24.7 Space Complexity"
 description: "Explains how to measure additional memory separately from document storage, including buffers and save-time temp files."
 ---
+
+import { Aside } from "@astrojs/starlight/components";
 
 Time complexity tells us how the amount of computational work grows. Space complexity asks a different question:
 
@@ -422,9 +424,11 @@ A real engineering decision needs both perspectives.
 
 This becomes especially important in the next chapters, where we compare text representations that deliberately make different trade-offs.
 
-The key principle is:
+<Aside type="tip" title="Key Principle" icon="rocket">
 
-> **Do not ask only how fast an operation is. Ask how much memory it consumes and what it must allocate, move, or retain to achieve that performance.**
+Do not ask only how fast an operation is. Ask how much memory it consumes and what it must allocate, move, or retain to achieve that performance.
+
+</Aside>
 
 ## Summary
 

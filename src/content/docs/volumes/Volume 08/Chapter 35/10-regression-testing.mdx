@@ -1,0 +1,422 @@
+---
+title: "35.10 Regression Testing"
+description: "Shows how regression tests preserve previously established behavior, choosing the lowest level that reproduces a defect and keeping tests deterministic, targeted, and behavior-oriented."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+A text editor is not a static system.
+
+As new features are added, existing behavior can change unintentionally. A modification to the Document may affect Cursor behavior. A change to input handling may affect commands. A change to Buffer management may affect saving or multiple Views.
+
+A regression occurs when behavior that previously worked becomes incorrect after a change.
+
+Regression testing provides a mechanism for detecting these failures.
+
+The central idea is simple:
+
+```text
+Known-correct behavior
+        │
+        ▼
+Change the system
+        │
+        ▼
+Run existing tests
+        │
+        ▼
+Detect unintended change
+```
+
+Regression testing therefore turns previous correctness into continuing protection.
+
+## What Is a Regression?
+
+A regression is not necessarily a newly introduced feature that fails.
+
+It is often an old behavior that stops working because another part of the editor changed.
+
+For example, suppose the editor correctly handles:
+
+```text
+Move Cursor to beginning of line
+        │
+        ▼
+Press Backspace
+        │
+        ▼
+Merge with previous line
+```
+
+Later, the Document implementation is modified to support another editing operation.
+
+If Backspace at the beginning of a line now produces incorrect text, the new failure is a regression.
+
+The original behavior was already correct. The later change unintentionally broke it.
+
+Regression testing exists to detect precisely this kind of failure.
+
+## Regression Tests Begin With Real Failures
+
+A useful regression test usually originates from a concrete problem.
+
+The development process can be represented as:
+
+```text
+Bug discovered
+     │
+     ▼
+Understand the failure
+     │
+     ▼
+Fix the implementation
+     │
+     ▼
+Create a test reproducing the bug
+     │
+     ▼
+Verify the fix
+     │
+     ▼
+Keep the test permanently
+```
+
+The important step is creating the test.
+
+Without it, the same defect can return later.
+
+For example, if a failed save once caused the Dirty Flag to clear incorrectly, the corrected behavior should become a permanent test:
+
+```text
+Modify document
+     │
+     ▼
+Save fails
+     │
+     ▼
+Dirty Flag remains set
+```
+
+Future changes to saving, Buffer management, or state transitions can then be checked against this behavior.
+
+This is the same failed-save contract that Section 35.11 treats in detail.
+
+## Regression Tests Should Describe the Defect
+
+A regression test should capture the behavior that was previously broken.
+
+Consider a defect involving line merging.
+
+The test should not merely assert that a particular internal function was called.
+
+Instead, it should reproduce the meaningful condition:
+
+```text
+Initial:
+
+line one
+line two
+
+Operation:
+Backspace at beginning of "line two"
+
+Expected:
+
+line onetwo
+```
+
+The test protects the behavior rather than the implementation.
+
+This is important because the internal implementation may change while the expected editor behavior remains the same.
+
+## Regression Tests Across Architectural Boundaries
+
+Some regressions occur entirely within one component.
+
+Others cross architectural boundaries.
+
+For example:
+
+```text
+Input Parser
+     │
+     ▼
+Input Engine
+     │
+     ▼
+Command Engine
+     │
+     ▼
+Cursor
+```
+
+Suppose an arrow-key escape sequence previously worked but stops moving the Cursor after an Input Engine change.
+
+A regression test can preserve the complete input-to-command behavior.
+
+Similarly:
+
+```text
+Command Engine
+     │
+     ▼
+Buffer
+     │
+     ▼
+File Manager
+     │
+     ▼
+File System
+```
+
+A previous save bug can be protected with a workflow test that verifies the final file contents.
+
+Regression tests should therefore be placed at the lowest level that reproduces the defect.
+
+If a failure can be reproduced entirely within the Document, a Document-level test is preferable.
+
+If it requires several components, an integration test may be appropriate.
+
+If it requires the complete editor lifecycle, an end-to-end regression test may be necessary.
+
+## Choosing the Correct Test Level
+
+The relationship can be summarized as:
+
+```text
+Can the bug be reproduced in one component?
+        │
+       Yes
+        ▼
+Unit regression test
+
+        No
+        │
+        ▼
+Does it require multiple components?
+        │
+       Yes
+        ▼
+Integration regression test
+
+        No
+        │
+        ▼
+Does it require the complete application?
+        │
+       Yes
+        ▼
+End-to-end regression test
+```
+
+This prevents the regression suite from becoming unnecessarily dependent on the complete application.
+
+A smaller test is generally easier to diagnose and faster to execute when it can adequately protect the behavior.
+
+## Where Regression Cases Live
+
+Regression cases are placed where the protected behavior already lives, not in a separate collection. A Document regression belongs with the Document unit tests of Section 35.4; a Cursor regression with the Cursor tests of Section 35.5; a Viewport regression with Section 35.6; an input-parsing regression with Section 35.7; a save or file-safety regression with Section 35.11; and a multi-buffer regression with the integration cases of Section 35.8. Configuration precedence has no dedicated component section, so configuration regressions are best kept with the configuration-validation tests; its failure behavior is covered in Section 35.11.
+
+In every case the principle is the same: a regression test reproduces the behavior that was broken—a line merge, a preferred-column transition, a scroll boundary, a partial escape sequence, a failed replacement, a buffer switch—at the lowest level that captures it.
+
+## Keep Regression Tests Deterministic
+
+A regression test should fail because the editor behavior changed, not because the environment happened to behave differently. The same determinism discipline that applies to unit tests—covered in Section 35.3—applies here: avoid wall-clock timing, random data, and unrelated external state, and use controlled temporary files or a controlled pseudo-terminal when terminal behavior is part of the test.
+
+## Regression Tests Are Not Historical Records
+
+A regression test should remain useful after the original bug has been forgotten.
+
+It should answer:
+
+> What behavior must continue to work?
+
+rather than:
+
+> What did bug #17 do?
+
+A useful test name might describe the behavior:
+
+```text
+failed_save_keeps_document_dirty
+backspace_at_line_start_merges_lines
+partial_escape_sequence_is_parsed_correctly
+switching_buffers_preserves_document_state
+```
+
+These names communicate the protected contract directly.
+
+The original issue or defect report can provide historical context, but the test itself should describe the behavior that matters.
+
+## Avoiding a Growing Collection of Redundant Tests
+
+Regression testing does not mean adding a new test for every possible variation of every bug.
+
+As the editor grows, duplicate tests can make the suite difficult to understand.
+
+Before adding a regression test, determine:
+
+1. What behavior was broken?
+2. At which architectural boundary can it be reproduced?
+3. Is an existing test already protecting the same behavior?
+4. What is the smallest test that would have detected the defect?
+
+The goal is targeted protection.
+
+For example, if a bug is already completely protected by a Document test, another end-to-end test may not add much value unless the failure involved the assembled workflow.
+
+## Running Regression Tests After Changes
+
+Regression tests become useful only when they are run consistently.
+
+A practical development cycle is:
+
+```text
+Make change
+    │
+    ▼
+Run focused tests
+    │
+    ▼
+Run integration tests
+    │
+    ▼
+Run regression suite
+    │
+    ▼
+Run selected end-to-end workflows
+```
+
+The exact sequence can evolve as the project grows.
+
+During active development, a programmer may first run tests related to the changed component.
+
+Before considering a larger change complete, the broader suite should be executed.
+
+This helps detect both local failures and unintended effects elsewhere in the architecture.
+
+## Regression Testing as a Safety Net
+
+The editor's test suite can be viewed as a growing safety net.
+
+Initially:
+
+```text
+Small feature set
+       │
+       ▼
+Small test suite
+```
+
+As development continues:
+
+```text
+New feature
+    │
+    ├──► New behavior tests
+    │
+    └──► Existing regression tests
+```
+
+When a defect is discovered:
+
+```text
+Defect
+  │
+  ▼
+Fix
+  │
+  ▼
+Regression test
+  │
+  ▼
+Permanent protection
+```
+
+The test suite therefore grows alongside the editor.
+
+This is especially important for an educational project because later chapters and implementation work may modify foundations established much earlier.
+
+A change should not silently invalidate previously established behavior.
+
+## Regression Testing and Refactoring
+
+Refactoring changes the internal structure without intentionally changing externally observable behavior.
+
+Regression tests provide evidence that this property is being maintained.
+
+For example, the internal representation of the Document could eventually change while preserving the same logical editing behavior.
+
+Before refactoring:
+
+```text
+Document implementation A
+        │
+        ▼
+Expected behavior
+```
+
+After refactoring:
+
+```text
+Document implementation B
+        │
+        ▼
+Same expected behavior
+```
+
+If the relevant regression tests continue to pass, they provide evidence that the refactoring preserved the tested contract.
+
+This is one of the most important practical benefits of testing: tests allow implementation details to evolve without requiring every architectural decision to remain permanently frozen.
+
+## The Role of Regression Testing in This Editor
+
+Regression testing connects the past and present states of the project.
+
+Unit tests protect component behavior.
+
+Integration tests protect architectural boundaries.
+
+End-to-end tests protect complete workflows.
+
+Regression tests preserve important behaviors from all of these levels after the behavior has been established or after a defect has been corrected.
+
+The resulting relationship is:
+
+```text
+                 ┌─────────────────┐
+                 │ Existing Tests  │
+                 └────────┬────────┘
+                          │
+                          ▼
+                     Code Change
+                          │
+                          ▼
+                  Run Test Suite
+                          │
+              ┌───────────┴───────────┐
+              ▼                       ▼
+          Still Works             Regression
+              │                       │
+              ▼                       ▼
+        Preserve behavior       Investigate
+                                      │
+                                      ▼
+                                   Fix + Test
+```
+
+A mature editor is not merely a collection of features. It is a collection of features whose previously established behavior is continually protected.
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+Regression testing preserves previously established editor behavior: when a defect is discovered or the implementation changes, the affected behavior should become protected by an appropriate unit, integration, or end-to-end test so that future changes do not silently reintroduce the problem.
+
+</Aside>
+
+## Summary
+
+Regression testing turns previously established correctness into permanent protection. A useful regression test originates from a real failure, is placed at the lowest level that reproduces the defect, describes the protected behavior rather than the implementation, and remains deterministic and targeted to avoid an unwieldy suite.
+
+Regression cases should live with the behavior they protect, whether that is a Document test, a Viewport boundary test, or an end-to-end save workflow. Consistent execution after changes is what turns those cases into a safety net rather than a historical record.
+
+The next section examines the failure conditions that these tests must cover: **Section 35.11, Testing Failure Cases**.

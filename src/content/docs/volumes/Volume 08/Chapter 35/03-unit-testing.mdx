@@ -1,0 +1,564 @@
+---
+title: "35.3 Unit Testing"
+description: "Defines focused, deterministic unit tests that exercise a component through its public interface, covering boundaries, failure behavior, invariants, and architectural contracts."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Unit testing verifies the behavior of a small, isolated part of the editor.
+
+The purpose is not to test the entire application at once. Instead, a unit test gives one module a controlled input, observes its result, and determines whether the module behaved according to its contract.
+
+For our editor, this is particularly useful because the architecture already divides responsibilities among components. The Document owns text, the Cursor manages position, the Viewport manages the visible region, and the Input Parser translates terminal input into abstract key events. Each of these responsibilities can be tested independently.
+
+The basic structure is:
+
+```text
+Controlled Input
+       │
+       ▼
+   Unit Under Test
+       │
+       ▼
+Observed Result
+       │
+       ▼
+   Expected Result
+       │
+       ▼
+     Pass / Fail
+```
+
+A unit test therefore asks a focused question:
+
+> Given this state and this input, does this component produce the expected result?
+
+## What Should Be Tested as a Unit?
+
+A natural unit is usually a module or a small, cohesive piece of behavior with a clear interface.
+
+For example:
+
+```text
+Document
+Cursor
+Viewport
+Input Parser
+```
+
+are good candidates because their responsibilities are relatively well defined.
+
+The project structure reflects this modular organization: each module owns its public header and implementation, while the `tests/` directory provides a separate location for tests.
+
+A unit test should interact with the component through its intended public interface whenever practical.
+
+For example, if the Document provides an operation such as:
+
+```c
+document_insert(...)
+```
+
+the test should normally call that operation rather than directly modifying the Document's internal arrays.
+
+This preserves the same boundary used by the rest of the application.
+
+```text
+Test
+ │
+ │ public interface
+ ▼
+Document
+ │
+ │ private implementation
+ ▼
+Internal Representation
+```
+
+The test is therefore testing the behavior that other modules are expected to rely upon.
+
+This is important because the internal representation of the Document is an implementation decision. The baseline architecture represents a Document as a vector of lines, but the higher-level Document interface should not require other components to know how those lines are stored.
+
+## Testing One Behavior at a Time
+
+A useful unit test should have a narrow purpose.
+
+Consider a test for inserting a character.
+
+The test can establish:
+
+```text
+Initial Document
+
+"Hello"
+```
+
+Then perform:
+
+```text
+Insert 'X' at column 2
+```
+
+and expect:
+
+```text
+"HeXllo"
+```
+
+The test is answering one question:
+
+> Does character insertion place the character at the requested logical position?
+
+It should not simultaneously test file saving, terminal rendering, cursor movement, and input parsing.
+
+Those behaviors belong to other tests.
+
+A focused test makes failures easier to understand.
+
+If the test fails, the problem is likely somewhere in the behavior being examined rather than hidden inside a large sequence of unrelated operations.
+
+## Arrange, Act, Assert
+
+Many unit tests naturally follow three conceptual stages:
+
+```text
+Arrange
+   ↓
+Act
+   ↓
+Assert
+```
+
+### Arrange
+
+Create the initial state.
+
+```text
+Document:
+"Hello"
+```
+
+Cursor:
+
+```text
+row    = 0
+column = 2
+```
+
+### Act
+
+Perform the operation being tested.
+
+```text
+Insert 'X'
+```
+
+### Assert
+
+Check the resulting state.
+
+```text
+Document:
+"HeXllo"
+```
+
+and, where appropriate:
+
+```text
+Cursor:
+row    = 0
+column = 3
+```
+
+The important point is that the test describes a state transition rather than merely checking that a function returned successfully.
+
+For an editor, this distinction matters because many operations have multiple consequences.
+
+An insertion can change:
+
+- document contents,
+- cursor position,
+- dirty state,
+- undo history,
+- derived state.
+
+Not every one of these consequences necessarily belongs in the same unit test. The test should focus on the responsibility of the component being tested.
+
+For example, a Document test should primarily verify the resulting text. A higher-level command test can verify that an insertion command coordinates the Document and Cursor correctly.
+
+## Testing Boundaries
+
+Editor bugs frequently occur at boundaries rather than in ordinary cases.
+
+For example, cursor movement has important boundaries:
+
+```text
+Beginning of line
+        │
+        ▼
+"Hello"
+^
+0
+```
+
+and:
+
+```text
+"Hello"
+     ^
+     5
+```
+
+A unit test for horizontal movement should therefore examine positions such as:
+
+```text
+column = 0
+column = 1
+column = line_length - 1
+column = line_length
+```
+
+Similarly, a Document test should consider:
+
+```text
+Empty document
+One empty line
+One-character line
+Multiple lines
+Empty line between two lines
+Insertion at beginning
+Insertion at end
+Deletion at beginning
+Deletion at end
+```
+
+The purpose is not to create an enormous collection of arbitrary cases.
+
+The purpose is to test the boundaries implied by the component's rules.
+
+This follows directly from the editor's architecture. For example, the Cursor's movement model defines horizontal movement as remaining within the current line, while vertical movement must deal with lines of different lengths. Those rules create specific boundary conditions that can be expressed as unit tests.
+
+## Testing Invariants
+
+Unit tests should also verify invariants—conditions that must remain true whenever a component is in a valid state, such as a Cursor never moving past the end of its line. A single invariant can protect many different execution paths, and it remains useful during refactoring because the invariant does not change when the internal representation does. Invariants recur throughout this chapter; Section 35.14 collects the editor's full set and ties them to the ownership model, so this section only notes their role within a unit test.
+
+## What Unit Tests Should Not Test
+
+Unit tests become less useful when they cross too many architectural boundaries.
+
+For example, a test that:
+
+```text
+starts the editor
+        ↓
+puts the terminal into raw mode
+        ↓
+reads keyboard input
+        ↓
+parses an escape sequence
+        ↓
+moves the cursor
+        ↓
+renders the screen
+```
+
+is no longer a focused unit test.
+
+It may be a valuable integration or end-to-end test, but it is testing too many components to provide the diagnostic clarity expected from a unit test.
+
+Similarly, a Document unit test should not require:
+
+- a terminal,
+- terminal dimensions,
+- ANSI escape sequences,
+- keyboard input,
+- the Renderer,
+- the File Manager.
+
+The Document should be testable without any of them.
+
+The architecture explicitly establishes these boundaries. For example, the Document does not depend on the Renderer, and the File Manager does not depend on the Renderer.
+
+This gives us an important rule:
+
+> A unit test should require as little of the rest of the editor as possible.
+
+## Deterministic Unit Tests
+
+Unit tests should preferably be deterministic.
+
+Given the same initial state and the same input, the test should produce the same result every time.
+
+For example:
+
+```text
+Document = "Hello"
+Position = 2
+Operation = insert 'X'
+Expected = "HeXllo"
+```
+
+There is no reason for this test to depend on:
+
+- terminal size,
+- wall-clock time,
+- keyboard timing,
+- terminal emulator behavior,
+- filesystem state,
+- random values.
+
+Removing these dependencies makes the test fast and repeatable.
+
+This is especially important for the editor because terminal behavior and interactive input introduce external state that is unnecessary when testing purely logical components.
+
+## Testing Failure Conditions
+
+A unit test should not only verify successful operations.
+
+It should also verify how a component behaves when an operation cannot be performed.
+
+For example:
+
+```text
+Delete at beginning of document
+```
+
+should produce the behavior defined by the editor rather than corrupting state.
+
+Likewise:
+
+```text
+Move cursor left at column 0
+```
+
+should preserve the valid boundary.
+
+Testing these cases establishes that the component handles invalid or boundary operations according to its contract.
+
+The important distinction is between:
+
+```text
+Operation rejected safely
+```
+
+and:
+
+```text
+Operation causes invalid state
+```
+
+A well-designed component should make the former observable to its caller.
+
+## Unit Tests as Architectural Protection
+
+Unit tests do more than verify individual functions.
+
+They can also protect architectural decisions.
+
+Suppose the Document interface guarantees that callers manipulate logical text without knowing its internal representation.
+
+Tests written against that interface help preserve this boundary.
+
+Similarly, tests for the Input Parser can ensure that terminal escape sequences remain isolated from higher-level editor logic.
+
+Tests for the Cursor can protect its movement rules.
+
+Tests for the Viewport can protect the relationship between the logical document position and the visible region.
+
+In this way:
+
+```text
+Architecture
+     │
+     ▼
+Module Contract
+     │
+     ▼
+Unit Tests
+     │
+     ▼
+Future Refactoring
+```
+
+The tests become executable evidence of important design assumptions.
+
+If a later implementation change breaks one of those assumptions, the tests provide an early signal.
+
+## Unit Tests and Implementation Changes
+
+A good unit-test suite should make internal refactoring possible without requiring the entire test suite to be rewritten.
+
+Consider the Document representation.
+
+The project's baseline uses a vector of lines because it fits the editor's workload and keeps the implementation understandable. More advanced representations such as a gap buffer or piece table were studied earlier in Volume VI as alternatives.
+
+The higher-level behavior, however, does not need to change merely because the internal representation changes.
+
+Therefore, a useful test should prefer:
+
+```text
+document_insert(...)
+document_delete(...)
+document_get_line(...)
+```
+
+over assumptions such as:
+
+```text
+document.lines[3].characters[7]
+```
+
+when the latter exposes implementation details that callers should not depend upon.
+
+This gives the test suite a second role:
+
+> It verifies behavior while allowing implementation details to evolve behind stable interfaces.
+
+## A Practical Unit-Test Pattern
+
+For the editor, a useful mental model is:
+
+```text
+Create State
+     │
+     ▼
+Perform One Operation
+     │
+     ▼
+Observe Relevant State
+     │
+     ▼
+Compare With Expected State
+```
+
+For example:
+
+```text
+Initial:
+
+Document
+"Hello"
+
+Cursor
+row    = 0
+column = 2
+```
+
+Operation:
+
+```text
+Insert 'X'
+```
+
+Expected:
+
+```text
+Document
+"HeXllo"
+
+Cursor
+row    = 0
+column = 3
+```
+
+Another test might begin with:
+
+```text
+Document
+
+"Hello"
+"World"
+```
+
+and test deletion at a line boundary.
+
+Another might provide a raw escape sequence to the Input Parser:
+
+```text
+ESC [ A
+```
+
+and expect:
+
+```text
+KEY_ARROW_UP
+```
+
+Each test remains small because it answers a specific question about one part of the editor.
+
+Later, integration tests will combine these components and verify that their contracts work together.
+
+## The Role of Unit Testing in This Editor
+
+Unit testing is the foundation of the editor's testing strategy, but it is not the entire strategy.
+
+It is strongest where behavior can be isolated:
+
+```text
+Document
+Cursor
+Viewport
+Input Parser
+```
+
+It is weaker for behavior whose correctness depends on several components interacting.
+
+For example:
+
+```text
+Ctrl+S
+  │
+  ▼
+Input Parser
+  │
+  ▼
+Input Engine
+  │
+  ▼
+Command Engine
+  │
+  ▼
+File Manager
+  │
+  ▼
+File System
+```
+
+A unit test for any one of these components cannot establish that the entire save workflow works correctly.
+
+That is why unit testing must be followed by integration and end-to-end testing.
+
+The testing levels complement one another:
+
+```text
+                 End-to-End
+                     ▲
+                     │
+                Integration
+                     ▲
+                     │
+                    Unit
+```
+
+Unit tests establish confidence in individual building blocks.
+
+Integration tests establish confidence in the connections between those blocks.
+
+End-to-end tests establish confidence in complete user-visible workflows.
+
+Together, they provide stronger evidence than any one level could provide alone.
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+> Unit testing verifies a component in isolation; it should test the component's contract, boundaries, failure behavior, and invariants without unnecessarily involving the rest of the editor.
+
+This is especially valuable in our architecture because clear module boundaries make isolation practical. The editor is deliberately divided into components with focused responsibilities, allowing tests to examine those responsibilities independently before higher-level tests examine their interaction.
+
+</Aside>
+
+## Summary
+
+Unit testing verifies a component in isolation through its public interface. A good unit test is focused, deterministic, and tests the component's contract, boundaries, failure behavior, and invariants while requiring as little of the rest of the editor as possible, which also protects architectural decisions and allows implementation details to evolve.
+
+Following Arrange, Act, Assert keeps each test centered on a single state transition rather than on unrelated consequences. Because the test calls documented operations such as `document_insert` instead of internal arrays, it remains valid when the representation changes.
+
+The next section applies unit testing to the most important component of the editor: **Section 35.4, Testing the Document**.

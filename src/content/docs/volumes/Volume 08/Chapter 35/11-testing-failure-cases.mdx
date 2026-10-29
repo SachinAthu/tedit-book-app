@@ -1,0 +1,688 @@
+---
+title: "35.11 Testing Failure Cases"
+description: "Explains failure-case testing for invalid commands and positions, file and save failures, malformed input, configuration errors, and terminal failures, with state preservation as the goal."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+A reliable editor must be tested not only when operations succeed, but also when they fail.
+
+File operations can fail. Input can be malformed. Configuration can be invalid. A command can be issued in a state where it is not applicable. Terminal operations can fail or behave unexpectedly.
+
+These conditions are part of the editor's operating environment.
+
+A system that behaves correctly only along the successful path is incomplete.
+
+The general pattern is:
+
+```text
+Normal condition
+      │
+      ▼
+Operation requested
+      │
+      ▼
+Failure occurs
+      │
+      ▼
+Editor preserves valid state
+      │
+      ▼
+Failure is communicated
+      │
+      ▼
+Editor remains usable when possible
+```
+
+Failure-case testing verifies these properties explicitly.
+
+## Why Failure Cases Matter
+
+Successful operations often follow the expected path:
+
+```text
+Input
+  │
+  ▼
+Command
+  │
+  ▼
+State change
+  │
+  ▼
+Success
+```
+
+Failure paths are different:
+
+```text
+Input
+  │
+  ▼
+Command
+  │
+  ▼
+Operation fails
+  │
+  ├──► What state remains?
+  ├──► What information is reported?
+  └──► Can the editor continue?
+```
+
+The most important questions are therefore not simply whether the operation failed.
+
+They are:
+
+- Was the existing valid state preserved?
+- Was the failure detected?
+- Was the failure reported appropriately?
+- Was partially applied state avoided?
+- Can the user recover?
+- Did the failure leave unrelated state unchanged?
+
+These questions are especially important for operations that can affect user data.
+
+## Failure Testing and Invariants
+
+Failure tests should be connected to the invariants established throughout the editor architecture.
+
+For example, a failed save should not cause:
+
+```text
+Dirty Flag = clean
+```
+
+when the document has not actually been persisted successfully.
+
+The expected relationship is:
+
+```text
+Modified Document
+      │
+      ▼
+Save Attempt
+      │
+      ▼
+Failure
+      │
+      ├──► Document remains unchanged
+      ├──► Dirty Flag remains set
+      └──► Failure is reported
+```
+
+Likewise, malformed input should not leave the Input Parser in an invalid state.
+
+A failed operation should therefore be tested not only for its immediate error, but also for preservation of the relevant invariants.
+
+## Testing Invalid Commands
+
+Some commands are invalid in particular states.
+
+For example, an operation that requires a previous line cannot perform a line merge when the Cursor is already on the first line.
+
+The test should establish the boundary condition:
+
+```text
+Document:
+    line 1
+    line 2
+
+Cursor:
+    row = 0
+```
+
+Then issue the command.
+
+The expected result may be that:
+
+- the Document is unchanged;
+- the Cursor is unchanged;
+- no invalid state is created;
+- an appropriate message may be produced if the command design requires one.
+
+The exact response should follow the command contract established by the editor architecture.
+
+The important point is that an invalid operation must not corrupt valid state.
+
+## Testing Invalid Positions
+
+The Document and Cursor boundaries should also be tested against invalid positions.
+
+Examples include:
+
+```text
+row < 0
+row >= number_of_lines
+column < 0
+column > line_length
+```
+
+If an API accepts positions directly, failure behavior should be defined and tested.
+
+For example:
+
+```text
+Invalid position
+      │
+      ▼
+Operation rejected
+      │
+      ▼
+Document unchanged
+```
+
+The editor should not rely on accidental behavior such as accessing memory outside a valid array or silently modifying another line.
+
+Failure tests therefore reinforce the same boundary conditions tested by the normal Document and Cursor tests.
+
+## Testing File-Open Failures
+
+Opening a file is an operation outside the editor's complete control.
+
+The file may:
+
+- not exist;
+- be inaccessible;
+- be a directory instead of a regular file;
+- contain data that cannot be handled by the current implementation;
+- become unavailable during the operation.
+
+A failure test should verify what happens when loading cannot be completed.
+
+A useful state transition is:
+
+```text
+Request Open
+      │
+      ▼
+File Manager attempts load
+      │
+      ▼
+Failure
+      │
+      ├──► Existing valid state preserved
+      └──► Failure reported
+```
+
+The editor should not replace an existing valid editing context with partially loaded or invalid data simply because an open operation failed.
+
+The exact recovery behavior depends on the command design, but the failure should remain explicit.
+
+## Testing Save Failures
+
+Save failures deserve special attention because they can affect the user's data.
+
+A save operation can fail at different stages.
+
+Conceptually:
+
+```text
+Encode document
+      │
+      ▼
+Create temporary file
+      │
+      ▼
+Write data
+      │
+      ▼
+Finalize temporary file
+      │
+      ▼
+Replace destination
+```
+
+A failure can occur at any of these stages.
+
+The test should verify that failure does not incorrectly transition the Buffer into a clean state.
+
+For example:
+
+```text
+Dirty Buffer
+     │
+     ▼
+Save
+     │
+     ▼
+Write failure
+     │
+     ▼
+Dirty Buffer
+```
+
+The Message Bar or other designated reporting mechanism should also communicate the failure according to the editor's error-reporting design.
+
+## Testing Temporary-File Failures
+
+The safe-save architecture uses a temporary file before replacing the destination.
+
+Therefore, failure during temporary-file creation or writing should be considered separately from successful saving.
+
+A representative test is:
+
+```text
+Existing file
+     │
+     ▼
+Modified Buffer
+     │
+     ▼
+Temporary-file creation/write fails
+     │
+     ▼
+Original destination remains protected
+     │
+     ▼
+Buffer remains dirty
+```
+
+The exact filesystem behavior depends on how the File Manager is implemented, but the test should verify the guarantees promised by the safe-save design.
+
+In particular, the test should distinguish between:
+
+```text
+save failed
+```
+
+and:
+
+```text
+save succeeded
+```
+
+The editor must not report success merely because the save command was executed.
+
+## Testing Replacement Failures
+
+The final replacement step is another failure boundary.
+
+A simplified save sequence is:
+
+```text
+Document
+   │
+   ▼
+Temporary file
+   │
+   ▼
+Atomic replacement
+   │
+   ▼
+Destination
+```
+
+If replacement fails, the Buffer must not be treated as successfully saved.
+
+A regression or failure test can verify:
+
+```text
+Replacement fails
+      │
+      ▼
+Dirty Flag remains set
+      │
+      ▼
+Editor reports failure
+```
+
+Where the safe-save contract provides stronger guarantees about the original destination, those guarantees should also be tested.
+
+## Testing Partial Operations
+
+A particularly dangerous failure is one that leaves the editor in a partially modified state.
+
+For example:
+
+```text
+Operation begins
+      │
+      ▼
+First state change succeeds
+      │
+      ▼
+Second required change fails
+      │
+      ▼
+Partially modified state
+```
+
+Whenever an operation is intended to be atomic at the editor-state level, failure testing should verify that the operation either completes according to its contract or leaves the state in a valid condition.
+
+This does not mean every editor operation must be transactional.
+
+It means that the intended state-transition contract must be explicit.
+
+For simple in-memory operations, the implementation may be able to validate conditions before modifying the Document.
+
+For more complex operations, the architecture may require a different strategy.
+
+The test should follow the actual contract rather than assuming a stronger guarantee than the design provides.
+
+## Testing Malformed Input
+
+The Input Parser operates on an external byte stream.
+
+External input cannot always be assumed to be valid.
+
+For example:
+
+```text
+ESC
+```
+
+may begin an escape sequence, but the expected continuation may never arrive.
+
+Likewise:
+
+```text
+ESC [ X
+```
+
+may not represent a recognized sequence.
+
+Failure-case tests should verify that malformed or incomplete input does not permanently corrupt parser state.
+
+A useful sequence is:
+
+```text
+Malformed input
+      │
+      ▼
+Parser rejects or handles it
+      │
+      ▼
+Parser returns to a valid state
+      │
+      ▼
+Next valid input is processed correctly
+```
+
+The final step is important.
+
+A parser that rejects invalid input but becomes permanently unusable is still incorrect.
+
+## Testing Recovery After Failure
+
+Failure handling should include recovery where recovery is part of the editor's design.
+
+For example:
+
+```text
+Invalid input
+      │
+      ▼
+Error handled
+      │
+      ▼
+Valid input
+      │
+      ▼
+Normal command execution
+```
+
+Similarly:
+
+```text
+Save fails
+      │
+      ▼
+Failure reported
+      │
+      ▼
+User continues editing
+      │
+      ▼
+Save attempted again
+```
+
+The second operation should begin from a valid editor state.
+
+Recovery tests are particularly useful because some failures do not become visible until the next operation.
+
+## Testing Configuration Failures
+
+Configuration is processed during startup and is validated before becoming effective Editor State.
+
+Therefore invalid configuration should be tested explicitly.
+
+Examples include:
+
+- invalid Tab width;
+- malformed key binding;
+- unknown configuration value;
+- conflicting configuration;
+- invalid command-line override.
+
+The expected behavior follows the configuration policy:
+
+```text
+Configuration
+      │
+      ▼
+Validation
+      │
+      ├──► Valid ──► Editor starts
+      │
+      └──► Invalid
+              │
+              ▼
+          Startup fails
+          with useful error
+```
+
+The important property is that invalid configuration must not silently enter Editor State.
+
+## Testing Terminal Failures
+
+Terminal operations are also external operations.
+
+The editor depends on the terminal for:
+
+- changing terminal modes;
+- obtaining terminal dimensions;
+- reading input;
+- writing output;
+- restoring terminal state.
+
+Not every terminal failure needs a dedicated automated test at every layer.
+
+However, important failure behavior should be considered.
+
+For example, if terminal initialization fails, the editor should not proceed as though Raw Mode had been successfully established.
+
+Likewise, shutdown should attempt to restore the terminal state even when the editor is leaving because of an error.
+
+The precise guarantees depend on the terminal interface design.
+
+## Testing Errors Without Corrupting Unrelated State
+
+A failure in one subsystem should not unnecessarily modify unrelated state.
+
+For example:
+
+```text
+Save fails
+   │
+   ├──► Document: unchanged
+   ├──► Dirty Flag: remains set
+   ├──► Cursor: unchanged
+   ├──► Viewport: unchanged
+   └──► Buffer identity: unchanged
+```
+
+The exact list depends on the operation, but the principle is general.
+
+Failure handling should have a defined scope.
+
+A test can therefore compare state before and after a failed operation:
+
+```text
+State Before
+     │
+     ▼
+Failing Operation
+     │
+     ▼
+State After
+     │
+     ▼
+Compare relevant invariants
+```
+
+This is often more informative than checking only an error message.
+
+## Testing Error Messages
+
+Failure messages are part of the user-visible behavior, but tests should avoid coupling themselves unnecessarily to presentation details.
+
+For example, if the requirement is that a save failure is communicated through the Message Bar, a test can verify that an appropriate failure message is produced.
+
+It may not need to require an exact punctuation mark or wording unless the wording itself is part of the contract.
+
+This distinction keeps tests focused on behavior:
+
+```text
+Required:
+    Save failure is communicated.
+
+Usually unnecessary:
+    Exact wording of every character.
+```
+
+If a particular message format is intentionally specified, however, that format becomes part of the behavior that can be tested.
+
+## Testing Failure Boundaries Systematically
+
+A useful approach is to identify every operation with an external dependency and ask where it can fail.
+
+For example:
+
+```text
+File Manager
+    │
+    ├──► Open
+    ├──► Read
+    ├──► Create temporary file
+    ├──► Write
+    └──► Replace
+
+Terminal Interface
+    │
+    ├──► Enter Raw Mode
+    ├──► Read input
+    ├──► Write output
+    └──► Restore terminal
+
+Configuration
+    │
+    ├──► Parse
+    └──► Validate
+```
+
+Each meaningful failure boundary should have an expected behavior.
+
+This produces a useful test-design process:
+
+```text
+Operation
+    │
+    ▼
+Identify failure points
+    │
+    ▼
+Define expected state
+    │
+    ▼
+Define reporting behavior
+    │
+    ▼
+Define recovery behavior
+    │
+    ▼
+Write test
+```
+
+## Failure Testing and Data Preservation
+
+For a text editor, failure testing has a particularly important purpose: protecting user data.
+
+The editor should be designed so that failures do not silently turn uncertainty into apparent success.
+
+For example:
+
+```text
+Unknown save result
+       │
+       ▼
+Do not assume clean state
+```
+
+Likewise, when opening or replacing files:
+
+```text
+Operation incomplete
+       │
+       ▼
+Do not pretend the complete operation succeeded
+```
+
+This principle is more important than producing a friendly error message.
+
+A clear error is useful, but preserving valid state is essential.
+
+## Failure Cases Should Become Regression Tests
+
+When a failure reveals a defect, the resulting test should normally remain in the regression suite. Section 35.10 describes this in full: the test reproduces the failure, is kept permanently, and the suite gradually accumulates protection around the failure modes that have proven important in the actual editor.
+
+## The Role of Failure-Case Testing in This Editor
+
+Failure handling is not a separate feature added after successful behavior has been implemented.
+
+It is part of defining correct behavior.
+
+For every important operation, the editor should have an answer to three questions:
+
+```text
+What happens when it succeeds?
+What happens when it fails?
+What state remains after failure?
+```
+
+For operations involving external resources, a fourth question is often necessary:
+
+```text
+Can the editor recover and continue?
+```
+
+These questions should be reflected in the tests.
+
+A robust test suite therefore covers both paths:
+
+```text
+                Operation
+                   │
+          ┌────────┴────────┐
+          ▼                 ▼
+       Success            Failure
+          │                 │
+          ▼                 ▼
+    Expected state     Valid state preserved
+          │                 │
+          ▼                 ▼
+    Continue normally   Report / recover
+```
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+Failure-case testing verifies that the editor detects failed operations, preserves valid state, communicates the failure through the appropriate boundary, and recovers when the architecture permits recovery.
+
+</Aside>
+
+## Summary
+
+Failure-case testing verifies that the editor behaves correctly when operations cannot complete: invalid commands and positions, file and save failures, malformed input, configuration errors, and terminal failures. It confirms that failures are detected, valid state is preserved, unrelated state is untouched, and recovery paths work.
+
+Each external operation should be examined for its failure points, and the test should compare relevant state before and after the failure rather than checking only an error message. A failed save, in particular, must not clear the Dirty Flag or treat uncertainty as success.
+
+The next section explains how to organize this growing test suite: **Section 35.12, Test Organization**.

@@ -1,0 +1,973 @@
+---
+title: "35.8 Integration Testing"
+description: "Explains integration testing across architectural boundaries, verifying that parsers, engines, state, buffers, files, and the renderer honor their contracts and coordinate correctly."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Unit tests establish confidence in individual components.
+
+They do not establish that those components work correctly when connected.
+
+The editor is a layered system in which information moves through several boundaries:
+
+```text
+Input Parser
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command Engine
+      │
+      ▼
+Editor State
+      │
+      ├── Document
+      ├── Cursor
+      └── Viewport
+             │
+             ▼
+          Renderer
+```
+
+Integration testing verifies these connections.
+
+The central question changes from:
+
+> Does this component work correctly by itself?
+
+to:
+
+> Do these components interpret and use each other's results correctly?
+
+This distinction is important because a component can pass all of its unit tests while the integration between two components is still incorrect.
+
+For example, the Input Parser may correctly produce:
+
+```text
+KEY_ARROW_LEFT
+```
+
+and the Input Engine may correctly know how to map that event to:
+
+```text
+MOVE_CURSOR_LEFT
+```
+
+but the connection between the two can still be wrong.
+
+Integration testing provides evidence that the components agree on their interfaces and contracts.
+
+## What Integration Testing Means for This Editor
+
+Integration testing should focus on meaningful architectural boundaries.
+
+Important boundaries include:
+
+```text
+Input Parser → Input Engine
+Input Engine → Command Engine
+Command Engine → Editor State
+Command Engine → Document / Cursor / Viewport
+File Manager → Document / Buffer
+Renderer → Editor Screen Buffer
+```
+
+The architecture deliberately separates these responsibilities.
+
+The Input Parser handles terminal-specific byte interpretation, while the Input Engine translates abstract key events into commands. The Command Engine then executes those commands against editor state.
+
+An integration test verifies that the handoff between these components preserves the intended meaning.
+
+## Testing the Input Parser and Input Engine
+
+Consider the sequence:
+
+```text
+ESC [ D
+```
+
+The Input Parser should produce:
+
+```text
+KEY_ARROW_LEFT
+```
+
+The Input Engine should then map that event to:
+
+```text
+MOVE_CURSOR_LEFT
+```
+
+The integration test can therefore verify:
+
+```text
+Raw Bytes
+    │
+    ▼
+Input Parser
+    │
+    ▼
+KEY_ARROW_LEFT
+    │
+    ▼
+Input Engine
+    │
+    ▼
+MOVE_CURSOR_LEFT
+```
+
+The test is no longer concerned only with whether the parser recognizes the escape sequence.
+
+It verifies that the event produced by the parser is understood correctly by the next component.
+
+This catches interface mismatches such as:
+
+```text
+Parser produces:
+KEY_LEFT
+
+Input Engine expects:
+KEY_ARROW_LEFT
+```
+
+Both components could individually appear reasonable while their integration is broken.
+
+## Testing the Input Engine and Command Engine
+
+The next boundary is:
+
+```text
+Key Event
+    │
+    ▼
+Input Engine
+    │
+    ▼
+Command
+    │
+    ▼
+Command Engine
+```
+
+For example:
+
+```text
+KEY_ARROW_LEFT
+```
+
+should result in the appropriate cursor-movement command according to the editor's key-binding policy.
+
+The integration test should verify that the expected command reaches the Command Engine.
+
+It should not necessarily test the complete terminal path.
+
+A useful test might therefore begin with:
+
+```text
+KEY_ARROW_LEFT
+```
+
+rather than:
+
+```text
+ESC [ D
+```
+
+if the purpose is specifically to test the Input Engine → Command Engine boundary.
+
+This keeps the test focused.
+
+The parser has already been tested independently.
+
+## Testing Commands Against Editor State
+
+The Command Engine represents another important integration boundary.
+
+A command such as:
+
+```text
+MOVE_CURSOR_LEFT
+```
+
+should cause the appropriate change to the Cursor.
+
+Similarly:
+
+```text
+INSERT_CHARACTER
+```
+
+should coordinate the Document and Cursor according to the editor's command semantics.
+
+Conceptually:
+
+```text
+Command
+   │
+   ▼
+Command Engine
+   │
+   ├──────────────┐
+   ▼              ▼
+Document        Cursor
+```
+
+An integration test can therefore verify the complete state transition.
+
+For example:
+
+```text
+Initial:
+
+Document = "Hello"
+Cursor   = column 2
+```
+
+Execute:
+
+```text
+MOVE_CURSOR_LEFT
+```
+
+Expected:
+
+```text
+Document = "Hello"
+Cursor   = column 1
+```
+
+The Document should remain unchanged.
+
+This test verifies not only that the command executes, but that it changes the correct piece of state.
+
+## Testing Commands That Affect Multiple Components
+
+Some commands naturally cross more than one state boundary.
+
+Consider inserting a character.
+
+A simplified workflow is:
+
+```text
+INSERT_CHARACTER('X')
+        │
+        ▼
+Command Engine
+        │
+        ├───────────────┐
+        ▼               ▼
+    Document          Cursor
+        │               │
+        ▼               ▼
+    text changed    position changed
+```
+
+An integration test should verify both relevant results.
+
+For example:
+
+```text
+Initial:
+
+Document = "Hello"
+Cursor   = column 2
+```
+
+Execute:
+
+```text
+INSERT_CHARACTER('X')
+```
+
+Expected:
+
+```text
+Document = "HeXllo"
+Cursor   = column 3
+```
+
+The test is valuable because the operation crosses a component boundary.
+
+A Document unit test can verify insertion independently.
+
+A Cursor unit test can verify movement independently.
+
+The integration test verifies that the command correctly coordinates them.
+
+## Testing Editing at Line Boundaries
+
+Line-oriented commands provide particularly useful integration cases.
+
+Suppose:
+
+```text
+Document:
+"HelloWorld"
+
+Cursor:
+column = 5
+```
+
+Executing a line-splitting command should produce:
+
+```text
+Document:
+"Hello"
+"World"
+```
+
+and update the Cursor according to the editor's defined behavior.
+
+This verifies a chain such as:
+
+```text
+Command
+   │
+   ▼
+Command Engine
+   │
+   ├── Document split
+   │
+   └── Cursor adjustment
+```
+
+The Document unit tests establish that splitting works.
+
+The Cursor unit tests establish that cursor positions are valid.
+
+The integration test establishes that the two operations are coordinated correctly.
+
+## Testing Cursor and Viewport Integration
+
+The Cursor and Viewport are separate components, but they are closely related.
+
+A Cursor can move to a logical position that is outside the currently visible region.
+
+The Viewport must then adjust when required.
+
+For example:
+
+```text
+Document
+many rows
+
+Cursor:
+row = 50
+
+Viewport:
+row = 45
+height = 5
+```
+
+If the visible region ends before the Cursor, the Viewport must be adjusted.
+
+Conceptually:
+
+```text
+Cursor movement
+      │
+      ▼
+Cursor position changes
+      │
+      ▼
+Viewport checks visibility
+      │
+      ▼
+Viewport adjusts
+```
+
+This is an integration test because the behavior depends on the interaction between two pieces of state.
+
+The test should verify:
+
+```text
+Cursor remains at expected logical position
+Viewport makes Cursor visible
+```
+
+It should not yet verify how the Renderer subsequently draws that state.
+
+## Testing Document and Buffer State
+
+The multi-buffer architecture introduces another important boundary.
+
+The Document contains the logical text, while the Buffer represents the broader editing context associated with that Document.
+
+The Buffer owns state such as:
+
+```text
+Document
+File association
+Dirty Flag
+Undo history
+Search state
+Syntax-related state
+```
+
+Therefore, editing the Document through a command should have consequences at the Buffer level.
+
+For example:
+
+```text
+Initial:
+Buffer dirty = false
+
+Edit Document
+
+Expected:
+Buffer dirty = true
+```
+
+This is not purely a Document test.
+
+The Document test verifies that the text changed.
+
+The integration test verifies that the editing context recognizes the modification.
+
+This distinction becomes increasingly important as the editor supports multiple buffers.
+
+## Testing Buffer Switching
+
+With multiple buffers, integration testing must also verify that switching editing contexts preserves their independent state.
+
+Consider:
+
+```text
+Buffer A
+Document = "Alpha"
+
+Buffer B
+Document = "Beta"
+```
+
+Suppose the Cursor and other view state are associated with the current Window.
+
+The test can perform:
+
+```text
+Activate Buffer A
+Modify A
+
+Switch to Buffer B
+Modify B
+
+Return to Buffer A
+```
+
+The expected result is:
+
+```text
+Buffer A
+  └── retains its modified document
+
+Buffer B
+  └── retains its modified document
+```
+
+The purpose is to verify the Buffer Manager and state ownership boundaries rather than the internal implementation of either Document.
+
+This is especially important because the multi-buffer architecture deliberately avoids treating the active buffer as an independent editor-wide state variable. The active Buffer is derived from the active Window in the active Tab.
+
+## Testing Multiple Views of One Buffer
+
+The architecture also permits more than one Window to display the same Buffer.
+
+This creates a useful integration case:
+
+```text
+              Buffer
+             /      \
+            /        \
+        Window A   Window B
+```
+
+Each Window has its own view state.
+
+Therefore, changing the Cursor or Viewport of one Window should not accidentally overwrite the corresponding view state of another Window displaying the same Buffer.
+
+A test can establish:
+
+```text
+Window A → Buffer A
+Window B → Buffer A
+```
+
+with different view positions.
+
+Then:
+
+```text
+Move Cursor in Window A
+```
+
+and verify that:
+
+```text
+Window A
+  → changes its view state
+
+Window B
+  → retains its own view state
+```
+
+The shared Document should remain the same underlying logical text.
+
+This is a particularly valuable integration test because it verifies the ownership boundaries introduced by the multi-window architecture.
+
+## Testing the File Manager Boundary
+
+The File Manager forms the editor's boundary with the file system.
+
+An integration test can verify:
+
+```text
+Buffer / Document
+       │
+       ▼
+File Manager
+       │
+       ▼
+File System
+```
+
+For example, a test can establish an in-memory document:
+
+```text
+"Hello"
+"World"
+```
+
+save it through the File Manager, and then load it again.
+
+The expected logical Document should be equivalent to the original.
+
+This tests more than the Document alone.
+
+It verifies the integration between:
+
+```text
+Document representation
+        │
+        ▼
+File encoding
+        │
+        ▼
+File system
+        │
+        ▼
+Document reconstruction
+```
+
+The File Manager is intentionally the single file-system boundary in the architecture, so this is the appropriate place to test that contract.
+
+## Testing Line-End Conversion
+
+The file boundary also provides a useful integration test for line endings.
+
+The internal Document uses logical lines without storing line-ending bytes.
+
+The File Manager handles conversion at the file boundary.
+
+Therefore, an integration test can provide a file containing:
+
+```text
+line one\r\n
+line two\r\n
+```
+
+and verify that loading produces the same logical state as:
+
+```text
+line one
+line two
+```
+
+The test can then save the Document using the editor's canonical output policy and verify the resulting file representation.
+
+The important boundary is:
+
+```text
+File bytes
+    │
+    ▼
+File Manager
+    │
+    ▼
+Logical Document
+```
+
+The test should not duplicate the Document's internal line representation tests.
+
+It verifies that the two representations are connected correctly.
+
+## Testing Save Failure and Dirty State
+
+Save failure is another important integration case: when the File Manager fails during persistence, the architecture specifies that the Dirty Flag remains set until the final replacement succeeds. An integration test establishes this state transition across the File Manager boundary:
+
+```text
+Initial:  Buffer dirty = true
+Save fails → File Manager reports failure
+Expected: Buffer dirty = true
+```
+
+The detailed treatment of save, temporary-file, and replacement failures—and the recovery that follows them—is covered in Section 35.11. Here it is enough to note that a failed persistence operation must not make the editor appear clean.
+
+## Testing the Renderer and the Editor Screen Buffer
+
+The Renderer also has an important integration boundary.
+
+The Renderer constructs a frame from Editor State and writes it into the Editor Screen Buffer before terminal output.
+
+A useful integration test can verify:
+
+```text
+Editor State
+     │
+     ▼
+Renderer
+     │
+     ▼
+Editor Screen Buffer
+```
+
+For example, given:
+
+```text
+Document:
+"Hello"
+
+Cursor:
+row    = 0
+column = 2
+```
+
+the Renderer should place the expected visible characters and cursor representation into the appropriate screen-buffer locations.
+
+This test does not need to verify the terminal itself.
+
+It verifies that the Renderer correctly consumes editor state and produces the intermediate screen representation.
+
+The Editor Screen Buffer architecture deliberately provides this intermediate boundary, making such testing possible without coupling every rendering test to terminal I/O.
+
+## Testing the Renderer Without the Terminal
+
+Terminal output should remain outside most Renderer integration tests.
+
+Instead of:
+
+```text
+Renderer
+   │
+   ▼
+stdout
+   │
+   ▼
+PTY
+   │
+   ▼
+Terminal emulator
+```
+
+an integration test can stop at:
+
+```text
+Renderer
+   │
+   ▼
+Editor Screen Buffer
+```
+
+This makes the test deterministic.
+
+It can inspect:
+
+```text
+screen cell contents
+screen positions
+cursor representation
+status bar region
+message bar region
+```
+
+without requiring a particular terminal emulator.
+
+Actual terminal behavior can be covered later by end-to-end testing.
+
+## Testing Architectural Contracts
+
+Integration tests should deliberately verify important architectural contracts.
+
+Examples include:
+
+```text
+Input Parser produces events, not commands.
+Input Engine produces commands, not Document mutations.
+Command Engine coordinates state changes.
+Document does not render itself.
+Renderer does not modify the Document.
+File Manager is responsible for file-system access.
+Viewport manages visibility rather than text content.
+```
+
+These are not merely implementation preferences.
+
+They define how the system is divided into cooperating components.
+
+An integration test can detect violations indirectly.
+
+For example, if a Renderer test requires the Document to be modified before rendering can occur, that may indicate that rendering has acquired an inappropriate responsibility.
+
+Similarly, if the Input Parser must know about the Cursor to produce an event, the boundary between parsing and editor behavior has been compromised.
+
+Testing therefore provides evidence not only about functional correctness but also about whether architectural boundaries remain usable.
+
+## Testing One Boundary at a Time
+
+Integration tests should remain focused just as unit tests do.
+
+A test covering:
+
+```text
+Input Parser
+   ↓
+Input Engine
+   ↓
+Command Engine
+   ↓
+Document
+   ↓
+Renderer
+   ↓
+Terminal
+```
+
+may be valuable, but it is no longer a small integration test.
+
+It becomes closer to an end-to-end workflow test.
+
+Instead, integration tests should preferably cover a meaningful boundary or small chain:
+
+```text
+Input Parser → Input Engine
+```
+
+or:
+
+```text
+Input Engine → Command Engine → Cursor
+```
+
+or:
+
+```text
+Command Engine → Document + Buffer
+```
+
+or:
+
+```text
+Renderer → Editor Screen Buffer
+```
+
+This provides better diagnostic information.
+
+When the test fails, the failing boundary is easier to identify.
+
+## Testing Integration Failures
+
+Integration tests should intentionally include cases where components disagree or where an operation fails.
+
+Examples include:
+
+```text
+Unknown key event
+Invalid command
+Document operation rejected
+File save failure
+Buffer close with unsaved changes
+Invalid viewport dimensions
+```
+
+The purpose is to verify that the failure is propagated through the architecture correctly.
+
+For example:
+
+```text
+File Manager failure
+       │
+       ▼
+Command Engine
+       │
+       ▼
+Buffer remains dirty
+       │
+       ▼
+Message available to user
+```
+
+The exact presentation of the message belongs to the appropriate UI layer, but the integration test can establish that failure does not silently become success.
+
+## Integration Tests and Test Doubles
+
+Some integrations involve external dependencies that are undesirable in every test.
+
+For example, testing save behavior against the real file system can make tests slower or less predictable.
+
+A controlled test implementation can represent the file-system boundary while allowing the rest of the integration to be exercised.
+
+Conceptually:
+
+```text
+Command Engine
+       │
+       ▼
+File Manager Interface
+       │
+       ▼
+Controlled Test Environment
+```
+
+The important principle is not to introduce test infrastructure merely for its own sake.
+
+A test double is useful when it allows the test to isolate a particular integration behavior while controlling an otherwise external dependency.
+
+For example, a simulated save failure can make it straightforward to verify:
+
+```text
+save fails
+   ↓
+Dirty Flag remains set
+```
+
+without depending on a particular accidental file-system failure.
+
+## A Practical Integration Test Pattern
+
+A useful integration test can be expressed as:
+
+```text
+Arrange
+   │
+   ▼
+Connect Components
+   │
+   ▼
+Provide Input
+   │
+   ▼
+Observe State Transition
+   │
+   ▼
+Assert Cross-Component Result
+```
+
+For example:
+
+```text
+Arrange:
+
+Document = "Hello"
+Cursor   = column 2
+```
+
+Provide:
+
+```text
+KEY_CHARACTER('X')
+```
+
+Then:
+
+```text
+Input Engine
+      │
+      ▼
+INSERT_CHARACTER('X')
+      │
+      ▼
+Command Engine
+      │
+      ├── Document
+      └── Cursor
+```
+
+Expected:
+
+```text
+Document = "HeXllo"
+Cursor   = column 3
+```
+
+This test verifies the connection between several components while remaining independent of the terminal.
+
+## Integration Test Coverage
+
+A practical integration test plan can be organized around architectural boundaries:
+
+| Integration Boundary            | Example                                        |
+| ------------------------------- | ---------------------------------------------- |
+| Input Parser → Input Engine     | Arrow-key event becomes movement command       |
+| Input Engine → Command Engine   | Key binding produces correct command           |
+| Command Engine → Document       | Insert/delete command modifies text            |
+| Command Engine → Cursor         | Movement/editing updates logical position      |
+| Cursor → Viewport               | Cursor leaving visible region causes scrolling |
+| Command Engine → Buffer         | Editing changes Dirty Flag                     |
+| Buffer → File Manager           | Save updates persistence state                 |
+| File Manager → File System      | Logical document is serialized and loaded      |
+| Renderer → Editor Screen Buffer | Editor state produces correct frame            |
+| Buffer Manager → Windows        | Buffer switching preserves editing contexts    |
+
+The purpose of the table is not to prescribe one test per row.
+
+It identifies the important contracts that deserve explicit verification.
+
+## What Integration Tests Establish
+
+A successful integration test suite provides evidence that:
+
+```text
+Components understand each other's interfaces
+             │
+             ▼
+Events become the intended commands
+             │
+             ▼
+Commands modify the intended state
+             │
+             ▼
+Related state remains synchronized
+             │
+             ▼
+Persistence state reflects editing results
+             │
+             ▼
+Rendering consumes editor state correctly
+```
+
+This is stronger evidence than unit testing alone.
+
+However, integration testing still does not establish that the complete application behaves correctly from the user's perspective.
+
+For example, an Input Parser → Input Engine test may prove that an arrow-key sequence becomes the correct command, but it does not prove that a real terminal delivers that sequence correctly under all conditions.
+
+Likewise, a Renderer → Editor Screen Buffer test does not prove that a terminal emulator displays the resulting bytes exactly as expected.
+
+Those questions belong to end-to-end testing.
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+> Integration testing verifies the contracts between editor components: test meaningful boundaries and state transitions without unnecessarily expanding each test into a complete application workflow.
+
+The editor's architecture makes this possible because responsibilities are deliberately separated. Unit tests establish confidence within components, while integration tests establish confidence across the boundaries that connect them. The next level, end-to-end testing, will verify complete user-visible workflows through the assembled editor.
+
+</Aside>
+
+## Summary
+
+Integration testing verifies the contracts and state transitions between editor components—input parsing, command execution, state ownership, file operations, and rendering. It catches interface mismatches that unit tests cannot and is strongest when it tests one meaningful boundary at a time.
+
+Useful cases include a key event becoming the intended command, an insert command updating both Document and Cursor, a failed save leaving the Buffer dirty, and a buffer switch preserving each editing context. Test doubles are appropriate at external boundaries such as the file system, but they should not replace the real integration being examined.
+
+The next section extends this verification to the complete editor: **Section 35.9, End-to-End Testing**.

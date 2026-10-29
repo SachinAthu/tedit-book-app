@@ -1,0 +1,876 @@
+---
+title: "35.6 Testing the Viewport"
+description: "Explains how to test the Viewport's visibility management, covering offsets, cursor containment, scroll boundaries, horizontal scrolling, and terminal resizing without rendering."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The Viewport determines which portion of the Document is currently visible in the terminal.
+
+The Cursor identifies a logical editing position, but the Cursor alone does not determine what the user can see.
+
+For example, the Cursor may be located on document row `100` while the terminal is only tall enough to display a small range of rows.
+
+The Viewport bridges this difference:
+
+```text
+Document
+   │
+   │ large logical document
+   ▼
+Viewport
+   │
+   │ visible region
+   ▼
+Terminal
+```
+
+Testing the Viewport therefore focuses on whether the visible region remains consistent with the Cursor, Document, and terminal dimensions.
+
+The Viewport should be tested independently from the Renderer.
+
+A Viewport test should determine **which document region should be visible**, not whether the Renderer produces the correct ANSI escape sequences or screen cells.
+
+## The Viewport as State
+
+The Viewport maintains offsets describing the beginning of the visible region.
+
+The baseline architecture uses:
+
+```text
+viewport_row
+viewport_column
+```
+
+for vertical and horizontal scrolling.
+
+Conceptually:
+
+```text
+Document
+┌──────────────────────────┐
+│ row 0                    │
+│ row 1                    │
+│ row 2                    │
+│ row 3                    │
+│ row 4                    │
+│ row 5                    │
+│ row 6                    │
+│ row 7                    │
+│ row 8                    │
+│ row 9                    │
+└──────────────────────────┘
+          ▲
+          │
+    viewport_row
+          │
+          ▼
+      visible area
+```
+
+A Viewport test can therefore establish:
+
+```text
+Document size
+Terminal dimensions
+Cursor position
+Current viewport
+```
+
+perform a relevant operation, and then verify the resulting offsets.
+
+The test does not need a real terminal.
+
+## Testing the Initial Viewport
+
+The first tests should establish the initial state.
+
+Suppose the terminal has:
+
+```text
+rows    = 24
+columns = 80
+```
+
+and the Document begins with:
+
+```text
+"Hello"
+"World"
+```
+
+If the Cursor is positioned at:
+
+```text
+row    = 0
+column = 0
+```
+
+the initial Viewport should begin at:
+
+```text
+viewport_row    = 0
+viewport_column = 0
+```
+
+The entire Document fits within the vertical and horizontal visible region.
+
+The basic relationship is:
+
+```text
+Cursor
+   │
+   ▼
+Visible region contains cursor
+```
+
+This containment relationship becomes one of the most important properties to test.
+
+## Testing Cursor Visibility
+
+The primary responsibility of the Viewport is to keep the Cursor visible when scrolling is required.
+
+Consider a terminal that can display only five document rows:
+
+```text
+Terminal height = 5
+```
+
+and a Document:
+
+```text
+row 0
+row 1
+row 2
+row 3
+row 4
+row 5
+row 6
+row 7
+row 8
+row 9
+```
+
+If the Cursor is at:
+
+```text
+row = 2
+```
+
+the Viewport can remain:
+
+```text
+viewport_row = 0
+```
+
+because:
+
+```text
+0 <= 2 < 5
+```
+
+The visible region is:
+
+```text
+row 0
+row 1
+row 2
+row 3
+row 4
+```
+
+Now move the Cursor to:
+
+```text
+row = 6
+```
+
+The previous Viewport is no longer sufficient.
+
+The Viewport must change so that row `6` becomes visible.
+
+Conceptually:
+
+```text
+Before:
+
+viewport_row = 0
+
+┌─────────────┐
+│ row 0       │
+│ row 1       │
+│ row 2       │
+│ row 3       │
+│ row 4       │
+└─────────────┘
+
+Cursor → row 6
+```
+
+After adjustment:
+
+```text
+viewport_row = 2
+
+┌─────────────┐
+│ row 2       │
+│ row 3       │
+│ row 4       │
+│ row 5       │
+│ row 6   ←   │
+└─────────────┘
+```
+
+The exact scrolling policy may determine how much of the surrounding document remains visible, but the essential property is that the Cursor is inside the visible range.
+
+## Testing the Top Boundary
+
+The first document row represents the upper boundary.
+
+Suppose:
+
+```text
+viewport_row = 0
+cursor_row   = 0
+```
+
+Moving the Cursor upward must not produce:
+
+```text
+viewport_row = -1
+```
+
+or:
+
+```text
+cursor_row = -1
+```
+
+The Viewport therefore has a lower bound:
+
+```text
+viewport_row >= 0
+```
+
+A useful test is:
+
+```text
+Initial:
+viewport_row = 0
+cursor_row   = 0
+
+Move cursor upward
+
+Expected:
+viewport_row = 0
+cursor_row   = 0
+```
+
+This verifies that the Viewport does not attempt to represent a region before the beginning of the Document.
+
+## Testing the Bottom Boundary
+
+The opposite boundary occurs at the end of the Document.
+
+Suppose the Document contains:
+
+```text
+row 0
+row 1
+row 2
+row 3
+row 4
+```
+
+and the terminal can display ten rows.
+
+The entire Document already fits on screen.
+
+Therefore:
+
+```text
+viewport_row = 0
+```
+
+should remain valid even when the Cursor moves to:
+
+```text
+row = 4
+```
+
+There is no reason to scroll because the final row is already visible.
+
+This produces an important rule:
+
+> The Viewport should scroll only when the visible region no longer satisfies its visibility requirements.
+
+The test should therefore distinguish between:
+
+```text
+Cursor moved
+```
+
+and:
+
+```text
+Viewport must scroll
+```
+
+A Cursor movement does not automatically imply a Viewport movement.
+
+## Testing Documents Larger Than the Terminal
+
+The previous examples considered a small Document.
+
+The more important case is a Document larger than the terminal.
+
+Suppose:
+
+```text
+Document rows  = 1000
+Terminal rows  = 20
+```
+
+Only a small portion can be visible at once.
+
+A useful test should move the Cursor through several regions:
+
+```text
+row 0
+row 19
+row 20
+row 100
+row 500
+row 999
+```
+
+After each movement, the test should verify that the resulting Viewport keeps the Cursor within the visible region.
+
+Conceptually:
+
+```text
+Large Document
+────────────────────────────────
+          ▲
+          │
+      Viewport
+          │
+          ▼
+     Small terminal
+```
+
+This tests the scaling behavior of the logical model without requiring an actual large terminal or rendering operation.
+
+## Testing Vertical Scrolling Direction
+
+Vertical scrolling uses logical document rows.
+
+If:
+
+```text
+viewport_row = 20
+```
+
+then the first visible document row is:
+
+```text
+row 20
+```
+
+Moving the Viewport downward should increase:
+
+```text
+viewport_row
+```
+
+while moving upward should decrease it.
+
+For example:
+
+```text
+viewport_row = 20
+       │
+       │ scroll down
+       ▼
+viewport_row = 21
+```
+
+and:
+
+```text
+viewport_row = 20
+       │
+       │ scroll up
+       ▼
+viewport_row = 19
+```
+
+These are simple tests, but they establish the direction and meaning of the offset.
+
+The Viewport should not use terminal coordinates as a substitute for document row offsets.
+
+## Testing Horizontal Scrolling
+
+Horizontal scrolling is different because the editor's horizontal viewport is based on **visual/display columns**, not simply logical character positions.
+
+For example:
+
+```text
+Long line
+───────────────────────────────────────────────────────────
+                         ▲
+                         │
+                   visible region
+```
+
+If the line is wider than the terminal, the Viewport must adjust its horizontal offset when the Cursor moves outside the visible horizontal region.
+
+A test might establish:
+
+```text
+Terminal width = 10
+
+Line:
+"0123456789ABCDEFGHIJ"
+
+Cursor:
+column = 5
+```
+
+The Cursor is visible without horizontal scrolling.
+
+Moving farther right:
+
+```text
+Cursor:
+column = 15
+```
+
+requires the Viewport to adjust.
+
+The test should verify that the resulting `viewport_column` makes the Cursor visible.
+
+## Logical Column Versus Visual Column
+
+Horizontal Viewport tests must not accidentally redefine the Cursor's logical column.
+
+This distinction is important because the editor's architecture separates:
+
+```text
+Logical position
+```
+
+from:
+
+```text
+Visual position
+```
+
+The Cursor uses a logical character position, while the Renderer converts logical positions into visual columns.
+
+The Viewport's horizontal offset therefore participates in the visual-coordinate side of the system.
+
+Conceptually:
+
+```text
+Cursor
+logical column
+     │
+     ▼
+logical → visual mapping
+     │
+     ▼
+Viewport
+visual offset
+     │
+     ▼
+screen position
+```
+
+A Viewport test should therefore verify the visibility relationship without assuming that a logical column is always identical to a terminal column.
+
+This becomes especially important for tabs and other characters whose visual width differs from their logical representation.
+
+## Testing Tabs and Horizontal Visibility
+
+Suppose a line contains:
+
+```text
+"\tHello"
+```
+
+The logical position of the Cursor and its visual screen position may differ because a tab expands to a configured visual width.
+
+A Viewport test should not calculate this mapping independently if that responsibility belongs to the Renderer or the text-layout logic.
+
+Instead, the test should use the appropriate visual position supplied by the architecture and verify the Viewport's visibility behavior.
+
+This preserves the boundary:
+
+```text
+Logical text
+     │
+     ▼
+Visual position calculation
+     │
+     ▼
+Viewport visibility
+```
+
+rather than allowing the Viewport to become another text-layout engine.
+
+The same principle applies to Unicode characters whose rendered width may not correspond directly to their logical character count.
+
+## Testing Scroll Stability
+
+The Viewport should not move unnecessarily when the Cursor is already visible.
+
+Suppose:
+
+```text
+viewport_row = 20
+```
+
+and the visible region contains:
+
+```text
+row 20
+row 21
+row 22
+row 23
+row 24
+```
+
+If the Cursor moves from:
+
+```text
+row 21
+```
+
+to:
+
+```text
+row 22
+```
+
+the Viewport should normally remain:
+
+```text
+viewport_row = 20
+```
+
+There is no reason to scroll.
+
+This property is important because unnecessary scrolling makes the screen jump even though the Cursor remains visible.
+
+A useful test is therefore:
+
+```text
+Cursor visible
+      │
+      │ small movement
+      ▼
+Cursor still visible
+      │
+      ▼
+Viewport unchanged
+```
+
+This is a different property from simply testing whether scrolling eventually occurs.
+
+## Testing Scroll Boundaries
+
+A particularly useful set of tests examines the exact points at which scrolling begins and stops.
+
+Suppose the visible vertical range is:
+
+```text
+viewport_row = 20
+height       = 5
+```
+
+so the visible rows are:
+
+```text
+20
+21
+22
+23
+24
+```
+
+The Cursor can move among these rows without requiring a vertical scroll.
+
+When the Cursor moves to:
+
+```text
+row = 25
+```
+
+the visibility condition is violated.
+
+The Viewport must then adjust.
+
+Similarly, moving back into the visible range should not cause unnecessary movement of the Viewport.
+
+This gives a boundary sequence:
+
+```text
+row 24
+  │
+  │ cursor moves down
+  ▼
+row 25
+  │
+  │ viewport must adjust
+  ▼
+new visible region
+```
+
+Testing these exact transitions is more useful than testing only extreme positions such as the first and last document rows.
+
+## Testing Viewport Invariants
+
+The Viewport should maintain its own invariants: `viewport_row >= 0`, `viewport_column >= 0`, a visible region consistent with the terminal dimensions, and, whenever the Cursor must be visible, `Cursor ∈ Visible Region`. These are part of the editor's broader invariant set collected in Section 35.14, so Viewport tests can verify them directly after movement and scrolling operations without re-deriving the ownership model here.
+
+## Testing Resize-Related Viewport Changes
+
+Terminal resizing introduces another important boundary.
+
+Suppose the terminal initially provides:
+
+```text
+rows = 30
+columns = 100
+```
+
+and the Cursor is visible.
+
+If the terminal becomes smaller:
+
+```text
+rows = 10
+columns = 40
+```
+
+the previously valid Viewport may no longer be sufficient.
+
+The Viewport must be recalculated or adjusted so that the Cursor remains visible under the new dimensions.
+
+Conceptually:
+
+```text
+Terminal resize
+      │
+      ▼
+New dimensions
+      │
+      ▼
+Viewport adjustment
+      │
+      ▼
+Cursor remains visible
+```
+
+A unit test can simulate the dimension change directly.
+
+It does not need to generate an actual terminal resize signal.
+
+This keeps the test deterministic while still verifying the Viewport's response to changing geometry.
+
+## Testing Empty Documents
+
+An empty Document creates another boundary condition.
+
+There may be no document rows to display.
+
+The Viewport must nevertheless remain in a valid state.
+
+For example:
+
+```text
+Document
+┌──────────────┐
+│ no rows      │
+└──────────────┘
+```
+
+The test should establish what the editor's defined empty-document behavior requires.
+
+At minimum, the Viewport must not produce negative offsets or an invalid state merely because the Document contains no rows.
+
+This is an example where tests should follow the architecture's defined semantics rather than inventing new behavior.
+
+## Testing Viewport Independence from Rendering
+
+A Viewport test should not inspect ANSI escape sequences.
+
+For example, the test should not need to determine whether the Renderer emitted:
+
+```text
+ESC [ 5 ; 1 H
+```
+
+or any other terminal control sequence.
+
+That belongs to terminal-output and rendering tests.
+
+The Viewport should instead be tested at the level of:
+
+```text
+Document position
+Terminal dimensions
+Viewport offsets
+Cursor visibility
+```
+
+This keeps the unit boundary clear:
+
+```text
+Viewport Test
+      │
+      ▼
+"Which document region is visible?"
+```
+
+rather than:
+
+```text
+Renderer Test
+      │
+      ▼
+"Which terminal bytes were emitted?"
+```
+
+The distinction prevents the Viewport tests from becoming tightly coupled to the rendering implementation.
+
+## Testing Viewport Changes After Cursor Movement
+
+The most important relationship between the Cursor and Viewport can be tested as a sequence.
+
+For example:
+
+```text
+Document:
+many rows
+
+Cursor:
+row = 0
+
+Viewport:
+row = 0
+```
+
+Move the Cursor repeatedly downward.
+
+```text
+Cursor
+  │
+  ├── move down
+  ├── move down
+  ├── move down
+  ├── ...
+  └── move down
+```
+
+At first:
+
+```text
+Cursor moves
+Viewport remains unchanged
+```
+
+Once the Cursor reaches the visibility boundary:
+
+```text
+Cursor moves
+      │
+      ▼
+Viewport begins scrolling
+```
+
+Afterward:
+
+```text
+Cursor continues moving
+Viewport follows as required
+```
+
+This sequence tests the interaction between Cursor position and Viewport visibility without requiring the Input Engine, Command Engine, or Renderer.
+
+## A Viewport Test Matrix
+
+The major Viewport cases can be organized as:
+
+| Situation                        | Expected Test                          |
+| -------------------------------- | -------------------------------------- |
+| Document fits terminal           | No unnecessary scrolling               |
+| Cursor at top                    | Viewport does not move above beginning |
+| Cursor at bottom                 | Viewport keeps Cursor visible          |
+| Cursor moves beyond visible rows | Vertical offset adjusts                |
+| Cursor moves within visible rows | Viewport remains stable                |
+| Long line                        | Horizontal offset adjusts              |
+| Cursor moves left                | Horizontal offset remains valid        |
+| Empty document                   | Offsets remain valid                   |
+| Terminal becomes smaller         | Visible region is recalculated         |
+| Terminal becomes larger          | Unnecessary scrolling is avoided       |
+
+The matrix provides a coverage checklist without requiring every case to become a single test function.
+
+## What Viewport Tests Establish
+
+A successful Viewport test suite provides evidence that:
+
+```text
+Viewport offsets remain valid
+          │
+          ▼
+Cursor visibility is maintained
+          │
+          ▼
+Scrolling occurs at appropriate boundaries
+          │
+          ▼
+Unnecessary scrolling is avoided
+          │
+          ▼
+Horizontal and vertical offsets remain distinct
+          │
+          ▼
+Terminal resizing is handled correctly
+```
+
+It does **not** establish that the Cursor moves correctly, that the Renderer calculates screen cells correctly, that ANSI escape sequences are correct, or that the terminal displays the frame correctly—those responsibilities belong elsewhere.
+
+The Viewport test therefore occupies a specific position in the testing architecture:
+
+```text
+Document
+   │
+   ▼
+Cursor
+   │
+   ▼
+Viewport
+   │
+   ▼
+Renderer
+```
+
+Each layer can be tested independently before their interactions are tested together.
+
+<Aside type="tip" title="Key Principle" icon="rocket">
+
+> Test the Viewport as a visibility-management component: verify its offsets, scrolling boundaries, Cursor visibility, horizontal and vertical behavior, and response to terminal dimensions without coupling the tests to rendering or terminal output.
+
+The Viewport does not decide what the document contains or how that content is rendered. Its responsibility is to determine which portion of the logical document belongs in the visible region. Testing that responsibility independently keeps the architecture clear and makes scrolling failures much easier to diagnose.
+
+</Aside>
+
+## Summary
+
+Viewport tests verify a visibility-management component: offsets, scrolling boundaries, Cursor visibility, horizontal and vertical behavior, and responses to terminal dimensions are all tested without coupling the tests to rendering or terminal output.
+
+Scroll stability matters as much as scrolling itself: when the Cursor is already visible, small movements should leave the offsets unchanged. Horizontal tests must also respect the distinction between logical columns and visual display columns, especially for tabs and wide characters.
+
+The next section tests the component that turns raw terminal bytes into abstract key events: **Section 35.7, Testing Input Parsing**.
