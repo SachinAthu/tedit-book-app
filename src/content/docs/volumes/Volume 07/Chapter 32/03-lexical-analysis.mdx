@@ -1,0 +1,875 @@
+---
+title: "32.3 Lexical Analysis"
+description: "Explains how a Lexer performs a stateful left-to-right scan, identifying token boundaries, lexical context, and token types without modifying the Document."
+---
+
+The syntax-highlighting pipeline begins with a simple but important problem:
+
+> Given a sequence of characters, how can the editor determine where meaningful pieces of text begin and end?
+
+Consider:
+
+```c
+int count = 42;
+```
+
+The Document contains only characters. To perform syntax highlighting, the editor needs to recognize that the text can be divided into meaningful units:
+
+```text
+int
+count
+=
+42
+;
+```
+
+These units are called **tokens**, and the process of identifying them is called **lexical analysis**.
+
+The component responsible for this work is the **Lexer**.
+
+## What Is Lexical Analysis?
+
+Lexical analysis is the process of reading a character sequence and identifying its **lexical units**.
+
+A lexical unit is a contiguous region of text that can be classified as a particular kind of element.
+
+For example:
+
+```c
+int count = 42;
+```
+
+can be divided into:
+
+```text
+KEYWORD      int
+IDENTIFIER   count
+OPERATOR     =
+NUMBER       42
+PUNCTUATION  ;
+```
+
+The Lexer has therefore transformed this:
+
+```text
+i n t   c o u n t   =   4 2 ;
+```
+
+into something more structured:
+
+```text
++----------+---------+
+| Type     | Text    |
++----------+---------+
+| KEYWORD  | int     |
+| IDENTIFIER | count |
+| OPERATOR | =       |
+| NUMBER   | 42      |
+| PUNCTUATION | ;    |
++----------+---------+
+```
+
+The Lexer does not change the underlying characters.
+
+It simply **classifies regions of the existing text**.
+
+## Why Does an Editor Need a Lexer?
+
+A terminal does not understand programming-language syntax.
+
+Neither does the Document.
+
+The Renderer should not need to understand it either.
+
+Suppose the editor encounters:
+
+```c
+return total + 10;
+```
+
+To highlight this line, the editor needs to distinguish:
+
+```text
+return
+```
+
+from:
+
+```text
+total
+```
+
+and:
+
+```text
+10
+```
+
+A Lexer provides the first level of that understanding.
+
+```text
+Document
+    │
+    │ characters
+    ▼
+   Lexer
+    │
+    │ lexical units
+    ▼
+  Tokens
+```
+
+This gives the rest of the syntax-highlighting system structured information to work with.
+
+Without lexical analysis, later stages would have to repeatedly inspect raw characters themselves.
+
+That would spread language-specific knowledge throughout the system.
+
+## The Lexer Reads, It Does Not Edit
+
+The Lexer should be treated as an analyzer of the Document.
+
+It reads:
+
+```text
+Document
+```
+
+and produces:
+
+```text
+Tokens
+```
+
+It should not modify:
+
+```text
+Document
+```
+
+For example, given:
+
+```c
+int value = 10;
+```
+
+the Lexer might produce:
+
+```text
+KEYWORD      [0, 3]
+IDENTIFIER   [4, 9]
+OPERATOR     [10, 11]
+NUMBER       [12, 14]
+PUNCTUATION  [14, 15]
+```
+
+The positions identify regions of the original text.
+
+The Document remains unchanged.
+
+This is important because the Document continues to be the authoritative source of the user's text.
+
+## Common Token Categories
+
+A simple language lexer might recognize several categories.
+
+### Keywords
+
+Keywords are reserved words with special meaning in a programming language.
+
+Examples in C include:
+
+```text
+int
+return
+if
+else
+while
+for
+struct
+```
+
+For example:
+
+```c
+return value;
+```
+
+could become:
+
+```text
+KEYWORD     return
+IDENTIFIER  value
+PUNCTUATION ;
+```
+
+### Identifiers
+
+Identifiers are names used by the program.
+
+Examples:
+
+```text
+count
+total
+user_name
+calculate_sum
+```
+
+For:
+
+```c
+int total;
+```
+
+the Lexer can identify:
+
+```text
+KEYWORD      int
+IDENTIFIER   total
+PUNCTUATION  ;
+```
+
+The Lexer does not necessarily need to know what `total` represents.
+
+It only needs to recognize that it follows the lexical rules for an identifier.
+
+### Numbers
+
+Numeric literals form another common category.
+
+Examples:
+
+```text
+10
+42
+3.14
+0xFF
+```
+
+A language's rules determine exactly which forms are valid.
+
+For:
+
+```c
+int count = 42;
+```
+
+the `42` portion can be classified as:
+
+```text
+NUMBER
+```
+
+### Strings
+
+Strings are particularly important because they introduce context.
+
+For example:
+
+```c
+printf("Hello");
+```
+
+contains:
+
+```text
+IDENTIFIER   printf
+PUNCTUATION (
+STRING       "Hello"
+PUNCTUATION )
+```
+
+The characters inside the string should normally be treated as part of the string rather than analyzed as ordinary source code.
+
+This is one reason lexical analysis requires more than simply searching for known keywords.
+
+### Comments
+
+Comments are another important lexical category.
+
+For example:
+
+```c
+// Calculate the total
+int total = count + 10;
+```
+
+The first line can be recognized as a comment.
+
+The Lexer needs to recognize the language's comment syntax and understand where the comment begins and, depending on the language, where it ends.
+
+For a single-line comment:
+
+```text
+// Calculate the total
+```
+
+the remainder of that line belongs to the comment.
+
+For a block comment:
+
+```c
+/*
+    Calculate the total
+*/
+```
+
+the comment can span multiple lines.
+
+This introduces an important property of lexical analysis:
+
+> **The classification of a character can depend on the lexical context established by earlier characters.**
+
+## Operators and Punctuation
+
+Operators and punctuation are usually small lexical units.
+
+For example:
+
+```c
+count += 10;
+```
+
+might contain:
+
+```text
+IDENTIFIER   count
+OPERATOR     +=
+NUMBER       10
+PUNCTUATION  ;
+```
+
+A Lexer must follow the language's rules for determining whether characters form one operator or several.
+
+For example:
+
+```text
+=
+==
+!=
+<=
+>=
+++
+--
+```
+
+cannot always be classified one character at a time.
+
+The Lexer may need to inspect the following character before deciding which token has been encountered.
+
+## Whitespace
+
+Whitespace deserves special attention.
+
+Consider:
+
+```c
+int count = 42;
+```
+
+The spaces separate lexical units, but they generally do not need to become visible syntax tokens for highlighting.
+
+The Lexer may therefore recognize whitespace as a boundary without necessarily producing a token for every space.
+
+Conceptually:
+
+```text
+int␠count␠=␠42;
+│││ │─────│ │──│
+│││ │     │ │  │
+│││ │     │ │  └── punctuation
+│││ │     │ └───── number
+│││ │     └─────── operator
+│││ └───────────── identifier
+└───────────────── keyword
+```
+
+Whether whitespace is represented explicitly depends on the design of the syntax-highlighting system.
+
+For a simple highlighter, it is often enough to recognize whitespace as something between tokens.
+
+## Token Boundaries
+
+One of the Lexer's most important responsibilities is determining **where a token starts and ends**.
+
+Consider:
+
+```c
+count + 42
+```
+
+The Lexer must determine:
+
+```text
+count
+```
+
+ends before:
+
+```text
++
+```
+
+and:
+
+```text
++
+```
+
+ends before:
+
+```text
+42
+```
+
+This sounds simple, but token boundaries become more interesting with multi-character operators and literals.
+
+For example:
+
+```c
+count >= 42
+```
+
+should recognize:
+
+```text
+IDENTIFIER   count
+OPERATOR     >=
+NUMBER       42
+```
+
+rather than:
+
+```text
+IDENTIFIER   count
+OPERATOR     >
+OPERATOR     =
+NUMBER       42
+```
+
+The correct interpretation depends on the language's lexical rules.
+
+## A Lexer Is Usually Sequential
+
+A straightforward Lexer processes the input from left to right.
+
+Conceptually:
+
+```text
+Start
+  │
+  ▼
+Read next character
+  │
+  ▼
+Determine what begins here
+  │
+  ├── identifier?
+  ├── number?
+  ├── string?
+  ├── comment?
+  ├── operator?
+  ├── punctuation?
+  └── whitespace?
+  │
+  ▼
+Consume the complete lexical unit
+  │
+  ▼
+Produce token
+  │
+  ▼
+Continue
+```
+
+For:
+
+```c
+int count = 42;
+```
+
+the process might look like:
+
+```text
+Read 'i'
+   │
+   ▼
+Looks like identifier/keyword
+   │
+   ▼
+Consume "int"
+   │
+   ▼
+Classify as KEYWORD
+   │
+   ▼
+Continue at 'c'
+```
+
+Then:
+
+```text
+Consume "count"
+        ↓
+IDENTIFIER
+```
+
+Then:
+
+```text
+Read '='
+   ↓
+OPERATOR
+```
+
+Then:
+
+```text
+Consume "42"
+        ↓
+NUMBER
+```
+
+Finally:
+
+```text
+Read ';'
+   ↓
+PUNCTUATION
+```
+
+The exact implementation can vary, but the conceptual model remains the same.
+
+## Keywords Are Usually Recognized After Lexing
+
+There is a subtle distinction between recognizing an identifier and determining whether that identifier is a keyword.
+
+Consider:
+
+```c
+count
+```
+
+and:
+
+```c
+return
+```
+
+Both can initially look like sequences of identifier characters.
+
+The Lexer may first recognize:
+
+```text
+IDENTIFIER-LIKE TEXT
+```
+
+and then determine whether the resulting text belongs to the language's keyword set.
+
+Conceptually:
+
+```text
+Characters
+    │
+    ▼
+"return"
+    │
+    ▼
+Identifier-shaped token
+    │
+    ▼
+Keyword lookup
+    │
+    ▼
+KEYWORD
+```
+
+while:
+
+```text
+"count"
+    │
+    ▼
+Identifier-shaped token
+    │
+    ▼
+Keyword lookup
+    │
+    ▼
+IDENTIFIER
+```
+
+This illustrates an important point:
+
+> Lexical classification can involve multiple small decisions rather than one single character test.
+
+## Lexical State
+
+Some syntax cannot be interpreted correctly without remembering what came before.
+
+Consider:
+
+```c
+printf("hello");
+```
+
+After encountering:
+
+```text
+"
+```
+
+the Lexer enters a string context.
+
+While inside that context, characters that would normally have special meanings may simply be string contents.
+
+Conceptually:
+
+```text
+NORMAL
+  │
+  │ "
+  ▼
+STRING
+  │
+  │ "
+  ▼
+NORMAL
+```
+
+Likewise, a block comment may introduce another state:
+
+```text
+NORMAL
+  │
+  │ /*
+  ▼
+COMMENT
+  │
+  │ */
+  ▼
+NORMAL
+```
+
+This is why lexical analysis is more accurately thought of as a **stateful scan** rather than a collection of independent character checks.
+
+## A Simple Lexer State Machine
+
+We can visualize this idea as:
+
+```text
+                 identifier
+              ┌───────────────┐
+              │               ▼
+          +--------+      +------------+
+          | NORMAL |      | IDENTIFIER |
+          +--------+      +------------+
+              │
+              │ "
+              ▼
+         +----------+
+         |  STRING  |
+         +----------+
+              │
+              │ closing "
+              ▼
+          +--------+
+          | NORMAL |
+          +--------+
+
+          NORMAL
+             │
+             │ /*
+             ▼
+        +---------+
+        | COMMENT |
+        +---------+
+             │
+             │ */
+             ▼
+          NORMAL
+```
+
+This is not yet a full parser.
+
+It is simply a mechanism for recognizing lexical context.
+
+That distinction will become important in the next sections.
+
+## Lexical Analysis vs. Parsing
+
+It is easy to confuse lexical analysis with parsing.
+
+They solve different problems.
+
+The Lexer asks:
+
+> **What are these pieces of text?**
+
+The Parser asks:
+
+> **How are these pieces related?**
+
+For example:
+
+```c
+if (count > 10) {
+    total = count;
+}
+```
+
+The Lexer can identify:
+
+```text
+KEYWORD
+PUNCTUATION
+IDENTIFIER
+OPERATOR
+NUMBER
+PUNCTUATION
+PUNCTUATION
+IDENTIFIER
+OPERATOR
+IDENTIFIER
+PUNCTUATION
+```
+
+But that does not fully explain the structure.
+
+A Parser can reason that:
+
+```text
+if
+```
+
+introduces a conditional construct whose condition is:
+
+```text
+count > 10
+```
+
+and whose body is:
+
+```text
+total = count;
+```
+
+Therefore:
+
+```text
+Lexer
+  │
+  │ identifies pieces
+  ▼
+Tokens
+  │
+  │ provides structure
+  ▼
+Parser
+```
+
+The Lexer comes first because the Parser needs a structured token stream to work with.
+
+The Lexer also does not decide how any token should look: whether a keyword appears in red or blue is a presentation concern handled by the Theme and Renderer in later sections. Keeping language analysis out of the rendering system is what lets each component keep one responsibility.
+
+## Complexity of Lexical Analysis
+
+A straightforward Lexer generally scans the relevant text from beginning to end.
+
+If the number of characters examined is `n`, the basic work is approximately:
+
+```text
+Time:  O(n)
+```
+
+The Lexer must inspect the input at least once to determine its lexical structure.
+
+The amount of additional storage depends on the representation.
+
+If tokens are stored for the entire document:
+
+```text
+Space: O(t)
+```
+
+where `t` is the number of tokens.
+
+If the Lexer produces tokens incrementally and the consumer processes them immediately, additional memory can be much smaller.
+
+The choice depends on how the rest of the syntax-highlighting pipeline is designed.
+
+For our purposes, the important observation is:
+
+> **Lexical analysis is naturally linear, but repeatedly performing that work after every edit can become expensive.**
+
+That problem will become important when we discuss updating highlighting after edits.
+
+## The Lexer's Boundary
+
+We can now define the Lexer's responsibility precisely.
+
+The Lexer:
+
+- reads document text
+- recognizes lexical units
+- determines token boundaries
+- tracks lexical context when necessary
+- classifies tokens
+- provides token locations
+
+The Lexer does not:
+
+- modify the Document
+- move the Cursor
+- manage the Viewport
+- render terminal output
+- choose theme colors
+- perform file I/O
+- manage undo/redo
+
+Its position in the architecture is therefore:
+
+```text
++----------------+
+|    Document    |
++----------------+
+        │
+        │ text
+        ▼
++----------------+
+|     Lexer      |
++----------------+
+        │
+        │ tokens
+        ▼
++----------------+
+|     Parser     |
++----------------+
+        │
+        │ syntax information
+        ▼
++----------------+
+|   Highlight    |
+|   Information  |
++----------------+
+        │
+        ▼
++----------------+
+|    Renderer    |
++----------------+
+```
+
+The Lexer is the first stage that turns the Document's undifferentiated character sequence into meaningful structure.
+
+## Summary
+
+Lexical analysis is the first stage that turns a Document's undifferentiated character stream into meaningful structure. The Lexer reads text, determines token boundaries, tracks lexical context when needed, and classifies the results into token types, without modifying the Document and without choosing colors. Because comments, strings, and multi-character operators depend on earlier context, a Lexer is more accurately described as a stateful sequential scan than a collection of independent character checks, and its natural cost is linear in the size of the input.
+
+The boundary is also deliberately narrow: the Lexer classifies text and reports token locations, but it never decides appearance, edits the Document, or owns terminal output. Keeping lexing at that level makes later stages—and a future parser—replaceable without touching the text model.
+
+Those classified pieces are represented as tokens, which gives us the next question:
+
+> **What exactly should a token contain, and how does it lead to a highlight class?**
+
+That is the subject of the next section: **Section 32.4, Tokens and Highlight Classes**.

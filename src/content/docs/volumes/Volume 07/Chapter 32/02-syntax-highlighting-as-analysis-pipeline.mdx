@@ -1,0 +1,564 @@
+---
+title: "32.2 Syntax Highlighting as an Analysis Pipeline"
+description: "Describes syntax highlighting as a staged analysis pipeline from language definition and lexing through highlight classes, themes, and the Renderer."
+---
+
+In the previous section, we established that syntax highlighting is not simply a collection of colors. The editor must first **analyze the Document**, determine what different parts of the text represent, and then provide that information to the Renderer.
+
+That gives us a more useful way to think about syntax highlighting:
+
+> **Syntax highlighting is an analysis pipeline that transforms plain document text into structured presentation information.**
+
+The pipeline can be divided into several stages.
+
+```text
+Document
+   │
+   ▼
+Language Definition
+   │
+   ▼
+Lexer
+   │
+   ▼
+Tokens
+   │
+   ▼
+Syntax Analysis
+   │
+   ▼
+Highlight Classes
+   │
+   ▼
+Theme
+   │
+   ▼
+Renderer
+   │
+   ▼
+Terminal
+```
+
+Each stage has a specific responsibility.
+
+The important part is not merely having these components. It is keeping their responsibilities separate.
+
+## From Characters to Meaning
+
+The Document contains text.
+
+For example:
+
+```c
+int count = 42;
+```
+
+At the lowest level, the editor sees a sequence of characters:
+
+```text
+i n t   c o u n t   =   4 2 ;
+```
+
+There is no special `keyword` object stored inside the Document.
+
+The syntax-highlighting pipeline progressively adds information.
+
+First, the **Lexer** identifies meaningful units:
+
+```text
+int       → keyword
+count     → identifier
+=         → operator
+42        → number
+;         → punctuation
+```
+
+Those units can then be represented as **tokens**.
+
+The next stage can reason about relationships and context between those tokens.
+
+Finally, the syntax information is converted into highlight classes that the presentation system can understand.
+
+Conceptually:
+
+```text
+Characters
+    │
+    ▼
+Lexical Units
+    │
+    ▼
+Tokens
+    │
+    ▼
+Syntax
+    │
+    ▼
+Highlight Classes
+```
+
+Each stage adds information without changing the original text.
+
+## The Language Definition
+
+Before analysis can begin, the editor needs to know **which language rules it should apply**.
+
+Consider:
+
+```text
+main.c
+```
+
+The editor may determine that the document should be analyzed using C syntax rules.
+
+Another file might use:
+
+```text
+main.py
+```
+
+and therefore require Python syntax rules.
+
+Conceptually:
+
+```text
+Filename
+   │
+   ▼
+Language Selection
+   │
+   ▼
+Language Definition
+   │
+   ▼
+Syntax Analyzer
+```
+
+A language definition describes the vocabulary and rules that the syntax-highlighting system understands.
+
+For a simple C-like language, it might contain information about:
+
+- keywords
+- numeric literals
+- string delimiters
+- character literals
+- comments
+- operators
+- punctuation
+
+The language definition does not contain the document itself.
+
+It describes **how the document should be interpreted**.
+
+This distinction becomes important when the same editor supports multiple languages.
+
+## The Lexer
+
+The Lexer is the first major analysis stage.
+
+Its job is to examine the document and divide the character stream into meaningful lexical units.
+
+For example:
+
+```c
+int count = 42;
+```
+
+could produce:
+
+```text
+KEYWORD      "int"
+IDENTIFIER   "count"
+OPERATOR     "="
+NUMBER       "42"
+PUNCTUATION  ";"
+```
+
+The Lexer does not need to decide how these items should look on screen.
+
+It answers a different question:
+
+> **What kind of textual element is this?**
+
+That gives us an important separation:
+
+```text
+Lexer
+  │
+  │ identifies
+  ▼
+Token Type
+```
+
+not:
+
+```text
+Lexer
+  │
+  │ chooses
+  ▼
+Terminal Color
+```
+
+The Lexer should not know whether a keyword is displayed using red, blue, bold text, or some other style.
+
+That is a presentation concern.
+
+## Tokens
+
+The Lexer produces tokens.
+
+A token represents a region of the Document and gives that region a type.
+
+For example:
+
+```text
+KEYWORD
+start = 0
+length = 3
+```
+
+followed by:
+
+```text
+IDENTIFIER
+start = 4
+length = 5
+```
+
+and:
+
+```text
+OPERATOR
+start = 10
+length = 1
+```
+
+The token does not need to contain a copy of the characters.
+
+It can instead identify where the characters already exist in the Document.
+
+Conceptually:
+
+```text
+Document
+────────────────────────
+int count = 42;
+│││ │─────│ │──│
+│││ │     │ │  │
+│││ │     │ │  └─ NUMBER
+│││ │     │ └──── OPERATOR
+│││ │     └─────── ...
+│││ └───────────── IDENTIFIER
+└────────────────── KEYWORD
+```
+
+This avoids creating another copy of the document merely for highlighting.
+
+The Document remains authoritative.
+
+## Syntax Analysis
+
+Tokens are useful, but tokens alone do not always provide enough context.
+
+Consider:
+
+```c
+int value = 10;
+```
+
+and:
+
+```c
+printf("int value = 10");
+```
+
+The characters `int` occur in both examples.
+
+But their meanings are different.
+
+In the first:
+
+```text
+int
+```
+
+is a keyword.
+
+In the second:
+
+```text
+"int value = 10"
+```
+
+is a string literal.
+
+The syntax-highlighting system therefore needs some awareness of context.
+
+This is where syntax analysis becomes useful.
+
+```text
+Characters
+    │
+    ▼
+Lexer
+    │
+    ▼
+Tokens
+    │
+    ▼
+Syntax Analysis
+    │
+    ▼
+Contextual Meaning
+```
+
+The exact sophistication of this stage depends on the editor.
+
+A simple editor might use straightforward state-based rules.
+
+A more advanced editor might construct and maintain a syntax tree.
+
+The important architectural idea is that **the analysis strategy can evolve without changing the Document or Renderer interfaces**.
+
+## Highlight Classes
+
+Once the editor understands what a region represents, it needs a representation of that information that is independent of a particular visual theme.
+
+For example:
+
+```text
+KEYWORD
+IDENTIFIER
+STRING
+NUMBER
+COMMENT
+OPERATOR
+PUNCTUATION
+```
+
+These are **highlight classes**.
+
+They describe semantic or syntactic categories rather than physical colors.
+
+The pipeline therefore becomes:
+
+```text
+Token
+  │
+  ▼
+Highlight Class
+  │
+  ▼
+Theme
+  │
+  ▼
+Visual Attributes
+```
+
+For example:
+
+```text
+KEYWORD
+    ↓
+keyword style
+    ↓
+visual attributes
+```
+
+The benefit is that the syntax analyzer does not need to know anything about the currently selected theme.
+
+## The Theme
+
+The Theme provides the visual mapping.
+
+Suppose the syntax analyzer produces:
+
+```text
+KEYWORD
+STRING
+COMMENT
+NUMBER
+```
+
+A theme can map these classes to visual styles.
+
+Conceptually:
+
+```text
++------------------+
+| Highlight Class  |
++------------------+
+          │
+          ▼
++------------------+
+|     Theme        |
++------------------+
+          │
+          ▼
++------------------+
+| Visual Attribute |
++------------------+
+```
+
+One theme might represent:
+
+```text
+KEYWORD  → style A
+STRING   → style B
+COMMENT  → style C
+NUMBER   → style D
+```
+
+Another theme could use completely different visual attributes.
+
+The syntax analyzer does not need to change.
+
+This is the reason we use semantic categories rather than embedding visual decisions into the lexical or syntax analysis stages.
+
+## The Renderer Remains the Renderer
+
+Eventually, the highlighting information must reach the Renderer.
+
+The Renderer already owns the responsibility of converting editor state into a visual frame.
+
+Syntax highlighting does not change that responsibility.
+
+Instead, the Renderer receives additional information about how portions of the document should be presented.
+
+The complete relationship is:
+
+```text
+                 Document
+                    │
+                    ▼
+              Syntax Analysis
+                    │
+                    ▼
+              Highlight Classes
+                    │
+                    ▼
+                  Theme
+                    │
+                    ▼
+                Renderer
+                    │
+                    ▼
+              Screen Buffer
+                    │
+                    ▼
+                 Terminal
+```
+
+The syntax subsystem determines **what something is**.
+
+The Theme determines **how that category should look**.
+
+The Renderer determines **how that visual information becomes part of the frame**.
+
+This keeps the existing rendering architecture intact.
+
+Because highlighting information depends on the Document, it is a **derived relationship**: the Document remains authoritative, and highlighting can always be discarded and regenerated from it. That property was established in the previous section and will become especially important when we discuss updating highlighting after edits.
+
+## A Complete Example
+
+Consider:
+
+```c
+// Calculate the total
+int total = count + 10;
+```
+
+A simplified analysis pipeline might produce:
+
+```text
+Source Text
+    │
+    ▼
+Lexer
+    │
+    ├── COMMENT
+    ├── KEYWORD
+    ├── IDENTIFIER
+    ├── OPERATOR
+    ├── IDENTIFIER
+    ├── OPERATOR
+    ├── NUMBER
+    └── PUNCTUATION
+    │
+    ▼
+Highlight Classes
+    │
+    ▼
+Theme
+    │
+    ▼
+Renderer
+    │
+    ▼
+Visual Frame
+```
+
+Notice what has **not** happened.
+
+The Document was not modified.
+
+The Cursor was not moved.
+
+The Viewport was not changed.
+
+The syntax analyzer did not write anything to the terminal.
+
+The Renderer still owns the final presentation.
+
+This is the architectural separation we want.
+
+## The Complete Responsibility Boundary
+
+We can now summarize the pipeline as follows:
+
+| Stage               | Main Question                                       |
+| ------------------- | --------------------------------------------------- |
+| Language Definition | Which syntax rules apply?                           |
+| Lexer               | What lexical units exist?                           |
+| Tokens              | Where are those units located?                      |
+| Syntax Analyzer     | What do those units mean in context?                |
+| Highlight Classes   | Which semantic category does each region belong to? |
+| Theme               | How should each category look?                      |
+| Renderer            | How should the final visual frame be produced?      |
+
+This gives us a clean chain:
+
+```text
+What language?
+      │
+      ▼
+What pieces?
+      │
+      ▼
+Where are they?
+      │
+      ▼
+What do they mean?
+      │
+      ▼
+What category are they?
+      │
+      ▼
+How should they look?
+      │
+      ▼
+How should they be displayed?
+```
+
+Each question belongs to a different part of the system.
+
+That separation is what allows a simple syntax-highlighting implementation today to evolve into a sophisticated incremental parser tomorrow without forcing the rest of the editor to understand its internal machinery.
+
+## Summary
+
+Syntax highlighting is best understood as an analysis pipeline that transforms plain Document text into structured presentation information. Along the way, a language definition selects the applicable rules, a Lexer produces tokens, syntax analysis adds context, highlight classes represent semantic categories, and a Theme maps those categories to visual styles before the Renderer produces the final frame. Every stage adds information without modifying the original text, and keeping these responsibilities separate is what allows the analysis strategy to become more sophisticated over time without forcing the Document or Renderer to change.
+
+Each stage answers a narrower question than the one before it: language selection chooses the rules, lexing locates lexical units, contextual analysis assigns meaning, and the theme supplies appearance. The interfaces between those stages matter more than the sophistication of any single stage, because they let the implementation grow without disturbing the others.
+
+This pipeline sets up the details of each stage. The next section examines the first major analysis step in full: **Section 32.3, Lexical Analysis**.

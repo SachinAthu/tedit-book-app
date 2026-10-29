@@ -1,0 +1,950 @@
+---
+title: "32.9 Updating Highlighting After Editing"
+description: "Explains how edits invalidate highlighting, why syntax state propagates across lines, and how incremental re-analysis keeps derived information synchronized."
+---
+
+Syntax highlighting is derived from the Document, which means it must change whenever the Document changes.
+
+This creates a fundamental requirement for an interactive editor:
+
+> **Highlighting must remain synchronized with the current contents of the Document.**
+
+A user may insert, delete, replace, or split text at any time. The syntax subsystem must respond to those changes without interfering with the normal editing pipeline.
+
+The basic relationship is:
+
+```text
+User edit
+   │
+   ▼
+Document changes
+   │
+   ▼
+Syntax information may become stale
+   │
+   ▼
+Re-analysis
+   │
+   ▼
+Updated highlighting
+```
+
+The challenge is deciding **how much** of the Document needs to be analyzed again.
+
+## The Simplest Strategy: Re-Analyze Everything
+
+The most straightforward implementation is to discard all syntax information after every edit:
+
+```text
+Edit
+ │
+ ▼
+Discard highlighting
+ │
+ ▼
+Analyze entire Document
+ │
+ ▼
+Generate new highlighting
+```
+
+This approach has an important advantage: simplicity.
+
+There is no need to determine which regions were affected.
+
+There is no need to track syntax dependencies.
+
+There is no need to maintain incremental state.
+
+The result is also easy to reason about because the highlighting is always generated from the current Document.
+
+For a small editor and small documents, this may be entirely acceptable.
+
+## Why Whole-Document Re-Analysis Does Not Scale
+
+Consider a Document containing:
+
+```text
+100,000 lines
+```
+
+Suppose the user changes one character near the beginning:
+
+```text
+line 20
+```
+
+Re-analyzing the entire Document means processing:
+
+```text
+lines 0 → 99,999
+```
+
+even though the edit may affect only a small portion of the syntax.
+
+If the user types several characters one at a time, this work may be repeated for every keystroke.
+
+Conceptually:
+
+```text
+Keystroke 1 → analyze entire document
+Keystroke 2 → analyze entire document
+Keystroke 3 → analyze entire document
+Keystroke 4 → analyze entire document
+```
+
+The total work can become unnecessarily large.
+
+This does not mean whole-document analysis is always wrong.
+
+It means that syntax highlighting eventually needs a more selective invalidation strategy.
+
+## The Changed Region
+
+An edit has a location and a size.
+
+For example:
+
+```text
+insert "x"
+at (20, 8)
+```
+
+or:
+
+```text
+delete range
+(20, 8) → (20, 12)
+```
+
+The syntax subsystem can use this information to identify an initial region that may need re-analysis.
+
+Conceptually:
+
+```text
+Document
+────────────────────────────────
+line 19
+line 20   ← changed
+line 21
+line 22
+────────────────────────────────
+```
+
+The simplest incremental strategy is therefore:
+
+```text
+Edit
+ │
+ ▼
+Mark affected region
+ │
+ ▼
+Re-analyze region
+```
+
+However, syntax dependencies mean that the affected region may extend beyond the exact location of the edit.
+
+## Why an Edit Can Affect Later Lines
+
+Consider a multi-line comment:
+
+```c
+/*
+   comment
+   continues
+*/
+int value = 10;
+```
+
+Suppose the user inserts the opening comment delimiter:
+
+```text
+/*
+```
+
+at the beginning of the file.
+
+The syntax state changes from:
+
+```text
+NORMAL
+```
+
+to:
+
+```text
+IN_COMMENT
+```
+
+That change affects every following line until the closing delimiter.
+
+The dependency therefore looks like:
+
+```text
+Changed line
+     │
+     ▼
+Syntax state changes
+     │
+     ▼
+Next line interpreted differently
+     │
+     ▼
+Following line may change
+     │
+     ▼
+Continue until state stabilizes
+```
+
+The changed line is only the starting point.
+
+## Syntax State Propagation
+
+A useful model is to treat each line as having an input and output syntax state.
+
+For example:
+
+```text
+Line 10
+Input:  NORMAL
+Output: IN_COMMENT
+
+Line 11
+Input:  IN_COMMENT
+Output: IN_COMMENT
+
+Line 12
+Input:  IN_COMMENT
+Output: NORMAL
+```
+
+The output state of one line becomes the input state of the next:
+
+```text
+Line N
+Output State
+     │
+     ▼
+Line N+1
+Input State
+```
+
+When a line changes, the syntax subsystem can recompute its output state.
+
+If the output state is unchanged from the previously stored state, later lines may not need to be re-analyzed.
+
+## The Stable-State Optimization
+
+Suppose the original analysis contains:
+
+```text
+Line 20 → NORMAL
+Line 21 → NORMAL
+Line 22 → NORMAL
+Line 23 → NORMAL
+```
+
+An edit occurs on line 20.
+
+The syntax subsystem re-analyzes:
+
+```text
+Line 20
+```
+
+and obtains the same outgoing state:
+
+```text
+Output = NORMAL
+```
+
+Since line 21 previously received:
+
+```text
+Input = NORMAL
+```
+
+its input state has not changed.
+
+The subsystem may therefore stop propagation.
+
+Conceptually:
+
+```text
+Edit line 20
+     │
+     ▼
+Analyze line 20
+     │
+     └── output state unchanged
+                │
+                ▼
+        later analysis remains valid
+```
+
+This can greatly reduce work for local edits.
+
+## When Propagation Must Continue
+
+Now consider the opposite case.
+
+Suppose the edit changes:
+
+```text
+/*
+```
+
+into:
+
+```text
+//
+```
+
+The outgoing syntax state may change.
+
+Previously:
+
+```text
+Output = IN_COMMENT
+```
+
+Now:
+
+```text
+Output = NORMAL
+```
+
+The next line's input state has changed.
+
+Therefore, it must be reconsidered:
+
+```text
+Line 20
+    │
+    │ state changed
+    ▼
+Line 21
+    │
+    │ may change
+    ▼
+Line 22
+    │
+    ▼
+...
+```
+
+The propagation continues until the syntax state and resulting highlighting become stable again.
+
+## Insertions and Deletions
+
+Edits can affect both text and line structure.
+
+An insertion may:
+
+```text
+add characters
+split a line
+```
+
+A deletion may:
+
+```text
+remove characters
+join lines
+```
+
+Therefore, the syntax subsystem should not rely solely on a fixed line number.
+
+Instead, the editing operation can provide information about the affected logical range.
+
+Conceptually:
+
+```text
+Edit Range
+├── start position
+└── end position
+```
+
+The syntax subsystem uses this information to invalidate its derived ranges and determine where re-analysis should begin.
+
+The exact edit representation remains the responsibility of the editor's command and document-editing architecture.
+
+## Invalidating Highlight Ranges
+
+When source text changes, existing highlight ranges may no longer correspond to the current Document.
+
+For example:
+
+```c
+int count = 42;
+```
+
+contains:
+
+```text
+count → IDENTIFIER
+```
+
+After editing:
+
+```c
+int total = 42;
+```
+
+the old range for `count` is no longer meaningful.
+
+The syntax subsystem must therefore invalidate affected derived information.
+
+Conceptually:
+
+```text
+Old Document
+      │
+      ▼
+Old Highlight Ranges
+      │
+      X
+      │
+      ▼
+Document Edit
+      │
+      ▼
+New Highlight Ranges
+```
+
+The Document remains authoritative throughout.
+
+## Invalidating by Region
+
+A useful strategy is to divide syntax information into regions, such as lines.
+
+For example:
+
+```text
+Line 0  → syntax state + highlights
+Line 1  → syntax state + highlights
+Line 2  → syntax state + highlights
+...
+```
+
+When line 20 changes:
+
+```text
+Line 20 → invalid
+```
+
+The subsystem can then propagate invalidation forward as necessary:
+
+```text
+20 → 21 → 22 → 23 → ...
+```
+
+The process stops when the syntax state reaches a stable point.
+
+This is more efficient than invalidating the entire Document after every edit.
+
+## Changes Near the End of a File
+
+Not every edit causes long-range propagation.
+
+Suppose the user changes the final line:
+
+```text
+line N
+```
+
+and the line does not contain a construct whose state affects anything after it.
+
+There are no following lines to invalidate.
+
+The syntax subsystem can simply re-analyze the changed region.
+
+This gives a useful best case:
+
+```text
+Edit
+ │
+ ▼
+Analyze affected line
+ │
+ ▼
+End of Document
+```
+
+No further work is required.
+
+## Changes Inside a String or Comment
+
+Edits inside a multi-line construct can have more complicated effects.
+
+Consider:
+
+```text
+/*
+   first part
+   second part
+*/
+```
+
+Deleting the closing delimiter:
+
+```text
+/*
+   first part
+   second part
+```
+
+causes the comment state to continue beyond the previous endpoint.
+
+The syntax subsystem must therefore propagate the new state through later lines.
+
+The same principle applies to multi-line strings or other language constructs whose lexical state crosses line boundaries.
+
+This is why syntax state is more important than simply tracking changed characters.
+
+## Edits Before the Viewport
+
+Syntax highlighting is independent of what is currently visible.
+
+Suppose the viewport is showing:
+
+```text
+lines 500–530
+```
+
+but the user edits:
+
+```text
+line 100
+```
+
+The syntax subsystem may need to update information affecting lines beyond the edit, even if none of those lines are currently visible.
+
+The renderer does not need to be involved in this analysis.
+
+The syntax subsystem works in Document coordinates:
+
+```text
+Document
+   │
+   ├── edit at line 100
+   │
+   └── syntax propagation
+             │
+             ▼
+        updated ranges
+             │
+             ▼
+Viewport later requests visible data
+```
+
+This keeps syntax analysis independent of scrolling and screen position.
+
+## Rendering After Syntax Changes
+
+Once syntax information has been updated, the editor needs to render the current state.
+
+The runtime sequence is conceptually:
+
+```text
+Input event
+    │
+    ▼
+Command execution
+    │
+    ▼
+Document edit
+    │
+    ▼
+Syntax invalidation
+    │
+    ▼
+Syntax re-analysis
+    │
+    ▼
+Render frame
+```
+
+The Renderer then sees the current Document and current derived highlighting information.
+
+The syntax subsystem does not directly trigger terminal output.
+
+It participates in the normal application update cycle.
+
+## Keeping the Event Loop Responsive
+
+Syntax analysis occurs in an interactive application, so its cost matters.
+
+If every keystroke causes a large amount of computation, the editor can feel sluggish.
+
+For example:
+
+```text
+Key press
+   │
+   ├── Document update
+   │
+   ├── syntax analysis
+   │
+   └── rendering
+```
+
+If syntax analysis dominates the entire operation, input latency increases.
+
+This creates a practical objective:
+
+> **Perform enough syntax analysis to keep highlighting correct while avoiding unnecessary work.**
+
+Incremental invalidation is one mechanism for achieving that objective.
+
+## Correctness Comes Before Optimization
+
+It is important not to optimize syntax invalidation by making assumptions that can produce stale highlighting.
+
+For example, assuming:
+
+```text
+only the edited line can change
+```
+
+is incorrect for multi-line syntax.
+
+A safer progression is:
+
+```text
+Correct whole-document analysis
+          │
+          ▼
+Correct regional invalidation
+          │
+          ▼
+Correct state propagation
+          │
+          ▼
+Performance optimization
+```
+
+The implementation should first establish a correct model.
+
+Only then should it reduce the amount of work.
+
+This follows a general engineering principle:
+
+> **An optimization is useful only if it preserves correctness.**
+
+## A Practical Initial Strategy
+
+A reasonable implementation can begin with a deliberately simple strategy.
+
+After an edit:
+
+1. Identify the first affected line.
+2. Invalidate syntax information from that point.
+3. Re-analyze forward.
+4. Track the resulting syntax state.
+5. Stop when the state becomes equivalent to the previously known state.
+6. Leave unaffected later regions intact.
+
+Conceptually:
+
+```text
+Edit
+ │
+ ▼
+Find first affected line
+ │
+ ▼
+Invalidate
+ │
+ ▼
+Analyze line
+ │
+ ▼
+Did syntax state change?
+ ├── No → stop
+ └── Yes
+       │
+       ▼
+   Analyze next line
+       │
+       └── repeat
+```
+
+This is substantially more efficient than always analyzing the entire Document while remaining understandable.
+
+## When the Entire Document Really Does Need Re-Analysis
+
+Incremental analysis is not guaranteed to remain local.
+
+Some changes can affect a large portion of the Document.
+
+For example:
+
+```text
+/*
+```
+
+inserted near the beginning of a file may cause many later lines to be interpreted as part of a comment.
+
+In that case:
+
+```text
+Edit near beginning
+       │
+       ▼
+Large syntax-state change
+       │
+       ▼
+Large re-analysis region
+```
+
+The system should accept this possibility.
+
+Incremental analysis does not promise that every edit is cheap.
+
+It promises that the editor avoids work when the syntax consequences are local.
+
+## The Role of Caching
+
+Syntax information can also be cached between renders.
+
+For example:
+
+```text
+Document
+   │
+   ▼
+Syntax cache
+├── token information
+├── highlight ranges
+└── line states
+```
+
+The cache is valid only while it corresponds to the current Document state.
+
+After an edit:
+
+```text
+Document changed
+       │
+       ▼
+Invalidate affected cache entries
+       │
+       ▼
+Recompute
+```
+
+This allows rendering to reuse syntax information instead of repeatedly performing lexical analysis for every frame.
+
+## Syntax Cache Versus Document State
+
+The syntax cache must remain clearly separate from the Document.
+
+A useful mental model is:
+
+```text
+Document
+   │
+   └── authoritative
+
+Syntax Cache
+   │
+   └── derived
+```
+
+The cache may be deleted at any time:
+
+```text
+Delete cache
+    │
+    ▼
+Rebuild from Document
+```
+
+This makes cache correctness easier to reason about.
+
+If the syntax subsystem ever becomes uncertain whether its cached information is valid, it can discard it and regenerate the necessary portions from the Document.
+
+## Syntax Updating and Undo / Redo
+
+Undo and redo introduce no special ownership requirement for syntax highlighting.
+
+An undo operation changes the Document:
+
+```text
+Undo
+ │
+ ▼
+Document restored
+ │
+ ▼
+Syntax information may be stale
+ │
+ ▼
+Re-analysis
+```
+
+A redo operation follows the same pattern.
+
+The syntax subsystem does not need to understand why the Document changed.
+
+It only needs to respond to the resulting document edit.
+
+This keeps the syntax system independent from the history mechanism.
+
+## Syntax Updating and Saving
+
+Saving the Document also does not require syntax information to be written to the file.
+
+The file contains source text:
+
+```text
+Document
+   │
+   ▼
+File Manager
+   │
+   ▼
+Plain text file
+```
+
+Highlight ranges remain in memory as editor-derived information.
+
+This reinforces the distinction:
+
+```text
+Persistent:
+Document contents
+
+Transient:
+Syntax analysis
+Highlight ranges
+Syntax cache
+```
+
+The syntax subsystem is therefore not part of the file format.
+
+## A Useful Invariant
+
+The syntax subsystem should maintain a simple invariant:
+
+> **Every valid highlight result corresponds to the current Document state and the current highlighting mode.**
+
+If either changes:
+
+```text
+Document changed
+       OR
+Highlighting mode changed
+       │
+       ▼
+Existing syntax information may be invalid
+```
+
+The subsystem must then regenerate the affected information.
+
+This invariant provides a clear correctness criterion.
+
+## The Complete Update Cycle
+
+Putting the pieces together:
+
+```text
+                 User Input
+                     │
+                     ▼
+                Command Engine
+                     │
+                     ▼
+                  Document
+                     │
+                     │ edit
+                     ▼
+             Syntax Invalidation
+                     │
+                     ▼
+              Incremental Analysis
+                     │
+                     ▼
+             Updated Highlight Data
+                     │
+                     ▼
+                  Renderer
+                     │
+                     ▼
+               Screen Buffer
+                     │
+                     ▼
+                  Terminal
+```
+
+The Document remains the center of truth.
+
+Syntax highlighting reacts to changes rather than owning them.
+
+The Renderer consumes the updated derived information when constructing the next frame.
+
+## Engineering Trade-Off
+
+There are now three broad strategies:
+
+```text
+Strategy 1
+Whole-document re-analysis
+    │
+    ├── simplest
+    ├── easiest to verify
+    └── potentially expensive
+
+Strategy 2
+Regional re-analysis
+    │
+    ├── more efficient
+    ├── requires invalidation logic
+    └── requires syntax-state tracking
+
+Strategy 3
+Advanced incremental parsing
+    │
+    ├── potentially highly efficient
+    ├── handles complex syntax
+    └── significantly more complex
+```
+
+The architecture should allow progression between these strategies.
+
+The initial implementation does not need to solve every possible incremental-parsing problem.
+
+What matters is establishing a clean boundary so that syntax analysis can become more sophisticated without forcing changes to the core Document or Renderer.
+
+## The Central Principle
+
+Syntax highlighting in an editor is not a one-time operation performed when a file is opened.
+
+It is a continuously maintained derived view:
+
+```text
+Current Document
+       │
+       ▼
+Current Syntax State
+       │
+       ▼
+Current Highlighting
+       │
+       ▼
+Current Frame
+```
+
+Every edit potentially invalidates part of that chain.
+
+A robust implementation therefore treats syntax information as **incrementally maintainable derived state**, not as permanent metadata attached to the source text.
+
+## Summary
+
+Syntax highlighting in an interactive editor is not a one-time operation performed when a file is opened; it is a continuously maintained derived view. Every edit can invalidate part of the chain from the current Document to the current frame, so the subsystem treats syntax information as incrementally maintainable derived state rather than permanent metadata. Practical strategies range from whole-document re-analysis, through regional re-analysis with syntax-state tracking and caching, to advanced incremental parsing; the architecture should allow progression between them while keeping the core Document and Renderer unchanged. The syntax subsystem reacts to changes rather than owning them, and it stays independent of undo/redo and file saving.
+
+The correctness criterion is simple: every valid highlight result must correspond to the current Document contents and the current highlighting mode, so either kind of change makes the affected information stale. Incremental invalidation is then an optimization layered on top of that invariant, and whole-document re-analysis remains a correct—if costly—fallback when dependencies propagate widely.
+
+Even with incremental invalidation, the editor must consider how much syntax information to retain and how much work to perform during edits. Those performance considerations lead to the next section: **Section 32.10, Performance and Scalability**.

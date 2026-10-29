@@ -1,0 +1,929 @@
+---
+title: "32.10 Performance and Scalability"
+description: "Examines the time, memory, and latency costs of syntax highlighting, comparing whole-document analysis with incremental, cached, and checkpointed strategies."
+---
+
+Syntax highlighting is easy to make functional.
+
+Making it responsive for large Documents is a different problem.
+
+The editor must analyze source text, maintain derived syntax information, and incorporate that information into rendered frames while the user continues typing.
+
+This creates three important performance concerns:
+
+```text
+Computation
+   │
+   ├── lexical analysis
+   ├── syntax analysis
+   └── invalidation
+
+Memory
+   │
+   ├── tokens
+   ├── highlight ranges
+   └── syntax state
+
+Latency
+   │
+   ├── response to edits
+   └── frame rendering
+```
+
+A good syntax-highlighting architecture must balance all three.
+
+## The Cost of Lexical Analysis
+
+A basic lexer processes the source text from beginning to end.
+
+For a Document containing `n` relevant code points, a straightforward lexical analysis pass is approximately:
+
+```text
+O(n)
+```
+
+Each character or code point is examined a bounded number of times.
+
+For a small file, this is inexpensive.
+
+For a large file, repeatedly performing this operation after every edit can become expensive.
+
+For example:
+
+```text
+Document size = n
+
+User types one character
+        │
+        ▼
+O(n) analysis
+
+User types another character
+        │
+        ▼
+O(n) analysis
+
+User types another character
+        │
+        ▼
+O(n) analysis
+```
+
+If the user enters many characters, the repeated work accumulates quickly.
+
+This is why the distinction between **whole-document analysis** and **incremental analysis** matters.
+
+## The Cost of Contextual Analysis
+
+Lexical analysis is generally linear, but contextual analysis can require additional work.
+
+A simple contextual rule might inspect only nearby tokens:
+
+```text
+Token N
+   │
+   ▼
+Inspect Token N+1
+```
+
+This is inexpensive.
+
+More complicated rules may need to inspect larger structures:
+
+```text
+Token
+  │
+  ▼
+Related declaration
+  │
+  ▼
+Containing construct
+```
+
+The more context the analyzer requires, the greater the potential cost.
+
+This creates an important design principle:
+
+> **Highlighting analysis should perform only as much structural work as the visual result requires.**
+
+There is little benefit in computing information that the renderer will never use.
+
+## Whole-Document Analysis
+
+The simplest performance model is:
+
+```text
+Every edit
+    │
+    ▼
+Analyze entire Document
+```
+
+If the Document contains `n` code points and the user performs `e` edits, the approximate total analysis work can become:
+
+```text
+O(e × n)
+```
+
+This is not necessarily a problem for small files.
+
+It becomes increasingly undesirable as `n` grows.
+
+For example, a 500-line source file may be perfectly responsive under whole-document analysis, while a very large source tree represented by one Document may not be.
+
+The architecture should therefore avoid assuming that whole-document analysis will always remain sufficient.
+
+## Incremental Analysis
+
+Incremental analysis attempts to restrict work to the region affected by an edit.
+
+Conceptually:
+
+```text
+Whole-document:
+
+Edit
+ │
+ ▼
+████████████████████
+Entire Document
+
+
+Incremental:
+
+Edit
+ │
+ ▼
+      ███████
+      Affected
+       region
+```
+
+If only a small region changes, the amount of analysis can be much smaller than the size of the complete Document.
+
+In the best case:
+
+```text
+Document size = n
+Changed region = k
+
+k << n
+```
+
+The syntax work can approach:
+
+```text
+O(k)
+```
+
+rather than:
+
+```text
+O(n)
+```
+
+The exact complexity depends on syntax dependencies and how far state propagation travels.
+
+## The Important Worst Case
+
+Incremental analysis does not guarantee that only a small region will be processed.
+
+Consider:
+
+```text
+/*
+   ...
+   ...
+   ...
+```
+
+If the closing delimiter is removed, the comment may continue through a large portion of the Document.
+
+The affected region can therefore become:
+
+```text
+Edit
+ │
+ ▼
+line 20
+ │
+ ▼
+line 21
+ │
+ ▼
+line 22
+ │
+ ▼
+...
+ │
+ ▼
+line 20,000
+```
+
+In this case, incremental analysis approaches whole-document analysis.
+
+That is not a failure of the algorithm.
+
+It is a consequence of the syntax dependency itself.
+
+The optimization works when syntax dependencies are local.
+
+## Average Case Matters for an Editor
+
+Interactive software should not be judged only by theoretical worst-case behavior.
+
+Typical editing operations are usually small:
+
+```text
+insert character
+delete character
+type identifier
+add punctuation
+```
+
+Most such edits affect a limited region.
+
+Therefore, an incremental highlighter can often achieve good practical performance even though some edits occasionally require substantial re-analysis.
+
+The objective is:
+
+```text
+Most edits
+    ↓
+Small analysis region
+
+Unusual edits
+    ↓
+Larger analysis region
+```
+
+This matches the interactive nature of the editor.
+
+## Rendering Cost
+
+Syntax analysis is only part of the performance equation.
+
+The renderer still needs to construct the visible frame.
+
+Suppose the viewport contains:
+
+```text
+R visible rows
+C visible columns
+```
+
+The renderer already operates on the visible screen region.
+
+Syntax highlighting should not require analysis of invisible terminal cells.
+
+A useful architecture is therefore:
+
+```text
+Document
+   │
+   ▼
+Syntax information
+   │
+   └── available by logical region
+
+Viewport
+   │
+   ▼
+Visible region
+   │
+   ▼
+Renderer
+```
+
+The renderer consumes only the syntax information relevant to the current frame.
+
+This prevents the syntax subsystem from becoming coupled to terminal dimensions.
+
+## Do Not Re-Lex During Every Cell Render
+
+One particularly poor design would be:
+
+```text
+For every visible character:
+    determine its syntax
+```
+
+This could cause the same source text to be repeatedly analyzed while rendering a frame.
+
+For example:
+
+```text
+Character 1 → analyze
+Character 2 → analyze
+Character 3 → analyze
+...
+```
+
+The renderer should instead consume already-derived syntax information:
+
+```text
+Document
+   │
+   ▼
+Syntax analysis
+   │
+   ▼
+Highlight ranges
+   │
+   ▼
+Renderer
+```
+
+The expensive interpretation step should not be hidden inside the rendering loop.
+
+## Cache Derived Syntax Information
+
+Caching is one way to avoid repeated analysis.
+
+The syntax subsystem can retain:
+
+```text
+Tokens
+Highlight ranges
+Line syntax states
+```
+
+and reuse them until the relevant Document region changes.
+
+Conceptually:
+
+```text
+              Document
+                 │
+                 ▼
+           Syntax Analysis
+                 │
+                 ▼
+            Syntax Cache
+                 │
+          ┌──────┴──────┐
+          ▼             ▼
+       Renderer      Invalidation
+```
+
+The cache should always be considered derived.
+
+It can be invalidated whenever its assumptions no longer hold.
+
+## Cache Invalidation
+
+The difficult part of caching is not storing information.
+
+It is knowing when the information is no longer valid.
+
+Suppose:
+
+```text
+Line 40 → cached syntax
+```
+
+is changed.
+
+At minimum, the syntax information for that region must be invalidated.
+
+If the edit changes lexical state, later regions may also need invalidation:
+
+```text
+Line 40
+   │
+   ▼
+Line 41
+   │
+   ▼
+Line 42
+   │
+   ▼
+...
+```
+
+The state-propagation model developed earlier provides a principled way to determine where invalidation can stop.
+
+## Memory Usage
+
+Performance is not only about CPU time.
+
+The syntax subsystem also consumes memory.
+
+If every token is retained, memory usage is roughly proportional to the number of tokens:
+
+```text
+O(t)
+```
+
+where `t` is the number of stored tokens.
+
+Highlight ranges introduce additional derived storage:
+
+```text
+O(h)
+```
+
+where `h` is the number of highlight ranges.
+
+Line-level syntax state introduces another relatively small component:
+
+```text
+O(l)
+```
+
+where `l` is the number of tracked lines.
+
+The actual memory cost depends on the structures chosen, but the important principle is to avoid duplicating source text unnecessarily.
+
+## Do Not Store More Than Necessary
+
+A syntax subsystem does not necessarily need to retain every intermediate representation.
+
+For example:
+
+```text
+Document
+   ↓
+Tokens
+   ↓
+Highlight Ranges
+```
+
+If tokens are no longer needed after highlight ranges are generated, retaining both structures may waste memory.
+
+A more sophisticated implementation may decide:
+
+```text
+Temporary tokens
+       │
+       ▼
+Highlight ranges
+       │
+       ▼
+Discard tokens
+```
+
+On the other hand, if contextual analysis repeatedly needs the tokens, retaining them may be justified.
+
+This is an implementation trade-off rather than a universal rule.
+
+## Large Documents
+
+As Document size increases, several strategies become increasingly important.
+
+### Strategy 1 — Analyze on demand
+
+Only analyze regions that need to be displayed.
+
+```text
+Viewport
+   │
+   ▼
+Required syntax region
+   │
+   ▼
+Analyze
+```
+
+This reduces initial work but introduces complexity around syntax state dependencies.
+
+### Strategy 2 — Analyze incrementally
+
+Maintain syntax information and update affected regions after edits.
+
+```text
+Edit
+ │
+ ▼
+Affected region
+ │
+ ▼
+Incremental analysis
+```
+
+### Strategy 3 — Analyze asynchronously
+
+A more advanced architecture can perform expensive analysis outside the immediate input path.
+
+However, introducing concurrency creates additional synchronization and state-consistency problems.
+
+For the single-threaded architecture developed in this book, asynchronous syntax analysis should not be introduced merely for theoretical scalability.
+
+The simplest correct strategy is preferable until measurements show that more complexity is justified.
+
+## Interactive Latency
+
+The most important performance metric for an editor is often not total throughput.
+
+It is **perceived responsiveness**.
+
+The user expects:
+
+```text
+Key press
+   │
+   ▼
+Document changes
+   │
+   ▼
+Screen updates
+```
+
+to happen quickly.
+
+If syntax analysis takes too long after every key press, the editor feels unresponsive even if the system eventually completes the work.
+
+This creates a practical constraint:
+
+> **Syntax highlighting must not unnecessarily delay the interactive editing path.**
+
+The architecture should therefore favor local invalidation, bounded work, and simple analysis before introducing more complicated optimization mechanisms.
+
+## Typing Bursts
+
+Users rarely edit one isolated character and then wait.
+
+They may type:
+
+```c
+calculateTotal(value)
+```
+
+as a rapid sequence of keystrokes.
+
+If the editor performs expensive full-document analysis after every character:
+
+```text
+c → full analysis
+a → full analysis
+l → full analysis
+c → full analysis
+...
+```
+
+the system performs repeated work while the source is changing continuously.
+
+An efficient syntax subsystem should minimize redundant computation.
+
+Incremental invalidation naturally helps because each edit generally affects a small region.
+
+More advanced systems can also coalesce work, but such optimizations should be introduced only when justified by the editor's requirements and measured behavior.
+
+## Initial Highlighting
+
+Opening a large file creates another performance problem.
+
+The editor may need to establish syntax information before the first useful frame can be displayed.
+
+A naive approach is:
+
+```text
+Open file
+   │
+   ▼
+Analyze entire file
+   │
+   ▼
+Render
+```
+
+For large Documents, this can delay initial display.
+
+A more scalable approach is to prioritize the region needed for the initial viewport:
+
+```text
+Open file
+   │
+   ▼
+Determine visible region
+   │
+   ▼
+Analyze required syntax
+   │
+   ▼
+Render first frame
+```
+
+The remaining syntax information can be generated as needed.
+
+However, lexical state dependencies mean that analyzing an arbitrary line in isolation is not always possible.
+
+The implementation must account for the syntax state required to interpret that region correctly.
+
+## Syntax State and Lazy Analysis
+
+Suppose the viewport starts at line 500.
+
+The syntax state at line 500 may depend on earlier lines:
+
+```text
+Line 0
+  │
+  ▼
+Line 1
+  │
+  ▼
+...
+  │
+  ▼
+Line 500
+```
+
+A lazy highlighter therefore cannot blindly start at line 500 if the syntax state is unknown.
+
+Possible strategies include:
+
+```text
+Known checkpoint
+      │
+      ▼
+Analyze forward
+      │
+      ▼
+Viewport
+```
+
+or:
+
+```text
+Analyze from beginning
+      │
+      ▼
+Reach required region
+```
+
+The appropriate strategy depends on the language and the complexity of the syntax state.
+
+This illustrates a recurring theme:
+
+> **Performance optimizations are constrained by the dependencies of the syntax model.**
+
+## Checkpoints
+
+A useful optimization is to retain syntax state at selected points.
+
+For example:
+
+```text
+Line 0     checkpoint
+Line 100   checkpoint
+Line 200   checkpoint
+Line 300   checkpoint
+Line 400   checkpoint
+```
+
+If the renderer needs line 450, the syntax subsystem can begin from the nearest known checkpoint:
+
+```text
+Line 400
+   │
+   ▼
+Analyze 401
+   │
+   ▼
+...
+   │
+   ▼
+Line 450
+```
+
+This avoids always starting analysis from the beginning of the Document.
+
+Checkpoints are another form of derived state and can be discarded and regenerated when necessary.
+
+## Complexity of Incremental Updating
+
+For an edit affecting a region of `k` lines, a simplified model is:
+
+```text
+O(k)
+```
+
+where `k` represents the amount of source that actually needs to be re-analyzed.
+
+But `k` is not necessarily equal to the number of edited lines.
+
+It includes any additional lines affected by syntax-state propagation.
+
+Therefore:
+
+```text
+edited region
+     +
+syntax-dependent region
+     =
+actual analysis region
+```
+
+This distinction is more useful than simply claiming that incremental highlighting is always fast.
+
+## Memory Versus Computation
+
+Retaining more syntax state can reduce future computation.
+
+For example:
+
+```text
+More cache
+   │
+   └── less recomputation
+```
+
+but:
+
+```text
+More cache
+   │
+   └── more memory
+```
+
+Conversely:
+
+```text
+Less cache
+   │
+   └── less memory
+```
+
+but:
+
+```text
+Less cache
+   │
+   └── more recomputation
+```
+
+The correct balance depends on the expected Document sizes and usage patterns.
+
+This is a classic space-time trade-off.
+
+## Avoid Premature Complexity
+
+It is tempting to introduce:
+
+```text
+multiple caches
+complex dependency graphs
+background workers
+persistent syntax trees
+advanced incremental algorithms
+```
+
+before the editor has demonstrated a real performance problem.
+
+That would increase implementation complexity and make correctness harder to establish.
+
+A more disciplined progression is:
+
+```text
+Correct lexical highlighting
+        │
+        ▼
+Measure performance
+        │
+        ▼
+Incremental invalidation
+        │
+        ▼
+Measure again
+        │
+        ▼
+Add further optimization only if necessary
+```
+
+This keeps optimization driven by actual requirements.
+
+The idea that highlighting can start simple and grow through progressively richer analysis levels was introduced in Section 32.5. For performance, the key point is that the architecture should support this progression, and the first implementation does not need to begin at the most advanced level.
+
+## Measuring the Right Things
+
+When evaluating syntax-highlighting performance, useful measurements include:
+
+```text
+Initial analysis time
+Time per edit
+Number of lines re-analyzed
+Number of tokens generated
+Memory used by syntax state
+Rendering time
+```
+
+The most useful measurement may be:
+
+```text
+How much source was re-analyzed after a typical edit?
+```
+
+If most edits require only a few lines of work, incremental highlighting is behaving as intended.
+
+If ordinary edits repeatedly trigger analysis of most of the Document, the implementation needs further investigation.
+
+## Performance Should Preserve Architecture
+
+Optimization should not undermine the subsystem boundaries.
+
+For example, a performance optimization should not cause:
+
+```text
+Renderer
+   │
+   └── directly modifies syntax state
+```
+
+or:
+
+```text
+Document
+   │
+   └── becomes responsible for language parsing
+```
+
+The clean architecture should remain:
+
+```text
+Document
+   │
+   ▼
+Syntax
+   │
+   ▼
+Highlight Classes
+   │
+   ▼
+Theme
+   │
+   ▼
+Renderer
+```
+
+Performance improvements should optimize the work performed inside these boundaries rather than eliminating the boundaries.
+
+## The Engineering Trade-Off
+
+There is no single universally correct syntax-highlighting strategy.
+
+A tiny editor may be perfectly well served by:
+
+```text
+re-analyze everything
+```
+
+A larger editor may require:
+
+```text
+incremental analysis
+```
+
+An advanced editor may eventually require:
+
+```text
+incremental syntax trees
+```
+
+The correct choice depends on:
+
+```text
+Document size
++
+Language complexity
++
+Expected editing workload
++
+Required responsiveness
+```
+
+The architecture should make these strategies replaceable without changing the core Document model.
+
+## Summary
+
+Syntax highlighting introduces several kinds of derived work:
+
+```text
+Document
+   │
+   ├── lexical analysis
+   │
+   ├── contextual analysis
+   │
+   ├── highlight generation
+   │
+   └── cache maintenance
+```
+
+A scalable implementation should:
+
+- avoid analyzing unchanged regions,
+- avoid repeating analysis during rendering,
+- invalidate derived data when its source changes,
+- propagate syntax state only as far as necessary,
+- avoid unnecessary duplication of source text,
+- keep rendering independent from expensive parsing,
+- and introduce more sophisticated optimization only when justified.
+
+The central performance principle is:
+
+> **Analyze only what has to change, retain only what is useful, and keep the interactive path predictable.**
+
+Those principles are relative to the editor's actual workload: a small document may be perfectly responsive with whole-document analysis, while large files justify checkpointing, regional invalidation, or on-demand analysis. The key measurement is how much source is re-analyzed after a typical edit, and optimization should stop once that number and the input path are comfortably responsive.
+
+There are several possible ways to implement syntax highlighting—from simple regular-expression rules to state machines, parser-based approaches, and more advanced syntax-tree systems. Each provides a different balance of simplicity, correctness, extensibility, and performance. The next section compares these approaches at a high level in **Section 32.11, Design Alternatives and Trade-offs**.

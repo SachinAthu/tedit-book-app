@@ -1,0 +1,59 @@
+---
+title: "Chapter 32 — Syntax Highlighting"
+description: "Introduces syntax highlighting as a derived analysis pipeline, tracing lexing, contextual parsing, themes, language modes, and incremental updates."
+---
+
+## Introduction
+
+A terminal text editor works with text: to a Document, `int count = 42;` is nothing more than a sequence of characters. Yet a modern editor displays that same text as keywords, identifiers, operators, and numbers. It does so without changing the document—it *understands* the text well enough to present it more clearly. That is syntax highlighting.
+
+Syntax highlighting looks like a matter of color, but it is really an information-processing problem. The editor must analyze the text, decide what different regions represent, and hand that semantic information to the Renderer, which decides how each region looks. Getting this right requires a clear boundary: the Document stays authoritative, the syntax subsystem derives structure from it, a Theme maps that structure to styles, and the Renderer draws the result.
+
+This chapter builds that pipeline progressively:
+
+```text
+Problem — why abstract structure from plain text?
+    ↓
+Pipeline — analysis stages and their boundaries
+    ↓
+Lexing — recognizing tokens and lexical state
+    ↓
+Parsing — adding context beyond tokens
+    ↓
+Presentation — classes, themes, and the renderer
+    ↓
+Integration — language detection, edits, performance
+```
+
+We begin with why syntax highlighting exists and why it must remain derived information. We then walk through the analysis pipeline before detailing the Lexer, and then tokens and highlight classes together. Next we see why lexical analysis alone is insufficient and how a lightweight parser adds context. After that we examine how highlighting is applied to the Document and connected to the text buffer, how Themes map semantic classes to visual styles, and how the editor decides which language rules apply. We close with the practical concerns of updating highlighting after edits, performance and scalability, and the design alternatives and trade-offs involved.
+
+## Learning Objectives
+
+By the end of this chapter, you should be able to:
+
+- Explain why syntax highlighting treats text as derived information rather than modifying the Document.
+- Describe the syntax-highlighting pipeline and the responsibility of each stage.
+- Explain how a Lexer recognizes tokens and tracks lexical state.
+- Distinguish a token from a highlight class, and a token type from a semantic category.
+- Explain why lexical analysis alone is insufficient and what a lightweight parser adds.
+- Describe how highlighting information is associated with the Document and layered around the text buffer.
+- Explain how Themes map highlight classes to visual styles without coupling to language analysis.
+- Describe how the editor selects a language or highlighting mode for a Document.
+- Explain how highlighting is (re)built incrementally after edits, and why it can always be discarded and regenerated.
+- Evaluate the performance and scalability considerations of the baseline design.
+- Compare the main implementation alternatives and their trade-offs.
+
+## Sections
+
+- [32.1 Why Syntax Highlighting Exists](/volumes/volume-07/chapter-32/01-why-syntax-highlighting-exists/)
+- [32.2 Syntax Highlighting as an Analysis Pipeline](/volumes/volume-07/chapter-32/02-syntax-highlighting-as-analysis-pipeline/)
+- [32.3 Lexical Analysis](/volumes/volume-07/chapter-32/03-lexical-analysis/)
+- [32.4 Tokens and Highlight Classes](/volumes/volume-07/chapter-32/04-tokens-and-highlight-classes/)
+- [32.5 Beyond Lexing - Context and Lightweight Parsing](/volumes/volume-07/chapter-32/05-beyond-lexing-context-and-lightweight-parsing/)
+- [32.6 Highlighting the Document and the Text Buffer](/volumes/volume-07/chapter-32/06-highlighting-document-and-text-buffer/)
+- [32.7 Themes and Visual Styles](/volumes/volume-07/chapter-32/07-themes-and-visual-styles/)
+- [32.8 Language Detection and Highlighting Modes](/volumes/volume-07/chapter-32/08-language-detection-and-highlighting-modes/)
+- [32.9 Updating Highlighting After Editing](/volumes/volume-07/chapter-32/09-updating-highlighting-after-editing/)
+- [32.10 Performance and Scalability](/volumes/volume-07/chapter-32/10-performance-and-scalability/)
+- [32.11 Design Alternatives and Trade-offs](/volumes/volume-07/chapter-32/11-design-alternatives-and-trade-offs/)
+- [32.12 Conclusion](/volumes/volume-07/chapter-32/12-conclusion/)

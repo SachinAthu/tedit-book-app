@@ -1,0 +1,455 @@
+---
+title: "32.5 Beyond Lexing - Context and Lightweight Parsing"
+description: "Explains why lexing alone cannot resolve context, and how lightweight parsing improves semantic classification while degrading gracefully on incomplete code."
+---
+
+Lexical analysis is powerful because many syntax-highlighting decisions can be made by examining source text from left to right. Keywords look like keywords, numbers look like numbers, and strings and comments have recognizable delimiters. For a large class of programming languages, this is enough to produce useful highlighting.
+
+However, not every highlighting decision can be made from a token in isolation. A lightweight parser provides a limited amount of structural understanding—enough to improve highlighting—without requiring the editor to implement a complete compiler. This section explains why lexing is not enough, and what a deliberately limited parser adds.
+
+## Lexical Meaning Versus Context
+
+An identifier is a good example. Suppose the lexer encounters:
+
+```text
+calculate
+```
+
+On its own, this is simply an identifier-shaped sequence of characters. Now consider where it appears:
+
+```c
+int calculate(int value)
+```
+
+The surrounding structure suggests that `calculate` is a function declaration. Compare that with:
+
+```c
+calculate(value);
+```
+
+where the same identifier is being used as a function call, and with:
+
+```c
+int calculate = 10;
+```
+
+where `calculate` is a variable.
+
+The text itself has not changed—its surrounding context has:
+
+```text
+Lexical question:
+"What kind of token is this?"
+
+Syntax question:
+"What role does this token play here?"
+```
+
+Syntax highlighting sometimes needs the answer to the second question.
+
+```text
+                ┌─────────────┐
+Source text ───►│    Lexer    │
+                └──────┬──────┘
+                       │
+                       ▼
+                    Tokens
+                       │
+                       ▼
+                Contextual analysis
+                       │
+                       ▼
+                Highlight classes
+```
+
+The lexer provides the raw material; a later analysis stage can interpret that material.
+
+## Strings Demonstrate Another Boundary
+
+Context also matters when determining whether characters should be interpreted as syntax at all.
+
+Consider:
+
+```text
+return value;
+```
+
+The word `return` is a keyword. Now consider:
+
+```text
+"return value;"
+```
+
+Here, the entire sequence is part of a string literal, and `return` should not receive keyword highlighting. The lexer can handle this because it tracks lexical state:
+
+```text
+NORMAL STATE
+     │
+     │ "
+     ▼
+STRING STATE
+     │
+     │ "
+     ▼
+NORMAL STATE
+```
+
+While in the string state, characters that normally have special meaning are interpreted as string contents. The same principle applies to comments: the text inside a comment may resemble language syntax, but it should normally remain a comment. This demonstrates that some context is already required during lexing itself.
+
+## Lexical State Is Not Full Parsing
+
+It is useful to distinguish **lexical state** from **syntax parsing**.
+
+Lexical state answers questions such as:
+
+```text
+Are we currently inside a string?
+Are we currently inside a comment?
+Does this quote terminate the current string?
+Does this sequence begin a comment?
+```
+
+A parser answers more structural questions:
+
+```text
+Is this identifier a function?
+Is this name a type?
+Does this token belong to a declaration?
+Which tokens form this expression?
+```
+
+The distinction matters because syntax highlighting does not automatically require a complete language parser. A lightweight editor can often obtain useful results from a combination of lexical rules and limited contextual analysis.
+
+## When Lexing Is Sufficient, and When Context Is Useful
+
+Many useful highlighting decisions can be made entirely from lexical information:
+
+```text
+keyword
+number
+string
+comment
+operator
+punctuation
+```
+
+For example:
+
+```c
+const int limit = 100;
+```
+
+can be highlighted effectively by recognizing:
+
+```text
+const → KEYWORD
+int   → KEYWORD
+limit → IDENTIFIER
+=     → OPERATOR
+100   → NUMBER
+```
+
+No full parser is necessary for this result. This is an important engineering principle:
+
+> Use the simplest analysis that produces the required result.
+
+Context becomes valuable when the editor wants to distinguish categories that share the same lexical form. For example, `IDENTIFIER` might become `VARIABLE`, `FUNCTION`, `TYPE`, `PARAMETER`, or `CONSTANT` depending on its surrounding syntax. Similarly, the character `*` could represent multiplication in `a * b` or a pointer-related construct in `int *ptr;`. The lexer can identify `*` as an operator-like token, but understanding its precise role requires context.
+
+## What "Lightweight" Means
+
+A lightweight parser does not attempt to understand every aspect of a programming language. Its purpose is narrower:
+
+> **Recognize enough structural relationships to improve syntax highlighting.**
+
+For example, it might recognize that:
+
+```c
+int calculate(int value)
+```
+
+contains:
+
+```text
+TYPE       → int
+FUNCTION   → calculate
+PARAMETER  → value
+```
+
+It does not need to determine whether the function is correctly implemented, whether its types are compatible, or whether another module defines a referenced symbol. The parser is concerned with **highlighting-relevant structure**, not complete program semantics.
+
+## Parsing Tokens Rather Than Characters
+
+The parser operates on tokens produced by the lexer:
+
+```text
+Document
+    │
+    ▼
+  Lexer
+    │
+    ▼
+ Tokens
+    │
+    ▼
+Lightweight Parser
+    │
+    ▼
+Highlight Classes
+```
+
+This separation is useful because the parser does not need to rediscover lexical boundaries. The lexer has already determined that `calculate` is an identifier and that `(` is punctuation; the parser can concentrate on relationships between those tokens:
+
+```text
+IDENTIFIER
+    │
+    │ followed by "("
+    ▼
+Possible function-related construct
+```
+
+The parser can then assign a more specific highlight class when the surrounding structure supports that interpretation.
+
+## Recognizing Simple Structures
+
+Consider:
+
+```c
+int calculate(int value) {
+    return value + 10;
+}
+```
+
+A lightweight parser could recognize the broad structure:
+
+```text
+Declaration
+├── Type
+│   └── int
+├── Function name
+│   └── calculate
+├── Parameter list
+│   └── value
+└── Body
+```
+
+It does not need to build a complete representation of every expression inside the function. For highlighting purposes, recognizing the important regions may be sufficient:
+
+```text
+int        → TYPE
+calculate  → FUNCTION
+int        → TYPE
+value      → PARAMETER
+return     → KEYWORD
+value      → VARIABLE
+10         → NUMBER
+```
+
+The parser has improved the semantic classification without becoming responsible for the entire language.
+
+## A Small State Machine Can Sometimes Be Enough
+
+Not every contextual rule requires a traditional parser. Some rules can be handled with a small state machine. For example, after seeing a type-like token followed by an identifier and an opening parenthesis:
+
+```text
+TYPE IDENTIFIER (
+```
+
+the analyzer may tentatively interpret the identifier as a function name:
+
+```text
+START
+  │
+  │ TYPE
+  ▼
+AFTER_TYPE
+  │
+  │ IDENTIFIER
+  ▼
+POSSIBLE_DECLARATION
+  │
+  │ "("
+  ▼
+FUNCTION_LIKE_DECLARATION
+```
+
+This is substantially simpler than parsing the entire language grammar. The appropriate technique depends on how much context the language requires.
+
+## Grammar as a Source of Structure
+
+When rules become more complicated, a grammar provides a more formal way to describe relationships between tokens:
+
+```text
+function_declaration
+    → type identifier "(" parameter_list ")"
+```
+
+The grammar does not need to model every language feature to be useful for highlighting. A deliberately reduced grammar can focus only on structures relevant to visual classification:
+
+```text
+Complete language grammar
+        │
+        ├── more accurate
+        ├── more implementation effort
+        └── more maintenance
+
+Reduced highlighting grammar
+        │
+        ├── simpler
+        ├── faster to implement
+        └── sufficient for many visual distinctions
+```
+
+The editor should choose the smallest useful model.
+
+## Error Recovery and Best-Effort Parsing
+
+Unlike a compiler, an editor must operate while the source code is incomplete. A user may temporarily have:
+
+```text
+int calculate(
+```
+
+or:
+
+```text
+if (count > 10 {
+```
+
+or:
+
+```text
+"unfinished string
+```
+
+These are normal editing states. A parser that expects perfect source code would frequently fail while the user is typing, so a syntax highlighter needs some form of graceful recovery.
+
+Suppose the user is typing `int calculate(int val`—the closing parenthesis has not been entered yet. A useful highlighter can still recognize `int → TYPE`, `calculate → FUNCTION`, and `val → PARAMETER` without declaring the entire construct invalid.
+
+This suggests an important editor-specific principle:
+
+> **Syntax highlighting should degrade gracefully when syntax is incomplete or temporarily invalid.**
+
+The goal is not to reject malformed input; it is to continue producing the best highlighting information available.
+
+## Parsing Does Not Own the Document
+
+The lightweight parser reads the Document through the syntax-analysis pipeline. It does not modify the source text:
+
+```text
+             ┌──────────────┐
+             │   Document   │
+             └──────┬───────┘
+                    │ read
+                    ▼
+              ┌───────────┐
+              │   Lexer   │
+              └─────┬─────┘
+                    ▼
+               ┌────────┐
+               │ Tokens │
+               └────┬───┘
+                    ▼
+              ┌───────────┐
+              │  Parser   │
+              └─────┬─────┘
+                    ▼
+           Highlight Classes
+```
+
+The parser should not modify Document lines, move the Cursor, change the Viewport, produce terminal escape sequences, draw directly to the terminal, perform file I/O, or decide theme styles. Its output is syntax information.
+
+## Parser Output Does Not Have to Be a Full Syntax Tree
+
+A common assumption is that parsing necessarily means constructing a complete abstract syntax tree. That is not required here. A lightweight highlighter could produce only the information it needs:
+
+```text
+FUNCTION
+ └── range
+
+PARAMETER
+ └── range
+
+TYPE
+ └── range
+```
+
+The smaller representation can be easier to maintain and may require less memory. A complete syntax tree becomes valuable when many other editor features need structural information—a broader architectural decision that belongs beyond the initial syntax-highlighting subsystem.
+
+## Choosing the Right Analysis Level
+
+There are several possible implementation levels:
+
+```text
+Level 1 — Lexical highlighting
+
+Document → Lexer → Highlight Classes
+```
+
+```text
+Level 2 — Lightweight contextual highlighting
+
+Document → Lexer → Tokens → Contextual Rules → Highlight Classes
+```
+
+```text
+Level 3 — Parser-based highlighting
+
+Document → Lexer → Parser → Syntax Structure → Highlight Classes
+```
+
+```text
+Level 4 — Full language infrastructure
+
+Document → Incremental Parser → Syntax Tree → Semantic Information → Highlight Classes
+```
+
+Each level provides more structural information but also introduces additional complexity. The editor should not jump to Level 4 simply because it produces the most sophisticated result, and the architecture should leave room for these possibilities without requiring the simplest implementation to contain all of them. A professional architecture should make it possible to evolve from one level to another without requiring unrelated components to be redesigned.
+
+## The Importance of Isolation
+
+The syntax parser should be isolated behind a clear interface:
+
+```text
+             Syntax Subsystem
+┌────────────────────────────────────┐
+│  Language Definition               │
+│          ▼                         │
+│        Lexer                       │
+│          ▼                         │
+│       Tokens                       │
+│          ▼                         │
+│  Lightweight Analysis              │
+│          ▼                         │
+│  Highlight Ranges                  │
+└──────────────────┬─────────────────┘
+                   ▼
+                Renderer
+```
+
+The rest of the editor does not need to know how the syntax subsystem arrived at its result. A simple contextual analyzer could eventually be replaced with a more capable parser while preserving the same conceptual output—`Highlight Ranges`—and the Renderer does not need to care whether those ranges came from a state machine, a grammar-based parser, or a more sophisticated syntax engine.
+
+There is a natural temptation to make syntax highlighting extremely sophisticated—detailed syntax trees, semantic classification, incremental parsing, language-server integration—but those capabilities solve problems beyond basic highlighting. For this editor, the syntax subsystem should first establish a clean foundation and leave room for future sophistication:
+
+> **Design stable boundaries before optimizing for advanced capabilities.**
+
+## Context Does Not Mean Semantic Analysis
+
+A syntax highlighter may use enough context to distinguish `FUNCTION`, `VARIABLE`, and `TYPE` without attempting to understand the complete meaning of the program. It does not necessarily need to know whether `calculate(value);` will actually execute successfully; it only needs enough structural information to determine how the source should be highlighted:
+
+```text
+Syntax highlighting
+        ≠
+Complete compiler analysis
+```
+
+A highlighter can be useful while knowing very little about program correctness, and this distinction keeps the subsystem focused. It should not attempt to become a full compiler, a language server, a semantic type checker, or a complete static-analysis engine. Its narrower purpose is:
+
+> **Analyze enough structure to produce useful semantic highlighting for the current Document.**
+
+## Summary
+
+Lexical analysis alone cannot always determine how text should be highlighted. Characters such as `int`, `(`, or `*` take on different meanings depending on whether they appear inside a comment, a string, a declaration, or an ordinary expression, so some contextual analysis is required. Lightweight syntax parsing provides that analysis by reasoning about relationships between tokens—for example, telling when an identifier names a function rather than a variable—without attempting to understand the entire program. Because editors must operate on incomplete source, the parser degrades gracefully and works on a best-effort basis rather than rejecting malformed input. Like all syntax information, its results are derived from the current Document and can be recalculated when the source changes.
+
+The useful level of analysis is an engineering choice: regular-expression rules, a stateful lexer, a lightweight parser, or a full syntax tree each buy more context at the cost of more complexity, and the baseline deliberately stops at lightweight contextual rules. Whatever the level, the output should remain the same conceptual form—highlight ranges over the Document—so the Renderer never needs to know how the analysis was produced.
+
+A syntax subsystem may understand the entire source file, but the renderer only displays a viewport-sized portion of it at any given moment. The next section therefore examines how syntax highlighting is applied to the Document and connected to the text buffer: **Section 32.6, Highlighting the Document and the Text Buffer**.

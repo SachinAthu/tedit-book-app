@@ -1,0 +1,591 @@
+---
+title: "32.4 Tokens and Highlight Classes"
+description: "Defines tokens as typed document ranges and highlight classes as semantic categories, showing how derived classification stays separate from visual styling."
+---
+
+The lexer identifies meaningful pieces of source text, but those pieces need a representation that the rest of the syntax-highlighting system can work with. A **token** provides that representation. A token, however, is not enough by itself: lexical token types are not necessarily the right abstraction for deciding how text should be highlighted. That is why the system introduces a second layer—the **highlight class**.
+
+This section covers both. We begin with tokens, then explain how and why they are transformed into highlight classes.
+
+## A Token Is a Typed Region
+
+A token describes a region of the Document and gives that region a lexical meaning. It does not replace the text in the Document, and it does not contain visual formatting. Instead, it acts as a reference to derived information about existing document text.
+
+For example, given:
+
+```c
+int count = 42;
+```
+
+the lexer might produce:
+
+```text
+KEYWORD    "int"
+IDENTIFIER "count"
+OPERATOR   "="
+NUMBER     "42"
+PUNCTUATION ";"
+```
+
+A useful conceptual model is:
+
+```text
+Token
+ ├── Type
+ ├── Start position
+ └── Length
+```
+
+The **type** identifies what kind of lexical element the token represents. The **start position** identifies where the token begins in the Document. The **length** identifies how much document text belongs to the token.
+
+Conceptually:
+
+```text
+Document:
+
+int count = 42;
+^^^
+│
+└── token starts here
+
+Token:
+
+Type   = KEYWORD
+Start  = (row 0, column 0)
+Length = 3
+```
+
+The token does not need to copy `"int"` into a separate string. The text can be obtained from the referenced region of the Document when needed.
+
+## Token Positions
+
+The position stored by a token must use the same logical coordinate system as the Document.
+
+In this editor, the Document is organized as lines of Unicode code points. Therefore, syntax information should describe locations in terms of the Document's logical positions rather than terminal screen coordinates or encoded file bytes.
+
+For a simple token:
+
+```c
+int count = 42;
+```
+
+the tokens could be represented conceptually as:
+
+| Token   |     Start | Length |
+| ------- | --------: | -----: |
+| `int`   |  `(0, 0)` |      3 |
+| `count` |  `(0, 4)` |      5 |
+| `=`     | `(0, 10)` |      1 |
+| `42`    | `(0, 12)` |      2 |
+| `;`     | `(0, 14)` |      1 |
+
+The exact internal structure can vary, but the important architectural rule is that token positions must remain meaningful with respect to the Document.
+
+A token should **not** be defined using:
+
+```text
+terminal row
+terminal column
+screen cell
+viewport position
+```
+
+Those are presentation concepts. Syntax belongs to the logical document, not to the current viewport.
+
+## Start and Length Versus Start and End
+
+There are several ways to represent a token's range.
+
+One possibility is:
+
+```text
+start + length
+```
+
+Another is:
+
+```text
+start + end
+```
+
+Both describe a range of document text. The choice is primarily an internal representation decision. A start-and-length representation can be convenient when the lexer naturally consumes a known number of characters, while a start-and-end representation can make range comparisons and transformations easier.
+
+For multi-line constructs, however, a single column value is insufficient. A token representing a block comment could begin on one line and end several lines later:
+
+```text
+/*
+   explanation
+   continues here
+*/
+```
+
+Conceptually:
+
+```text
+Start: (10, 4)
+End:   (12, 2)
+```
+
+The token representation therefore needs to be capable of describing ranges that cross line boundaries if the language definition permits multi-line lexical constructs.
+
+## Tokens Should Not Own Document Text
+
+A tempting design is to make every token contain its own copy of the text:
+
+```text
+Token
+ ├── type
+ ├── start
+ ├── length
+ └── text
+```
+
+This appears convenient, but it creates unnecessary duplication. The Document already contains the source text, and copying every token's text means the same information exists in multiple places.
+
+A better model is:
+
+```text
+             ┌──────────────┐
+             │   Document   │
+             │              │
+             │ int count... │
+             └──────┬───────┘
+                    │
+                    │ references
+                    ▼
+             ┌──────────────┐
+             │    Tokens    │
+             │              │
+             │ type         │
+             │ start        │
+             │ length       │
+             └──────────────┘
+```
+
+The Document remains the authoritative source of text, and tokens are only an interpretation of that text. This follows the broader principle established in the previous sections: **derived state should not become a second authoritative copy of the underlying data**.
+
+## Token Lifetime
+
+Tokens are derived from the current contents of the Document, so they have a different lifetime from the Document itself.
+
+Consider:
+
+```c
+int count = 42;
+```
+
+The lexer produces tokens for that text. Now suppose the user changes the document:
+
+```c
+int total = 42;
+```
+
+The token describing `count` is no longer valid because the underlying document region has changed.
+
+Therefore, syntax information must be treated as **recomputable derived state**:
+
+```text
+Document changes
+       │
+       ▼
+Old syntax information
+       │
+       └── becomes stale
+
+       ▼
+
+Re-analyze affected text
+
+       ▼
+
+New tokens
+```
+
+A token should not be treated as permanent document metadata. It is valid only for the document state from which it was produced. Later sections examine how the editor updates this derived information efficiently after edits.
+
+## Token Storage
+
+A syntax subsystem can store tokens explicitly:
+
+```text
+Token 0
+Token 1
+Token 2
+Token 3
+...
+```
+
+or process them as a stream:
+
+```text
+Lexer
+  │
+  ├── Token
+  ├── Token
+  ├── Token
+  └── ...
+```
+
+Storing tokens is useful when later stages need to inspect them repeatedly, such as when syntax analysis requires contextual information. Streaming can reduce intermediate storage when the processing pipeline can consume each token immediately.
+
+If all tokens are stored, the additional memory requirement is generally proportional to the number of tokens:
+
+```text
+O(t)
+```
+
+where `t` is the number of stored tokens. The underlying Document remains the source of the actual text.
+
+## Common Token Design Mistakes
+
+Several mistakes are particularly easy to make.
+
+### 1. Copying all text into tokens
+
+This duplicates information already owned by the Document and increases memory usage.
+
+### 2. Storing terminal coordinates
+
+Terminal coordinates describe the rendered frame, not the source document. Scrolling would make such coordinates immediately unsuitable for syntax data.
+
+### 3. Storing ANSI escape sequences
+
+A token should not contain terminal formatting such as color escape sequences. That would couple lexical analysis directly to terminal rendering.
+
+### 4. Treating tokens as permanent
+
+Editing the Document can invalidate token ranges. Syntax information must therefore be refreshed or invalidated when its source text changes.
+
+### 5. Mixing lexical meaning with visual appearance
+
+A token should not need to know whether a keyword is displayed in a particular color or with a particular terminal attribute.
+
+These mistakes all violate the same architectural principle:
+
+> **Syntax analysis describes the Document; rendering decides how that description is displayed.**
+
+## From Token Types to Highlight Classes
+
+Tokens tell us what kind of lexical elements exist in the source text. However, lexical token types are not necessarily the right abstraction for deciding how text should be highlighted. A syntax-highlighting system therefore introduces another layer: the **highlight class**.
+
+A highlight class is a semantic category that describes how a piece of source text should be treated by the presentation layer:
+
+```text
+Token Type
+    │
+    │ semantic interpretation
+    ▼
+Highlight Class
+    │
+    │ visual mapping
+    ▼
+Theme Style
+```
+
+This separation prevents the lexer from becoming coupled to a particular visual design.
+
+### Why Token Types Are Not Enough
+
+Consider this source:
+
+```c
+int calculate(int value) {
+    return value + 10;
+}
+```
+
+A lexer can identify the pieces:
+
+```text
+int          → KEYWORD
+calculate    → IDENTIFIER
+(            → PUNCTUATION
+int          → KEYWORD
+value        → IDENTIFIER
+)            → PUNCTUATION
+{            → PUNCTUATION
+return       → KEYWORD
+value        → IDENTIFIER
++            → OPERATOR
+10           → NUMBER
+;            → PUNCTUATION
+}            → PUNCTUATION
+```
+
+This is useful, but it does not completely describe the semantic role of each identifier. The identifier `calculate` could be an ordinary variable, a function name, a type name, or another language-specific construct. The lexer alone may not be able to determine that distinction.
+
+A later syntax-analysis stage can refine the information:
+
+```text
+IDENTIFIER
+     │
+     ├── VARIABLE
+     ├── FUNCTION
+     ├── TYPE
+     └── OTHER
+```
+
+The result is a more useful representation for highlighting.
+
+### Highlight Classes Are Semantic, Not Visual
+
+A highlight class should describe a semantic category rather than a specific terminal appearance:
+
+```text
+keyword
+string
+number
+comment
+variable
+function
+type
+operator
+punctuation
+```
+
+These names describe what the source element represents. They do **not** say:
+
+```text
+blue
+green
+bold
+underline
+bright
+```
+
+That distinction belongs to the theme. One theme might map `keyword` to one visual style, while another maps the same class completely differently:
+
+```text
+Syntax subsystem
+    │
+    └── "This is a keyword."
+
+Theme
+    │
+    └── "Keywords should look like this."
+
+Renderer
+    │
+    └── "Apply that style while producing the frame."
+```
+
+Each layer has one clear responsibility.
+
+### A Mapping Layer
+
+The relationship between token types and highlight classes can be simple. For many languages:
+
+```text
+KEYWORD       → KEYWORD
+NUMBER        → NUMBER
+STRING        → STRING
+COMMENT       → COMMENT
+OPERATOR      → OPERATOR
+PUNCTUATION   → PUNCTUATION
+```
+
+But other cases require additional interpretation:
+
+```text
+IDENTIFIER
+    │
+    ├── VARIABLE
+    ├── FUNCTION
+    └── TYPE
+```
+
+This gives the syntax subsystem room to become more expressive without forcing the lexer itself to understand every semantic distinction. The lexer identifies structure, syntax analysis interprets that structure, and highlight classes represent the resulting semantic categories.
+
+### Why This Separation Matters
+
+Suppose the editor initially supports only a small set of visual categories:
+
+```text
+keyword
+string
+comment
+number
+normal
+```
+
+Later, it may become useful to distinguish:
+
+```text
+function
+type
+constant
+variable
+parameter
+attribute
+```
+
+If lexical token types are directly tied to terminal colors, introducing these categories would require changes throughout the system. With highlight classes, the layers remain independent: the lexer can continue producing `IDENTIFIER`, while the syntax analysis layer determines `FUNCTION`, and the theme decides how `FUNCTION` should appear.
+
+## Highlight Classes in Practice
+
+### The Default Highlight Class
+
+Not every character needs a special semantic category. Most source text can simply use a default class:
+
+```text
+NORMAL
+```
+
+Any text not covered by a more specific classification remains `NORMAL`:
+
+```text
+Document region
+      │
+      ├── classified → specific Highlight Class
+      │
+      └── unclassified → NORMAL
+```
+
+The default class simplifies rendering because the renderer does not need a special case for every character that lacks syntax information.
+
+### Highlight Ranges
+
+A practical syntax-highlighting system usually needs to associate a highlight class with a region of the Document:
+
+```text
+Highlight Range
+ ├── Start
+ ├── End
+ └── Class
+```
+
+For:
+
+```c
+int count = 42;
+```
+
+the derived information might look like:
+
+```text
+(0, 0) → (0, 3)   KEYWORD
+(0, 4) → (0, 9)   VARIABLE
+(0,10) → (0,11)   OPERATOR
+(0,12) → (0,14)   NUMBER
+(0,14) → (0,15)   PUNCTUATION
+```
+
+The ranges remain document-relative. They do not change simply because the user scrolls, and the renderer can later translate those logical document positions into screen positions while constructing the current frame. This maintains the separation between **document coordinates** and **screen coordinates**.
+
+### One Character Can Be Classified Only Once
+
+For a simple highlighter, each document position normally receives one effective highlight class. The text `"hello"` might be classified as `STRING` rather than simultaneously being `STRING`, `IDENTIFIER`, and `KEYWORD`.
+
+The syntax subsystem therefore needs a rule for resolving overlapping classifications. A common approach is to establish precedence:
+
+```text
+comment
+    ↓
+string
+    ↓
+keyword
+    ↓
+number
+    ↓
+identifier
+    ↓
+operator
+    ↓
+punctuation
+    ↓
+normal
+```
+
+The exact precedence depends on the language, but the important idea is that highlighting should produce a deterministic result. The text inside a string literal should normally remain part of the string even if it happens to contain text that resembles a keyword:
+
+```text
+"return value"
+```
+
+The word `return` is not a keyword here—it is part of a string.
+
+### Highlight Classes Should Remain Stable
+
+A highlight class should have a stable semantic meaning. `KEYWORD` should mean "language keyword," not "whatever the current theme displays in blue." Similarly, `COMMENT` should mean "comment text," not "dim gray text."
+
+This stability makes themes interchangeable. A theme can change from `KEYWORD → bright style` to `KEYWORD → subdued style` without requiring the syntax analyzer to change. That is one of the main architectural benefits of the additional abstraction.
+
+## From Highlight Classes to Visual Styles
+
+At this point, the syntax subsystem has transformed raw document text into semantic information:
+
+```text
+Source text
+    │
+    ▼
+Tokens
+    │
+    ▼
+Highlight Classes
+```
+
+The remaining question is visual rather than syntactic:
+
+> How should each highlight class appear on the terminal?
+
+That decision belongs to the **theme**:
+
+```text
+Highlight Class
+      │
+      ▼
+Visual Style
+```
+
+For example:
+
+```text
+KEYWORD      → style A
+STRING       → style B
+COMMENT      → style C
+NUMBER       → style D
+NORMAL       → default style
+```
+
+The syntax subsystem does not need to know what those styles actually contain.
+
+## A Useful Architectural Boundary
+
+The syntax subsystem should answer questions such as:
+
+- Where are the language constructs?
+- Which regions are comments?
+- Which regions are strings?
+- Which identifiers represent functions?
+- Which regions should receive the `KEYWORD` highlight class?
+
+It should not answer questions such as:
+
+- What ANSI escape sequence represents this class?
+- Which screen row contains this token?
+- Where should the cursor be drawn?
+- How should the terminal be cleared?
+- Which theme file should the user configure?
+
+Those responsibilities belong elsewhere. The separation can therefore be summarized as:
+
+```text
+Syntax
+  "What does this text represent?"
+
+Theme
+  "How should that category look?"
+
+Renderer
+  "How do I display it in the current frame?"
+```
+
+Keeping these questions separate is what allows syntax highlighting to grow without turning the editor into a tightly coupled collection of language-specific rendering code.
+
+## Summary
+
+A token is a typed reference to a region of the Document, described by a type, a start position, and a length, rather than a copy of the text. Tokens use the Document's logical coordinate system, never own the text they describe, and are recomputable derived state. Highlight classes are semantic categories that sit between lexical analysis and presentation: a token describes what the text is syntactically, while a highlight class describes which semantic presentation category applies. Classification uses document-relative ranges, a `NORMAL` default class for unclassified text, and deterministic precedence to resolve overlapping classifications. Because highlight classes keep stable meanings, themes can be swapped without forcing language analysis to change.
+
+The same discipline explains why tokens reference rather than copy document text and why positions use logical document coordinates: both choices keep the syntax layer small, correct across scrolling, and safe to discard when the document changes. The additional highlight-class layer costs a little structure, but it buys language-independent themes and room for richer semantic categories later.
+
+This completes the conceptual separation between language analysis and presentation. But highlighting still cannot be done by tokens alone, because some classification depends on context beyond the lexical form. The next section examines why, and introduces the lightweight parser: **Section 32.5, Beyond Lexing: Context and Lightweight Parsing**.

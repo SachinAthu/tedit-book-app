@@ -1,0 +1,578 @@
+---
+title: "32.6 Highlighting the Document and the Text Buffer"
+description: "Shows how highlight ranges attach to logical Document coordinates and why derived syntax state stays outside the text buffer, undo history, and saved files."
+---
+
+The syntax subsystem can now produce tokens and highlight classes, but the editor still has to answer two practical questions:
+
+> How does highlighting information become associated with the text currently stored in the Document?
+
+and:
+
+> Where does that highlighting information live relative to the text buffer?
+
+The answer to both preserves the architecture established throughout the editor: the Document remains responsible for source text, the syntax subsystem derives highlighting information from that text, and the Renderer consumes the resulting information when constructing the visible frame.
+
+```text
+Document
+    │
+    │ read
+    ▼
+Syntax Subsystem
+    │
+    │ produces
+    ▼
+Highlight Information
+    │
+    │ consumed by
+    ▼
+Renderer
+```
+
+The highlighting information does not become part of the authoritative text representation.
+
+## The Document Remains the Source of Truth
+
+Suppose the Document contains:
+
+```c
+int count = 42;
+```
+
+The syntax subsystem may determine:
+
+```text
+int       → KEYWORD
+count     → IDENTIFIER
+=         → OPERATOR
+42        → NUMBER
+;         → PUNCTUATION
+```
+
+The Document itself remains unchanged:
+
+```c
+int count = 42;
+```
+
+There is no need to transform it into something like:
+
+```text
+<keyword>int</keyword>
+<identifier>count</identifier>
+<operator>=</operator>
+<number>42</number>
+```
+
+Such a representation would mix content with presentation metadata and make the text buffer dependent on language-specific syntax information. Instead, the editor keeps two separate concepts:
+
+```text
+Authoritative data:
+
+Document
+└── int count = 42;
+
+
+Derived data:
+
+Highlight information
+├── KEYWORD
+├── IDENTIFIER
+├── OPERATOR
+├── NUMBER
+└── PUNCTUATION
+```
+
+## Highlight Ranges Describe Document Regions
+
+A convenient conceptual representation is a collection of highlight ranges:
+
+```text
+Highlight Range
+├── start
+├── end
+└── highlight class
+```
+
+For example:
+
+```c
+int count = 42;
+```
+
+could produce:
+
+```text
+(0, 0) → (0, 3)   KEYWORD
+(0, 4) → (0, 9)   IDENTIFIER
+(0,10) → (0,11)   OPERATOR
+(0,12) → (0,14)   NUMBER
+(0,14) → (0,15)   PUNCTUATION
+```
+
+Here `count` is shown as `IDENTIFIER`, its raw token classification; a later syntax-analysis stage may refine it to `VARIABLE`, `FUNCTION`, or `TYPE` as discussed in Section 32.4.
+
+These ranges are expressed using logical Document coordinates. They are not screen coordinates.
+
+## Logical Coordinates Versus Screen Coordinates
+
+Suppose the document contains:
+
+```text
+10: int count = 42;
+11: return count;
+12: ...
+```
+
+The syntax subsystem might identify a token at document position `(row 11, column 0)`. The user might currently have the viewport positioned so that row 11 appears on screen row 3, but the syntax information does not change:
+
+```text
+Document coordinate
+        │
+        ▼
+(row 11, column 0)
+        │
+        │ viewport transformation
+        ▼
+Screen coordinate
+(row 3, column ...)
+```
+
+The transformation belongs to the rendering process, so syntax information remains independent of scrolling. This allows syntax analysis to be performed without knowing anything about the current terminal dimensions or viewport position.
+
+## Highlighting a Line and the Visible Portion
+
+A simple implementation can think about highlighting one document line at a time. Consider:
+
+```c
+const int limit = 100;
+```
+
+The syntax subsystem could produce a sequence of classified regions:
+
+```text
+┌─────────┬──────┬───────┬───┬─────┬───┐
+│ KEYWORD │ TYPE │ IDENT │ = │ NUM │ ; │
+└─────────┴──────┴───────┴───┴─────┴───┘
+```
+
+The source characters have not changed; only their derived classification has changed.
+
+The syntax subsystem may know about the entire Document, while the renderer only displays a viewport-sized portion of it. The renderer does not need to render syntax information for invisible lines:
+
+```text
+                    Document
+                       │
+             ┌─────────┴─────────┐
+             │                   │
+       syntax information     viewport
+             │                   │
+             └─────────┬─────────┘
+                       ▼
+                visible regions
+                       │
+                       ▼
+                    Renderer
+```
+
+Syntax information can be associated with the logical document, while rendering only consumes the portion relevant to the current viewport.
+
+## Applying Classes During Rendering
+
+The Renderer already has the responsibility of constructing the visible frame, and syntax highlighting does not change that responsibility. Instead, the renderer performs an additional lookup while processing each visible region:
+
+```text
+Document text
+      │
+      ├── character/range
+      │
+      ▼
+Highlight information
+      │
+      ▼
+Highlight class
+      │
+      ▼
+Theme
+      │
+      ▼
+Visual attributes
+      │
+      ▼
+Screen buffer
+```
+
+For example:
+
+```text
+Text:
+int
+
+Class:
+KEYWORD
+
+Theme:
+KEYWORD → visual style
+
+Renderer:
+apply that style to the cells representing "int"
+```
+
+The important point is that the renderer does not determine that `int` is a keyword—that decision has already been made by the syntax subsystem. The renderer merely uses the classification.
+
+## Highlighting and the Screen Buffer
+
+The editor's screen buffer represents the frame that will eventually be written to the terminal, and syntax highlighting contributes visual attributes to the cells representing document text:
+
+```text
+Document
+   │
+   ▼
+Syntax information
+   │
+   ▼
+Highlight class
+   │
+   ▼
+Theme style
+   │
+   ▼
+Screen-cell attributes
+   │
+   ▼
+Screen buffer
+   │
+   ▼
+Terminal
+```
+
+This does not require syntax information to be stored inside the screen buffer permanently. The screen buffer remains a representation of the current rendered frame; if the user scrolls, types, or resizes the terminal, the next frame can be constructed using the same document and the appropriate syntax information.
+
+## Whitespace and Unhighlighted Text
+
+Not every character requires an explicit highlight range. The spaces in `int count = 42;` may simply use the default visual class:
+
+```text
+KEYWORD        int
+NORMAL         [space]
+IDENTIFIER     count
+NORMAL         [space]
+OPERATOR       =
+NORMAL         [space]
+NUMBER         42
+PUNCTUATION    ;
+```
+
+An implementation does not necessarily need to create a separate `NORMAL` range for every unclassified character. It can instead treat the absence of a more specific range as the default class, which can reduce unnecessary derived data.
+
+## Overlapping Ranges
+
+Highlight ranges can become more complicated when multiple analysis rules apply to the same region. Consider `"return"`: the characters `return` resemble a keyword, but they are inside a string. The syntax subsystem must ensure that the effective result is `STRING` rather than `KEYWORD`.
+
+This means the system needs a deterministic way to resolve overlapping or competing classifications. One conceptual approach is to process more specific or higher-priority regions first; another is to have the parser produce a final classification rather than several competing ones. The exact implementation is a design choice, but the architectural requirement is simpler:
+
+> **For every rendered document region, the syntax subsystem must provide a deterministic effective highlight class.**
+
+## Highlighting Does Not Change Cursor Behavior
+
+The Cursor remains independent of syntax highlighting. The Cursor still stores its logical document position, while syntax stores highlight ranges:
+
+```text
+Cursor
+└── row
+    column
+    preferred column
+
+Syntax
+└── highlight ranges
+```
+
+The two pieces of state may interact during rendering, but neither owns the other. The renderer combines them when producing the final visual representation:
+
+```text
+Syntax style
+     +
+Cursor style
+     ↓
+Rendered cell
+```
+
+This is another reason not to store terminal formatting directly inside tokens: the final appearance of a cell can depend on several independent sources of visual state.
+
+## Highlighting Does Not Change Editing
+
+Similarly, syntax information must not interfere with editing operations. An insertion still modifies the Document through the normal editing machinery:
+
+```text
+User input
+    │
+    ▼
+Command / editing operation
+    │
+    ▼
+Document changes
+    │
+    ▼
+Syntax information becomes stale
+    │
+    ▼
+Syntax analysis
+    │
+    ▼
+Updated highlighting
+```
+
+This maintains the established separation between editing state and derived analysis, and it means syntax highlighting can be disabled without changing the underlying editing model.
+
+## Where Highlighting Lives: Not Inside the Buffer
+
+The text buffer remains responsible for storing and modifying source text, while syntax highlighting is derived information generated from that text. The answer to the question "should highlighting information be stored inside the text buffer alongside the text?" is therefore **no**.
+
+### The Text Buffer Has One Primary Responsibility
+
+The Document represents the actual source text:
+
+```text
+Document
+│
+├── Line 0
+├── Line 1
+├── Line 2
+├── ...
+└── Line N
+```
+
+Editing operations modify this structure—insert, delete, split a line, join lines, replace text—but the Document does not need to know whether its contents are C, Python, JavaScript, JSON, Markdown, or plain text. It simply stores text, and syntax highlighting is layered on top:
+
+```text
+              Document
+                  │
+                  │ text
+                  ▼
+          Syntax Highlighting
+                  │
+                  │ derived information
+                  ▼
+               Renderer
+```
+
+This allows the same text-buffer implementation to support many languages.
+
+### Why Not Store Highlighting With Each Character?
+
+A tempting design is to extend every character or code point in the Document with a highlight class:
+
+```text
+Code Point
+├── value
+└── highlight class
+```
+
+This appears convenient because the syntax information is immediately available alongside the text, but it creates several problems: the core Document becomes language-aware, every edit must potentially update both text and syntax metadata, syntax information becomes tightly coupled to the lifetime of the text buffer, and changing the syntax-highlighting implementation becomes harder because the buffer now depends on it.
+
+The alternative is:
+
+```text
+Document
+    │
+    └── source text
+
+Syntax State
+    │
+    └── derived highlight information
+```
+
+The two structures can evolve independently.
+
+### The Cost of Keeping Syntax Data in the Buffer
+
+Suppose a Document contains one million code points. If every code point also stores syntax metadata, the memory cost of the Document increases substantially—even a small metadata field multiplied across a large document can become significant. More importantly, much of that information is unnecessary: a large region of ordinary source text may use the same default class (`NORMAL`), so storing an explicit class for every character wastes space.
+
+A range-based representation can instead describe only meaningful changes:
+
+```text
+Range 1 → KEYWORD
+Range 2 → IDENTIFIER
+Range 3 → NUMBER
+```
+
+Unclassified regions can implicitly use the default class. This makes the syntax layer independent of the size and internal representation of individual Document elements.
+
+### The Text Buffer Should Not Become a Syntax Cache
+
+Another tempting design is to make the Document responsible for caching syntax information:
+
+```text
+Document
+├── text
+├── cursor
+├── syntax cache
+└── language state
+```
+
+This is undesirable because the Document then becomes responsible for information that does not define the document itself. A cleaner architecture keeps the Document to its source text and lets the syntax subsystem maintain its own derived state:
+
+```text
+Document
+└── source text
+
+Syntax Subsystem
+├── language
+├── tokens
+├── syntax state
+└── highlight information
+```
+
+The Document remains language-neutral.
+
+## Why This Works With Undo, Redo, and Search
+
+Undo and redo operate on document-editing operations, and syntax information does not need to become part of the undo history:
+
+```text
+User inserts text
+       │
+       ├── Document changes
+       │
+       └── Undo history records edit
+```
+
+Syntax highlighting then responds by invalidating and re-analyzing. When the user performs undo, the Document is restored and syntax is re-evaluated. Syntax metadata is not user-authored document state, so it does not belong in the operation history.
+
+The same principle applies to search. Both search and syntax highlighting operate on the Document's text, and neither needs to own or modify the other:
+
+```text
+              Document
+             /        \
+            ▼          ▼
+        Search       Syntax
+            │          │
+            ▼          ▼
+      Search State  Highlight State
+```
+
+Both are derived systems that consume the authoritative document.
+
+## Highlighting and Document Lifetime
+
+The syntax subsystem must also respect the lifetime of the Document. If a Document is closed, its associated syntax information must no longer be used. If a different Document becomes active, the syntax state associated with one Document must not accidentally be applied to another. This reinforces the idea that syntax state belongs to the analyzed Document state rather than to the renderer globally.
+
+## Avoiding Stale References
+
+If tokens or highlight ranges refer directly into internal Document storage, edits can make those references invalid. After an operation that reallocates or restructures the underlying storage, a raw pointer might no longer refer to the intended text. A safer conceptual model is for syntax information to refer to stable logical positions or ranges:
+
+```text
+Token
+├── document position
+├── range
+└── token type
+```
+
+The syntax subsystem can then resolve those positions against the current Document state. The exact memory-management strategy depends on the underlying implementation, but the architectural rule remains:
+
+> **Derived syntax data must not accidentally impose unsafe ownership or lifetime requirements on the Document.**
+
+## The Buffer Does Not Need to Know the Language
+
+One of the strongest benefits of this design is language independence. The same Document implementation can contain C source, Python source, Markdown, JSON, or plain text without changing, because only the syntax subsystem changes its analysis rules:
+
+```text
+Document
+   │
+   ├── C language definition
+   ├── Python language definition
+   ├── Markdown language definition
+   └── Plain-text mode
+```
+
+This keeps the core text model stable while allowing language-specific behavior to remain isolated.
+
+## Highlight Information Is Recomputable
+
+The previous examples reveal an important property of syntax highlighting:
+
+> **It is acceptable to discard and regenerate highlighting information.**
+
+The source text is not lost because the Document remains authoritative:
+
+```text
+Document
+   │
+   ├── authoritative
+   │
+   ▼
+Highlight cache
+   │
+   └── disposable
+```
+
+If the highlight cache becomes invalid, the editor can discard it, re-analyze, and rebuild it. This makes syntax highlighting fundamentally different from information such as the user's actual text or file contents, and it lets the syntax subsystem trade memory and computation according to the editor's needs.
+
+## A Clean Boundary With the Renderer
+
+The final architecture can now be stated precisely.
+
+The syntax subsystem owns language rules, lexical analysis, tokens, syntax interpretation, highlight classes, highlight ranges, and syntax state. The Document owns source text. The Theme owns the mapping from highlight classes to visual styles. The Renderer owns visible frame construction, screen-cell generation, cursor presentation, and terminal output.
+
+```text
+             ┌──────────────┐
+             │   Document   │
+             └──────┬───────┘
+                    ▼
+             ┌──────────────┐
+             │    Syntax    │
+             │  subsystem  │
+             └──────┬───────┘
+                    │ highlight classes
+                    ▼
+             ┌──────────────┐
+             │    Theme     │
+             └──────┬───────┘
+                    │ visual style
+                    ▼
+             ┌──────────────┐
+             │   Renderer   │
+             └──────┬───────┘
+                    ▼
+                Terminal
+```
+
+The direction of dependency is important: the syntax subsystem depends on the Document's contents, but the Document does not depend on syntax highlighting. No component needs to take ownership of another component's responsibilities.
+
+## The Rendering Path
+
+Putting everything together, the editor's rendering path can be viewed as:
+
+```text
+                    Document
+                       │
+                       │ source text
+                       ▼
+                Syntax Subsystem
+                       │
+                       │ highlight classes
+                       ▼
+                     Theme
+                       │
+                       │ visual attributes
+                       ▼
+                    Renderer
+                       │
+                       │ screen cells
+                       ▼
+                 Screen Buffer
+                       │
+                       │ terminal output
+                       ▼
+                    Terminal
+```
+
+The Cursor and Viewport participate in determining which document region becomes visible, while syntax contributes highlight information. This preserves the architecture established in earlier chapters while adding syntax highlighting as a new source of derived presentation information.
+
+## Summary
+
+Syntax highlighting is a derived view of the text buffer: the Document remains the single authoritative source of text, while the syntax subsystem reads it and produces highlight ranges that are disposable and can be recalculated. Highlighting is associated with logical Document coordinates—not screen coordinates or buffer storage—so it stays independent of scrolling and of the text buffer's internal representation. Derived syntax data must never impose unsafe ownership or lifetime requirements on the Document, and the two can remain decoupled: the syntax subsystem depends on the Document's contents, but the Document does not depend on syntax highlighting. Because of this separation, the same Document implementation works for many languages.
+
+The text buffer therefore stays language-neutral: editing operations continue to change only source text, while tokens and ranges are invalidated and rebuilt afterwards. This is also why syntax information stays outside undo history and file contents—both the editing history and the saved file need the text, not a disposable interpretation of it.
+
+At this point, the editor can determine that a region is a keyword, comment, string, number, or other semantic category. But those categories still have no appearance. The next section examines the final presentation layer—the Theme—that turns semantic classes into visual styles: **Section 32.7, Themes and Visual Styles**.

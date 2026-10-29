@@ -1,0 +1,743 @@
+---
+title: "32.11 Design Alternatives and Trade-offs"
+description: "Compares regex rules, stateful lexers, lightweight parsers, full syntax trees, and incremental trees, and explains the baseline chosen for this editor."
+---
+
+There is no single way to implement syntax highlighting.
+
+A small editor can achieve useful results with a relatively simple lexer, while a professional editor may use sophisticated parsing infrastructure and incremental syntax trees.
+
+The important engineering question is not:
+
+> Which approach is the most powerful?
+
+It is:
+
+> **Which approach provides the required behavior at an acceptable level of complexity?**
+
+For the editor developed in this book, simplicity and clear architectural boundaries are important design goals. The syntax subsystem should therefore begin with the simplest approach that provides useful highlighting while leaving room for future improvement.
+
+The major alternatives can be viewed as a progression:
+
+```text
+Simple
+  │
+  ▼
+Regular-expression rules
+  │
+  ▼
+Stateful lexer
+  │
+  ▼
+Lightweight parser
+  │
+  ▼
+Full parser / syntax tree
+  │
+  ▼
+Incremental syntax tree
+  │
+  ▼
+More sophisticated
+```
+
+Each step provides additional structural understanding at the cost of additional implementation complexity.
+
+## Alternative 1 — Regular-Expression Highlighting
+
+The simplest approach is to recognize syntax using patterns.
+
+For example:
+
+```text
+keyword:
+    int
+    return
+    if
+    while
+
+number:
+    [0-9]+
+```
+
+The highlighter searches the source text for matching patterns and assigns highlight classes.
+
+Conceptually:
+
+```text
+Document
+   │
+   ▼
+Pattern matching
+   │
+   ▼
+Highlight Classes
+```
+
+This approach can be surprisingly effective for simple languages or simple syntax categories.
+
+### Advantages
+
+- Very easy to understand.
+- Small implementation.
+- Quick to add basic highlighting rules.
+- No explicit token representation is required.
+- Suitable for simple syntax.
+
+### Limitations
+
+Regular expressions alone struggle with stateful constructs.
+
+For example:
+
+```text
+"return value"
+```
+
+contains the text `return`, but it should not be highlighted as a keyword.
+
+Likewise:
+
+```text
+/*
+   return
+*/
+```
+
+contains keyword-like text inside a comment.
+
+Patterns also become difficult to manage when rules depend on previous or following syntax.
+
+Regular-expression highlighting is therefore attractive for simplicity but becomes increasingly fragile as language complexity grows.
+
+## Alternative 2 — Stateful Lexer
+
+A stateful lexer introduces explicit lexical states.
+
+For example:
+
+```text
+NORMAL
+STRING
+LINE_COMMENT
+BLOCK_COMMENT
+```
+
+The lexer transitions between these states while processing the Document:
+
+```text
+NORMAL
+  │
+  │ "
+  ▼
+STRING
+  │
+  │ "
+  ▼
+NORMAL
+```
+
+This allows the highlighter to distinguish:
+
+```text
+return
+```
+
+from:
+
+```text
+"return"
+```
+
+and:
+
+```text
+// return
+```
+
+without treating all occurrences of the word identically.
+
+### Advantages
+
+- Still relatively simple.
+- Handles strings and comments correctly.
+- Naturally produces tokens.
+- Runs efficiently in a sequential pass.
+- Provides a strong foundation for incremental highlighting.
+
+### Limitations
+
+A lexer primarily understands lexical structure.
+
+It may still have difficulty distinguishing:
+
+```text
+calculate
+```
+
+as a function, variable, type, or parameter.
+
+Those distinctions depend on context beyond the lexical form.
+
+For the editor in this book, a stateful lexer is therefore a strong baseline.
+
+## Alternative 3 — Lightweight Syntax Parser
+
+A lightweight parser builds on the lexer.
+
+The lexer produces:
+
+```text
+Tokens
+```
+
+and the parser examines relationships between those tokens.
+
+For example:
+
+```text
+TYPE IDENTIFIER (
+```
+
+may indicate a function declaration.
+
+Conceptually:
+
+```text
+Document
+   │
+   ▼
+Lexer
+   │
+   ▼
+Tokens
+   │
+   ▼
+Lightweight Parser
+   │
+   ▼
+Highlight Classes
+```
+
+The parser does not need to understand every detail of the language.
+
+It only needs enough structure to improve highlighting.
+
+### Advantages
+
+- Provides contextual highlighting.
+- Can distinguish semantic roles such as functions and variables.
+- More robust than isolated pattern matching.
+- Can remain relatively small if its scope is limited.
+
+### Limitations
+
+- More complex than lexical highlighting.
+- Requires additional syntax rules.
+- Error handling becomes important.
+- Incomplete source code must be handled gracefully.
+- Language-specific rules become more involved.
+
+This is a useful middle ground for an editor that wants better highlighting without immediately adopting a complete parser infrastructure.
+
+## Alternative 4 — Full Parser and Syntax Tree
+
+A more sophisticated approach is to parse the source into a syntax tree.
+
+Conceptually:
+
+```text
+Document
+   │
+   ▼
+Lexer
+   │
+   ▼
+Parser
+   │
+   ▼
+Syntax Tree
+   │
+   ▼
+Highlight Classes
+```
+
+Instead of merely knowing that a token is an identifier, the syntax tree can represent the structure in which that identifier occurs.
+
+For example:
+
+```text
+Function Declaration
+├── Return Type
+│   └── int
+├── Name
+│   └── calculate
+├── Parameters
+│   └── value
+└── Body
+```
+
+This provides much richer structural information.
+
+### Advantages
+
+- Strong contextual understanding.
+- More accurate highlighting.
+- Can support other syntax-aware features.
+- Provides a foundation for structural editor capabilities.
+
+### Limitations
+
+- Considerably more implementation complexity.
+- Requires a grammar or parser for each language.
+- Error recovery becomes a major concern.
+- Memory usage increases.
+- Rebuilding the tree after every edit can become expensive.
+
+A complete syntax tree is therefore powerful, but it may be excessive for a small educational terminal editor.
+
+## Alternative 5 — Incremental Syntax Trees
+
+Modern editors can go further by updating only the portions of a syntax tree affected by an edit.
+
+Conceptually:
+
+```text
+Document
+   │
+   ▼
+Incremental Parser
+   │
+   ▼
+Syntax Tree
+   │
+   ▼
+Highlight Classes
+```
+
+Instead of rebuilding the complete syntax representation:
+
+```text
+Edit
+ │
+ ▼
+Rebuild entire tree
+```
+
+the parser attempts to preserve unaffected portions:
+
+```text
+Edit
+ │
+ ▼
+Identify affected region
+ │
+ ▼
+Reparse affected structure
+ │
+ ▼
+Reuse unaffected structure
+```
+
+This can provide excellent performance for large Documents.
+
+### Advantages
+
+- Efficient updates.
+- Strong structural understanding.
+- Well suited to interactive editing.
+- Can support more than syntax highlighting.
+
+### Limitations
+
+- Considerably more complex.
+- Requires sophisticated parser infrastructure.
+- Incremental correctness is difficult.
+- Memory management becomes more involved.
+- More difficult to implement and explain from first principles.
+
+This approach is important for understanding modern editor architecture, but it is intentionally beyond the initial syntax-highlighting implementation developed here.
+
+## Comparing the Alternatives
+
+The major approaches can be summarized as follows:
+
+| Approach                | Simplicity | Context   | Performance               | Extensibility |
+| ----------------------- | ---------- | --------- | ------------------------- | ------------- |
+| Regular expressions     | Very high  | Low       | Good for simple cases     | Low           |
+| Stateful lexer          | High       | Moderate  | Good                      | Moderate      |
+| Lightweight parser      | Moderate   | Good      | Good                      | Good          |
+| Full parser/tree        | Low        | Very high | Depends on implementation | Very high     |
+| Incremental syntax tree | Low        | Very high | Excellent for large edits | Very high     |
+
+These ratings are relative rather than absolute.
+
+A poorly designed lexer can be slower than a well-designed parser.
+
+Likewise, a simple regular-expression highlighter may be entirely adequate for a small language.
+
+The table should therefore be interpreted as a comparison of typical engineering characteristics.
+
+## Simplicity Versus Accuracy
+
+The first major trade-off is:
+
+```text
+Simplicity
+    ◄────────────────────►
+Accuracy
+```
+
+A simple lexer may produce:
+
+```text
+IDENTIFIER
+```
+
+for every identifier.
+
+A more sophisticated parser may distinguish:
+
+```text
+FUNCTION
+VARIABLE
+TYPE
+PARAMETER
+```
+
+The latter produces richer highlighting, but the implementation must understand more of the language.
+
+For this editor, perfect semantic accuracy is not the primary requirement.
+
+Useful and predictable highlighting is more valuable than implementing a complete compiler front end.
+
+## Implementation Cost Versus Capability
+
+Another trade-off is:
+
+```text
+Implementation effort
+        │
+        ▼
+Capability
+```
+
+A regular-expression highlighter can be implemented quickly.
+
+A stateful lexer requires more explicit logic.
+
+A parser requires grammar and structural analysis.
+
+An incremental parser requires sophisticated change tracking and tree maintenance.
+
+The progression is roughly:
+
+```text
+More capability
+      ▲
+      │
+      │
+      │       Incremental parser
+      │      /
+      │     / Full parser
+      │    /
+      │   / Lightweight parser
+      │  /
+      │ / Stateful lexer
+      │/
+      └────────────────────►
+          More complexity
+```
+
+The correct architecture does not necessarily choose the point farthest toward the upper-right.
+
+It chooses an appropriate point for the problem.
+
+## Regex Rules Versus Explicit Tokens
+
+There is also a conceptual difference between:
+
+```text
+pattern → visual style
+```
+
+and:
+
+```text
+text → token → highlight class → visual style
+```
+
+The first approach is compact:
+
+```text
+Pattern
+  ↓
+Style
+```
+
+The second introduces explicit intermediate representations:
+
+```text
+Document
+   ↓
+Token
+   ↓
+Highlight Class
+   ↓
+Theme
+   ↓
+Style
+```
+
+Those additional representations require more code, but they make responsibilities clearer.
+
+They also provide a path toward contextual syntax analysis.
+
+This is one reason the token-based architecture is valuable even when the first implementation remains simple.
+
+## Language-Specific Logic Versus Generic Infrastructure
+
+Another important trade-off concerns where language-specific rules live.
+
+A tightly coupled design might put language rules directly into the lexer:
+
+```text
+Lexer
+├── C rules
+├── Python rules
+├── JSON rules
+└── Markdown rules
+```
+
+As languages are added, the lexer becomes increasingly complicated.
+
+A more modular design separates the generic mechanism from language definitions:
+
+```text
+Language Definition
+        │
+        ▼
+Generic Lexer
+        │
+        ▼
+Tokens
+```
+
+This keeps the analysis machinery reusable.
+
+Adding a language should primarily involve providing its syntax rules rather than rewriting the entire syntax subsystem.
+
+## Theme Coupling
+
+A similar trade-off exists between syntax and presentation.
+
+A tightly coupled highlighter might directly produce:
+
+```text
+KEYWORD → terminal color
+```
+
+A more modular design produces:
+
+```text
+KEYWORD
+```
+
+and lets the theme determine:
+
+```text
+KEYWORD → Visual Style
+```
+
+The second approach requires an additional abstraction, but it allows themes to change independently from language analysis.
+
+For an extensible editor, that separation is worth the small amount of additional structure.
+
+## Choosing the Baseline
+
+The editor's baseline syntax architecture should favor a layered approach:
+
+```text
+Document
+   │
+   ▼
+Language Definition
+   │
+   ▼
+Stateful Lexer
+   │
+   ▼
+Tokens
+   │
+   ▼
+Lightweight Syntax Analysis
+   │
+   ▼
+Highlight Classes
+   │
+   ▼
+Theme
+   │
+   ▼
+Renderer
+```
+
+This provides a useful balance.
+
+It is more structured than raw pattern matching.
+
+It does not require a complete compiler.
+
+It can handle lexical state.
+
+It leaves room for contextual classification.
+
+It keeps semantic information separate from visual styling.
+
+And it can later evolve toward more advanced parsing infrastructure.
+
+## Why Not Start With the Most Advanced Solution?
+
+A common engineering mistake is to choose an advanced solution because it is technically impressive rather than because the problem requires it.
+
+For this project, immediately introducing a complete incremental syntax-tree framework would create several problems:
+
+```text
+More dependencies
+More concepts
+More code
+More failure modes
+More implementation complexity
+```
+
+The reader would also lose sight of the fundamental concepts that syntax highlighting is intended to teach.
+
+The architecture should therefore progress deliberately:
+
+```text
+Understand tokens
+      ↓
+Understand syntax state
+      ↓
+Understand contextual analysis
+      ↓
+Understand invalidation
+      ↓
+Understand performance
+      ↓
+Only then consider advanced parsing
+```
+
+This progression mirrors the educational goal of the book.
+
+## Future Evolution
+
+The architecture should nevertheless make future evolution possible.
+
+The initial implementation might use:
+
+```text
+Stateful Lexer
+```
+
+Later, it could add:
+
+```text
+Lightweight Parser
+```
+
+Eventually, a more advanced version could use:
+
+```text
+Incremental Syntax Tree
+```
+
+The surrounding editor should continue to consume the same conceptual output:
+
+```text
+Highlight Classes
+```
+
+This gives the system an important form of replaceability.
+
+```text
+                 Highlight Classes
+                       ▲
+                       │
+          ┌────────────┼────────────┐
+          │            │            │
+          │            │            │
+       Lexer       Parser      Syntax Tree
+          │            │            │
+          └────────────┴────────────┘
+```
+
+The analysis mechanism can evolve without forcing the Theme or Renderer to understand how syntax was analyzed.
+
+## The Decision for This Book
+
+For the editor developed throughout this book, the preferred baseline is:
+
+```text
+Stateful lexical analysis
+        +
+Lightweight contextual analysis
+        +
+Semantic highlight classes
+        +
+Independent themes
+```
+
+This provides enough structure to demonstrate professional architectural principles without prematurely introducing the complexity of advanced parsing systems.
+
+The design deliberately leaves a path toward more sophisticated approaches.
+
+Later chapters can build upon this foundation rather than replacing the conceptual model entirely.
+
+## Summary
+
+The major trade-offs can be summarized as:
+
+```text
+Regular Expressions
+    ↓
+Simplest
+    ↓
+Limited context
+
+Stateful Lexer
+    ↓
+Still simple
+    ↓
+Handles lexical state
+
+Lightweight Parser
+    ↓
+More context
+    ↓
+More complexity
+
+Full Syntax Tree
+    ↓
+Rich structure
+    ↓
+Higher cost
+
+Incremental Syntax Tree
+    ↓
+Rich structure + efficient updates
+    ↓
+Highest complexity
+```
+
+There is no universal winner.
+
+The best solution depends on the requirements of the editor, the languages being supported, expected Document sizes, and the desired level of structural understanding.
+
+For this project, the guiding principle is:
+
+> **Start with a small, correct syntax subsystem and preserve the boundaries that allow it to become more sophisticated later.**
+
+The comparison targets are relative rather than absolute—a well-designed lexer can outperform a poorly designed parser—so the decision should follow the required behavior, document size, and expected editing workload. For this editor, a stateful lexer with lightweight contextual analysis and independent themes is the chosen baseline, with more advanced parsing deliberately deferred.
+
+The chapter closes by bringing these ideas together in a summary, a set of exercises, and a preview of what comes next in **Chapter 33 — Configuration**.

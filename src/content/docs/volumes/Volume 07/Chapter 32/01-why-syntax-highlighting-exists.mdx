@@ -1,0 +1,404 @@
+---
+title: "32.1 Why Syntax Highlighting Exists"
+description: "Explains why syntax highlighting is derived information rather than document text, adding visual structure while leaving the Document and other features unchanged."
+---
+
+A text editor fundamentally works with text.
+
+At the document level, the following source code:
+
+```c
+int count = 42;
+```
+
+is simply a sequence of characters.
+
+The Document does not inherently know that `int` is a keyword, `count` is an identifier, `42` is a number, or `=` is an operator. From the perspective of the text buffer, they are all just text.
+
+Yet when we look at source code in a modern editor, these parts usually appear differently.
+
+For example:
+
+```c
+int count = 42;
+```
+
+might be displayed conceptually as:
+
+```text
+keyword    identifier    operator    number
+   │            │            │          │
+   ▼            ▼            ▼          ▼
+  int         count          =         42;
+```
+
+The editor has added information that was not explicitly stored in the original document.
+
+That is the fundamental purpose of **syntax highlighting**.
+
+## From Plain Text to Visual Structure
+
+Without syntax highlighting, every character in a source file could be rendered using the same visual style:
+
+```c
+int count = 42;
+
+// calculate total
+total = count + 10;
+```
+
+The editor would still be completely functional. The text could be inserted, deleted, searched, saved, and displayed normally.
+
+But the structure of the source code would be harder to recognize at a glance.
+
+Syntax highlighting adds visual distinctions such as:
+
+- keywords
+- identifiers
+- numbers
+- strings
+- comments
+- operators
+- punctuation
+
+The result is not a different document.
+
+It is a different **presentation of the same document**.
+
+This distinction is important.
+
+```text
+                Document
+                   │
+                   │  contains text
+                   ▼
+              Plain Text
+                   │
+                   │  analyzed
+                   ▼
+          Syntax Information
+                   │
+                   │  presented using
+                   ▼
+              Highlighting
+```
+
+The characters in the document have not changed. The editor has simply determined how different parts of those characters should be presented.
+
+## Syntax Highlighting Is Derived Information
+
+The Document is the authoritative representation of the user's text.
+
+Syntax highlighting should therefore be treated as **derived information**.
+
+Consider:
+
+```c
+int count = 42;
+```
+
+The Document might conceptually contain:
+
+```text
+i n t   c o u n t   =   4 2 ;
+```
+
+The syntax-highlighting system can analyze those characters and derive information such as:
+
+```text
+0–2   → keyword
+4–8   → identifier
+10    → operator
+12–13 → number
+```
+
+The derived information can then be consumed by the Renderer.
+
+```text
+Document
+   │
+   ▼
+Syntax Analysis
+   │
+   ▼
+Highlight Information
+   │
+   ▼
+Renderer
+```
+
+The important rule is:
+
+> **Highlighting describes the Document; it does not become the Document.**
+
+This preserves the architecture established throughout the book.
+
+The Renderer remains responsible for presentation. The Document remains responsible for the editable text. The syntax-highlighting subsystem sits between them as an analysis mechanism.
+
+## Why the Editor Must Understand the Text
+
+At first glance, syntax highlighting might appear to be nothing more than a collection of colors.
+
+It is not.
+
+Consider this example:
+
+```c
+int value = 10;
+```
+
+The sequence:
+
+```text
+int
+```
+
+is normally recognized as a keyword.
+
+But now consider:
+
+```c
+printf("int value = 10");
+```
+
+The characters `int` still appear in the document, but they are part of a string. They should not necessarily receive the same highlighting as the `int` keyword in the first example.
+
+Similarly:
+
+```c
+// int value = 10;
+```
+
+contains the same characters, but they occur inside a comment.
+
+Therefore, the editor cannot correctly highlight source code simply by asking:
+
+> "Does this sequence of characters look like a keyword?"
+
+It needs some understanding of **context**.
+
+This is where syntax analysis begins to matter.
+
+```text
+Characters
+    │
+    ▼
+What do these characters represent?
+    │
+    ▼
+Syntax information
+    │
+    ▼
+How should they be displayed?
+```
+
+Syntax highlighting is therefore an information-processing problem before it is a rendering problem.
+
+## Syntax Highlighting Does Not Modify the Text
+
+Suppose the user opens:
+
+```c
+int count = 42;
+```
+
+and the editor decides that `int` should be highlighted as a keyword.
+
+The Document should still contain:
+
+```c
+int count = 42;
+```
+
+It should not contain terminal escape sequences such as:
+
+```text
+<color keyword>int</color> count = 42;
+```
+
+and it should not replace the characters with some special colored representation.
+
+The text buffer remains independent from presentation.
+
+This separation is especially important because the same Document may be used by many other editor features.
+
+For example:
+
+```text
+                  Document
+                     │
+        ┌────────────┼────────────┐
+        │            │            │
+        ▼            ▼            ▼
+      Search     Syntax       File Save
+                 Analysis
+                     │
+                     ▼
+                 Renderer
+```
+
+Search needs the text.
+
+File saving needs the text.
+
+Syntax highlighting needs the text.
+
+The Renderer needs information derived from the text.
+
+None of these responsibilities require the Document to know anything about colors or terminal escape sequences.
+
+## Why This Matters Architecturally
+
+This separation gives us an important property:
+
+> **The syntax-highlighting system can change without changing the Document model.**
+
+Today, the editor might use a simple lexical analyzer.
+
+Later, it might use a more sophisticated parser.
+
+Eventually, it might use an incremental parsing system.
+
+The Document does not need to know which technique is being used.
+
+Conceptually:
+
+```text
+                    Document
+                       │
+             ┌─────────┴─────────┐
+             │                   │
+             ▼                   ▼
+      Simple Analyzer      Advanced Analyzer
+             │                   │
+             └─────────┬─────────┘
+                       ▼
+               Highlight Information
+                       │
+                       ▼
+                   Renderer
+```
+
+This is another example of the architectural principle used throughout the project:
+
+**Keep responsibilities separate so implementations can evolve independently.**
+
+The advanced parsing techniques discussed later in the book can therefore build on the same basic boundary rather than requiring the entire editor architecture to be redesigned.
+
+## Syntax Highlighting Is More Than Decoration
+
+It is tempting to think of syntax highlighting as a purely cosmetic feature.
+
+In practice, it provides a form of visual structure.
+
+Compare:
+
+```c
+if (count > 10) {
+    print("large");
+}
+```
+
+with the same text conceptually classified as:
+
+```text
+KEYWORD      if
+PUNCTUATION  (
+IDENTIFIER   count
+OPERATOR     >
+NUMBER       10
+PUNCTUATION  )
+PUNCTUATION  {
+IDENTIFIER   print
+PUNCTUATION  (
+STRING       "large"
+PUNCTUATION  )
+PUNCTUATION  ;
+PUNCTUATION  }
+```
+
+The second representation reveals something important: the editor has extracted structure from an otherwise undifferentiated stream of characters.
+
+The Renderer can then use that structure to produce the final visual presentation.
+
+This leads to the central idea of this chapter:
+
+```text
+Text
+ │
+ │  analysis
+ ▼
+Structure
+ │
+ │  classification
+ ▼
+Highlight Information
+ │
+ │  presentation
+ ▼
+Visual Output
+```
+
+The editor does not change the source code to make it easier to understand.
+
+It **understands enough of the source code to present it more clearly**.
+
+## The Boundary We Will Build
+
+The syntax-highlighting system introduced in this chapter will therefore have a clear boundary.
+
+It will:
+
+- inspect the Document
+- identify meaningful regions of text
+- classify those regions
+- produce highlighting information
+- provide that information to the rendering system
+
+It will not:
+
+- modify the Document
+- move the Cursor
+- manage the Viewport
+- emit terminal escape sequences
+- perform file I/O
+- own user configuration
+- decide how the terminal physically draws characters
+
+The resulting architecture is:
+
+```text
++----------------+
+|    Document    |
++----------------+
+        │
+        ▼
++----------------+
+| Syntax         |
+| Analyzer       |
++----------------+
+        │
+        ▼
++----------------+
+| Highlight      |
+| Information    |
++----------------+
+        │
+        ▼
++----------------+
+|    Renderer    |
++----------------+
+        │
+        ▼
++----------------+
+|    Terminal    |
++----------------+
+```
+
+## Summary
+
+Syntax highlighting does not change the editor's text. It adds a derived, analytical layer that learns _what_ different regions of the source code represent, so that the Renderer can present the same Document more clearly. Highlighting is derived information rather than part of the Document: it never modifies the text, moves the Cursor, changes the Viewport, or emits terminal escape sequences, and it does not need to understand terminal colors itself. By keeping responsibilities separate, the analysis approach can evolve—from a simple lexer today to a more advanced parser later—without forcing the Document or Renderer to be redesigned.
+
+Because the analysis layer is separate, the Document can continue to serve Search, file saving, and other features without carrying language-specific or presentation metadata. The syntax subsystem's boundary therefore gives the editor a stable extension point rather than a one-off feature.
+
+Now that we have defined what syntax highlighting is and why it exists, the next section turns this idea into a concrete architecture: **Section 32.2, Syntax Highlighting as an Analysis Pipeline**.

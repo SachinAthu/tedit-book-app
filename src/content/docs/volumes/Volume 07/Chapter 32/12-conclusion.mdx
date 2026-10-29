@@ -1,0 +1,87 @@
+---
+title: "32.12 Conclusion"
+description: "Consolidates the chapter's derived-highlighting model, then presents exercises, seven engineering insights, common mistakes, and a preview of configuration."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Syntax highlighting turns the editor from a tool that displays text into one that understands and presents it. The unifying idea of the chapter is that highlighting is **derived information**: the Document remains the single authoritative source of text, and everything built above it—tokens, syntax structure, highlight classes, and themes—forms a disposable, recomputable view that exists only to guide presentation.
+
+The chapter builds this idea as a pipeline:
+
+```text
+Document
+   │  analysis
+   ▼
+Tokens → Syntax Structure → Highlight Classes → Theme → Renderer
+```
+
+The syntax subsystem answers *what the text represents*; the Theme answers *how that category should look*; the Renderer answers *how to draw it in the current frame*. Because these responsibilities are separate, the analysis approach can evolve from a simple lexer to an incremental parser without redesigning the Document or Renderer, and the same highlighting can be re-derived after any edit or any theme change.
+
+The important lessons are:
+
+- Syntax highlighting describes the Document; it does not become the Document.
+- Lexical analysis and rendering must remain independent, so language knowledge never leaks into presentation.
+- A token describes lexical structure, while a highlight class describes a semantic category.
+- Lexical analysis alone is insufficient; a lightweight parser adds the context needed to distinguish functions, types, and variables.
+- Highlighting is incrementally maintainable derived state, safely discarded and regenerated from the current Document.
+- A Theme separates semantic classes from terminal styles, and language detection ties a Document to the right rules.
+
+The baseline highlighting pipeline — a stateful Lexer refined by lightweight contextual analysis into semantic Highlight Classes that a Theme maps to Visual Styles, all derived from and regenerable from the Document — is recorded as **ADR-025: Syntax Highlighting Baseline**.
+
+## Exercises
+
+### Review Questions
+
+1. What is the difference between a Lexer and a Parser?
+2. Why should the Lexer not emit ANSI escape sequences?
+3. Why should highlighting information not be stored as part of the Document text?
+4. What problem does a Theme solve?
+5. Why can a small edit require re-analysis of more than the edited characters?
+
+### Thought Experiments
+
+6. How would highlighting change if the editor switched from a vector of lines to a piece table?
+7. What would happen if the Renderer directly performed lexical analysis?
+8. Why might regex-based highlighting fail for nested language constructs?
+
+### Design Challenge
+
+9. Design a syntax-highlighting pipeline for a small C-like language without implementing it.
+
+10. Design an interface that would allow the highlighting engine to be replaced by an incremental parser later.
+
+<Aside type="tip" title="Engineering Insights" icon="rocket">
+
+A few design principles summarize the chapter's architectural choices:
+
+1. **Syntax highlighting is derived information.**
+2. **The Document remains the single source of truth.**
+3. **Lexical analysis and rendering should remain independent.**
+4. **Semantic classes are better architectural boundaries than terminal colors.**
+5. **Simple analysis is sufficient for a baseline editor.**
+6. **Incremental parsing becomes valuable when document size and editing frequency demand it.**
+7. **A good abstraction allows the highlighting implementation to evolve without redesigning the editor core.**
+
+</Aside>
+
+## Common Mistakes
+
+Most highlighting problems arise from mixing responsibilities between these layers:
+
+- Putting colors directly into the Document.
+- Making the Lexer emit ANSI escape sequences.
+- Making the Renderer understand programming-language syntax.
+- Treating tokens as a replacement for the Document.
+- Re-parsing the entire document unnecessarily after every tiny edit.
+- Assuming regex matching is equivalent to parsing.
+- Making theme definitions part of the lexer.
+- Confusing syntax highlighting with syntax checking.
+- Designing the system around one programming language.
+- Treating highlighting as authoritative application state.
+
+## Preview of the Next Chapter
+
+An editor that can understand and present its text is ready to become configurable. Where this chapter separated *what* text means from *how* it should look, the next chapter applies the same principle of decoupling to the whole editor.
+
+The next chapter turns to **Chapter 33 — Configuration**, where choices such as settings, key bindings, themes, and tab width move out of the code and into user-controllable configuration. The editor will learn how preferences are stored, bound, and applied without forcing the core Document, syntax, or rendering systems to understand them.

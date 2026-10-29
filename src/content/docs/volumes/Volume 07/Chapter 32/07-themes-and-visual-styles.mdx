@@ -1,0 +1,730 @@
+---
+title: "32.7 Themes and Visual Styles"
+description: "Explains how themes map semantic highlight classes to visual styles, keeping appearance separate from language analysis, the Document, and terminal output."
+---
+
+The syntax subsystem can determine that a region of text is a `KEYWORD`, `STRING`, `COMMENT`, or `NUMBER`. It still does not determine what those categories should look like.
+
+That responsibility belongs to the **theme**.
+
+A theme maps semantic highlight classes to visual styles:
+
+```text
+Highlight Class
+      │
+      ▼
+    Theme
+      │
+      ▼
+Visual Style
+```
+
+For example:
+
+```text
+KEYWORD      → keyword style
+STRING       → string style
+COMMENT      → comment style
+NUMBER       → number style
+FUNCTION     → function style
+NORMAL       → default style
+```
+
+The theme therefore provides the final interpretation between syntax information and visual presentation.
+
+## Semantic Meaning Versus Appearance
+
+The distinction between a highlight class and a visual style is fundamental.
+
+Consider:
+
+```text
+KEYWORD
+```
+
+This describes a semantic category.
+
+It does not inherently mean:
+
+```text
+blue
+bold
+bright
+underlined
+```
+
+Those are visual decisions.
+
+A theme can therefore define:
+
+```text
+KEYWORD → one visual appearance
+```
+
+while another theme defines:
+
+```text
+KEYWORD → a completely different appearance
+```
+
+The syntax subsystem does not need to change.
+
+Conceptually:
+
+```text
+                Syntax
+                  │
+                  ▼
+              KEYWORD
+                  │
+        ┌─────────┴─────────┐
+        ▼                   ▼
+     Theme A              Theme B
+        │                   │
+        ▼                   ▼
+   Visual Style A      Visual Style B
+```
+
+This separation allows the same language analysis to support multiple visual designs.
+
+## What a Visual Style Represents
+
+A visual style is the collection of presentation attributes associated with a highlight class.
+
+Conceptually:
+
+```text
+Visual Style
+├── foreground
+├── background
+└── attributes
+```
+
+The exact attributes depend on what the terminal renderer supports.
+
+The syntax subsystem does not need to know those details.
+
+For example:
+
+```text
+COMMENT
+    ↓
+Theme
+    ↓
+Visual Style
+```
+
+The resulting style might use a subdued foreground, while another theme might use a different treatment.
+
+The important architectural boundary is:
+
+```text
+Syntax → semantic category
+Theme  → visual mapping
+Renderer → frame construction
+```
+
+## A Theme Is a Mapping
+
+A useful mathematical model is to treat a theme as a function:
+
+```text
+Theme : HighlightClass → VisualStyle
+```
+
+For example:
+
+```text
+Theme(KEYWORD)     = Style A
+Theme(STRING)      = Style B
+Theme(COMMENT)     = Style C
+Theme(NUMBER)      = Style D
+Theme(NORMAL)      = Default Style
+```
+
+The theme does not need to understand why a region is a keyword.
+
+It only needs to know what visual style corresponds to the `KEYWORD` category.
+
+This keeps the theme independent from the language grammar.
+
+## The Same Theme Can Support Multiple Languages
+
+Suppose the editor supports C and Python.
+
+Both languages can produce common semantic classes:
+
+```text
+KEYWORD
+STRING
+COMMENT
+NUMBER
+FUNCTION
+TYPE
+VARIABLE
+```
+
+The theme can use the same mappings:
+
+```text
+KEYWORD  → keyword style
+STRING   → string style
+COMMENT  → comment style
+FUNCTION → function style
+```
+
+The language definitions remain separate:
+
+```text
+C Language Definition
+       │
+       ▼
+C Syntax Analysis
+       │
+       ▼
+Highlight Classes
+       │
+       └──────────────┐
+                      ▼
+                    Theme
+                      ▲
+       ┌──────────────┘
+       │
+Python Syntax Analysis
+       ▲
+       │
+Python Language Definition
+```
+
+This is one of the strongest reasons to use semantic highlight classes instead of language-specific colors.
+
+The theme understands presentation categories, not programming languages.
+
+## A Theme Should Not Parse Text
+
+The theme must not attempt to recognize syntax.
+
+For example, it should never need to ask:
+
+```text
+Is this text a keyword?
+
+Does this identifier represent a function?
+
+Is this quote the beginning of a string?
+```
+
+Those decisions have already been made.
+
+The theme receives:
+
+```text
+KEYWORD
+```
+
+rather than:
+
+```text
+"int"
+```
+
+or:
+
+```text
+"return"
+```
+
+This gives the theme a simple responsibility:
+
+> Given a highlight class, return its visual style.
+
+That keeps language knowledge entirely outside the theme.
+
+## A Theme Should Not Modify the Document
+
+Themes are also read-only with respect to source text.
+
+They should not:
+
+```text
+modify Document
+insert characters
+delete characters
+change tokens
+move Cursor
+change Viewport
+```
+
+The relationship remains:
+
+```text
+Document
+   │
+   ▼
+Syntax
+   │
+   ▼
+Highlight Classes
+   │
+   ▼
+Theme
+   │
+   ▼
+Visual Styles
+```
+
+Each stage consumes information from the previous stage and produces information for the next.
+
+## The Default Style
+
+Every theme needs a default style.
+
+Most text in a source file may not require a specialized visual treatment.
+
+For example:
+
+```c
+int count = 42;
+```
+
+might have:
+
+```text
+int       → KEYWORD
+count     → VARIABLE
+=         → OPERATOR
+42        → NUMBER
+;         → PUNCTUATION
+```
+
+while spaces and other unclassified regions use:
+
+```text
+NORMAL
+```
+
+The theme therefore needs at least one fallback:
+
+```text
+NORMAL → default visual style
+```
+
+This prevents the renderer from needing to invent a style whenever syntax information is absent.
+
+## Missing Highlight Classes
+
+As the syntax subsystem becomes more capable, it may introduce new classes:
+
+```text
+CONSTANT
+TYPE
+FUNCTION
+PARAMETER
+ATTRIBUTE
+```
+
+An existing theme may not explicitly define every new class.
+
+The theme system therefore needs a fallback policy.
+
+One possible approach is:
+
+```text
+Requested class
+      │
+      ▼
+Does theme define it?
+   /        \
+ yes         no
+ │            │
+ ▼            ▼
+Use style   Use fallback
+```
+
+The fallback might be:
+
+```text
+NORMAL
+```
+
+or another appropriate generic style.
+
+The exact policy can be chosen by the implementation, but it should be deterministic.
+
+A missing theme entry should not cause the editor to fail.
+
+## Theme and Renderer Separation
+
+The Renderer should not contain a large collection of language-specific style decisions.
+
+A poor design might look like:
+
+```text
+Renderer
+├── if keyword → style X
+├── if string  → style Y
+├── if comment → style Z
+└── ...
+```
+
+This makes the renderer aware of syntax semantics.
+
+A cleaner design is:
+
+```text
+Renderer
+   │
+   ├── receives Highlight Class
+   │
+   ▼
+Theme
+   │
+   └── returns Visual Style
+```
+
+The renderer remains responsible for constructing the frame.
+
+The theme remains responsible for mapping semantic categories to visual attributes.
+
+This reduces coupling between the language subsystem and terminal presentation.
+
+## Themes and Terminal-Specific Details
+
+The theme ultimately produces styles that the renderer can use with the terminal's supported visual capabilities.
+
+However, the theme abstraction should still avoid becoming a terminal-output mechanism.
+
+The syntax subsystem should never generate terminal escape sequences.
+
+The theme should conceptually describe:
+
+```text
+foreground attribute
+background attribute
+text attributes
+```
+
+rather than directly writing:
+
+```text
+ESC [ ...
+```
+
+The Renderer remains responsible for translating visual styles into the terminal representation.
+
+The flow is therefore:
+
+```text
+Highlight Class
+      │
+      ▼
+Theme
+      │
+      ▼
+Visual Style
+      │
+      ▼
+Renderer
+      │
+      ▼
+Terminal representation
+```
+
+This preserves the renderer's existing ownership of terminal output.
+
+## Combining Syntax Style With Other Visual State
+
+A rendered cell may be affected by more than syntax highlighting.
+
+For example, a character may simultaneously have:
+
+```text
+syntax style
++
+cursor state
+```
+
+The editor may also have other visual states in the future.
+
+Therefore, the syntax style should not necessarily be treated as the complete final appearance of a screen cell.
+
+Conceptually:
+
+```text
+Syntax Style
+       │
+       ├─────────┐
+       │         │
+       ▼         ▼
+Other visual   Cursor state
+state          / selection
+       │         │
+       └────┬────┘
+            ▼
+       Final cell style
+```
+
+The Renderer can combine these sources when constructing the frame.
+
+This is another reason the syntax subsystem should produce semantic information rather than terminal escape sequences.
+
+## Themes Do Not Belong in the Document
+
+A theme should not be stored inside individual Document characters.
+
+For example, this would create unnecessary coupling:
+
+```text
+Document
+├── character
+├── highlight class
+├── foreground
+└── background
+```
+
+Instead:
+
+```text
+Document
+└── source text
+
+Syntax
+└── highlight information
+
+Theme
+└── visual mappings
+```
+
+The same Document can then be displayed using different themes without changing its contents or syntax analysis.
+
+## Changing a Theme
+
+Changing a theme does not require re-lexing the Document.
+
+Suppose the current state is:
+
+```text
+Document
+   ↓
+Tokens
+   ↓
+Highlight Classes
+   ↓
+Theme A
+   ↓
+Rendered Frame
+```
+
+Changing the theme gives:
+
+```text
+Document
+   ↓
+Tokens
+   ↓
+Highlight Classes
+   ↓
+Theme B
+   ↓
+Rendered Frame
+```
+
+The syntax information remains valid.
+
+Only the visual mapping changes.
+
+This demonstrates the value of keeping semantic information separate from presentation.
+
+A theme change is therefore primarily a rendering concern rather than a syntax-analysis operation.
+
+## Themes and Performance
+
+Theme lookup occurs during rendering, so it should be inexpensive.
+
+The renderer may process many visible cells in every frame.
+
+A conceptual implementation might resolve a class through a direct mapping:
+
+```text
+highlight_class → visual_style
+```
+
+rather than performing expensive language analysis during every cell rendering operation.
+
+The expensive work should happen earlier:
+
+```text
+Document
+   ↓
+Syntax analysis
+```
+
+while the rendering path should remain relatively simple:
+
+```text
+Highlight Class
+   ↓
+Theme lookup
+   ↓
+Visual Style
+   ↓
+Screen cell
+```
+
+This follows the broader runtime model of keeping the event loop responsive.
+
+## Theme Scope
+
+A theme describes visual mappings for the editor's semantic categories.
+
+It does not need to contain:
+
+```text
+language grammar
+lexer rules
+parser rules
+Document data
+Cursor position
+Viewport position
+key bindings
+file-format rules
+```
+
+Those concerns belong elsewhere.
+
+The theme can therefore remain a small, focused component:
+
+```text
+Theme
+├── semantic class → style mapping
+└── fallback style
+```
+
+This makes it easier to reason about and replace.
+
+## Syntax, Theme, and Renderer
+
+The complete relationship can now be represented as three distinct layers:
+
+```text
+┌──────────────────────┐
+│       Syntax         │
+│                      │
+│ "What is this text?" │
+└──────────┬───────────┘
+           │
+           │ Highlight Class
+           ▼
+┌──────────────────────┐
+│        Theme         │
+│                      │
+│ "How should it look?"│
+└──────────┬───────────┘
+           │
+           │ Visual Style
+           ▼
+┌──────────────────────┐
+│      Renderer        │
+│                      │
+│ "How do I draw it?"  │
+└──────────────────────┘
+```
+
+This separation is one of the central architectural ideas of syntax highlighting.
+
+The syntax subsystem does not know the theme.
+
+The theme does not know the language grammar.
+
+The renderer does not need to understand the meaning of source text.
+
+Each component performs one transformation.
+
+## A Complete Example
+
+Consider:
+
+```c
+// Calculate the total
+int total = count + 10;
+```
+
+The syntax subsystem might produce:
+
+```text
+COMMENT
+KEYWORD
+TYPE
+IDENTIFIER
+OPERATOR
+IDENTIFIER
+OPERATOR
+NUMBER
+PUNCTUATION
+```
+
+The theme maps those classes:
+
+```text
+COMMENT      → Style A
+KEYWORD      → Style B
+TYPE         → Style C
+IDENTIFIER   → Style D
+OPERATOR     → Style E
+NUMBER       → Style F
+PUNCTUATION  → Style G
+```
+
+The renderer then combines those styles with the current viewport, cursor state, and screen-buffer construction.
+
+The final result is visual, but the source document remains untouched.
+
+```text
+Source text
+     │
+     ▼
+Syntax meaning
+     │
+     ▼
+Highlight class
+     │
+     ▼
+Theme style
+     │
+     ▼
+Rendered frame
+```
+
+## The Architectural Principle
+
+Themes demonstrate a broader design principle:
+
+> **Semantic information should be separated from presentation policy.**
+
+The syntax subsystem answers:
+
+```text
+"What is this?"
+```
+
+The theme answers:
+
+```text
+"How should this category appear?"
+```
+
+The renderer answers:
+
+```text
+"How should that appearance be represented in this frame?"
+```
+
+Because these questions are separate, the editor can change languages, syntax-analysis strategies, themes, or rendering details without forcing all of the other layers to change with them.
+
+## Summary
+
+Themes provide the visual mapping from semantic highlight classes to actual terminal styles. Because this mapping is separated from language analysis, a theme change does not require re-lexing the Document, and the same Document and syntax information can be displayed with entirely different themes. Theme lookup itself should be inexpensive, since it happens during rendering, and a Theme remains a small, focused component that maps classes to styles and provides a fallback. The result is a clean three-layer division: the syntax subsystem says _what_ the text is, the Theme says _how_ that category should look, and the Renderer says _how_ to draw it in the current frame.
+
+The theme's only obligations are a deterministic mapping and a sensible fallback for classes it does not define, which prevents missing entries from becoming rendering failures. Keeping the theme this small also means it can be replaced without re-lexing the Document, while the Renderer retains sole responsibility for terminal output.
+
+One issue remains before highlighting can work for arbitrary files: deciding **which language's syntax rules apply to a given Document**. The next section examines that problem in **Section 32.8, Language Detection and Highlighting Modes**.

@@ -1,0 +1,660 @@
+---
+title: "32.8 Language Detection and Highlighting Modes"
+description: "Describes highlighting modes and language definitions, showing how file names or explicit choices select syntax rules while the Document stays language-neutral."
+---
+
+Syntax highlighting is language-dependent.
+
+The same sequence of characters can have completely different meanings in different languages. A word that is a keyword in one language may simply be an identifier in another, while a character sequence that begins a comment in one language may have no special meaning in another.
+
+Therefore, before the syntax subsystem can analyze a Document, it needs to know **which language rules should be applied**.
+
+This introduces the concept of a **highlighting mode**.
+
+A highlighting mode associates a Document with a particular set of syntax-analysis rules.
+
+Conceptually:
+
+```text
+Document
+   │
+   ▼
+Highlighting Mode
+   │
+   ▼
+Language Definition
+   │
+   ▼
+Lexer / Syntax Analysis
+```
+
+The mode determines which interpretation of the source text is appropriate.
+
+## Why Language Matters
+
+Consider:
+
+```text
+// comment
+```
+
+This is a familiar comment form in languages such as C.
+
+Now consider:
+
+```text
+# comment
+```
+
+This is commonly used by languages such as Python.
+
+The characters themselves are ordinary document text.
+
+Their meaning comes from the selected language.
+
+Similarly, keywords differ between languages:
+
+```text
+C:
+int
+return
+struct
+```
+
+versus:
+
+```text
+Python:
+def
+return
+class
+```
+
+The lexer therefore cannot simply use one universal collection of rules.
+
+It needs a language definition.
+
+## The Language Definition
+
+A **language definition** describes the syntax rules required by the highlighting subsystem.
+
+A simplified definition might contain:
+
+```text
+Language Definition
+├── keywords
+├── comment rules
+├── string rules
+├── number rules
+├── operators
+└── contextual rules
+```
+
+For example, a C language definition could conceptually provide:
+
+```text
+C
+├── Keywords
+│   ├── int
+│   ├── return
+│   ├── if
+│   └── while
+│
+├── Comments
+│   ├── //
+│   └── /* ... */
+│
+└── Strings
+    ├── "..."
+    └── '...'
+```
+
+The lexer consumes these rules to interpret the Document.
+
+The language definition is therefore data and policy for syntax analysis, rather than part of the Document itself.
+
+## Highlighting Mode as the Selected Language
+
+A highlighting mode can be thought of as the active syntax interpretation for a Document.
+
+For example:
+
+```text
+Document: main.c
+Mode:     C
+```
+
+or:
+
+```text
+Document: script.py
+Mode:     Python
+```
+
+The syntax subsystem then uses the corresponding language definition.
+
+```text
+Document
+   │
+   ▼
+Mode = C
+   │
+   ▼
+C Language Definition
+   │
+   ▼
+Lexer
+```
+
+Changing the mode changes how the existing Document is interpreted.
+
+The Document itself does not need to change.
+
+## File Names Can Provide a Useful Hint
+
+A practical editor can often infer the highlighting mode from a file's name.
+
+For example:
+
+```text
+main.c       → C
+program.py   → Python
+config.json  → JSON
+README.md    → Markdown
+```
+
+The file extension provides a convenient initial guess.
+
+However, it should be treated as a **language-selection mechanism**, not as a property of the text buffer itself.
+
+Conceptually:
+
+```text
+File name
+    │
+    ▼
+Language detection
+    │
+    ▼
+Highlighting mode
+    │
+    ▼
+Syntax analysis
+```
+
+The detection mechanism may be simple in the initial implementation.
+
+More sophisticated mechanisms can be added later without changing the Document representation.
+
+## New Files and Existing Files
+
+Language detection behaves differently depending on whether a file already exists.
+
+For an existing file:
+
+```text
+Open "main.c"
+      │
+      ▼
+Detect extension
+      │
+      ▼
+Select C mode
+      │
+      ▼
+Analyze Document
+```
+
+For a new unsaved document, there may be no filename or extension:
+
+```text
+New Document
+     │
+     ▼
+No filename
+     │
+     ▼
+No reliable extension
+```
+
+In that case, the editor needs a default highlighting mode.
+
+A natural fallback is:
+
+```text
+PLAIN TEXT
+```
+
+Plain-text mode means that no language-specific syntax interpretation is applied.
+
+This is safer than guessing incorrectly.
+
+## Plain Text Is a Valid Mode
+
+Syntax highlighting does not have to be enabled for every Document.
+
+A plain-text mode can simply provide:
+
+```text
+No syntax rules
+     │
+     ▼
+NORMAL highlight class
+```
+
+The rendering system still works normally.
+
+The only difference is that the syntax subsystem produces little or no specialized highlighting information.
+
+This makes plain text a first-class mode rather than an exceptional error condition.
+
+## Explicit Mode Selection
+
+Automatic detection is useful, but it should not be the only possible mechanism.
+
+A file might have an unusual extension:
+
+```text
+build.script
+```
+
+while actually containing C-like or Python-like source.
+
+The editor may eventually allow the user to select a highlighting mode explicitly.
+
+Conceptually:
+
+```text
+Automatic detection
+        │
+        ▼
+Initial mode
+        │
+        │ optional override
+        ▼
+Selected highlighting mode
+```
+
+The important distinction for this chapter is that the syntax subsystem consumes the selected mode.
+
+The details of how users configure persistent preferences or key bindings belong to the configuration architecture rather than to syntax analysis itself.
+
+## Detection Should Not Modify Source Text
+
+Language detection is metadata about how the editor should interpret the Document.
+
+It must not transform the source.
+
+For example, detecting:
+
+```text
+main.c → C
+```
+
+does not cause the Document to be converted into another representation.
+
+The relationship remains:
+
+```text
+Document
+└── "int main() { ... }"
+
+Highlighting Mode
+└── C
+```
+
+The mode affects analysis, not document contents.
+
+## Language Definitions Should Be Isolated
+
+A language definition should not be embedded directly inside the lexer implementation.
+
+Instead, the relationship can be:
+
+```text
+              Syntax Subsystem
+                     │
+          ┌──────────┴──────────┐
+          ▼                     ▼
+Language Definition A     Language Definition B
+          │                     │
+          └──────────┬──────────┘
+                     ▼
+                   Lexer
+```
+
+This allows the lexer to remain a general mechanism while the language-specific rules are supplied separately.
+
+For example:
+
+```text
+Lexer
+  + C rules
+  + Python rules
+  + JSON rules
+  + Markdown rules
+```
+
+The implementation can choose whether language definitions are static tables, structures, or another representation.
+
+The architectural boundary is what matters.
+
+## Different Languages, Different Complexity
+
+Not all languages require the same amount of syntax information.
+
+A simple language might need:
+
+```text
+keywords
+comments
+strings
+numbers
+operators
+```
+
+Another language may require:
+
+```text
+nested constructs
+multiple string forms
+interpolation
+context-sensitive identifiers
+```
+
+The highlighting subsystem should therefore avoid assuming that every language can be described by one rigid set of rules.
+
+The language definition should be capable of expressing the distinctions actually needed by that language.
+
+At the same time, the initial editor does not need to support every possible language feature.
+
+## Mode Selection Is Separate From Syntax Analysis
+
+It is useful to distinguish two questions:
+
+```text
+Language selection:
+"Which rules should we use?"
+
+Syntax analysis:
+"What does this text mean under those rules?"
+```
+
+For example:
+
+```text
+main.c
+  │
+  ▼
+C mode
+  │
+  ▼
+C lexer
+  │
+  ▼
+Tokens
+```
+
+The detection step does not itself identify keywords, comments, or strings.
+
+It only chooses the language definition that will perform that work.
+
+This separation prevents file-management concerns from leaking into the lexer.
+
+## A Language Mode Is Not File Metadata
+
+The file extension and the active highlighting mode are related, but they are not identical concepts.
+
+For example:
+
+```text
+Filename:
+example.txt
+
+Selected mode:
+Python
+```
+
+The filename still says `.txt`.
+
+The syntax subsystem can nevertheless interpret the Document using Python rules if the active mode has been explicitly selected.
+
+This is useful when working with:
+
+- generated source files,
+- files without conventional extensions,
+- temporary files,
+- embedded languages,
+- or projects using custom naming conventions.
+
+The mode describes **how the editor should interpret the text**, not necessarily what the operating system calls the file.
+
+## Re-Highlighting After a Mode Change
+
+Changing the highlighting mode invalidates existing syntax information.
+
+Suppose:
+
+```text
+Document
+   │
+   ▼
+Mode = C
+   │
+   ▼
+C highlighting
+```
+
+The mode changes:
+
+```text
+Mode = Python
+```
+
+The existing highlight information may no longer be valid.
+
+The editor therefore performs:
+
+```text
+Mode changed
+    │
+    ▼
+Discard old syntax information
+    │
+    ▼
+Analyze Document using new rules
+    │
+    ▼
+Generate new highlighting
+```
+
+The Document itself remains unchanged.
+
+Only its derived interpretation changes.
+
+## Unsupported Languages
+
+The editor may encounter a file whose language is not supported.
+
+For example:
+
+```text
+example.xyz
+```
+
+If no language definition matches, the system should not fail simply because highlighting is unavailable.
+
+A reasonable fallback is:
+
+```text
+Unsupported / unknown
+          │
+          ▼
+      Plain text
+```
+
+The file remains editable.
+
+Saving remains independent of syntax highlighting.
+
+The editor simply displays the Document without language-specific highlighting.
+
+This is an important robustness property.
+
+## Language Detection Is Not Parsing
+
+Language detection should remain a lightweight selection mechanism.
+
+It should not attempt to determine the complete language from the source by performing expensive analysis.
+
+For example, this is unnecessary for the basic implementation:
+
+```text
+Read entire file
+     │
+     ▼
+Analyze grammar
+     │
+     ▼
+Guess language
+```
+
+A simpler approach is:
+
+```text
+Filename / explicit mode
+          │
+          ▼
+Selected language
+          │
+          ▼
+Syntax analysis
+```
+
+More advanced detection mechanisms can be introduced later if they provide practical value.
+
+## Language Mode and Architecture
+
+The complete syntax architecture now looks like:
+
+```text
+                    Document
+                       │
+                       ▼
+              Highlighting Mode
+                       │
+                       ▼
+              Language Definition
+                       │
+                       ▼
+                     Lexer
+                       │
+                       ▼
+                    Tokens
+                       │
+                       ▼
+              Syntax Analysis
+                       │
+                       ▼
+              Highlight Classes
+                       │
+                       ▼
+                    Theme
+                       │
+                       ▼
+                  Renderer
+```
+
+Each layer answers a different question.
+
+```text
+Highlighting Mode
+    "Which language rules apply?"
+
+Language Definition
+    "What are those rules?"
+
+Lexer
+    "What lexical regions exist?"
+
+Syntax Analysis
+    "What structural role do they have?"
+
+Highlight Class
+    "Which semantic presentation category applies?"
+
+Theme
+    "How should that category look?"
+
+Renderer
+    "How should it appear in this frame?"
+```
+
+This gives the syntax subsystem a clear path from a raw Document to a rendered representation.
+
+## A Small Initial Language Set
+
+The editor does not need to support dozens of languages to establish a strong architecture.
+
+A useful initial implementation might support only a few:
+
+```text
+C
+Markdown
+Plain Text
+```
+
+The important objective is not the number of languages.
+
+It is whether adding another language can be done without modifying the Document, Cursor, Viewport, or Renderer.
+
+If adding:
+
+```text
+Python
+```
+
+primarily means supplying another language definition, the architecture is appropriately decoupled.
+
+## The Architectural Principle
+
+Language selection should therefore be treated as metadata controlling syntax analysis.
+
+The relationship is:
+
+```text
+Document
+   │
+   │ unchanged
+   ▼
+Highlighting Mode
+   │
+   │ selects
+   ▼
+Language Definition
+   │
+   │ drives
+   ▼
+Syntax Analysis
+   │
+   ▼
+Highlight Information
+```
+
+The Document remains language-neutral.
+
+The syntax subsystem becomes language-aware.
+
+The theme remains presentation-oriented.
+
+The renderer remains responsible for displaying the final result.
+
+This separation gives the editor a foundation that can support additional languages without contaminating the core text model.
+
+## Summary
+
+Language selection is metadata that controls syntax analysis: a highlighting mode picks the language definition that drives the Lexer and subsequent stages. The Document remains language-neutral, while the syntax subsystem becomes language-aware and the Theme stays presentation-oriented. Because these layers are separate, adding a language such as Python or Markdown mainly means supplying another language definition, without modifying the Document, Cursor, Viewport, or Renderer. A small initial language set is enough to establish this architecture.
+
+The mode is metadata, not a property of the text buffer: files with unusual or missing extensions can still be interpreted with an explicit language choice, and unknown languages fall back to plain text without preventing editing or saving. A mode change invalidates existing highlighting but never alters the Document, which keeps language selection separate from syntax analysis itself.
+
+Selecting the correct language, however, is only the beginning. Syntax information also has to remain correct while the user continuously edits the Document. The next section addresses this practical problem in an interactive editor: **Section 32.9, Updating Highlighting After Editing**.
