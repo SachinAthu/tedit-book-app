@@ -1,0 +1,898 @@
+---
+title: 54.6 Terminal Restoration and Resize Handling
+description: "Hardens terminal restoration and adds resize handling so signal cleanup, SIGWINCH, and terminal state remain consistent."
+---
+
+This section focuses on two failure-prone areas of the implementation:
+
+- Terminal restoration: ensure raw mode and other terminal settings are restored when the editor exits through normal cleanup or an error path.
+- Resize handling: ensure a terminal-size change updates the Screen Buffer, Renderer, and Viewport consistently without invalidating the Cursor or Document.
+
+The changes must preserve the existing module boundaries and be verified against the repository's current tests before adding new behavior.
+
+## Files changed
+
+- `src/main.c` — added signal handling, resize processing, transactional Renderer replacement, and graceful termination.
+- `src/terminal/terminal.c` — added terminal-size querying and hardened terminal restoration.
+- `src/terminal/terminal.h` — exposed `terminal_get_size()`.
+- `tests/test_terminal.c` — added terminal API and cleanup regression tests.
+- `CMakeLists.txt` — added the ninth CTest target.
+
+## Complete source files
+
+### `src/main.c`
+
+```c
+/* src/main.c */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "command/command_engine.h"
+#include "cursor/cursor.h"
+#include "document/document.h"
+#include "input/input_engine.h"
+#include "input/input_parser.h"
+#include "renderer/renderer.h"
+#include "state/editor_state.h"
+#include "terminal/terminal.h"
+
+#include <errno.h>
+#include <locale.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/select.h>
+#include <unistd.h>
+
+#define ESCAPE_TIMEOUT_MICROSECONDS 50000
+
+/* Signal handlers only set flags; all terminal and allocation work remains in
+ * the ordinary event-loop context, never inside an asynchronous handler. */
+static volatile sig_atomic_t resize_requested = 0;
+static volatile sig_atomic_t termination_requested = 0;
+static struct sigaction previous_winch_action;
+static struct sigaction previous_int_action;
+static struct sigaction previous_term_action;
+static struct sigaction previous_hup_action;
+static bool signal_handlers_installed = false;
+
+static void application_signal_handler(int signal_number)
+{
+    if (signal_number == SIGWINCH)
+    {
+        resize_requested = 1;
+    }
+    else
+    {
+        termination_requested = 1;
+    }
+}
+
+static bool application_install_signal_handlers(void)
+{
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = application_signal_handler;
+    sigemptyset(&action.sa_mask);
+
+    if (sigaction(SIGWINCH, &action, &previous_winch_action) == -1)
+    {
+        return false;
+    }
+    if (sigaction(SIGINT, &action, &previous_int_action) == -1)
+    {
+        (void)sigaction(SIGWINCH, &previous_winch_action, NULL);
+        return false;
+    }
+    if (sigaction(SIGTERM, &action, &previous_term_action) == -1)
+    {
+        (void)sigaction(SIGINT, &previous_int_action, NULL);
+        (void)sigaction(SIGWINCH, &previous_winch_action, NULL);
+        return false;
+    }
+    if (sigaction(SIGHUP, &action, &previous_hup_action) == -1)
+    {
+        (void)sigaction(SIGTERM, &previous_term_action, NULL);
+        (void)sigaction(SIGINT, &previous_int_action, NULL);
+        (void)sigaction(SIGWINCH, &previous_winch_action, NULL);
+        return false;
+    }
+
+    signal_handlers_installed = true;
+    return true;
+}
+
+static void application_restore_signal_handlers(void)
+{
+    if (!signal_handlers_installed)
+    {
+        return;
+    }
+
+    (void)sigaction(SIGHUP, &previous_hup_action, NULL);
+    (void)sigaction(SIGTERM, &previous_term_action, NULL);
+    (void)sigaction(SIGINT, &previous_int_action, NULL);
+    (void)sigaction(SIGWINCH, &previous_winch_action, NULL);
+    signal_handlers_installed = false;
+}
+
+static int read_escape_byte(unsigned char *byte)
+{
+    fd_set read_set;
+    struct timeval timeout;
+    int result;
+
+    FD_ZERO(&read_set);
+    FD_SET(STDIN_FILENO, &read_set);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = ESCAPE_TIMEOUT_MICROSECONDS;
+
+    do
+    {
+        result = select(STDIN_FILENO + 1, &read_set, NULL, NULL, &timeout);
+    } while (result == -1 && errno == EINTR);
+
+    if (result <= 0)
+    {
+        return result;
+    }
+
+    for (;;)
+    {
+        const ssize_t bytes_read = read(STDIN_FILENO, byte, sizeof(*byte));
+
+        if (bytes_read == 1)
+        {
+            return 1;
+        }
+        if (bytes_read == 0)
+        {
+            return 0;
+        }
+        if (errno != EINTR)
+        {
+            return -1;
+        }
+    }
+}
+
+static bool redraw_after_action(Renderer *renderer, EditorState *state)
+{
+    if (renderer == NULL || state == NULL)
+    {
+        return false;
+    }
+
+    size_t cursor_visual_column;
+    if (!renderer_cursor_visual_column(state, &cursor_visual_column) ||
+        !viewport_ensure_cursor_visible(
+            &state->viewport,
+            state->cursor.row,
+            cursor_visual_column,
+            renderer->document_rows,
+            renderer->screen_buffer.columns))
+    {
+        return false;
+    }
+
+    return renderer_render(renderer, state);
+}
+
+/*
+ * Rebuild the Renderer for the latest terminal dimensions. A replacement is
+ * allocated first, so allocation failure leaves the existing Renderer valid
+ * for cleanup. The terminal dimensions are committed only after initialization
+ * succeeds.
+ */
+static bool application_handle_resize(TerminalState *terminal, EditorState *state, Renderer *renderer)
+{
+    size_t rows;
+    size_t columns;
+    Renderer replacement;
+
+    if (terminal == NULL || state == NULL || renderer == NULL || !terminal_get_size(&rows, &columns))
+    {
+        return false;
+    }
+
+    if (rows == terminal->rows && columns == terminal->columns)
+    {
+        return true;
+    }
+
+    /* The Renderer needs at least one document row and reserves the last
+     * physical terminal column to avoid delayed-wrap behavior. */
+    if (rows < 4 || columns < 2)
+    {
+        return false;
+    }
+
+    if (!renderer_init(&replacement, rows, columns - 1))
+    {
+        return false;
+    }
+
+    Renderer previous = *renderer;
+    *renderer = replacement;
+    terminal->rows = rows;
+    terminal->columns = columns;
+    renderer_destroy(&previous);
+
+    return redraw_after_action(renderer, state);
+}
+
+static bool application_event_loop(TerminalState *terminal, EditorState *state, Renderer *renderer, const char *save_path)
+{
+    InputParser parser;
+    input_parser_init(&parser);
+
+    while (true)
+    {
+        if (termination_requested)
+        {
+            return true;
+        }
+        if (resize_requested)
+        {
+            resize_requested = 0;
+            if (!application_handle_resize(terminal, state, renderer))
+            {
+                return false;
+            }
+        }
+
+        unsigned char byte;
+        int read_result;
+        InputEvent event;
+        bool should_quit;
+        bool event_ready = false;
+
+        /*
+         * While the parser is in the middle of an Escape sequence, the next
+         * byte must arrive quickly or not at all: read with a timeout so a
+         * lone ESC press is handled promptly. Otherwise a plain blocking
+         * read is enough.
+         */
+        if (input_parser_is_waiting(&parser))
+        {
+            read_result = read_escape_byte(&byte);
+
+            if (read_result == 0)
+            {
+                if (!input_parser_timeout(&parser, &event))
+                {
+                    return false;
+                }
+
+                if (event.type == INPUT_EVENT_NONE)
+                {
+                    continue;
+                }
+
+                event_ready = true;
+                read_result = 1;
+            }
+        }
+        else
+        {
+            const ssize_t bytes_read = read(STDIN_FILENO, &byte, sizeof(byte));
+
+            if (bytes_read < 0)
+            {
+                if (errno == EINTR)
+                {
+                    continue;
+                }
+                return false;
+            }
+
+            if (bytes_read == 0)
+            {
+                return true;
+            }
+            read_result = 1;
+        }
+
+        if (read_result < 0)
+        {
+            return false;
+        }
+        if (read_result == 0)
+        {
+            return true;
+        }
+
+        /*
+         * Feed the byte into the parser; it returns true once a complete key
+         * event is ready (or when a timeout already produced one above).
+         */
+        if (!event_ready && !input_parser_feed(&parser, byte, &event))
+        {
+            return false;
+        }
+
+        EditorCommand command;
+        bool redraw;
+
+        /* Pipeline step by step: event -> command -> state change -> redraw. */
+        if (!input_engine_translate(&event, &command))
+        {
+            return false;
+        }
+
+        command.page_rows = renderer->document_rows;
+
+        if (!command_engine_execute(state, &command, save_path, &redraw, &should_quit))
+        {
+            return false;
+        }
+        if (redraw && !redraw_after_action(renderer, state))
+        {
+            return false;
+        }
+        if (should_quit)
+        {
+            return true;
+        }
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    (void)setlocale(LC_CTYPE, "");
+
+    if (argc > 2)
+    {
+        fprintf(stderr, "Usage: %s [filename]\n", argv[0]);
+        return 1;
+    }
+
+    const char *startup_path = argc == 2 ? argv[1] : NULL;
+    bool startup_load_failed = false;
+    TerminalState terminal;
+    EditorState state;
+    Renderer renderer;
+    bool state_initialized = false;
+    bool renderer_initialized = false;
+    int exit_status = 1;
+
+    if (!application_install_signal_handlers())
+    {
+        return 1;
+    }
+    if (!terminal_init(&terminal))
+    {
+        application_restore_signal_handlers();
+        return 1;
+    }
+    if (!terminal_enable_raw_mode(&terminal))
+    {
+        terminal_restore(&terminal);
+        application_restore_signal_handlers();
+        return 1;
+    }
+    if (!terminal_enter_alternate_screen(&terminal))
+    {
+        terminal_restore(&terminal);
+        application_restore_signal_handlers();
+        return 1;
+    }
+    if (!editor_state_init(&state))
+    {
+        goto cleanup;
+    }
+    state_initialized = true;
+
+    if (startup_path != NULL && !editor_state_load_file(&state, startup_path))
+    {
+        startup_load_failed = true;
+        goto cleanup;
+    }
+    if (terminal.columns < 2 || !renderer_init(&renderer, terminal.rows, terminal.columns - 1))
+    {
+        goto cleanup;
+    }
+    renderer_initialized = true;
+
+    if (!redraw_after_action(&renderer, &state) ||
+        !application_event_loop(&terminal, &state, &renderer, startup_path))
+    {
+        goto cleanup;
+    }
+
+    exit_status = 0;
+
+cleanup:
+    if (renderer_initialized)
+    {
+        renderer_destroy(&renderer);
+    }
+    if (state_initialized)
+    {
+        editor_state_destroy(&state);
+    }
+    terminal_restore(&terminal);
+    terminal_leave_alternate_screen(&terminal);
+    application_restore_signal_handlers();
+
+    if (startup_load_failed)
+    {
+        fprintf(stderr, "tedit: unable to open or decode '%s'.\n", startup_path);
+    }
+
+    return exit_status;
+}
+```
+
+### `src/terminal/terminal.c`
+
+```c
+/* src/terminal/terminal.c */
+
+#include "terminal.h"
+
+#include <errno.h> /* Gives us errno and EINTR, so we can retry interrupted writes. */
+#include <string.h> /* Gives us memset(), used to zero out the struct. */
+#include <sys/ioctl.h> /* Gives us ioctl() and TIOCGWINSZ, used to ask the terminal its size. */
+#include <unistd.h> /* Gives us write() and STDIN_FILENO, the number that names the keyboard input stream. */
+
+static bool terminal_write_all(const char *data, size_t length)
+{
+    if (data == NULL)
+    {
+        return false;
+    }
+
+    size_t written = 0;
+
+    while (written < length)
+    {
+        ssize_t result;
+
+        /* Ask the OS to write the remaining bytes. */
+        result = write(STDOUT_FILENO, data + written, length - written);
+
+        if (result < 0)
+        {
+            /* EINTR means a signal interrupted us; retrying is safe. */
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        /* A return value of 0 means nothing could be written; give up. */
+        if (result == 0)
+        {
+            return false;
+        }
+
+        written += (size_t)result;
+    }
+
+    return true;
+}
+
+bool terminal_init(TerminalState *terminal)
+{
+    struct winsize window_size;
+
+    /* A *pointer can be NULL (point to nothing). Writing through a NULL
+     * pointer would crash, so we check for it first. */
+    if (terminal == NULL)
+    {
+        return false;
+    }
+
+    /* Overwrite everything the struct points at with zero bytes.
+     * sizeof(*terminal) is the size of the struct itself.
+     * This clears both flags (initialized, raw_mode_enabled) to false (0). */
+    memset(terminal, 0, sizeof(*terminal));
+
+    /* Ask the OS for the terminal's current settings and store them.
+     * tcgetattr = "terminal control get attributes".
+     * STDIN_FILENO is the standard input (the keyboard).
+     * It returns -1 if it fails, e.g. when not running in a real terminal.
+     * The & before terminal->original_attributes passes the address so the
+     * function can fill it in. */
+    if (tcgetattr(STDIN_FILENO, &terminal->original_attributes) == -1)
+    {
+        return false;
+    }
+
+    /* Ask the OS how big the terminal window is (in text rows and columns).
+     * TIOCGWINSZ = "terminal I/O control get window size". A real terminal
+     * answers; a pipe or file reports zeroes, which we reject as unusable. */
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &window_size) == -1 ||
+        window_size.ws_row == 0 || window_size.ws_col == 0)
+    {
+        return false;
+    }
+
+    terminal->rows = window_size.ws_row;
+    terminal->columns = window_size.ws_col;
+
+    /* Remember that init succeeded, so later functions are allowed to run. */
+    terminal->initialized = true;
+
+    return true;
+}
+
+bool terminal_get_size(size_t *rows, size_t *columns)
+{
+    struct winsize window_size;
+
+    if (rows == NULL || columns == NULL)
+    {
+        return false;
+    }
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &window_size) == -1 ||
+        window_size.ws_row == 0 || window_size.ws_col == 0)
+    {
+        return false;
+    }
+
+    *rows = window_size.ws_row;
+    *columns = window_size.ws_col;
+    return true;
+}
+
+bool terminal_enable_raw_mode(TerminalState *terminal)
+{
+    /* Only proceed if we have a valid state that was successfully initialized. */
+    if (terminal == NULL || !terminal->initialized)
+    {
+        return false;
+    }
+
+    /* Start from a copy of the saved original settings, then change only the
+     * parts we care about. Never edit original_attributes directly, because we
+     * still need it later to restore the terminal. */
+    struct termios raw_attributes = terminal->original_attributes;
+
+    /* c_iflag controls how incoming (typed) bytes are handled.
+     * The ~ flips every bit, and &= keeps all bits except the listed ones,
+     * so this turns each named behavior OFF. */
+    raw_attributes.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    /*   BRKINT: don't send an interrupt signal on a "break" condition.
+     *   ICRNL:  don't turn a carriage return (\r) into a newline (\n).
+     *   INPCK:  turn off input parity checking.
+     *   ISTRIP: don't strip the 8th bit, so we can read all byte values.
+     *   IXON:   turn off Ctrl-S / Ctrl-Q flow control. */
+
+    /* c_oflag controls output processing. Turning off OPOST ("output post
+     * processing") stops the terminal from rewriting our output, e.g. it will
+     * no longer convert "\n" into "\r\n". */
+    raw_attributes.c_oflag &= ~(OPOST);
+
+    /* c_cflag controls hardware/character settings. CS8 means "use 8 bits per
+     * character" (a full byte). |= turns that option ON. */
+    raw_attributes.c_cflag |= CS8;
+
+    /* c_lflag controls local, i.e. high-level, terminal behavior.
+     * Again &= ~ turns each named feature OFF. */
+    raw_attributes.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+    /*   ECHO:   don't print the keys we type back to the screen.
+     *   ICANON: turn off canonical/line mode, so input arrives key-by-key.
+     *   IEXTEN: turn off extended input handling (e.g. Ctrl-V).
+     *   ISIG:   don't turn Ctrl-C / Ctrl-Z into signals. */
+
+    /* c_cc holds control characters. VMIN is the minimum number of bytes a
+     * read() must wait for: 1 means "return as soon as one key is pressed". */
+    raw_attributes.c_cc[VMIN] = 1;
+
+    /* VTIME is the wait timeout in tenths of a second: 0 means "do not time
+     * out", so read() blocks until VMIN bytes arrive. */
+    raw_attributes.c_cc[VTIME] = 0;
+
+    /* Apply the modified settings to the input stream.
+     * tcsetattr = "terminal control set attributes".
+     * TCSAFLUSH means: wait until pending output is sent, then throw away any
+     * typed input that has not been read yet. Returns -1 on failure. */
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw_attributes) == -1)
+    {
+        return false;
+    }
+
+    /* Record that we are in raw mode, so terminal_restore knows to undo it. */
+    terminal->raw_mode_enabled = true;
+
+    return true;
+}
+
+void terminal_restore(TerminalState *terminal)
+{
+    /* Do nothing if there is no state, init never succeeded, or we never
+     * actually switched to raw mode. */
+    if (terminal == NULL || !terminal->initialized || !terminal->raw_mode_enabled)
+    {
+        return;
+    }
+
+    /* Restore with a valid tcsetattr action, retrying an interrupted call. */
+    int result;
+    do
+    {
+        result = tcsetattr(STDIN_FILENO, TCSAFLUSH, &terminal->original_attributes);
+    } while (result == -1 && errno == EINTR);
+
+    /* Keep the flag set if restoration failed so the state does not claim
+     * that the terminal was restored when the operating system rejected it. */
+    if (result == 0)
+    {
+        terminal->raw_mode_enabled = false;
+    }
+}
+
+bool terminal_enter_alternate_screen(TerminalState *terminal)
+{
+    /* "\x1b[?1049h" is the escape sequence that enters the alternate screen. */
+    if (!terminal_write_all("\x1b[?1049h", 8))
+    {
+        return false;
+    }
+
+    /* Remember the switch so that leaving is only attempted when needed. */
+    terminal->alternate_screen_enabled = true;
+
+    /*
+     * Full-width redraws must not trigger the terminal's delayed-wrap mode.
+     * Otherwise, writing the last cell can leave a pending wrap that causes
+     * the physical screen to scroll independently of the editor's Viewport.
+     */
+    if (!terminal_write_all("\x1b[?7l", 5))
+    {
+        (void)terminal_write_all("\x1b[?1049l", 8);
+        terminal->alternate_screen_enabled = false;
+        return false;
+    }
+
+    terminal->autowrap_disabled = true;
+    return true;
+}
+
+void terminal_leave_alternate_screen(TerminalState *terminal)
+{
+    if (terminal == NULL)
+    {
+        return;
+    }
+
+    /* Nothing to undo if we never switched to the alternate screen. */
+    if (!terminal->alternate_screen_enabled)
+    {
+        return;
+    }
+
+    /* Restore terminal wrapping before returning to the user's screen. */
+    if (terminal->autowrap_disabled)
+    {
+        (void)terminal_write_all("\x1b[?7h", 5);
+        terminal->autowrap_disabled = false;
+    }
+
+    /* "\x1b[?1049l" is the escape sequence that leaves the alternate screen. */
+    (void)terminal_write_all("\x1b[?1049l", 8);
+    terminal->alternate_screen_enabled = false;
+}
+```
+
+### `src/terminal/terminal.h`
+
+```c
+/* src/terminal/terminal.h */
+
+#ifndef TERMINAL_TERMINAL_H
+#define TERMINAL_TERMINAL_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <termios.h>
+
+typedef struct
+{
+    struct termios original_attributes;
+    bool initialized;
+    bool raw_mode_enabled;
+    bool alternate_screen_enabled;
+    bool autowrap_disabled;
+    size_t rows;
+    size_t columns;
+} TerminalState;
+
+bool terminal_init(TerminalState *terminal);
+
+/* Query current terminal dimensions without changing TerminalState. */
+bool terminal_get_size(size_t *rows, size_t *columns);
+
+bool terminal_enable_raw_mode(TerminalState *terminal);
+
+void terminal_restore(TerminalState *terminal);
+
+bool terminal_enter_alternate_screen(TerminalState *terminal);
+
+void terminal_leave_alternate_screen(TerminalState *terminal);
+
+#endif
+```
+
+### `tests/test_terminal.c`
+
+```c
+/* tests/test_terminal.c */
+
+#include "terminal/terminal.h"
+
+#include <assert.h>
+#include <stddef.h>
+
+int main(void)
+{
+    size_t rows = 17;
+    size_t columns = 29;
+
+    assert(!terminal_get_size(NULL, &columns));
+    assert(!terminal_get_size(&rows, NULL));
+    assert(!terminal_get_size(NULL, NULL));
+    assert(rows == 17);
+    assert(columns == 29);
+
+    /* Cleanup helpers must tolerate absent terminal state. */
+    terminal_restore(NULL);
+    terminal_leave_alternate_screen(NULL);
+
+    return 0;
+}
+```
+
+### `CMakeLists.txt`
+
+```cmake
+# CMakeLists.txt
+
+cmake_minimum_required(VERSION 3.20)
+enable_testing()
+
+project(
+    terminal_editor
+    VERSION 0.1.0
+    LANGUAGES C
+)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+option(
+    TEDIT_ENABLE_DIAGNOSTICS
+    "Enable development-time diagnostic logging"
+    OFF
+)
+
+option(
+    TEDIT_ENABLE_SANITIZERS
+    "Enable AddressSanitizer and UndefinedBehaviorSanitizer"
+    OFF
+)
+
+add_library(
+    tedit_core
+    STATIC
+    src/diagnostics/diagnostics.c
+    src/terminal/terminal.c
+    src/input/input_parser.c
+    src/input/input_engine.c
+    src/command/command_engine.c
+    src/state/editor_state.c
+    src/document/document.c
+    src/cursor/cursor.c
+    src/text/text_layout.c
+    src/viewport/viewport.c
+    src/renderer/screen_buffer.c
+    src/renderer/renderer.c
+    src/file/file.c
+    src/file/file_save.c
+)
+
+target_include_directories(tedit_core PUBLIC src)
+
+if(TEDIT_ENABLE_DIAGNOSTICS)
+    target_compile_definitions(tedit_core PUBLIC TEDIT_ENABLE_DIAGNOSTICS=1)
+endif()
+
+if(TEDIT_ENABLE_SANITIZERS)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(
+            tedit_core
+            PUBLIC
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+        target_link_options(
+            tedit_core
+            PUBLIC
+            -fsanitize=address,undefined
+        )
+    else()
+        message(FATAL_ERROR
+            "TEDIT_ENABLE_SANITIZERS requires a GCC- or Clang-compatible compiler"
+        )
+    endif()
+endif()
+
+add_executable(
+    tedit
+    src/main.c
+)
+
+target_link_libraries(tedit PRIVATE tedit_core)
+
+# tests
+
+add_executable(test_smoke tests/test_smoke.c)
+add_executable(test_editing tests/test_editing.c)
+add_executable(test_file tests/test_file.c)
+add_executable(test_file_save tests/test_file_save.c)
+add_executable(test_input_parser tests/test_input_parser.c)
+add_executable(test_input_engine tests/test_input_engine.c)
+add_executable(test_command_engine tests/test_command_engine.c)
+add_executable(test_input_pipeline tests/test_input_pipeline.c)
+add_executable(test_terminal tests/test_terminal.c)
+
+target_link_libraries(test_smoke PRIVATE tedit_core)
+target_link_libraries(test_editing PRIVATE tedit_core)
+target_link_libraries(test_file PRIVATE tedit_core)
+target_link_libraries(test_file_save PRIVATE tedit_core)
+target_link_libraries(test_input_parser PRIVATE tedit_core)
+target_link_libraries(test_input_engine PRIVATE tedit_core)
+target_link_libraries(test_command_engine PRIVATE tedit_core)
+target_link_libraries(test_input_pipeline PRIVATE tedit_core)
+target_link_libraries(test_terminal PRIVATE tedit_core)
+
+add_test(NAME smoke COMMAND test_smoke)
+add_test(NAME editing COMMAND test_editing)
+add_test(NAME file COMMAND test_file)
+add_test(NAME file_save COMMAND test_file_save)
+add_test(NAME input_parser COMMAND test_input_parser)
+add_test(NAME input_engine COMMAND test_input_engine)
+add_test(NAME command_engine COMMAND test_command_engine)
+add_test(NAME input_pipeline COMMAND test_input_pipeline)
+add_test(NAME terminal COMMAND test_terminal)
+
+# Test assertions must remain active in Release configurations because tests
+# use assert() to check results and, in some cases, invoke the operation under
+# test. Production targets retain the selected build type's NDEBUG behavior.
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    foreach(test_target IN ITEMS
+        test_smoke
+        test_editing
+        test_file
+        test_file_save
+        test_input_parser
+        test_input_engine
+        test_command_engine
+        test_input_pipeline
+        test_terminal
+    )
+        target_compile_options(${test_target} PRIVATE -UNDEBUG)
+    endforeach()
+endif()
+```
+
+## Important implementation details
+
+Terminal restoration: The previous implementation passed `TCIFLUSH` to `tcsetattr()`, although that function requires a valid terminal-setting action. This has been corrected to `TCSAFLUSH`. Restoration now retries interrupted calls and only clears the raw-mode flag after success.
+
+Resize handling: `SIGWINCH` sets a signal-safe flag. The event loop then queries the new dimensions and initializes a replacement Renderer before swapping it in. If the resize cannot be applied, the existing Renderer remains valid for cleanup.
+
+Termination handling: `SIGINT`, `SIGTERM`, and `SIGHUP` request a normal shutdown. Signal handlers perform no allocation or terminal I/O; cleanup restores terminal settings, leaves the alternate screen, and restores previous signal dispositions.
+
+## Next section
+
+Chapter 54.7 — Interactive Failure-Path Verification and Final Hardening Review
+
+The next section will test the complete editor lifecycle under failure conditions, identify any remaining gaps in cleanup and state consistency, and verify the final implementation before Chapter 54 is marked complete.

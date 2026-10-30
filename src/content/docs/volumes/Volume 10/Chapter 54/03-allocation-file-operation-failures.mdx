@@ -1,0 +1,850 @@
+---
+title: 54.3 Allocation and File-Operation Failures
+description: "Hardens file saving against inconsistent document storage and adds regression tests for file-read, temporary-file, and related failure paths."
+---
+
+Implementation complete. This section hardens the File Manager against inconsistent Document storage and adds regression tests for file-operation failures. The existing public interfaces remain unchanged.
+
+## Files changed
+
+- `src/file/file_save.c`: Added storage validation before serialization.
+- `tests/test_file_save.c`: Added tests for malformed storage and temporary-file creation failure.
+- `tests/test_file.c`: Added a regression test for a file-read failure.
+
+## Complete source files
+
+### `src/file/file_save.c`
+
+```c
+/* src/file/file_save.c */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "file/file.h"
+
+#include <errno.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#define FILE_SAVE_BUFFER_CAPACITY 4096
+#define TEMPORARY_PATH_SUFFIX ".tedit-XXXXXX"
+
+typedef struct
+{
+    int descriptor;
+    unsigned char data[FILE_SAVE_BUFFER_CAPACITY];
+    size_t length;
+} FileOutputBuffer;
+
+static bool file_write_all(int descriptor, const unsigned char *data, size_t length)
+{
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        ssize_t bytes_written = write(descriptor, data + offset, length - offset);
+
+        if (bytes_written < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        if (bytes_written == 0)
+        {
+            return false;
+        }
+
+        offset += (size_t)bytes_written;
+    }
+
+    return true;
+}
+
+static bool file_output_flush(FileOutputBuffer *buffer)
+{
+    if (buffer->length == 0)
+    {
+        return true;
+    }
+
+    if (!file_write_all(buffer->descriptor, buffer->data, buffer->length))
+    {
+        return false;
+    }
+
+    buffer->length = 0;
+    return true;
+}
+
+static bool file_output_byte(FileOutputBuffer *buffer, unsigned char byte)
+{
+    if (buffer->length == sizeof(buffer->data) && !file_output_flush(buffer))
+    {
+        return false;
+    }
+
+    buffer->data[buffer->length++] = byte;
+    return true;
+}
+
+static bool file_output_code_point(FileOutputBuffer *buffer, uint32_t code_point)
+{
+    if (code_point <= UINT32_C(0x7F))
+    {
+        return file_output_byte(buffer, (unsigned char)code_point);
+    }
+
+    if (code_point <= UINT32_C(0x7FF))
+    {
+        return file_output_byte(buffer, (unsigned char)(0xC0 | (code_point >> 6))) &&
+               file_output_byte(buffer, (unsigned char)(0x80 | (code_point & 0x3F)));
+    }
+
+    if (code_point <= UINT32_C(0xFFFF))
+    {
+        return file_output_byte(buffer, (unsigned char)(0xE0 | (code_point >> 12))) &&
+               file_output_byte(buffer, (unsigned char)(0x80 | ((code_point >> 6) & 0x3F))) &&
+               file_output_byte(buffer, (unsigned char)(0x80 | (code_point & 0x3F)));
+    }
+
+    if (code_point <= UINT32_C(0x10FFFF))
+    {
+        return file_output_byte(buffer, (unsigned char)(0xF0 | (code_point >> 18))) &&
+               file_output_byte(buffer, (unsigned char)(0x80 | ((code_point >> 12) & 0x3F))) &&
+               file_output_byte(buffer, (unsigned char)(0x80 | ((code_point >> 6) & 0x3F))) &&
+               file_output_byte(buffer, (unsigned char)(0x80 | (code_point & 0x3F)));
+    }
+
+    return false;
+}
+
+/*
+ * Check the Document's active storage before serialization.
+ *
+ * Saving must reject inconsistent metadata before dereferencing the line
+ * array or any line buffer. This is particularly important when the editor
+ * is already recovering from a programming error: a failed save must not
+ * turn corrupt state into an out-of-bounds read.
+ */
+static bool file_document_storage_is_valid(const Document *document)
+{
+    if (document == NULL || document->line_count > document->line_capacity)
+    {
+        return false;
+    }
+
+    if ((document->line_capacity == 0) != (document->lines == NULL))
+    {
+        return false;
+    }
+
+    for (size_t row = 0; row < document->line_count; ++row)
+    {
+        const DocumentLine *line = &document->lines[row];
+
+        if (line->length > line->capacity || ((line->capacity == 0) != (line->data == NULL)))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static FileSaveResult file_write_document(int descriptor, const Document *document)
+{
+    FileOutputBuffer output = {.descriptor = descriptor, .length = 0};
+
+    for (size_t row = 0; row < document->line_count; ++row)
+    {
+        const DocumentLine *line = &document->lines[row];
+
+        if (line->length > 0 && line->data == NULL)
+        {
+            return FILE_SAVE_INVALID_ARGUMENT;
+        }
+
+        for (size_t column = 0; column < line->length; ++column)
+        {
+            uint32_t code_point = line->data[column];
+
+            if ((code_point >= UINT32_C(0xD800) && code_point <= UINT32_C(0xDFFF)) || code_point > UINT32_C(0x10FFFF))
+            {
+                return FILE_SAVE_INVALID_CODE_POINT;
+            }
+
+            if (!file_output_code_point(&output, code_point))
+            {
+                return FILE_SAVE_WRITE_FAILED;
+            }
+        }
+
+        if (!file_output_byte(&output, (unsigned char)'\n'))
+        {
+            return FILE_SAVE_WRITE_FAILED;
+        }
+    }
+
+    return file_output_flush(&output) ? FILE_SAVE_OK : FILE_SAVE_WRITE_FAILED;
+}
+
+FileSaveResult file_save_document(const char *path, const Document *document)
+{
+    static const char temporary_suffix[] = TEMPORARY_PATH_SUFFIX;
+
+    size_t path_length;
+    char *temporary_path;
+    int descriptor;
+    FileSaveResult result;
+    bool close_succeeded;
+
+    if (path == NULL || path[0] == '\0' || !file_document_storage_is_valid(document))
+    {
+        return FILE_SAVE_INVALID_ARGUMENT;
+    }
+
+    path_length = strlen(path);
+
+    if (path_length > SIZE_MAX - sizeof(temporary_suffix))
+    {
+        return FILE_SAVE_OUT_OF_MEMORY;
+    }
+
+    temporary_path = malloc(path_length + sizeof(temporary_suffix));
+
+    if (temporary_path == NULL)
+    {
+        return FILE_SAVE_OUT_OF_MEMORY;
+    }
+
+    memcpy(temporary_path, path, path_length);
+    memcpy(temporary_path + path_length, temporary_suffix, sizeof(temporary_suffix));
+
+    descriptor = mkstemp(temporary_path);
+
+    if (descriptor < 0)
+    {
+        free(temporary_path);
+        return FILE_SAVE_TEMPORARY_CREATE_FAILED;
+    }
+
+    result = file_write_document(descriptor, document);
+    close_succeeded = close(descriptor) == 0;
+
+    if (result == FILE_SAVE_OK && !close_succeeded)
+    {
+        result = FILE_SAVE_CLOSE_FAILED;
+    }
+
+    if (result == FILE_SAVE_OK && rename(temporary_path, path) != 0)
+    {
+        result = FILE_SAVE_REPLACE_FAILED;
+    }
+
+    if (result != FILE_SAVE_OK)
+    {
+        (void)unlink(temporary_path);
+    }
+
+    free(temporary_path);
+    return result;
+}
+```
+
+### `tests/test_file_save.c`
+
+```c
+/* tests/test_file_save.c */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "document/document.h"
+#include "file/file.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <dirent.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static void write_all(int descriptor, const unsigned char *data, size_t length)
+{
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        ssize_t written = write(descriptor, data + offset, length - offset);
+        assert(written > 0);
+        offset += (size_t)written;
+    }
+}
+
+static size_t read_file(const char *path, unsigned char *buffer, size_t capacity)
+{
+    FILE *file = fopen(path, "rb");
+    size_t length;
+
+    assert(file != NULL);
+    length = fread(buffer, 1, capacity, file);
+    assert(!ferror(file));
+    assert(feof(file) || length == capacity);
+    assert(fclose(file) == 0);
+    return length;
+}
+
+static void test_editor_state_save_clears_dirty_flag_after_success(void)
+{
+    char path[] = "/tmp/tedit-save-state-XXXXXX";
+    int descriptor = mkstemp(path);
+    const unsigned char expected[] = {'A', 0xE2, 0x82, 0xAC, '\n', 'B', '\n'};
+    unsigned char actual[32];
+    EditorState state;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'A'));
+    assert(document_insert_character(&state.document, 0, 1, UINT32_C(0x20AC)));
+    assert(document_split_line(&state.document, 0, 2));
+    assert(document_insert_character(&state.document, 1, 0, 'B'));
+    state.is_dirty = true;
+
+    assert(editor_state_save_file(&state, path));
+    assert(!state.is_dirty);
+    assert(state.document.line_count == 2);
+    assert(document_get_line(&state.document, 0)->length == 2);
+    assert(document_get_line(&state.document, 0)->data[1] == UINT32_C(0x20AC));
+    assert(read_file(path, actual, sizeof(actual)) == sizeof(expected));
+    assert(memcmp(actual, expected, sizeof(expected)) == 0);
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_failed_save_preserves_dirty_flag_document_and_destination(void)
+{
+    char path[] = "/tmp/tedit-save-failure-XXXXXX";
+    int descriptor = mkstemp(path);
+    const unsigned char original[] = {'o', 'l', 'd'};
+    unsigned char actual[16];
+    EditorState state;
+
+    assert(descriptor >= 0);
+    write_all(descriptor, original, sizeof(original));
+    assert(close(descriptor) == 0);
+
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'x'));
+    state.is_dirty = true;
+    /* Simulate corrupted internal state to exercise the serializer's guard. */
+    document_get_line(&state.document, 0)->data[0] = UINT32_C(0xD800);
+
+    assert(!editor_state_save_file(&state, path));
+    assert(state.is_dirty);
+    assert(state.document.line_count == 1);
+    assert(document_get_line(&state.document, 0)->length == 1);
+    assert(document_get_line(&state.document, 0)->data[0] == UINT32_C(0xD800));
+    assert(read_file(path, actual, sizeof(actual)) == sizeof(original));
+    assert(memcmp(actual, original, sizeof(original)) == 0);
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_invalid_save_arguments_preserve_dirty_flag(void)
+{
+    EditorState state;
+
+    assert(editor_state_init(&state));
+    state.is_dirty = true;
+    assert(!editor_state_save_file(&state, NULL));
+    assert(!editor_state_save_file(NULL, "/tmp/tedit-save-invalid"));
+    assert(state.is_dirty);
+    editor_state_destroy(&state);
+}
+
+static void test_replace_failure_preserves_state_and_cleans_temporary_file(void)
+{
+    char path[] = "/tmp/tedit-save-replace-XXXXXX";
+    int descriptor = mkstemp(path);
+    const char *base_name;
+    char temporary_prefix[128];
+    DIR *directory;
+    struct dirent *entry;
+    struct stat status;
+    EditorState state;
+    bool temporary_file_found = false;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(path) == 0);
+    assert(mkdir(path, 0700) == 0);
+
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'x'));
+    state.is_dirty = true;
+
+    /* Renaming a temporary regular file over a directory must fail. */
+    assert(!editor_state_save_file(&state, path));
+    assert(state.is_dirty);
+    assert(state.document.line_count == 1);
+    assert(document_get_line(&state.document, 0)->length == 1);
+    assert(document_get_line(&state.document, 0)->data[0] == 'x');
+    assert(stat(path, &status) == 0);
+    assert(S_ISDIR(status.st_mode));
+
+    base_name = strrchr(path, '/');
+    assert(base_name != NULL);
+    ++base_name;
+    assert(snprintf(temporary_prefix, sizeof(temporary_prefix), "%s.tedit-", base_name) > 0);
+
+    directory = opendir("/tmp");
+    assert(directory != NULL);
+    while ((entry = readdir(directory)) != NULL)
+    {
+        if (strncmp(entry->d_name, temporary_prefix, strlen(temporary_prefix)) == 0)
+        {
+            temporary_file_found = true;
+            break;
+        }
+    }
+    assert(closedir(directory) == 0);
+    assert(!temporary_file_found);
+
+    editor_state_destroy(&state);
+    assert(rmdir(path) == 0);
+}
+
+static void test_malformed_document_storage_is_rejected_without_touching_destination(void)
+{
+    char path[] = "/tmp/tedit-save-malformed-XXXXXX";
+    int descriptor = mkstemp(path);
+    const unsigned char original[] = {'s', 'a', 'f', 'e'};
+    unsigned char actual[16];
+    EditorState state;
+    Document malformed;
+    DocumentLine malformed_line;
+
+    assert(descriptor >= 0);
+    write_all(descriptor, original, sizeof(original));
+    assert(close(descriptor) == 0);
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'x'));
+    state.is_dirty = true;
+
+    malformed = state.document;
+    malformed.line_count = malformed.line_capacity + 1;
+    assert(file_save_document(path, &malformed) == FILE_SAVE_INVALID_ARGUMENT);
+
+    malformed = state.document;
+    malformed_line = state.document.lines[0];
+    malformed_line.length = malformed_line.capacity + 1;
+    malformed.lines = &malformed_line;
+    assert(file_save_document(path, &malformed) == FILE_SAVE_INVALID_ARGUMENT);
+
+    malformed = state.document;
+    malformed_line = state.document.lines[0];
+    malformed_line.data = NULL;
+    malformed.lines = &malformed_line;
+    assert(file_save_document(path, &malformed) == FILE_SAVE_INVALID_ARGUMENT);
+
+    assert(state.is_dirty);
+    assert(document_get_line(&state.document, 0)->length == 1);
+    assert(document_get_line(&state.document, 0)->data[0] == (uint32_t)'x');
+    assert(read_file(path, actual, sizeof(actual)) == sizeof(original));
+    assert(memcmp(actual, original, sizeof(original)) == 0);
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_temporary_file_creation_failure_preserves_dirty_state(void)
+{
+    EditorState state;
+
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'x'));
+    state.is_dirty = true;
+
+    assert(!editor_state_save_file(&state, "/tmp/tedit-missing-directory/file.txt"));
+    assert(state.is_dirty);
+    assert(document_get_line(&state.document, 0)->length == 1);
+    assert(document_get_line(&state.document, 0)->data[0] == (uint32_t)'x');
+
+    editor_state_destroy(&state);
+}
+
+static void test_zero_line_document_saves_empty_file(void)
+{
+    char path[] = "/tmp/tedit-save-empty-XXXXXX";
+    int descriptor = mkstemp(path);
+    unsigned char actual[4];
+    Document document;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(document_init(&document));
+    assert(file_load_document(path, &document) == FILE_LOAD_OK);
+    assert(document.line_count == 0);
+
+    assert(file_save_document(path, &document) == FILE_SAVE_OK);
+    assert(read_file(path, actual, sizeof(actual)) == 0);
+
+    assert(unlink(path) == 0);
+}
+
+static void test_save_as_association_changes_only_after_success(void)
+{
+    char original_path[] = "/tmp/tedit-save-as-original-XXXXXX";
+    char new_path[] = "/tmp/tedit-save-as-new-XXXXXX";
+    char failure_path[] = "/tmp/tedit-save-as-failure-XXXXXX";
+    int original_descriptor = mkstemp(original_path);
+    int new_descriptor = mkstemp(new_path);
+    int failure_descriptor = mkstemp(failure_path);
+    EditorState state;
+    const DocumentLine *line;
+
+    assert(original_descriptor >= 0 && new_descriptor >= 0 && failure_descriptor >= 0);
+    write_all(original_descriptor, (const unsigned char *)"old", 3);
+    assert(close(original_descriptor) == 0);
+    assert(close(new_descriptor) == 0);
+    assert(close(failure_descriptor) == 0);
+    assert(unlink(new_path) == 0);
+    assert(unlink(failure_path) == 0);
+    assert(mkdir(failure_path, 0700) == 0);
+
+    assert(editor_state_init(&state));
+    assert(editor_state_load_file(&state, original_path));
+    assert(state.file_path != NULL && strcmp(state.file_path, original_path) == 0);
+    assert(document_insert_character(&state.document, 0, 3, 'x'));
+    state.is_dirty = true;
+
+    assert(!editor_state_save_as(&state, failure_path));
+    assert(state.file_path != NULL && strcmp(state.file_path, original_path) == 0);
+    assert(state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 4 && line->data[3] == 'x');
+
+    assert(editor_state_save_as(&state, new_path));
+    assert(state.file_path != NULL && strcmp(state.file_path, new_path) == 0);
+    assert(!state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 4 && line->data[3] == 'x');
+
+    editor_state_destroy(&state);
+    assert(unlink(original_path) == 0);
+    assert(unlink(new_path) == 0);
+    assert(rmdir(failure_path) == 0);
+}
+
+int main(void)
+{
+    test_editor_state_save_clears_dirty_flag_after_success();
+    test_failed_save_preserves_dirty_flag_document_and_destination();
+    test_invalid_save_arguments_preserve_dirty_flag();
+    test_replace_failure_preserves_state_and_cleans_temporary_file();
+    test_malformed_document_storage_is_rejected_without_touching_destination();
+    test_temporary_file_creation_failure_preserves_dirty_state();
+    test_zero_line_document_saves_empty_file();
+    test_save_as_association_changes_only_after_success();
+    puts("File save tests passed.");
+    return 0;
+}
+```
+
+### `tests/test_file.c`
+
+```c
+/* tests/test_file.c */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "document/document.h"
+#include "file/file.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static void write_all(int descriptor, const unsigned char *data, size_t length)
+{
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        ssize_t written = write(
+            descriptor,
+            data + offset,
+            length - offset);
+
+        assert(written > 0);
+        offset += (size_t)written;
+    }
+}
+
+static void test_load_utf8_and_line_endings(void)
+{
+    char path[] = "/tmp/tedit-file-XXXXXX";
+    int descriptor = mkstemp(path);
+
+    /* A + U+20AC EURO SIGN + CRLF + B + LF */
+    const unsigned char content[] = {
+        0x41,
+        0xE2, 0x82, 0xAC,
+        0x0D, 0x0A,
+        0x42,
+        0x0A};
+
+    Document document;
+
+    assert(descriptor >= 0);
+
+    write_all(descriptor, content, sizeof(content));
+    assert(close(descriptor) == 0);
+
+    assert(document_init(&document));
+
+    assert(file_load_document(path, &document) == FILE_LOAD_OK);
+
+    assert(document.line_count == 2);
+
+    DocumentLine *first = document_get_line(&document, 0);
+    DocumentLine *second = document_get_line(&document, 1);
+
+    assert(first != NULL);
+    assert(second != NULL);
+
+    assert(first->length == 2);
+    assert(first->data[0] == UINT32_C(0x41));
+    assert(first->data[1] == UINT32_C(0x20AC));
+
+    assert(second->length == 1);
+    assert(second->data[0] == UINT32_C(0x42));
+
+    document_destroy(&document);
+    assert(unlink(path) == 0);
+}
+
+static void test_empty_file_has_zero_lines(void)
+{
+    char path[] = "/tmp/tedit-file-XXXXXX";
+    int descriptor = mkstemp(path);
+    Document document;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+
+    assert(document_init(&document));
+    assert(file_load_document(path, &document) == FILE_LOAD_OK);
+    assert(document.line_count == 0);
+
+    document_destroy(&document);
+    assert(unlink(path) == 0);
+}
+
+static void test_invalid_utf8_preserves_destination(void)
+{
+    char path[] = "/tmp/tedit-file-XXXXXX";
+    int descriptor = mkstemp(path);
+
+    /* C0 AF is an invalid overlong UTF-8 encoding. */
+    const unsigned char invalid[] = {0xC0, 0xAF};
+
+    Document document;
+
+    assert(descriptor >= 0);
+
+    write_all(descriptor, invalid, sizeof(invalid));
+    assert(close(descriptor) == 0);
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'x'));
+
+    assert(file_load_document(path, &document) ==
+           FILE_LOAD_INVALID_UTF8);
+
+    assert(document.line_count == 1);
+
+    DocumentLine *line = document_get_line(&document, 0);
+
+    assert(line != NULL);
+    assert(line->length == 1);
+    assert(line->data[0] == 'x');
+
+    document_destroy(&document);
+    assert(unlink(path) == 0);
+}
+
+static void test_missing_file_preserves_destination(void)
+{
+    Document document;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'z'));
+
+    assert(file_load_document(
+               "/tmp/tedit-file-that-does-not-exist",
+               &document) == FILE_LOAD_OPEN_FAILED);
+
+    assert(document.line_count == 1);
+
+    DocumentLine *line = document_get_line(&document, 0);
+
+    assert(line != NULL);
+    assert(line->length == 1);
+    assert(line->data[0] == 'z');
+
+    document_destroy(&document);
+}
+
+static void test_read_failure_preserves_destination_document(void)
+{
+    Document document;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'q'));
+
+    /* POSIX permits opening a directory, but reading it fails on Linux. */
+    assert(file_load_document("/tmp", &document) == FILE_LOAD_READ_FAILED);
+    assert(document.line_count == 1);
+    assert(document_get_line(&document, 0)->length == 1);
+    assert(document_get_line(&document, 0)->data[0] == (uint32_t)'q');
+
+    document_destroy(&document);
+}
+
+static void test_editor_state_load_resets_cursor_viewport_and_dirty_flag(void)
+{
+    char path[] = "/tmp/tedit-state-load-XXXXXX";
+    int descriptor = mkstemp(path);
+    const unsigned char content[] = {'a', '\n', 'b', 'c'};
+    EditorState state;
+
+    assert(descriptor >= 0);
+    write_all(descriptor, content, sizeof(content));
+    assert(close(descriptor) == 0);
+
+    assert(editor_state_init(&state));
+    state.cursor.row = 12;
+    state.cursor.column = 7;
+    state.cursor.preferred_column = 7;
+    state.viewport.viewport_row = 5;
+    state.viewport.viewport_column = 9;
+    state.is_dirty = true;
+
+    assert(editor_state_load_file(&state, path));
+    assert(state.document.line_count == 2);
+    assert(state.cursor.row == 0);
+    assert(state.cursor.column == 0);
+    assert(state.cursor.preferred_column == 0);
+    assert(state.viewport.viewport_row == 0);
+    assert(state.viewport.viewport_column == 0);
+    assert(!state.is_dirty);
+    assert(state.file_path != NULL);
+    assert(strcmp(state.file_path, path) == 0);
+
+    assert(document_get_line(&state.document, 0)->length == 1);
+    assert(document_get_line(&state.document, 0)->data[0] == (uint32_t)'a');
+    assert(document_get_line(&state.document, 1)->length == 2);
+    assert(document_get_line(&state.document, 1)->data[0] == (uint32_t)'b');
+    assert(document_get_line(&state.document, 1)->data[1] == (uint32_t)'c');
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_editor_state_failed_load_preserves_state(void)
+{
+    EditorState state;
+
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'x'));
+    state.cursor.row = 0;
+    state.cursor.column = 1;
+    state.cursor.preferred_column = 1;
+    state.viewport.viewport_row = 3;
+    state.viewport.viewport_column = 4;
+    state.is_dirty = true;
+    state.file_path = malloc(sizeof("original.txt"));
+    assert(state.file_path != NULL);
+    memcpy(state.file_path, "original.txt", sizeof("original.txt"));
+
+    assert(!editor_state_load_file(&state, "/tmp/tedit-no-such-file"));
+
+    assert(state.document.line_count == 1);
+    assert(document_get_line(&state.document, 0)->length == 1);
+    assert(document_get_line(&state.document, 0)->data[0] == (uint32_t)'x');
+    assert(state.cursor.row == 0 && state.cursor.column == 1);
+    assert(state.cursor.preferred_column == 1);
+    assert(state.viewport.viewport_row == 3);
+    assert(state.viewport.viewport_column == 4);
+    assert(state.is_dirty);
+    assert(state.file_path != NULL);
+    assert(strcmp(state.file_path, "original.txt") == 0);
+
+    editor_state_destroy(&state);
+}
+
+int main(void)
+{
+    test_load_utf8_and_line_endings();
+    test_empty_file_has_zero_lines();
+    test_invalid_utf8_preserves_destination();
+    test_missing_file_preserves_destination();
+    test_read_failure_preserves_destination_document();
+    test_editor_state_load_resets_cursor_viewport_and_dirty_flag();
+    test_editor_state_failed_load_preserves_state();
+
+    puts("File Manager tests passed.");
+
+    return 0;
+}
+```
+
+## 1. Validate Document storage before saving
+
+The File Manager now checks the Document's structural metadata before serializing its contents.
+
+The validation rejects:
+
+- A line count greater than the allocated line capacity.
+- Inconsistent line-array pointer and capacity metadata.
+- A line length greater than its capacity.
+- Inconsistent line-buffer pointer and capacity metadata.
+
+These checks run before the serializer traverses active lines, preventing malformed storage metadata from causing an out-of-bounds read during saving.
+
+## 2. Verify failure behavior
+
+The new regression tests verify the following outcomes:
+
+| Failure case                         | Expected behavior                           |
+| ------------------------------------ | ------------------------------------------- |
+| Malformed Document storage           | Save is rejected before serialization       |
+| Temporary-file creation fails        | Document and Dirty Flag remain unchanged    |
+| File loading encounters a read error | Existing Document remains unchanged         |
+| Save is rejected                     | Existing destination file remains unchanged |
+
+The existing tests continue to verify that failed saves preserve unsaved changes and that failed replacements clean up their temporary files.
+
+## Next section
+
+Chapter 54.4 — Assertions and Debug Diagnostics
+
+The next implementation step will add focused assertions and debug diagnostics around critical editor invariants, keeping diagnostic code separate from normal state mutations.

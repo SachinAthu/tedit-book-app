@@ -1,0 +1,160 @@
+---
+title: 54.1 Establishing the Hardening Build
+description: "Adds an optional AddressSanitizer and UndefinedBehaviorSanitizer build and runs the existing test suite under runtime memory and undefined-behavior checks."
+---
+
+The latest repository has been extracted and checked. The existing implementation builds successfully, and all eight CTest targets pass before changes.
+
+The first implementation step adds an optional AddressSanitizer and UndefinedBehaviorSanitizer build. This lets us run the existing regression suite with runtime memory and undefined-behavior checks before modifying individual editor modules.
+
+## Files changed
+
+Modified: `CMakeLists.txt`
+
+Adds the `TEDIT_ENABLE_SANITIZERS` option. No existing editor behavior or public module interfaces change.
+
+No new source files are required for this step.
+
+## Complete updated `CMakeLists.txt`
+
+Replace the file with the following complete contents.
+
+```cmake
+# CMakeLists.txt
+
+cmake_minimum_required(VERSION 3.20)
+enable_testing()
+
+project(
+    terminal_editor
+    VERSION 0.1.0
+    LANGUAGES C
+)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+option(
+    TEDIT_ENABLE_SANITIZERS
+    "Enable AddressSanitizer and UndefinedBehaviorSanitizer"
+    OFF
+)
+
+add_library(
+    tedit_core
+    STATIC
+    src/terminal/terminal.c
+    src/input/input_parser.c
+    src/input/input_engine.c
+    src/command/command_engine.c
+    src/state/editor_state.c
+    src/document/document.c
+    src/cursor/cursor.c
+    src/text/text_layout.c
+    src/viewport/viewport.c
+    src/renderer/screen_buffer.c
+    src/renderer/renderer.c
+    src/file/file.c
+    src/file/file_save.c
+)
+
+target_include_directories(tedit_core PUBLIC src)
+
+if(TEDIT_ENABLE_SANITIZERS)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(
+            tedit_core
+            PUBLIC
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(
+            tedit_core
+            PUBLIC
+            -fsanitize=address,undefined
+        )
+    else()
+        message(FATAL_ERROR
+            "TEDIT_ENABLE_SANITIZERS requires a GCC- or Clang-compatible compiler"
+        )
+    endif()
+endif()
+
+add_executable(
+    tedit
+    src/main.c
+)
+
+target_link_libraries(tedit PRIVATE tedit_core)
+
+# Tests
+
+add_executable(test_smoke tests/test_smoke.c)
+add_executable(test_editing tests/test_editing.c)
+add_executable(test_file tests/test_file.c)
+add_executable(test_file_save tests/test_file_save.c)
+add_executable(test_input_parser tests/test_input_parser.c)
+add_executable(test_input_engine tests/test_input_engine.c)
+add_executable(test_command_engine tests/test_command_engine.c)
+add_executable(test_input_pipeline tests/test_input_pipeline.c)
+
+target_link_libraries(test_smoke PRIVATE tedit_core)
+target_link_libraries(test_editing PRIVATE tedit_core)
+target_link_libraries(test_file PRIVATE tedit_core)
+target_link_libraries(test_file_save PRIVATE tedit_core)
+target_link_libraries(test_input_parser PRIVATE tedit_core)
+target_link_libraries(test_input_engine PRIVATE tedit_core)
+target_link_libraries(test_command_engine PRIVATE tedit_core)
+target_link_libraries(test_input_pipeline PRIVATE tedit_core)
+
+add_test(NAME smoke COMMAND test_smoke)
+add_test(NAME editing COMMAND test_editing)
+add_test(NAME file COMMAND test_file)
+add_test(NAME file_save COMMAND test_file_save)
+add_test(NAME input_parser COMMAND test_input_parser)
+add_test(NAME input_engine COMMAND test_input_engine)
+add_test(NAME command_engine COMMAND test_command_engine)
+add_test(NAME input_pipeline COMMAND test_input_pipeline)
+
+```
+
+## Build and run the checks
+
+Keep the normal Debug build separate from the sanitizer build.
+
+1\. Configure and run the sanitizer build
+
+```bash
+cmake -S . -B build/sanitize \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DTEDIT_ENABLE_SANITIZERS=ON
+
+cmake --build build/sanitize -j2
+
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+UBSAN_OPTIONS=halt_on_error=1 \
+ctest --test-dir build/sanitize --output-on-failure
+```
+
+2\. Run the normal Debug build
+
+```bash
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/debug -j2
+ctest --test-dir build/debug --output-on-failure
+```
+
+## Implementation rules
+
+- Sanitizers remain disabled by default, so the ordinary build is unchanged.
+- The sanitizer flags propagate from `tedit_core` to the editor executable and linked test targets.
+- Unsupported compiler families fail configuration explicitly when sanitizers are requested.
+- Existing C99 settings, source files, test targets, and module boundaries remain unchanged.
+
+## Result and next step
+
+Section 54.1 establishes a repeatable sanitizer-enabled build for the current repository.
+
+Next: Section 54.2 — Document, Cursor, and Viewport Invariants. We will inspect the actual module interfaces and add focused regression checks for invalid positions, document boundaries, cursor validity, and viewport consistency before changing production behavior.

@@ -1,0 +1,23 @@
+---
+title: Chapter 54 — Hardening the Editor
+description: "Hardens the editor with sanitizer builds, invariant checks, safer failure paths, diagnostics, malformed-input recovery, terminal restoration, and integration tests."
+---
+
+## Introduction
+
+The editor now supports the full editing and navigation workflow, but a feature-complete program is not necessarily a robust one. Memory errors, malformed terminal input, failed file operations, and interrupted shutdown can still leave the editor in an invalid state—or leave the user's terminal broken.
+
+> **How can the editor be hardened so that failures are detected deliberately, contained, and recovered from rather than discovered by accident?**
+
+This chapter strengthens the existing implementation without redesigning it. It establishes a sanitizer-enabled build, adds regression checks for Document, Cursor, and Viewport invariants, and hardens allocation and file-operation failure paths. It introduces assertions and optional diagnostics, makes the Input Parser recover from malformed sequences, and adds terminal restoration and resize handling. It closes with pseudo-terminal integration tests covering clean exits, signals, resizes, and startup failures, followed by a small logging module for lifecycle and diagnostic visibility. Deterministic allocation-failure injection and exhaustive output-write failure simulation remain documented limitations.
+
+## Sections
+
+- [54.1 Establishing the Hardening Build](/volumes/volume-10/chapter-54/01-establishing-hardening-build/)
+- [54.2 Document, Cursor, and Viewport Invariants](/volumes/volume-10/chapter-54/02-document-cursor-viewport-invariants/)
+- [54.3 Allocation and File-Operation Failures](/volumes/volume-10/chapter-54/03-allocation-file-operation-failures/)
+- [54.4 Assertions and Debug Diagnostics](/volumes/volume-10/chapter-54/04-assertions-debug-diagnostics/)
+- [54.5 Malformed Input and Parser Recovery](/volumes/volume-10/chapter-54/05-malformed-input-parser-recovery/)
+- [54.6 Terminal Restoration and Resize Handling](/volumes/volume-10/chapter-54/06-terminal-restoration-resize-handling/)
+- [54.7 Interactive Failure-Path Verification and Final Hardening Review](/volumes/volume-10/chapter-54/07-interactive-failure-path-verification-final-hardening-review/)
+- [54.8 Follow Up - Logging module](/volumes/volume-10/chapter-54/08-follow-up-logging-module/)

@@ -1,0 +1,397 @@
+---
+title: 54.8 Follow Up - Logging module
+description: "Adds a four-level logging module for lifecycle events, file operations, input diagnostics, and error reporting."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## Logging module
+
+Added `src/common/logger.h` and `src/common/logger.c`.
+
+The logger supports four severity levels:
+
+| Level   | Purpose                                                              |
+| ------- | -------------------------------------------------------------------- |
+| `ERROR` | Unrecoverable failures and failed operations                         |
+| `WARN`  | Recoverable errors and rejected operations                           |
+| `INFO`  | Lifecycle events, file operations, and state transitions             |
+| `DEBUG` | Recognized input events, command execution, and detailed diagnostics |
+
+Each log entry contains a timestamp, severity, component, and message.
+
+Example entries:
+
+```
+[2026-10-20 17:40:19] [INFO] [lifecycle] editor process started
+[2026-10-20 17:40:19] [INFO] [state] Editor State initialized
+[2026-10-20 17:40:19] [DEBUG] [input] recognized event=ctrl-q
+[2026-10-20 17:40:19] [DEBUG] [command] executing command=quit
+```
+
+The log file is opened in append mode, preserving records from previous sessions. Its path is currently `log.txt` relative to the editor process's working directory.
+
+## Integrated logging into the editor
+
+The logger is now connected to the actual application flow.
+
+- Lifecycle: startup, initialization failures, cleanup, and exit status.
+- Input Handler and Command Engine: recognized key events and executed commands.
+- Editor State: transitions of the Dirty Flag between clean and dirty states.
+- File Manager: file loading, saving, decoding, temporary-file creation, replacement, and other failures.
+- Terminal Interface: terminal setup, restoration failures, and output-write errors.
+- Renderer: initialization failures, failed redraws, and resize-related failures.
+
+Document contents are not logged. Character input is recorded as a Unicode code point rather than as the actual text, and logging does not own or mutate Editor State.
+
+## Build configuration
+
+The new CMake option is `TEDIT_ENABLE_LOGGING`.
+
+```
+# Development build with logging enabled
+cmake -S . -B build/debug \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DTEDIT_ENABLE_LOGGING=ON
+
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Logging is enabled by default in development configurations. Release builds compile out application logging by default. To disable it explicitly:
+
+```bash
+cmake -S . -B build/no-logging \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DTEDIT_ENABLE_LOGGING=OFF
+```
+
+If the log cannot be opened or written, logging fails silently and best-effort. The editor can continue operating without a log file.
+
+## Complete source files
+
+### `src/common/logger.h`
+
+```c
+/* src/common/logger.h */
+
+#ifndef COMMON_LOGGER_H
+#define COMMON_LOGGER_H
+
+#include <stdbool.h>
+
+/*
+ * Severity of a diagnostic record, ordered from most to least severe.
+ *
+ * A record is written only when its level is numerically at or below the
+ * session's configured minimum, so ERROR (0) is always recorded while DEBUG
+ * is the first level to be filtered out as the minimum level rises.
+ */
+typedef enum
+{
+    LOGGER_LEVEL_ERROR = 0,
+    LOGGER_LEVEL_WARN,
+    LOGGER_LEVEL_INFO,
+    LOGGER_LEVEL_DEBUG
+} LoggerLevel;
+
+/*
+ * Open a diagnostic log file for the current session, replacing any records
+ * left by a previous session.
+ *
+ * A "session start" record is written immediately, naming the build version
+ * and process ID so separate runs can be told apart in the file.
+ *
+ * Logging is deliberately best-effort: if the file cannot be opened, the
+ * editor still starts normally and later log calls become harmless no-ops.
+ *
+ * Parameters:
+ *   path          - filesystem path of the log file; must not be NULL or
+ *                   empty.
+ *   minimum_level - the least-severe level that is still recorded; levels
+ *                   numerically greater than this are ignored.
+ *
+ * Returns:
+ *   true if the log was opened and the session-start record written, false
+ *   on invalid arguments or if the file could not be opened.
+ */
+bool logger_init(const char *path, LoggerLevel minimum_level);
+
+/*
+ * Write one formatted diagnostic record.
+ *
+ * This is the single sink for all log output. It uses printf-style format
+ * strings plus variadic arguments, so a NULL or empty format is rejected
+ * rather than passed on.
+ *
+ * Logging is best-effort: any write failure latches a "write failed" flag
+ * and silently disables further output for the rest of the session, so a
+ * full disk or closed stream can never crash the editor.
+ *
+ * Parameters:
+ *   level     - severity of the record; ignored when above the minimum level.
+ *   component - subsystem name to attribute the record to; NULL or empty is
+ *               replaced with "unknown".
+ *   format    - printf-style format string; must not be NULL.
+ *   ...       - values to substitute into `format`, as in printf().
+ *
+ * Returns:
+ *   void.
+ */
+void logger_log(LoggerLevel level, const char *component, const char *format, ...);
+
+/*
+ * Flush and close the log file.
+ *
+ * Safe to call repeatedly, and safe to call when logging was never
+ * initialized or when opening failed; it simply does nothing in those cases.
+ */
+void logger_shutdown(void);
+
+/*
+ * Return the stable, human-readable name used for a level in log records.
+ *
+ * Parameters:
+ *   level - the level to name.
+ *
+ * Returns:
+ *   the level's name, or "UNKNOWN" for an out-of-range value.
+ */
+const char *logger_level_name(LoggerLevel level);
+
+/*
+ * Convenience macros that call logger_log() with a fixed severity.
+ *
+ * They accept the same printf-style arguments as logger_log(). When logging
+ * is disabled (TEDIT_ENABLE_LOGGING is not defined) they expand to nothing,
+ * so diagnostic code that ships enabled-by-default costs nothing in a
+ * release build.
+ */
+#ifdef TEDIT_ENABLE_LOGGING
+#define TEDIT_LOG_ERROR(component, ...) \
+    logger_log(LOGGER_LEVEL_ERROR, (component), __VA_ARGS__)
+#define TEDIT_LOG_WARN(component, ...) \
+    logger_log(LOGGER_LEVEL_WARN, (component), __VA_ARGS__)
+#define TEDIT_LOG_INFO(component, ...) \
+    logger_log(LOGGER_LEVEL_INFO, (component), __VA_ARGS__)
+#define TEDIT_LOG_DEBUG(component, ...) \
+    logger_log(LOGGER_LEVEL_DEBUG, (component), __VA_ARGS__)
+#else
+#define TEDIT_LOG_ERROR(component, ...) ((void)0)
+#define TEDIT_LOG_WARN(component, ...) ((void)0)
+#define TEDIT_LOG_INFO(component, ...) ((void)0)
+#define TEDIT_LOG_DEBUG(component, ...) ((void)0)
+#endif
+
+#endif
+```
+
+### `src/common/logger.c`
+
+```c
+/* src/common/logger.c */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "common/logger.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+#include <time.h>
+#include <unistd.h>
+
+/*
+ * Fallback build identifier used when the build system did not supply one.
+ * It appears in the session-start record written by logger_init().
+ */
+#ifndef TEDIT_VERSION
+#define TEDIT_VERSION "unknown"
+#endif
+
+/*
+ * Module state. Logging keeps a single open FILE for the whole session plus
+ * two pieces of bookkeeping: the minimum severity that is still recorded and
+ * a latch that disables further output once any write has failed. These are
+ * file-scoped (static), so the rest of the program never touches them
+ * directly - it goes through logger_log() and friends.
+ */
+static FILE *logger_stream = NULL;
+static LoggerLevel logger_minimum_level = LOGGER_LEVEL_INFO;
+static bool logger_write_failed = false;
+
+/*
+ * Return the stable, human-readable name used for a level in log records.
+ *
+ * Parameters:
+ *   level - the level to name.
+ *
+ * Returns:
+ *   the level's name, or "UNKNOWN" for an out-of-range value.
+ */
+const char *logger_level_name(LoggerLevel level)
+{
+    switch (level)
+    {
+    case LOGGER_LEVEL_ERROR:
+        return "ERROR";
+    case LOGGER_LEVEL_WARN:
+        return "WARN";
+    case LOGGER_LEVEL_INFO:
+        return "INFO";
+    case LOGGER_LEVEL_DEBUG:
+        return "DEBUG";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+/*
+ * Open a diagnostic log file for the current session, replacing any records
+ * left by a previous session. See logger.h for the full contract.
+ *
+ * If a previous session's log is still open, it is closed first so opening
+ * twice never leaks a FILE handle. The open path is then validated, the file
+ * is opened in write mode (truncating any old content), and buffering is
+ * enabled so the file is not flushed on every record.
+ *
+ * Parameters:
+ *   path          - filesystem path of the log file; must not be NULL or
+ *                   empty.
+ *   minimum_level - the least-severe level that is still recorded.
+ *
+ * Returns:
+ *   true if the log was opened and the session-start record written, false
+ *   on invalid arguments or if the file could not be opened or buffered.
+ */
+bool logger_init(const char *path, LoggerLevel minimum_level)
+{
+    if (logger_stream != NULL)
+    {
+        logger_shutdown();
+    }
+
+    /* Start clean: no open stream, no latched failure. */
+    logger_stream = NULL;
+    logger_write_failed = false;
+
+    if (path == NULL || path[0] == '\0' || minimum_level < LOGGER_LEVEL_ERROR || minimum_level > LOGGER_LEVEL_DEBUG)
+    {
+        return false;
+    }
+
+    logger_stream = fopen(path, "w");
+    if (logger_stream == NULL)
+    {
+        return false;
+    }
+
+    logger_minimum_level = minimum_level;
+    /* Buffered writes avoid flushing the file for every input event. */
+    if (setvbuf(logger_stream, NULL, _IOFBF, BUFSIZ) != 0)
+    {
+        (void)fclose(logger_stream);
+        logger_stream = NULL;
+        return false;
+    }
+
+    /* The record timestamp is the session start time; version and pid make
+     * the log attributable and distinguish one run from another. */
+    logger_log(LOGGER_LEVEL_INFO, "logger", "session start version=%s pid=%ld",
+               TEDIT_VERSION, (long)getpid());
+
+    return true;
+}
+
+/*
+ * Write one formatted diagnostic record. See logger.h for the full contract.
+ *
+ * Records are dropped early when there is no open stream, a previous write
+ * already failed, the level is filtered out, or the format string is NULL.
+ * Otherwise a timestamp, level name, and component are printed, followed by
+ * the caller's formatted text and a trailing newline.
+ *
+ * Parameters:
+ *   level     - severity of the record.
+ *   component - subsystem name to attribute the record to.
+ *   format    - printf-style format string; must not be NULL.
+ *   ...       - values to substitute into `format`, as in printf().
+ *
+ * Returns:
+ *   void.
+ */
+void logger_log(LoggerLevel level, const char *component, const char *format, ...)
+{
+    time_t now;
+    struct tm local_time;
+    char timestamp[32];
+    va_list arguments;
+    int result;
+
+    if (logger_stream == NULL || logger_write_failed ||
+        level < LOGGER_LEVEL_ERROR || level > LOGGER_LEVEL_DEBUG ||
+        level > logger_minimum_level || format == NULL)
+    {
+        return;
+    }
+
+    /* Build a human-readable timestamp, falling back to a placeholder if the
+     * clock or locale conversion is unavailable. */
+    now = time(NULL);
+    if (now == (time_t)-1 || localtime_r(&now, &local_time) == NULL || strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &local_time) == 0)
+    {
+        (void)snprintf(timestamp, sizeof(timestamp), "time-unavailable");
+    }
+
+    if (component == NULL || component[0] == '\0')
+    {
+        component = "unknown";
+    }
+
+    result = fprintf(logger_stream, "[%s] [%s] [%s] ", timestamp, logger_level_name(level), component);
+    if (result < 0)
+    {
+        logger_write_failed = true;
+        return;
+    }
+
+    /* vfprintf() formats the caller's variadic arguments; it is the varargs
+     * counterpart of fprintf(). */
+    va_start(arguments, format);
+    result = vfprintf(logger_stream, format, arguments);
+    va_end(arguments);
+    if (result < 0 || fputc('\n', logger_stream) == EOF)
+    {
+        logger_write_failed = true;
+    }
+}
+
+/*
+ * Flush and close the log file.
+ *
+ * Safe to call repeatedly and to call when logging was never initialized or
+ * when opening failed; it does nothing in those cases. The pending-buffer
+ * flush is skipped after a write failure, since there is no point forcing
+ * known-bad data out.
+ */
+void logger_shutdown(void)
+{
+    if (logger_stream == NULL)
+    {
+        return;
+    }
+
+    if (!logger_write_failed)
+    {
+        (void)fflush(logger_stream);
+    }
+    (void)fclose(logger_stream);
+    logger_stream = NULL;
+    logger_write_failed = false;
+}
+```
+
+<Aside>
+  Complete code for this chapter can be found in the relevent branch in the
+  Github repository at
+  https://github.com/SachinAthu/tedit/tree/chapter-54-complete.
+</Aside>

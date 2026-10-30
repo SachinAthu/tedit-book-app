@@ -1,0 +1,355 @@
+---
+title: 54.7 Final hardening review complete
+description: "Adds pseudo-terminal integration tests for clean exit, resize, signals, and startup failures, completing the Chapter 54 hardening review."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The final review is complete. I added automated pseudo-terminal integration tests so the editor's lifecycle and cleanup behavior can be checked repeatedly rather than relying only on manual terminal sessions.
+
+## Files changed
+
+- `CMakeLists.txt` — registers the optional POSIX pseudo-terminal integration test when Python 3 is available.
+- `tests/test_pty_integration.py` — adds end-to-end lifecycle and failure-path tests.
+
+## Complete source files
+
+### `CMakeLists.txt`
+
+```cmake
+# CMakeLists.txt
+
+cmake_minimum_required(VERSION 3.20)
+enable_testing()
+
+project(
+    terminal_editor
+    VERSION 0.1.0
+    LANGUAGES C
+)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+option(
+    TEDIT_ENABLE_DIAGNOSTICS
+    "Enable development-time diagnostic logging"
+    OFF
+)
+
+option(
+    TEDIT_ENABLE_SANITIZERS
+    "Enable AddressSanitizer and UndefinedBehaviorSanitizer"
+    OFF
+)
+
+add_library(
+    tedit_core
+    STATIC
+    src/diagnostics/diagnostics.c
+    src/terminal/terminal.c
+    src/input/input_parser.c
+    src/input/input_engine.c
+    src/command/command_engine.c
+    src/state/editor_state.c
+    src/document/document.c
+    src/cursor/cursor.c
+    src/text/text_layout.c
+    src/viewport/viewport.c
+    src/renderer/screen_buffer.c
+    src/renderer/renderer.c
+    src/file/file.c
+    src/file/file_save.c
+)
+
+target_include_directories(tedit_core PUBLIC src)
+
+if(TEDIT_ENABLE_DIAGNOSTICS)
+    target_compile_definitions(tedit_core PUBLIC TEDIT_ENABLE_DIAGNOSTICS=1)
+endif()
+
+if(TEDIT_ENABLE_SANITIZERS)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(
+            tedit_core
+            PUBLIC
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+        target_link_options(
+            tedit_core
+            PUBLIC
+            -fsanitize=address,undefined
+        )
+    else()
+        message(FATAL_ERROR
+            "TEDIT_ENABLE_SANITIZERS requires a GCC- or Clang-compatible compiler"
+        )
+    endif()
+endif()
+
+add_executable(
+    tedit
+    src/main.c
+)
+
+target_link_libraries(tedit PRIVATE tedit_core)
+
+# tests
+
+add_executable(test_smoke tests/test_smoke.c)
+add_executable(test_editing tests/test_editing.c)
+add_executable(test_file tests/test_file.c)
+add_executable(test_file_save tests/test_file_save.c)
+add_executable(test_input_parser tests/test_input_parser.c)
+add_executable(test_input_engine tests/test_input_engine.c)
+add_executable(test_command_engine tests/test_command_engine.c)
+add_executable(test_input_pipeline tests/test_input_pipeline.c)
+add_executable(test_terminal tests/test_terminal.c)
+
+target_link_libraries(test_smoke PRIVATE tedit_core)
+target_link_libraries(test_editing PRIVATE tedit_core)
+target_link_libraries(test_file PRIVATE tedit_core)
+target_link_libraries(test_file_save PRIVATE tedit_core)
+target_link_libraries(test_input_parser PRIVATE tedit_core)
+target_link_libraries(test_input_engine PRIVATE tedit_core)
+target_link_libraries(test_command_engine PRIVATE tedit_core)
+target_link_libraries(test_input_pipeline PRIVATE tedit_core)
+target_link_libraries(test_terminal PRIVATE tedit_core)
+
+add_test(NAME smoke COMMAND test_smoke)
+add_test(NAME editing COMMAND test_editing)
+add_test(NAME file COMMAND test_file)
+add_test(NAME file_save COMMAND test_file_save)
+add_test(NAME input_parser COMMAND test_input_parser)
+add_test(NAME input_engine COMMAND test_input_engine)
+add_test(NAME command_engine COMMAND test_command_engine)
+add_test(NAME input_pipeline COMMAND test_input_pipeline)
+add_test(NAME terminal COMMAND test_terminal)
+
+# Test assertions must remain active in Release configurations because tests
+# use assert() to check results and, in some cases, invoke the operation under
+# test. Production targets retain the selected build type's NDEBUG behavior.
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    foreach(test_target IN ITEMS
+        test_smoke
+        test_editing
+        test_file
+        test_file_save
+        test_input_parser
+        test_input_engine
+        test_command_engine
+        test_input_pipeline
+        test_terminal
+    )
+        target_compile_options(${test_target} PRIVATE -UNDEBUG)
+    endforeach()
+endif()
+
+# End-to-end lifecycle checks use a POSIX pseudo-terminal when Python is available.
+if(UNIX)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME pty_integration
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pty_integration.py
+                    $<TARGET_FILE:tedit>
+        )
+        set_tests_properties(pty_integration PROPERTIES TIMEOUT 20)
+    endif()
+endif()
+```
+
+### `tests/test_pty_integration.py`
+
+```python
+#!/usr/bin/env python3
+"""Pseudo-terminal integration checks for editor startup and cleanup."""
+
+import fcntl
+import os
+import pty
+import select
+import signal
+import struct
+import subprocess
+import termios
+import tempfile
+import time
+
+
+def set_window_size(fd, rows, columns):
+    """Set a pseudo-terminal's dimensions."""
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
+
+
+def read_available(fd, timeout=0.15):
+    """Read currently available pseudo-terminal output without blocking."""
+    output = bytearray()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        ready, _, _ = select.select([fd], [], [], max(0, remaining))
+        if not ready:
+            break
+        try:
+            chunk = os.read(fd, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        output.extend(chunk)
+    return bytes(output)
+
+
+def launch_editor(executable, rows=24, columns=80, arguments=()):
+    """Launch the editor attached to a configured pseudo-terminal."""
+    master_fd, slave_fd = pty.openpty()
+    set_window_size(slave_fd, rows, columns)
+    original_attributes = termios.tcgetattr(slave_fd)
+    process = subprocess.Popen(
+        [executable, *arguments],
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
+    )
+    return process, master_fd, slave_fd, original_attributes
+
+
+def finish_and_check(
+    process, master_fd, slave_fd, original_attributes, expected_status=0, prior_output=b""
+):
+    """Wait for editor cleanup and verify its terminal restoration output."""
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=3)
+        raise AssertionError("editor did not terminate promptly")
+
+    output = prior_output + read_available(master_fd, 0.1)
+    restored_attributes = termios.tcgetattr(slave_fd)
+
+    assert process.returncode == expected_status, process.returncode
+    assert b"\x1b[?1049l" in output, "alternate screen was not restored"
+    assert b"\x1b[?7h" in output, "terminal wrap mode was not restored"
+    assert restored_attributes == original_attributes, "terminal attributes were not restored"
+    os.close(slave_fd)
+    os.close(master_fd)
+    return output
+
+
+def wait_for_output(master_fd, marker, timeout=3):
+    """Wait until the editor has emitted a particular terminal sequence."""
+    output = bytearray()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        output.extend(read_available(master_fd, 0.1))
+        if marker in output:
+            return bytes(output)
+    raise AssertionError(f"did not observe terminal sequence {marker!r}")
+
+
+def test_clean_quit(executable):
+    """Check startup, Ctrl-Q shutdown, and alternate-screen cleanup."""
+    process, master_fd, slave_fd, original_attributes = launch_editor(executable)
+    initial_output = wait_for_output(master_fd, b"\x1b[?1049h")
+    os.write(master_fd, b"\x11")  # Ctrl-Q
+    finish_and_check(
+        process, master_fd, slave_fd, original_attributes, prior_output=initial_output
+    )
+
+
+def test_resize_and_quit(executable):
+    """Check that SIGWINCH is processed and the editor remains usable."""
+    process, master_fd, slave_fd, original_attributes = launch_editor(executable)
+    initial_output = wait_for_output(master_fd, b"\x1b[?1049h")
+    set_window_size(master_fd, 30, 100)
+    os.kill(process.pid, signal.SIGWINCH)
+    # Give the event loop time to query dimensions and render the new frame.
+    time.sleep(0.15)
+    if process.poll() is not None:
+        raise AssertionError("editor exited while handling a valid resize")
+    os.write(master_fd, b"\x11")
+    finish_and_check(
+        process, master_fd, slave_fd, original_attributes, prior_output=initial_output
+    )
+
+
+def test_signal_cleanup(executable, termination_signal):
+    """Check cleanup after an externally delivered termination signal."""
+    process, master_fd, slave_fd, original_attributes = launch_editor(executable)
+    initial_output = wait_for_output(master_fd, b"\x1b[?1049h")
+    os.kill(process.pid, termination_signal)
+    finish_and_check(
+        process, master_fd, slave_fd, original_attributes, prior_output=initial_output
+    )
+
+
+def test_startup_load_failure(executable):
+    """Check cleanup when loading the requested startup file fails."""
+    with tempfile.TemporaryDirectory(prefix="tedit-pty-") as directory:
+        missing_path = os.path.join(directory, "does-not-exist.txt")
+        process, master_fd, slave_fd, original_attributes = launch_editor(
+            executable, arguments=(missing_path,)
+        )
+        initial_output = wait_for_output(master_fd, b"\x1b[?1049h")
+        output = finish_and_check(
+            process, master_fd, slave_fd, original_attributes, expected_status=1,
+            prior_output=initial_output
+        )
+        assert b"unable to open or decode" in output, output
+
+
+def main():
+    import sys
+
+    executable = os.path.abspath(sys.argv[1])
+    test_clean_quit(executable)
+    test_resize_and_quit(executable)
+    test_signal_cleanup(executable, signal.SIGINT)
+    test_signal_cleanup(executable, signal.SIGTERM)
+    test_signal_cleanup(executable, signal.SIGHUP)
+    test_startup_load_failure(executable)
+    print("pseudo-terminal integration checks passed")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## Integration tests added
+
+| Scenario                      | Verified behavior                                                      |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| Ctrl-Q                        | Clean exit and terminal restoration                                    |
+| `SIGWINCH`                    | Editor survives a valid terminal resize                                |
+| `SIGINT`, `SIGTERM`, `SIGHUP` | Normal cleanup path                                                    |
+| Startup file-load failure     | Terminal restored and failure status returned                          |
+| Terminal cleanup              | Original terminal attributes, alternate screen, and wrap mode restored |
+
+The integration test has a 20-second timeout to prevent a hung editor from blocking the test suite indefinitely.
+
+## Chapter 54 status
+
+Chapter 54 — Hardening the Editor is complete for the implemented scope.
+
+Two known limitations remain explicitly documented:
+
+- Deterministic allocation-failure injection has not been implemented.
+- Terminal output-write failures are not exhaustively simulated.
+
+These are remaining hardening tasks, not failures in the tests that were run.
+
+<Aside>
+  Complete code for this chapter can be found in the relevent branch in the
+  Github repository at
+  https://github.com/SachinAthu/tedit/tree/chapter-54-complete.
+</Aside>
+
+## Next: Chapter 55 — Final Integration and Release
+
+The next milestone should consolidate the implementation, perform a final requirements-to-code review, verify the documented build and run workflow from a clean checkout, and prepare a release-ready repository.
