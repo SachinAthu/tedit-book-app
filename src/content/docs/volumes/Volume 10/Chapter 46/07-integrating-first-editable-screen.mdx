@@ -1,0 +1,249 @@
+---
+title: 46.7 Integrating the First Editable Screen
+description: "Connects the Document, Cursor, Editor State, Screen Buffer, and Renderer to the application lifecycle and draws the first editor screen."
+---
+
+The Renderer is implemented, but the application still runs the minimal Chapter 45 event loop. To display the first editor screen, we must connect the new components to the existing application lifecycle.
+
+The goal of this section is to make the application:
+
+1. Initialize the terminal and enable raw mode.
+2. Initialize the Editor State and Renderer.
+3. Draw the initial empty Document.
+4. Continue using the existing `Ctrl-Q` exit behavior.
+5. Release editor resources and restore the terminal on exit.
+
+At this stage, ordinary character insertion is not yet integrated into the event loop. That behavior belongs to the next implementation steps; here, we establish the first visible screen without prematurely adding the full input architecture.
+
+The intended lifecycle is:
+
+```
+Program Start
+      |
+      v
+Initialize Terminal
+      |
+      v
+Enable Raw Mode
+      |
+      v
+Initialize Editor State
+      |
+      v
+Initialize Renderer
+      |
+      v
+Render Initial Screen
+      |
+      v
+Existing Event Loop
+      |
+      v
+Destroy Renderer and Editor State
+      |
+      v
+Restore Terminal
+      |
+      v
+Program Exit
+```
+
+Important: Cleanup order matters. The Renderer and Editor State must be destroyed before the process exits, and terminal restoration must still occur if an initialization step fails after raw mode has been enabled.
+
+## Updating `main.c`
+
+We need to preserve the existing terminal lifecycle and `Ctrl-Q` behavior while introducing the Editor State and Renderer.
+
+For this first integration, `main.c` obtains the terminal dimensions with POSIX `ioctl()`. This is a temporary application-level integration choice; as the Terminal Interface grows, terminal-size querying should be moved behind that module's public interface.
+
+Replace `src/main.c` with the following complete file:
+
+```c
+/* src/main.c */
+
+#include "terminal/terminal.h"
+#include "state/editor_state.h"
+#include "renderer/renderer.h"
+
+#include <stdbool.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+#define CONTROL_Q 0x11
+
+static bool get_terminal_size(size_t *rows, size_t *columns)
+{
+    struct winsize window_size;
+
+    if (rows == NULL || columns == NULL)
+    {
+        return false;
+    }
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &window_size) == -1)
+    {
+        return false;
+    }
+
+    if (window_size.ws_row == 0 || window_size.ws_col == 0)
+    {
+        return false;
+    }
+
+    *rows = window_size.ws_row;
+    *columns = window_size.ws_col;
+
+    return true;
+}
+
+static void application_event_loop(void)
+{
+    bool running = true;
+
+    while (running)
+    {
+        unsigned char input;
+        ssize_t bytes_read;
+
+        bytes_read = read(STDIN_FILENO, &input, sizeof(input));
+
+        if (bytes_read == 1 && input == CONTROL_Q)
+        {
+            running = false;
+        }
+        else if (bytes_read == 0)
+        {
+            running = false;
+        }
+    }
+}
+
+int main(void)
+{
+    TerminalState terminal;
+    EditorState state;
+    Renderer renderer;
+    size_t rows;
+    size_t columns;
+    bool state_initialized = false;
+    bool renderer_initialized = false;
+    int exit_status = 1;
+
+    if (!terminal_init(&terminal))
+    {
+        return 1;
+    }
+
+    if (!terminal_enable_raw_mode(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+
+    if (!terminal_enter_alternate_screen(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+
+    if (!get_terminal_size(&rows, &columns))
+    {
+        goto cleanup;
+    }
+
+    if (!editor_state_init(&state))
+    {
+        goto cleanup;
+    }
+
+    state_initialized = true;
+
+    if (!renderer_init(&renderer, rows, columns))
+    {
+        goto cleanup;
+    }
+
+    renderer_initialized = true;
+
+    if (!renderer_render(&renderer, &state))
+    {
+        goto cleanup;
+    }
+
+    application_event_loop();
+
+    exit_status = 0;
+
+cleanup:
+    if (renderer_initialized)
+    {
+        renderer_destroy(&renderer);
+    }
+
+    if (state_initialized)
+    {
+        editor_state_destroy(&state);
+    }
+
+    terminal_restore(&terminal);
+
+    terminal_leave_alternate_screen(&terminal);
+
+    return exit_status;
+}
+```
+
+## Why Initialization Flags Matter
+
+The application can fail at several stages. For example, the Editor State might initialize successfully while the Renderer allocation fails.
+
+The flags ensure that cleanup only destroys objects that were successfully initialized.
+
+The cleanup order is:
+
+1. Destroy the Renderer and release its Screen Buffer.
+2. Destroy the Editor State and release the Document.
+3. Restore the original terminal settings.
+
+The terminal is restored even if terminal-size detection, Editor State initialization, Renderer initialization, or initial rendering fails.
+
+## Updating the Build Configuration
+
+Add these source files to the existing `tedit` executable's source list in `CMakeLists.txt`, preserving the current test configuration and compiler settings:
+
+```
+src/state/editor_state.c
+src/document/document.c
+src/cursor/cursor.c
+src/renderer/screen_buffer.c
+src/renderer/renderer.c
+```
+
+Keep the existing `src/main.c` and `src/terminal/terminal.c` entries. Do not create a second executable target just for these modules.
+
+Build from the repository root using the project's existing CMake build directory:
+
+```
+cmake -S . -B build/debug
+cmake --build build/debug
+```
+
+If compilation succeeds, launch the executable using the target name already defined in your CMake configuration. The current project notes identify the application target as `tedit`, but verify the generated executable path in your repository rather than assuming it.
+
+## Manual Verification
+
+Run the editor inside a real terminal.
+
+- The application starts and clears the visible screen.
+- The initial Document appears blank.
+- The terminal cursor is positioned at the top-left corner.
+- Pressing ordinary keys does not cause terminal echo.
+- Pressing `Ctrl-Q` exits the application.
+- The original terminal settings are restored after exit.
+- The existing smoke test still passes.
+
+At this point, ordinary keys are intentionally ignored by the temporary event loop. The screen is visible, but text cannot yet be edited.
+
+Build status: These files and integration steps have not been compiled or run in your repository here. Treat the build and manual checks above as required verification, not as confirmed results.
+
+The next step is to extend the interactive loop so character input updates the Document and Cursor, then redraws the screen after each accepted input event.

@@ -1,0 +1,24 @@
+---
+title: "Chapter 46 — Building the First Editable Screen"
+description: "Builds the first editable screen by implementing the document, cursor, editor state, screen buffer, renderer, and interactive editing loop."
+---
+
+## Introduction
+
+Chapter 45 ended with a working runtime: the terminal entered raw mode, an event loop received input, and shutdown restored the terminal. But that program still had nothing to edit. Chapter 46 turns the runtime into an editor by building the first editable screen.
+
+> **How do the document, cursor, editor state, screen buffer, and renderer come together to produce an interactive editing experience without breaking the architecture?**
+
+The chapter proceeds in small, verifiable steps. It implements an in-memory Document, a logical Cursor, a central Editor State, and a contiguous Screen Buffer, then adds a Renderer that reads editor state without modifying it. Once these components can build a frame, they are integrated into the application lifecycle, and the event loop begins accepting printable ASCII characters, inserting them at the cursor, and redrawing after each input. The chapter ends by verifying the build, exercising the runtime manually in a terminal, and checking the architectural boundaries. File loading, deletion, line splitting, and UTF-8 remain deliberately out of scope; the goal is the first working editable screen, not the finished editor.
+
+## Sections
+
+- [46.1 Implementation Goal](/volumes/volume-10/chapter-46/01-implementation-goal/)
+- [46.2 Implementing the Document](/volumes/volume-10/chapter-46/02-implementing-document/)
+- [46.3 Implementing the Cursor](/volumes/volume-10/chapter-46/03-implementing-cursor/)
+- [46.4 Implementing Editor State](/volumes/volume-10/chapter-46/04-implementing-editor-state/)
+- [46.5 Implementing the Screen Buffer](/volumes/volume-10/chapter-46/05-implementing-screen-buffer/)
+- [46.6 Implementing the Renderer](/volumes/volume-10/chapter-46/06-implementing-renderer/)
+- [46.7 Integrating the First Editable Screen](/volumes/volume-10/chapter-46/07-integrating-first-editable-screen/)
+- [46.8 Implementing the First Interactive Editing Loop](/volumes/volume-10/chapter-46/08-implementing-first-interactive-editing-loop/)
+- [46.9 Build, Runtime Verification, and Integration Review](/volumes/volume-10/chapter-46/09-build-runtime-verification-integration-review/)

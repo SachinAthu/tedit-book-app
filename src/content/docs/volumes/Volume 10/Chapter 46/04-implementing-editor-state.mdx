@@ -1,0 +1,126 @@
+---
+title: 46.4 Implementing Editor State
+description: "Introduces Editor State as the central source of truth, combining the Document and Cursor into one structure with clear initialization and cleanup."
+---
+
+Create the Editor State module in `src/state/`. This module brings the Document and Cursor together and provides a single structure for the application's core editing state.
+
+## `editor_state.h`
+
+Create `src/state/editor_state.h`:
+
+```c
+/* src/state/editor_state.h */
+
+#ifndef STATE_EDITOR_STATE_H
+#define STATE_EDITOR_STATE_H
+
+#include <stdbool.h>
+
+#include "../cursor/cursor.h"
+#include "../document/document.h"
+
+typedef struct
+{
+    Document document;
+    Cursor cursor;
+} EditorState;
+
+bool editor_state_init(EditorState *state);
+void editor_state_destroy(EditorState *state);
+
+#endif
+```
+
+## `editor_state.c`
+
+Create `src/state/editor_state.c`:
+
+```c
+/* src/state/editor_state.c */
+
+#include "editor_state.h"
+
+#include <string.h>
+
+bool editor_state_init(EditorState *state)
+{
+    if (state == NULL)
+    {
+        return false;
+    }
+
+    memset(state, 0, sizeof(*state));
+
+    if (!document_init(&state->document))
+    {
+        return false;
+    }
+
+    cursor_init(&state->cursor);
+
+    return true;
+}
+
+void editor_state_destroy(EditorState *state)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+
+    document_destroy(&state->document);
+    cursor_init(&state->cursor);
+}
+```
+
+## Initialization and Cleanup
+
+The initialization sequence is:
+
+1. Validate the `EditorState` pointer.
+2. Initialize the structure.
+3. Initialize its Document.
+4. Initialize its Cursor.
+
+If Document initialization fails, the function returns `false`. The Document initialization routine already releases its partially allocated storage on failure.
+
+The cleanup routine destroys the Document and resets the Cursor. It is safe to call with a null pointer.
+
+## Resulting State
+
+After successful initialization, the application has:
+
+```
+EditorState
+├── Document
+│   └── lines[0]
+│       ├── length = 0
+│       └── data = ""
+└── Cursor
+    ├── row = 0
+    └── column = 0
+```
+
+The Document owns its dynamically allocated text storage. The Cursor stores only its position, so it requires no separate allocation.
+
+The application can now pass one `EditorState *` to components that need editing data rather than maintaining separate global variables for the Document and Cursor.
+
+## Files Completed So Far
+
+```
+src/
+├── cursor/
+│   ├── cursor.c
+│   └── cursor.h
+├── document/
+│   ├── document.c
+│   └── document.h
+└── state/
+    ├── editor_state.c
+    └── editor_state.h
+```
+
+These modules are not yet integrated into the executable. We will connect them through CMake and `main.c` as the first screen is assembled.
+
+Next section: 46.5 — Implementing the Screen Buffer.

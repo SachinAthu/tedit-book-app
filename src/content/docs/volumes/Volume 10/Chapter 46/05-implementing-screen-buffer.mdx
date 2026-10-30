@@ -1,0 +1,234 @@
+---
+title: 46.5 Implementing the Screen Buffer
+description: "Implements the Screen Buffer that holds a complete frame of single-character cells before the Renderer writes it to the terminal."
+---
+
+Create the Screen Buffer implementation in `src/renderer/`. It will store the complete frame before the Renderer writes anything to the terminal.
+
+For this milestone, each screen cell stores one character. Visual attributes can be added when the interface requires them.
+
+## `screen_buffer.h`
+
+Create `src/renderer/screen_buffer.h`:
+
+```c
+/* src/renderer/screen_buffer.h */
+
+#ifndef RENDERER_SCREEN_BUFFER_H
+#define RENDERER_SCREEN_BUFFER_H
+
+#include <stdbool.h>
+#include <stddef.h>
+
+typedef struct
+{
+    char character;
+} ScreenCell;
+
+typedef struct
+{
+    ScreenCell *cells;
+    size_t rows;
+    size_t columns;
+} ScreenBuffer;
+
+bool screen_buffer_init(
+    ScreenBuffer *buffer,
+    size_t rows,
+    size_t columns
+);
+
+void screen_buffer_destroy(ScreenBuffer *buffer);
+
+void screen_buffer_clear(ScreenBuffer *buffer, char character);
+
+bool screen_buffer_set(
+    ScreenBuffer *buffer,
+    size_t row,
+    size_t column,
+    char character
+);
+
+const ScreenCell *screen_buffer_get(
+    const ScreenBuffer *buffer,
+    size_t row,
+    size_t column
+);
+
+#endif
+```
+
+## `screen_buffer.c`
+
+Create `src/renderer/screen_buffer.c`:
+
+```c
+/* src/renderer/screen_buffer.c */
+
+#include "screen_buffer.h"
+
+#include <stdint.h>
+#include <stdlib.h>
+
+bool screen_buffer_init(
+    ScreenBuffer *buffer,
+    size_t rows,
+    size_t columns
+)
+{
+    size_t cell_count;
+
+    if (buffer == NULL || rows == 0 || columns == 0)
+    {
+        return false;
+    }
+
+    buffer->cells = NULL;
+    buffer->rows = 0;
+    buffer->columns = 0;
+
+    if (rows > SIZE_MAX / columns)
+    {
+        return false;
+    }
+
+    cell_count = rows * columns;
+
+    if (cell_count > SIZE_MAX / sizeof(*buffer->cells))
+    {
+        return false;
+    }
+
+    buffer->cells = malloc(cell_count * sizeof(*buffer->cells));
+    if (buffer->cells == NULL)
+    {
+        return false;
+    }
+
+    buffer->rows = rows;
+    buffer->columns = columns;
+
+    screen_buffer_clear(buffer, ' ');
+
+    return true;
+}
+
+void screen_buffer_destroy(ScreenBuffer *buffer)
+{
+    if (buffer == NULL)
+    {
+        return;
+    }
+
+    free(buffer->cells);
+
+    buffer->cells = NULL;
+    buffer->rows = 0;
+    buffer->columns = 0;
+}
+
+void screen_buffer_clear(ScreenBuffer *buffer, char character)
+{
+    size_t index;
+    size_t cell_count;
+
+    if (buffer == NULL || buffer->cells == NULL)
+    {
+        return;
+    }
+
+    cell_count = buffer->rows * buffer->columns;
+
+    for (index = 0; index < cell_count; ++index)
+    {
+        buffer->cells[index].character = character;
+    }
+}
+
+bool screen_buffer_set(
+    ScreenBuffer *buffer,
+    size_t row,
+    size_t column,
+    char character
+)
+{
+    size_t index;
+
+    if (buffer == NULL || buffer->cells == NULL ||
+        row >= buffer->rows || column >= buffer->columns)
+    {
+        return false;
+    }
+
+    index = row * buffer->columns + column;
+    buffer->cells[index].character = character;
+
+    return true;
+}
+
+const ScreenCell *screen_buffer_get(
+    const ScreenBuffer *buffer,
+    size_t row,
+    size_t column
+)
+{
+    size_t index;
+
+    if (buffer == NULL || buffer->cells == NULL ||
+        row >= buffer->rows || column >= buffer->columns)
+    {
+        return NULL;
+    }
+
+    index = row * buffer->columns + column;
+
+    return &buffer->cells[index];
+}
+```
+
+## Screen Buffer Initialization
+
+The caller supplies the terminal dimensions:
+
+```c
+ScreenBuffer buffer;
+
+if (!screen_buffer_init(&buffer, 24, 80))
+{
+    /* Handle initialization failure. */
+}
+```
+
+This creates a buffer containing 24 rows and 80 columns, initially filled with spaces.
+
+The dimensions above are an example, not values that should be hardcoded into the final application. The integrated runtime will obtain the actual terminal dimensions.
+
+## Memory Layout
+
+The buffer stores its cells in one contiguous allocation.
+
+For a buffer with 80 columns, the cell at row 2, column 5 is addressed by:
+
+```c
+index = 2 * 80 + 5;
+```
+
+The allocation occupies \\(rows \times columns \times sizeof(ScreenCell)\\) bytes. Rendering can reuse this allocation for successive frames rather than allocating a new buffer for each redraw.
+
+## Boundary Checks
+
+The public access functions reject invalid coordinates.
+
+For an 80-column buffer, valid column indices range from `0` through `79`. Attempting to write to column `80` returns `false`, and attempting to read an invalid position returns `NULL`.
+
+The multiplication checks in `screen_buffer_init()` also prevent allocation-size overflow.
+
+## Files Added
+
+```text
+src/renderer/
+├── screen_buffer.c
+└── screen_buffer.h
+```
+
+Next section: 46.6 — Implementing the Renderer. We will use the Document, Cursor, and Screen Buffer to construct a frame and display it in the terminal.

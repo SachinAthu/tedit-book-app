@@ -1,0 +1,434 @@
+---
+title: 46.8 Implementing the First Interactive Editing Loop
+description: "Adds the first interactive editing loop, inserting printable ASCII input at the cursor and redrawing the screen while preserving clean shutdown."
+---
+
+In the previous sections, we implemented the Document, Cursor, Editor State, Screen Buffer, and Renderer. The application can now display an empty document, but it cannot yet modify that document in response to keyboard input.
+
+This section connects those components into the first interactive editing loop.
+
+## Objective
+
+By the end of this section, the editor will:
+
+- Accept printable ASCII characters from the keyboard.
+- Insert each accepted character at the current Cursor position.
+- Advance the Cursor after a successful insertion.
+- Redraw the screen to reflect the updated Document.
+- Exit cleanly when the user presses `Ctrl-Q` or the input stream reaches EOF.
+- Preserve terminal cleanup when an operation fails.
+
+We will keep input handling inside `main.c` for now. This is a deliberate temporary implementation: the dedicated Input Handler, Input Parser, and Command Engine can take over these responsibilities in their respective implementation stages.
+
+The event loop will follow this sequence:
+
+Read keyboard input
+
+Check the input
+
+Exit command, EOF, or printable character
+
+Update Document
+
+Insert at the Cursor position
+
+Advance Cursor
+
+Render updated Editor State
+
+Return to reading input
+
+## Implementing Character Insertion
+
+We already have the necessary Document operation:
+
+```c
+document_insert_character(
+    &state->document,
+    state->cursor.row,
+    state->cursor.column,
+    character
+);
+```
+
+It inserts a character into the selected logical line and shifts the remaining bytes to the right. The event loop must update the Cursor only after the insertion succeeds.
+
+For this first version, we will accept printable ASCII characters (`0x20` through `0x7E`). Newlines, control characters other than `Ctrl-Q`, and non-ASCII input are not handled yet.
+
+Because viewport scrolling has not been implemented, we will also restrict insertion to positions where the Cursor can remain within the visible screen. This is a temporary boundary limitation, not the final editing behavior.
+
+## Replacing the Event Loop
+
+Update `src/main.c` so the event loop receives the shared `EditorState` and the `Renderer`. This gives it access to the current document and a way to display changes without creating duplicate state.
+
+Replace the existing `application_event_loop()` with the following implementation:
+
+```c
+#include <errno.h>
+#include <stddef.h>
+```
+
+Add these headers alongside the existing includes, then use this function:
+
+```c
+static bool application_event_loop(
+    EditorState *state,
+    Renderer *renderer
+)
+{
+    if (state == NULL || renderer == NULL)
+    {
+        return false;
+    }
+
+    while (true)
+    {
+        unsigned char input;
+        ssize_t bytes_read;
+
+        bytes_read = read(
+            STDIN_FILENO,
+            &input,
+            sizeof(input)
+        );
+
+        if (bytes_read < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        if (bytes_read == 0)
+        {
+            return true;
+        }
+
+        if (input == CONTROL_Q)
+        {
+            return true;
+        }
+
+        /*
+         * Accept printable ASCII characters only.
+         */
+        if (input < 0x20 || input > 0x7E)
+        {
+            continue;
+        }
+
+        /*
+         * Keep the Cursor visible until viewport
+         * scrolling is implemented.
+         */
+        if (renderer->screen_buffer.columns < 2 ||
+            state->cursor.column >=
+                renderer->screen_buffer.columns - 1)
+        {
+            continue;
+        }
+
+        if (!document_insert_character(
+                &state->document,
+                state->cursor.row,
+                state->cursor.column,
+                (char) input))
+        {
+            return false;
+        }
+
+        /*
+         * A successful insertion increases the line
+         * length, allowing the Cursor to advance.
+         */
+        if (!cursor_advance(
+                &state->cursor,
+                &state->document))
+        {
+            return false;
+        }
+
+        /*
+         * Render the updated Editor State.
+         */
+        if (!renderer_render(renderer, state))
+        {
+            return false;
+        }
+    }
+}
+```
+
+### Why the operations occur in this order
+
+1. Read input: obtain one byte from standard input.
+2. Check termination: handle `Ctrl-Q`, EOF, and read errors before editing.
+3. Validate the character: ignore unsupported input.
+4. Insert: modify the Document at the current Cursor position.
+5. Advance: update the Cursor after insertion succeeds.
+6. Render: rebuild and display the frame from the updated Editor State.
+
+Notice that the Renderer does not modify the Document or Cursor. The event loop coordinates changes, while the Renderer remains a consumer of the Editor State.
+
+The `EINTR` check also handles a read interrupted by a signal without treating that interruption as a fatal error.
+
+## Connecting the Event Loop to `main()`
+
+Replace the existing call:
+
+```c
+application_event_loop();
+exit_status = 0;
+```
+
+with:
+
+```c
+if (application_event_loop(&state, &renderer))
+{
+    exit_status = 0;
+}
+```
+
+Keep the existing cleanup block so the Renderer and Editor State are destroyed and the terminal settings are restored regardless of whether the event loop exits normally or reports an error.
+
+If you have implemented the alternate-screen operations discussed earlier, preserve this lifecycle as well:
+
+1. Enter the alternate screen before the initial frame is rendered.
+2. Run the event loop.
+3. Destroy application-owned resources.
+4. Leave the alternate screen.
+5. Restore the original terminal settings.
+
+The alternate-screen operations belong to the Terminal module; do not make `renderer_write_all()` public to implement them.
+
+## Complete Updated `src/main.c`
+
+To avoid integrating the function in the wrong place, here is the complete file with the changes applied. It preserves the existing initialization and cleanup structure.
+
+```c
+/* src/main.c */
+
+#include "terminal/terminal.h"
+#include "state/editor_state.h"
+#include "renderer/renderer.h"
+
+#include <errno.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+#define CONTROL_Q 0x11
+
+static bool get_terminal_size(size_t *rows, size_t *columns)
+{
+    struct winsize window_size;
+
+    if (rows == NULL || columns == NULL)
+    {
+        return false;
+    }
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &window_size) == -1)
+    {
+        return false;
+    }
+
+    if (window_size.ws_row == 0 || window_size.ws_col == 0)
+    {
+        return false;
+    }
+
+    *rows = window_size.ws_row;
+    *columns = window_size.ws_col;
+
+    return true;
+}
+
+static bool application_event_loop(
+    EditorState *state,
+    Renderer *renderer
+)
+{
+    if (state == NULL || renderer == NULL)
+    {
+        return false;
+    }
+
+    while (true)
+    {
+        unsigned char input;
+        ssize_t bytes_read;
+
+        bytes_read = read(
+            STDIN_FILENO,
+            &input,
+            sizeof(input)
+        );
+
+        if (bytes_read < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        if (bytes_read == 0)
+        {
+            return true;
+        }
+
+        if (input == CONTROL_Q)
+        {
+            return true;
+        }
+
+        if (input < 0x20 || input > 0x7E)
+        {
+            continue;
+        }
+
+        /*
+         * Reserve the final screen column so the Cursor
+         * remains within the visible area.
+         */
+        if (renderer->screen_buffer.columns < 2 ||
+            state->cursor.column >=
+                renderer->screen_buffer.columns - 1)
+        {
+            continue;
+        }
+
+        if (!document_insert_character(
+                &state->document,
+                state->cursor.row,
+                state->cursor.column,
+                (char) input))
+        {
+            return false;
+        }
+
+        if (!cursor_advance(
+                &state->cursor,
+                &state->document))
+        {
+            return false;
+        }
+
+        if (!renderer_render(renderer, state))
+        {
+            return false;
+        }
+    }
+}
+
+int main(void)
+{
+    TerminalState terminal;
+    EditorState state;
+    Renderer renderer;
+    size_t rows;
+    size_t columns;
+    bool state_initialized = false;
+    bool renderer_initialized = false;
+    int exit_status = 1;
+
+    if (!terminal_init(&terminal))
+    {
+        return 1;
+    }
+
+    if (!terminal_enable_raw_mode(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+
+    if (!terminal_enter_alternate_screen(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+
+    if (!get_terminal_size(&rows, &columns))
+    {
+        goto cleanup;
+    }
+
+    if (!editor_state_init(&state))
+    {
+        goto cleanup;
+    }
+
+    state_initialized = true;
+
+    if (!renderer_init(&renderer, rows, columns))
+    {
+        goto cleanup;
+    }
+
+    renderer_initialized = true;
+
+    if (!renderer_render(&renderer, &state))
+    {
+        goto cleanup;
+    }
+
+    if (application_event_loop(&state, &renderer))
+    {
+        exit_status = 0;
+    }
+
+cleanup:
+    if (renderer_initialized)
+    {
+        renderer_destroy(&renderer);
+    }
+
+    if (state_initialized)
+    {
+        editor_state_destroy(&state);
+    }
+
+    terminal_restore(&terminal);
+
+    terminal_leave_alternate_screen(&terminal);
+
+    return exit_status;
+}
+
+```
+
+## Build and Manual Verification
+
+Build the project using your existing CMake configuration:
+
+```
+cmake -S . -B build/debug
+cmake --build build/debug
+```
+
+Then launch the editor using your existing executable command.
+
+Verify the following:
+
+- The editor starts with an empty document.
+- Typing printable ASCII characters displays them on the screen.
+- Characters appear in the correct order.
+- The Cursor advances after each successful insertion.
+- Repeated typing updates the screen without requiring a restart.
+- `Ctrl-Q` exits the editor.
+- Terminal settings are restored after exiting.
+- A normal EOF also terminates the event loop.
+- A failed insertion or rendering operation follows the cleanup path.
+
+Expected limitation: this is not yet a complete text editor. It does not support backspace, Enter, arrow keys, multiple-line editing, horizontal scrolling, or non-ASCII input. Those capabilities will be introduced in later implementation sections.
+
+Once these checks pass, Section 46.8 is complete. The next step is to review the resulting implementation and confirm that the first interactive editing loop preserves the project's module boundaries and state invariants.

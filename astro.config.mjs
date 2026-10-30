@@ -18,6 +18,9 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "Tedit",
+      components: {
+        SocialIcons: "./src/components/SocialIcons.astro",
+      },
       customCss: ["./src/styles/custom.css"],
       favicon: "/favicon.ico",
       plugins: [

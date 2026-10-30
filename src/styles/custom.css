@@ -12,3 +12,9 @@
   :is(th:last-child, td:last-child):not(:where(.not-content *)) {
   padding-inline-end: 0.5rem;
 }
+
+.expressive-code pre {
+  max-height: 32rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

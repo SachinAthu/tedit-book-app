@@ -1,0 +1,366 @@
+---
+title: 46.2 Implementing the Document
+description: "Implements the in-memory Document as a vector of lines, with initialization, line access, character insertion, and cleanup—without file I/O or advanced editing yet."
+---
+
+The first editor-owned data structure is the `Document`.
+
+At this point the application does not open files yet. The Document therefore only needs to represent an in-memory editable text document.
+
+The established representation is a **vector of lines**. Each line owns its text, and the Document owns the collection of lines.
+
+For Chapter 46, we implement only the operations required by the first editable screen:
+
+- initialize an empty Document;
+- maintain at least one logical line;
+- access a line by index;
+- insert a character into a line;
+- release all allocated memory.
+
+We deliberately do not add deletion, line splitting, line merging, file loading, or UTF-8 file decoding here. Those belong to later implementation milestones.
+
+## `document.h`
+
+Create:
+
+```c
+/* src/document/document.h */
+
+#ifndef DOCUMENT_DOCUMENT_H
+#define DOCUMENT_DOCUMENT_H
+
+#include <stdbool.h>
+#include <stddef.h>
+
+typedef struct
+{
+    char *data;
+    size_t length;
+    size_t capacity;
+} DocumentLine;
+
+typedef struct
+{
+    DocumentLine *lines;
+    size_t line_count;
+    size_t line_capacity;
+} Document;
+
+bool document_init(Document *document);
+void document_destroy(Document *document);
+
+DocumentLine *document_get_line(
+    Document *document,
+    size_t row
+);
+
+bool document_insert_character(
+    Document *document,
+    size_t row,
+    size_t column,
+    char character
+);
+
+#endif
+```
+
+The public interface keeps ownership inside the Document module. Callers work with a `Document` rather than directly managing the line array or its allocations.
+
+## `document.c`
+
+Create:
+
+```c
+/* src/document/document.c */
+
+#include "document.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+#define INITIAL_LINE_CAPACITY 16
+#define INITIAL_DOCUMENT_CAPACITY 8
+
+static bool document_line_init(DocumentLine *line)
+{
+    if (line == NULL)
+    {
+        return false;
+    }
+
+    line->data = malloc(INITIAL_LINE_CAPACITY);
+    if (line->data == NULL)
+    {
+        return false;
+    }
+
+    line->length = 0;
+    line->capacity = INITIAL_LINE_CAPACITY;
+
+    return true;
+}
+
+static void document_line_destroy(DocumentLine *line)
+{
+    if (line == NULL)
+    {
+        return;
+    }
+
+    free(line->data);
+
+    line->data = NULL;
+    line->length = 0;
+    line->capacity = 0;
+}
+
+static bool document_grow_lines(Document *document)
+{
+    DocumentLine *new_lines;
+    size_t new_capacity;
+
+    if (document->line_capacity == 0)
+    {
+        new_capacity = INITIAL_DOCUMENT_CAPACITY;
+    }
+    else
+    {
+        new_capacity = document->line_capacity * 2;
+    }
+
+    new_lines = realloc(
+        document->lines,
+        new_capacity * sizeof(*new_lines)
+    );
+
+    if (new_lines == NULL)
+    {
+        return false;
+    }
+
+    document->lines = new_lines;
+    document->line_capacity = new_capacity;
+
+    return true;
+}
+
+static bool document_grow_line(DocumentLine *line)
+{
+    char *new_data;
+    size_t new_capacity;
+
+    if (line->capacity == 0)
+    {
+        new_capacity = INITIAL_LINE_CAPACITY;
+    }
+    else
+    {
+        new_capacity = line->capacity * 2;
+    }
+
+    new_data = realloc(
+        line->data,
+        new_capacity
+    );
+
+    if (new_data == NULL)
+    {
+        return false;
+    }
+
+    line->data = new_data;
+    line->capacity = new_capacity;
+
+    return true;
+}
+
+bool document_init(Document *document)
+{
+    if (document == NULL)
+    {
+        return false;
+    }
+
+    document->lines = NULL;
+    document->line_count = 0;
+    document->line_capacity = 0;
+
+    if (!document_grow_lines(document))
+    {
+        return false;
+    }
+
+    if (!document_line_init(&document->lines[0]))
+    {
+        free(document->lines);
+
+        document->lines = NULL;
+        document->line_capacity = 0;
+
+        return false;
+    }
+
+    document->line_count = 1;
+
+    return true;
+}
+
+void document_destroy(Document *document)
+{
+    size_t index;
+
+    if (document == NULL)
+    {
+        return;
+    }
+
+    for (index = 0; index < document->line_count; ++index)
+    {
+        document_line_destroy(&document->lines[index]);
+    }
+
+    free(document->lines);
+
+    document->lines = NULL;
+    document->line_count = 0;
+    document->line_capacity = 0;
+}
+
+DocumentLine *document_get_line(
+    Document *document,
+    size_t row
+)
+{
+    if (document == NULL || row >= document->line_count)
+    {
+        return NULL;
+    }
+
+    return &document->lines[row];
+}
+
+bool document_insert_character(
+    Document *document,
+    size_t row,
+    size_t column,
+    char character
+)
+{
+    DocumentLine *line;
+
+    line = document_get_line(document, row);
+    if (line == NULL || column > line->length)
+    {
+        return false;
+    }
+
+    if (line->length + 1 >= line->capacity)
+    {
+        if (!document_grow_line(line))
+        {
+            return false;
+        }
+    }
+
+    memmove(
+        &line->data[column + 1],
+        &line->data[column],
+        line->length - column
+    );
+
+    line->data[column] = character;
+    line->length += 1;
+
+    return true;
+}
+```
+
+## Initial Document State
+
+`document_init()` creates the first logical line:
+
+```text
+Document
+│
+├── line_count = 1
+│
+└── lines[0]
+    ├── length = 0
+    └── data = ""
+```
+
+This gives the editor a valid empty document immediately after initialization.
+
+That is important because later cursor and rendering code can operate on a valid line without introducing a special "document has no lines" case.
+
+## Character Insertion
+
+The initial insertion operation works entirely within one line.
+
+For example:
+
+```text
+Before:
+
+line = "cat"
+       ^
+     column 1
+
+Insert 'X'
+
+After:
+
+line = "cXat"
+        ^
+      column 2
+```
+
+The operation moves the existing suffix one byte to the right with `memmove()`, writes the new character, and increments the line length.
+
+The function deliberately does **not** move the Cursor. Cursor ownership remains with the Cursor module. The caller will advance the Cursor after a successful insertion.
+
+## Ownership
+
+The ownership relationship is now:
+
+```text
+Document
+  │
+  ├── owns line array
+  │
+  └── owns each DocumentLine
+          │
+          └── owns character storage
+```
+
+Therefore:
+
+```text
+document_init()
+        ↓
+allocates Document storage
+        ↓
+allocates line storage
+```
+
+and:
+
+```text
+document_destroy()
+        ↓
+destroys every line
+        ↓
+frees line array
+```
+
+No other module should call `free()` on Document-owned memory.
+
+## Current Limitation
+
+This implementation intentionally treats the line contents as a byte sequence.
+
+That is sufficient for the first ASCII editing milestone. Full UTF-8 decoding and Unicode-aware editing are not introduced here; the file boundary and text-encoding implementation arrive later in the implementation sequence.
+
+The important result of this section is that the editor now has a real, owned, dynamically allocated Document that can represent and modify its first line.
+
+Next, we connect this Document to the **Cursor module**, so the editing loop has a position from which characters can be inserted.

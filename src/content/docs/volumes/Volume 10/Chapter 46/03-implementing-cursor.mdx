@@ -1,0 +1,162 @@
+---
+title: 46.3 Implementing the Cursor
+description: "Implements the Cursor module with zero-based logical row and column coordinates and the operations required by the first editing loop."
+---
+
+Create the Cursor module in `src/cursor/`. It will store the current editing position and provide the operations needed by the first interactive editing loop.
+
+The Cursor uses zero-based logical coordinates:
+
+- `row` identifies the Document line.
+- `column` identifies the byte position within that line.
+
+At initialization, both coordinates are zero.
+
+## `cursor.h`
+
+Create `src/cursor/cursor.h`:
+
+```c
+/* src/cursor/cursor.h */
+
+#ifndef CURSOR_CURSOR_H
+#define CURSOR_CURSOR_H
+
+#include <stdbool.h>
+#include <stddef.h>
+
+#include "../document/document.h"
+
+typedef struct
+{
+    size_t row;
+    size_t column;
+} Cursor;
+
+void cursor_init(Cursor *cursor);
+
+bool cursor_set_position(
+    Cursor *cursor,
+    const Document *document,
+    size_t row,
+    size_t column
+);
+
+bool cursor_advance(Cursor *cursor, const Document *document);
+
+#endif
+```
+
+## `cursor.c`
+
+Create `src/cursor/cursor.c`:
+
+```c
+/* src/cursor/cursor.c */
+
+#include "cursor.h"
+
+void cursor_init(Cursor *cursor)
+{
+    if (cursor == NULL)
+    {
+        return;
+    }
+
+    cursor->row = 0;
+    cursor->column = 0;
+}
+
+bool cursor_set_position(
+    Cursor *cursor,
+    const Document *document,
+    size_t row,
+    size_t column
+)
+{
+    const DocumentLine *line;
+
+    if (cursor == NULL || document == NULL || row >= document->line_count)
+    {
+        return false;
+    }
+
+    line = &document->lines[row];
+
+    if (column > line->length)
+    {
+        return false;
+    }
+
+    cursor->row = row;
+    cursor->column = column;
+
+    return true;
+}
+
+bool cursor_advance(Cursor *cursor, const Document *document)
+{
+    const DocumentLine *line;
+
+    if (cursor == NULL || document == NULL ||
+        cursor->row >= document->line_count)
+    {
+        return false;
+    }
+
+    line = &document->lines[cursor->row];
+
+    if (cursor->column >= line->length)
+    {
+        return false;
+    }
+
+    cursor->column += 1;
+
+    return true;
+}
+```
+
+## Cursor Position After Insertion
+
+The current Document implementation inserts a character at the supplied column. After a successful insertion, the caller must advance the Cursor explicitly.
+
+For example:
+
+```
+Document line:  cat
+Cursor column:  1
+
+Insert 'X':
+
+Document line:  cXat
+Cursor column:  1
+
+Advance Cursor:
+
+Document line:  cXat
+Cursor column:  2
+```
+
+The Cursor module does not modify the Document, and the Document does not modify the Cursor. The application coordinates these operations.
+
+## Position Validation
+
+The Cursor must remain within the current Document's logical bounds.
+
+For a line of length four, valid insertion positions are:
+
+```
+Text:       c  a  t  s
+Positions:  0  1  2  3  4
+```
+
+Column `4` is valid because it represents the position immediately after the final character. Column `5` is invalid.
+
+The current `cursor_advance()` operation advances only when a character exists at the current position. Moving across line boundaries will be implemented in the later line-navigation milestone.
+
+## Build Integration
+
+Do not build the executable yet. The Cursor module now depends on the Document interface, but the Editor State, Renderer, and updated application entry point have not been integrated.
+
+The next section will implement Editor State, bringing the Document and Cursor together under one application-owned structure.

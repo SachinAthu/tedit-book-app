@@ -1,0 +1,119 @@
+---
+title: 46.1 Implementation Goal
+description: "Defines Chapter 46's milestone: extending the runtime with editor state, document, cursor, screen buffer, renderer, and a first interactive editing loop."
+---
+
+Chapter 45 ends with:
+
+```text
+Program Start
+      ↓
+Terminal Initialization
+      ↓
+Raw Mode
+      ↓
+Event Loop
+      ↓
+Ctrl-Q / EOF
+      ↓
+Terminal Restoration
+```
+
+Chapter 46 changes the runtime into an actual editor:
+
+```text
+Program Start
+      ↓
+Terminal Initialization
+      ↓
+Editor State Initialization
+      ↓
+Raw Mode
+      ↓
+Render Initial Frame
+      ↓
+Event Loop
+      │
+      ├── Read input
+      ├── Update Document
+      ├── Update Cursor
+      └── Render Frame
+      │
+      ↓
+Ctrl-Q / EOF
+      ↓
+Terminal Restoration
+```
+
+The first implementation milestone will establish:
+
+```text
+Editor State
+├── Document
+├── Cursor
+└── Screen Size
+```
+
+The Document will initially contain one empty line.
+
+The Cursor will initially be:
+
+```text
+row    = 0
+column = 0
+```
+
+Then we will add the Screen Buffer and Renderer.
+
+The resulting program should already be able to:
+
+- start in raw mode;
+- display an editor screen;
+- display the current document;
+- display the cursor;
+- accept printable characters;
+- insert them into the current line;
+- move the cursor after insertion;
+- redraw the screen after each input;
+- exit with the existing temporary `Ctrl-Q`;
+- restore the terminal before exiting.
+
+This matches the defined Chapter 46 scope: Editor State, Document, Cursor, Screen Buffer, basic Renderer, screen output, cursor display, and the first interactive editing loop. implementation-status
+
+## Files we will introduce
+
+```text
+src/
+├── cursor/
+│   ├── cursor.c
+│   └── cursor.h
+│
+├── document/
+│   ├── document.c
+│   └── document.h
+│
+├── renderer/
+│   ├── renderer.c
+│   └── renderer.h
+│
+├── state/
+│   ├── editor_state.c
+│   └── editor_state.h
+│
+├── terminal/
+│   ├── terminal.c
+│   └── terminal.h
+│
+└── main.c
+```
+
+The Screen Buffer will be introduced as part of the renderer implementation, following the established contiguous screen-cell representation. The existing architecture also requires the Renderer to read Editor State without modifying it. 07-adrs
+
+## Existing files that will change
+
+```text
+CMakeLists.txt
+src/main.c
+```
+
+The existing `terminal` implementation will **not** be rewritten unnecessarily.
