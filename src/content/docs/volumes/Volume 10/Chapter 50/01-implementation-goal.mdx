@@ -1,0 +1,75 @@
+---
+title: 50.1 Implementation Goal
+---
+
+Chapter 49 is complete. The attached repository has been configured and built successfully, and both registered CTest targets, `smoke` and `editing`, pass.
+
+Chapter 50 extends the existing editor with file opening. We will continue from the supplied repository without replacing the working navigation, editing, or rendering implementation.
+
+## Implementation milestone
+
+The editor must accept a file path at startup, load the file into memory, and display its contents in the existing editing screen.
+
+The implementation must provide:
+
+- A dedicated `file` module containing the File Manager.
+- File reading through POSIX file operations.
+- UTF-8 decoding into Unicode code points.
+- Normalization of LF and CRLF line endings into logical Document lines.
+- Correct initialization of the Cursor, Viewport, and Dirty Flag after loading.
+- A valid empty Document when no filename is supplied.
+- Safe handling of missing files, unreadable files, invalid UTF-8, and allocation failures.
+
+## Required project changes
+
+The following files will be introduced or modified during this chapter.
+
+```
+tedit-main/
+├── src/
+│   ├── file/                       [NEW]
+│   │   ├── file.h
+│   │   └── file.c
+│   ├── document/
+│   │   ├── document.h              [MODIFIED]
+│   │   └── document.c              [MODIFIED]
+│   ├── cursor/
+│   │   ├── cursor.h                [MODIFIED]
+│   │   └── cursor.c                [MODIFIED]
+│   ├── renderer/
+│   │   ├── renderer.h              [REVIEW / POSSIBLE CHANGE]
+│   │   └── renderer.c              [MODIFIED]
+│   ├── state/
+│   │   ├── editor_state.h          [MODIFIED]
+│   │   └── editor_state.c          [MODIFIED]
+│   └── main.c                      [MODIFIED]
+├── tests/
+│   ├── test_file.c                 [NEW]
+│   └── test_editing.c              [REVIEW / POSSIBLE CHANGE]
+└── CMakeLists.txt                  [MODIFIED]
+```
+
+## Implementation constraint discovered
+
+The current repository stores Document contents as bytes in `char *` line buffers. However, ADR-021 requires the Document to store decoded Unicode code points, with UTF-8 conversion confined to the File Manager boundary.
+
+This difference must be resolved before implementing file loading. Simply reading UTF-8 bytes into the existing Document would violate the established architecture and leave Cursor positions inconsistent with Unicode characters.
+
+Consequently, the implementation must update the affected interfaces and their tests as needed, preserving existing ASCII editing and navigation behavior. The Renderer must also be reviewed because its current character representation assumes ASCII.
+
+We will make these changes explicit rather than silently introducing a temporary persistence model that contradicts the project's ADRs.
+
+## Acceptance criteria
+
+Chapter 50 is complete when:
+
+1. Starting the editor without a filename displays an empty Document.
+2. Starting it with a valid filename displays the file's contents.
+3. LF and CRLF files produce the correct logical lines.
+4. Empty files load successfully.
+5. Valid UTF-8 is decoded into the Document's code-point representation.
+6. Invalid UTF-8 and file-reading failures are reported without leaving partially loaded state.
+7. The Cursor begins at row zero, column zero; the Viewport starts at its initial offsets; and the Dirty Flag remains clear.
+8. Existing editing and navigation tests continue to pass, with new automated tests covering file loading and failure cases.
+
+The next section will implement the File Manager interface and the required Document representation changes, providing the complete source files before the build, tests, and implementation review.

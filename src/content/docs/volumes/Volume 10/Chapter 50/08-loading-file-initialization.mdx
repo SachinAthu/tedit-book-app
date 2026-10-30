@@ -1,0 +1,268 @@
+---
+title: 50.8 Loading a File During Application Initialization
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The File Manager can now load a file into a `Document`. The next step is to connect that capability to the application's startup sequence so the user can open a file by supplying its path when launching the editor.
+
+This integration belongs in the application lifecycle, not in the Renderer or Document. The File Manager remains responsible for file-system access and UTF-8 decoding; `main()` coordinates initialization and decides whether the application can proceed.
+
+## Implementation goal
+
+Support both startup modes:
+
+```
+./tedit
+    |
+    v
+Initialize a new Document
+    |
+    v
+Initialize Cursor and Viewport
+    |
+    v
+Render and enter Event Loop
+```
+
+```
+./tedit notes.txt
+    |
+    v
+Initialize Editor State
+    |
+    v
+File Manager loads notes.txt
+    |
+    +---- Failure ----> Report error and clean up
+    |
+    v
+Reset Cursor, Viewport, and Dirty Flag
+    |
+    v
+Initialize Renderer
+    |
+    v
+Render and enter Event Loop
+```
+
+The key requirement is that the initial frame must display the requested file's contents—not a blank document that is replaced after rendering.
+
+## Update the Editor State
+
+The Editor State should own the transition from a newly initialized document to a loaded document. This keeps the reset of Cursor, Viewport, and Dirty Flag together instead of spreading it across the Event Loop.
+
+Add a function to `src/state/editor_state.h`:
+
+```c
+/*
+ * Load a file into the Editor State.
+ *
+ * On success, replaces the current Document, resets Cursor and Viewport,
+ * and clears the Dirty Flag.
+ *
+ * On failure, preserves the existing Editor State.
+ */
+bool editor_state_load_file(EditorState *state, const char *path);
+```
+
+Add the following implementation to `src/state/editor_state.c`, alongside the existing initialization and destruction functions:
+
+```c
+#include "file/file.h"
+
+/*
+ * Load a file and establish the initial editing position.
+ */
+bool editor_state_load_file(EditorState *state, const char *path)
+{
+    if (state == NULL || path == NULL)
+    {
+        return false;
+    }
+
+    /*
+     * file_load_document() guarantees that the destination Document
+     * remains unchanged if loading fails.
+     */
+    if (file_load_document(path, &state->document) != FILE_LOAD_OK)
+    {
+        return false;
+    }
+
+    /*
+     * The newly loaded Document starts at its beginning.
+     * A zero-line Document is valid, so do not use cursor_set_position()
+     * here if that function requires an existing logical line.
+     */
+    cursor_init(&state->cursor);
+    viewport_init(&state->viewport);
+    state->is_dirty = false;
+
+    return true;
+}
+```
+
+This implementation assumes the File Manager's public header is `file/file.h` and that its result enum includes `FILE_LOAD_OK`, as established in the preceding sections. Add the function declaration and implementation only once.
+
+Why load through the Editor State? The File Manager owns file operations; the Document owns text; and the Editor State coordinates the initial editing position. This helper preserves those boundaries while making the successful-load transition explicit.
+
+## Accept a Filename at Startup
+
+Modify `main()` in `src/main.c` to accept command-line arguments. The rest of the Event Loop can remain unchanged.
+
+Add these includes:
+
+```c
+#include "file/file.h"
+
+#include <stdio.h>
+```
+
+Change the entry point from:
+
+```c
+int main(void)
+```
+
+to:
+
+```c
+int main(int argc, char *argv[])
+```
+
+At the beginning of `main()`, validate the number of arguments:
+
+```c
+if (argc > 2)
+{
+    fprintf(stderr, "Usage: %s [filename]\n", argv[0]);
+    return 1;
+}
+```
+
+Keep the existing terminal and Editor State initialization. Immediately after `editor_state_init()` succeeds and `state_initialized` becomes `true`, add:
+
+```c
+const char *startup_error = NULL;
+
+if (argc == 2 && !editor_state_load_file(&state, argv[1]))
+{
+    startup_error = "Unable to open file.";
+    goto cleanup;
+}
+```
+
+Declare `startup_error` near the other local variables at the beginning of `main()` rather than after executable statements if you want to keep declarations grouped consistently.
+
+The Renderer must be initialized after this loading step. That ensures the first frame is built from the loaded Document.
+
+Finally, after terminal cleanup has restored the terminal and left the alternate screen, report the failure:
+
+```c
+if (startup_error != NULL)
+{
+    fprintf(stderr, "%s %s\n", startup_error, argv[1]);
+}
+```
+
+Keep the existing `exit_status` behavior: it remains nonzero when initialization fails. The cleanup path must continue to destroy only resources whose initialization succeeded.
+
+## Build and Test
+
+From the repository root, run:
+
+```bash
+cmake -S . -B build/debug
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+Then launch the editor in these ways:
+
+```
+# Start a new document
+./build/debug/tedit
+
+# Open an existing text file
+./build/debug/tedit notes.txt
+
+# Try opening a nonexistent file
+./build/debug/tedit missing.txt
+```
+
+Verify the following cases:
+
+| Scenario                      | Expected behavior                                          |
+| ----------------------------- | ---------------------------------------------------------- |
+| No filename supplied          | Opens a new, one-line empty document.                      |
+| Existing non-empty file       | Displays its contents immediately.                         |
+| Existing empty file           | Opens without crashing or inventing a line during loading. |
+| File containing CRLF          | Displays the same logical text as a file using LF.         |
+| File containing invalid UTF-8 | Reports startup failure and restores the terminal.         |
+| Missing or unreadable file    | Reports startup failure without entering the Event Loop.   |
+| More than one filename        | Prints usage and exits.                                    |
+
+These are required verification cases, not a claim that they have already been executed against your latest working tree.
+
+## Architecture review
+
+The resulting startup sequence is:
+
+```
+main(argc, argv)
+       |
+       v
+Initialize Terminal
+       |
+       v
+Initialize Editor State
+       |
+       +---- No filename ------> Keep new Document
+       |
+       +---- Filename ---------> File Manager
+                                      |
+                                      v
+                                Decode UTF-8
+                                Normalize lines
+                                      |
+                                      v
+                              Replace Document
+                                      |
+                                      v
+                           Reset Cursor and Viewport
+                           Clear Dirty Flag
+       |
+       v
+Initialize Renderer
+       |
+       v
+Render Initial Frame
+       |
+       v
+Enter Event Loop
+```
+
+The important invariant is that the first rendered frame represents the intended initial document. The Renderer never performs file I/O, and a failed load never enters normal editing with a partially loaded Document.
+
+One limitation remains: the startup error above is intentionally generic. Detailed distinctions between a missing file, invalid UTF-8, a read error, and allocation failure can be surfaced through the Message Bar or a more detailed startup diagnostic in a later hardening step.
+
+## What we have now
+
+Chapter 50 now has the planned path from file bytes to the initial editing state:
+
+- The File Manager reads and decodes the file.
+- LF and CRLF line endings are normalized into logical Document lines.
+- Empty files remain distinct from new documents.
+- Editor State resets Cursor, Viewport, and Dirty Flag after a successful load.
+- The application can accept a filename at startup and render its contents.
+
+Before moving to Chapter 51, verify that the zero-line behavior from Section 50.7 is implemented in your current code. In particular, opening an empty file must not cause a crash when the Renderer or an editing operation encounters a Document with zero lines.
+
+<Aside>
+  Complete code for this chapter can be found in the relevent branch in the
+  Github repository at
+  https://github.com/SachinAthu/tedit/tree/chapter-50-complete.
+</Aside>
+
+Next: Chapter 51 — Saving Files, beginning with UTF-8 serialization and the File Manager's save interface.

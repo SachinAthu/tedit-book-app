@@ -1,0 +1,112 @@
+---
+title: 50.2 Define the File Manager Interface
+---
+
+Before implementing file loading, establish the public interface of the File Manager and identify the existing source files that must change.
+
+The File Manager will own filesystem access and UTF-8 decoding. The Document will continue to own logical lines and their character storage. The File Manager must not manipulate Cursor, Viewport, Renderer, or terminal state.
+
+## Add the File Manager Header
+
+Create `src/file/file.h`:
+
+```c
+/* src/file/file.h */
+
+#ifndef FILE_FILE_H
+#define FILE_FILE_H
+
+#include "document/document.h"
+
+typedef enum
+{
+    FILE_LOAD_OK,
+    FILE_LOAD_INVALID_ARGUMENT,
+    FILE_LOAD_OPEN_FAILED,
+    FILE_LOAD_READ_FAILED,
+    FILE_LOAD_INVALID_UTF8,
+    FILE_LOAD_OUT_OF_MEMORY
+} FileLoadResult;
+
+/*
+ * Load a UTF-8 file into a Document.
+ *
+ * On success, replace the contents of the output Document with the
+ * decoded file contents. Recognize LF and CRLF line endings.
+ *
+ * On failure, leave the caller's existing Document unchanged.
+ *
+ * The caller owns the resulting Document and must eventually
+ * release it with document_destroy().
+ */
+FileLoadResult file_load_document(
+    const char *path,
+    Document *out_document
+);
+
+#endif
+```
+
+The interface deliberately returns a result code rather than a Boolean. The application can distinguish an invalid UTF-8 file from a filesystem failure or an allocation failure. User-facing error messages can be integrated later with the Message Bar.
+
+The output Document must remain unchanged when loading fails. The implementation will therefore construct the loaded content separately and replace the destination only after the entire file has been read and decoded successfully.
+
+## Resolve the Document Representation Mismatch
+
+The existing implementation does not yet satisfy ADR-021.
+
+| Component           | Current implementation | Required implementation                          |
+| ------------------- | ---------------------- | ------------------------------------------------ |
+| `DocumentLine.data` | `char *`               | Unicode code-point array                         |
+| Line length         | Number of bytes        | Number of code points                            |
+| Character insertion | Inserts one byte       | Inserts one code point                           |
+| Character deletion  | Deletes one byte       | Deletes one code point                           |
+| File loading        | Not implemented        | Decodes UTF-8 at the File Manager boundary       |
+| Rendering           | Reads stored bytes     | Converts stored code points into terminal output |
+
+Changing only the File Manager would leave the implementation inconsistent: a multibyte UTF-8 character could occupy several bytes while the Cursor treats each position as one character.
+
+The next implementation step must therefore update the Document representation and its callers together. The Renderer must also be adjusted so it can display the supported characters without treating UTF-8 bytes as separate logical characters. Unicode display-width calculations remain outside this milestone.
+
+## Establish the File-Loading Invariants
+
+The implementation must preserve these conditions:
+
+```text
+The File Manager is the only component that reads file contents.
+
+Document positions count Unicode code points, not UTF-8 bytes.
+
+LF and CRLF file endings become logical line boundaries.
+
+Line-ending bytes are not stored in DocumentLine.
+
+Invalid UTF-8 never produces a partially loaded Document.
+
+A failed load leaves the destination Document unchanged.
+
+A successful load leaves the application responsible for
+resetting Cursor, Viewport, and the Dirty Flag.
+```
+
+There is one additional compatibility issue to settle during the Document refactor: the existing `document_init()` creates one blank line, while ADR-021 explicitly defines a zero-line Document as a zero-byte file when serialized. The implementation must preserve the distinction between an empty file and a file containing a logical empty line rather than treating those states as interchangeable.
+
+**Files introduced in this section**
+
+- `src/file/file.h`
+
+**Files that must be updated in the implementation that follows**
+
+- `src/document/document.h`
+- `src/document/document.c`
+- `src/cursor/cursor.h`
+- `src/cursor/cursor.c`
+- `src/renderer/screen_buffer.h`
+- `src/renderer/screen_buffer.c`
+- `src/renderer/renderer.c`
+- `src/state/editor_state.c`
+- `src/main.c`
+- `CMakeLists.txt`
+- Existing editing tests, plus new file-loading tests
+
+The header establishes the boundary; it does not yet implement file loading. The next section will update the Document's character representation and provide the complete source files needed to keep existing editing and navigation behavior working.

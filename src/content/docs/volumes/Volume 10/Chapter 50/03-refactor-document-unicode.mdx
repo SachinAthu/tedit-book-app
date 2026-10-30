@@ -1,0 +1,549 @@
+---
+title: 50.3 Refactor the Document to Store Unicode Code Points
+---
+
+This section changes the Document's character storage from UTF-8-compatible byte arrays to arrays of Unicode code points, as required by ADR-021. Existing editing and navigation behavior must remain intact.
+
+## Files changed
+
+| File                           | Change                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------ |
+| `src/document/document.h`      | Store characters as `uint32_t` code points and update the insertion interface. |
+| `src/document/document.c`      | Allocate, resize, insert, delete, split, and merge code-point arrays.          |
+| `src/renderer/screen_buffer.h` | Prepare screen cells to hold code points.                                      |
+| `src/renderer/screen_buffer.c` | Update screen-cell operations to use code points.                              |
+| `src/renderer/renderer.c`      | Adapt frame construction and terminal output to the new representation.        |
+| `src/main.c`                   | Keep keyboard insertion compatible with the existing ASCII-only input path.    |
+| `tests/test_editing.c`         | Preserve regression coverage and add a non-ASCII code-point editing test.      |
+
+The Cursor and Viewport interfaces remain unchanged: their logical positions are still measured in character positions. Unicode display width is a separate concern and is not implemented in this section.
+
+## Update the Document interface
+
+Replace `src/document/document.h` with the following complete file.
+
+```c
+/* src/document/document.h */
+
+#ifndef DOCUMENT_DOCUMENT_H
+#define DOCUMENT_DOCUMENT_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+/*
+ * A logical line containing Unicode code points.
+ *
+ * length and capacity are measured in code points, not UTF-8 bytes.
+ * The array is not NUL-terminated.
+ */
+typedef struct
+{
+    uint32_t *data;
+    size_t length;
+    size_t capacity;
+} DocumentLine;
+
+/*
+ * A Document owns an ordered, dynamically sized collection of lines.
+ */
+typedef struct
+{
+    DocumentLine *lines;
+    size_t line_count;
+    size_t line_capacity;
+} Document;
+
+/*
+ * Initialize a Document containing one empty logical line.
+ */
+bool document_init(Document *document);
+
+/*
+ * Release all storage owned by a Document.
+ */
+void document_destroy(Document *document);
+
+/*
+ * Return a line by zero-based row, or NULL if the row is invalid.
+ */
+DocumentLine *document_get_line(Document *document, size_t row);
+
+/*
+ * Insert one Unicode code point at column.
+ */
+bool document_insert_character(
+    Document *document,
+    size_t row,
+    size_t column,
+    uint32_t code_point
+);
+
+/*
+ * Delete the code point at column.
+ */
+bool document_delete_character(
+    Document *document,
+    size_t row,
+    size_t column
+);
+
+/*
+ * Split a line at column, moving its suffix into a new line.
+ */
+bool document_split_line(
+    Document *document,
+    size_t row,
+    size_t column
+);
+
+/*
+ * Merge the line at row with the line immediately below it.
+ */
+bool document_merge_lines(Document *document, size_t row);
+
+#endif
+```
+
+## Update the Document implementation
+
+Replace `src/document/document.c` with this implementation.
+
+```c
+/* src/document/document.c */
+
+#include "document.h"
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define INITIAL_LINE_CAPACITY 16
+#define INITIAL_DOCUMENT_CAPACITY 8
+
+static bool document_line_init(DocumentLine *line)
+{
+    if (line == NULL)
+    {
+        return false;
+    }
+
+    line->data = malloc(INITIAL_LINE_CAPACITY * sizeof(*line->data));
+    if (line->data == NULL)
+    {
+        return false;
+    }
+
+    line->length = 0;
+    line->capacity = INITIAL_LINE_CAPACITY;
+
+    return true;
+}
+
+static void document_line_destroy(DocumentLine *line)
+{
+    if (line == NULL)
+    {
+        return;
+    }
+
+    free(line->data);
+    line->data = NULL;
+    line->length = 0;
+    line->capacity = 0;
+}
+
+static bool document_grow_line(DocumentLine *line)
+{
+    size_t new_capacity;
+    uint32_t *new_data;
+
+    if (line == NULL)
+    {
+        return false;
+    }
+
+    if (line->capacity == 0)
+    {
+        new_capacity = INITIAL_LINE_CAPACITY;
+    }
+    else
+    {
+        if (line->capacity > SIZE_MAX / 2)
+        {
+            return false;
+        }
+
+        new_capacity = line->capacity * 2;
+    }
+
+    if (new_capacity > SIZE_MAX / sizeof(*line->data))
+    {
+        return false;
+    }
+
+    new_data = realloc(
+        line->data,
+        new_capacity * sizeof(*line->data)
+    );
+
+    if (new_data == NULL)
+    {
+        return false;
+    }
+
+    line->data = new_data;
+    line->capacity = new_capacity;
+
+    return true;
+}
+
+static bool document_grow_lines(Document *document)
+{
+    size_t new_capacity;
+    DocumentLine *new_lines;
+
+    if (document == NULL)
+    {
+        return false;
+    }
+
+    if (document->line_capacity == 0)
+    {
+        new_capacity = INITIAL_DOCUMENT_CAPACITY;
+    }
+    else
+    {
+        if (document->line_capacity > SIZE_MAX / 2)
+        {
+            return false;
+        }
+
+        new_capacity = document->line_capacity * 2;
+    }
+
+    if (new_capacity > SIZE_MAX / sizeof(*document->lines))
+    {
+        return false;
+    }
+
+    new_lines = realloc(
+        document->lines,
+        new_capacity * sizeof(*document->lines)
+    );
+
+    if (new_lines == NULL)
+    {
+        return false;
+    }
+
+    document->lines = new_lines;
+    document->line_capacity = new_capacity;
+
+    return true;
+}
+
+bool document_init(Document *document)
+{
+    if (document == NULL)
+    {
+        return false;
+    }
+
+    document->lines = NULL;
+    document->line_count = 0;
+    document->line_capacity = 0;
+
+    if (!document_grow_lines(document))
+    {
+        return false;
+    }
+
+    if (!document_line_init(&document->lines[0]))
+    {
+        free(document->lines);
+        document->lines = NULL;
+        document->line_capacity = 0;
+        return false;
+    }
+
+    document->line_count = 1;
+
+    return true;
+}
+
+void document_destroy(Document *document)
+{
+    if (document == NULL)
+    {
+        return;
+    }
+
+    for (size_t index = 0; index < document->line_count; ++index)
+    {
+        document_line_destroy(&document->lines[index]);
+    }
+
+    free(document->lines);
+
+    document->lines = NULL;
+    document->line_count = 0;
+    document->line_capacity = 0;
+}
+
+DocumentLine *document_get_line(Document *document, size_t row)
+{
+    if (document == NULL || row >= document->line_count)
+    {
+        return NULL;
+    }
+
+    return &document->lines[row];
+}
+
+bool document_insert_character(
+    Document *document,
+    size_t row,
+    size_t column,
+    uint32_t code_point)
+{
+    DocumentLine *line = document_get_line(document, row);
+
+    if (line == NULL || column > line->length)
+    {
+        return false;
+    }
+
+    /*
+     * Reject values outside the Unicode code-point range and UTF-16
+     * surrogate values. UTF-8 validation at the file boundary will
+     * enforce the same restriction for loaded content.
+     */
+    if (code_point > UINT32_C(0x10FFFF) ||
+        (code_point >= UINT32_C(0xD800) &&
+         code_point <= UINT32_C(0xDFFF)))
+    {
+        return false;
+    }
+
+    if (line->length == SIZE_MAX)
+    {
+        return false;
+    }
+
+    if (line->length == line->capacity &&
+        !document_grow_line(line))
+    {
+        return false;
+    }
+
+    memmove(
+        &line->data[column + 1],
+        &line->data[column],
+        (line->length - column) * sizeof(*line->data)
+    );
+
+    line->data[column] = code_point;
+    ++line->length;
+
+    return true;
+}
+
+bool document_delete_character(
+    Document *document,
+    size_t row,
+    size_t column)
+{
+    DocumentLine *line = document_get_line(document, row);
+
+    if (line == NULL || column >= line->length)
+    {
+        return false;
+    }
+
+    memmove(
+        &line->data[column],
+        &line->data[column + 1],
+        (line->length - column - 1) * sizeof(*line->data)
+    );
+
+    --line->length;
+
+    return true;
+}
+
+bool document_split_line(
+    Document *document,
+    size_t row,
+    size_t column)
+{
+    DocumentLine *line = document_get_line(document, row);
+    DocumentLine new_line;
+    size_t suffix_length;
+    size_t new_capacity;
+
+    if (line == NULL || column > line->length)
+    {
+        return false;
+    }
+
+    suffix_length = line->length - column;
+    new_capacity = suffix_length > INITIAL_LINE_CAPACITY
+        ? suffix_length
+        : INITIAL_LINE_CAPACITY;
+
+    if (new_capacity > SIZE_MAX / sizeof(*new_line.data))
+    {
+        return false;
+    }
+
+    new_line.data = malloc(new_capacity * sizeof(*new_line.data));
+    if (new_line.data == NULL)
+    {
+        return false;
+    }
+
+    new_line.length = suffix_length;
+    new_line.capacity = new_capacity;
+
+    if (suffix_length > 0)
+    {
+        memcpy(
+            new_line.data,
+            &line->data[column],
+            suffix_length * sizeof(*new_line.data)
+        );
+    }
+
+    /*
+     * Reserve the new line slot before modifying the existing line.
+     */
+    if (document->line_count == document->line_capacity &&
+        !document_grow_lines(document))
+    {
+        document_line_destroy(&new_line);
+        return false;
+    }
+
+    /*
+     * Reacquire the pointer: growing the line array may have moved it.
+     */
+    line = &document->lines[row];
+
+    memmove(
+        &document->lines[row + 2],
+        &document->lines[row + 1],
+        (document->line_count - row - 1) *
+            sizeof(*document->lines)
+    );
+
+    document->lines[row + 1] = new_line;
+    ++document->line_count;
+    line->length = column;
+
+    return true;
+}
+
+bool document_merge_lines(Document *document, size_t row)
+{
+    DocumentLine *first_line;
+    DocumentLine *second_line;
+    size_t combined_length;
+
+    if (document == NULL || row + 1 >= document->line_count)
+    {
+        return false;
+    }
+
+    first_line = &document->lines[row];
+    second_line = &document->lines[row + 1];
+
+    if (second_line->length > SIZE_MAX - first_line->length)
+    {
+        return false;
+    }
+
+    combined_length = first_line->length + second_line->length;
+
+    while (first_line->capacity < combined_length)
+    {
+        if (!document_grow_line(first_line))
+        {
+            return false;
+        }
+    }
+
+    if (second_line->length > 0)
+    {
+        memcpy(
+            &first_line->data[first_line->length],
+            second_line->data,
+            second_line->length * sizeof(*second_line->data)
+        );
+    }
+
+    first_line->length = combined_length;
+    document_line_destroy(second_line);
+
+    memmove(
+        &document->lines[row + 1],
+        &document->lines[row + 2],
+        (document->line_count - row - 2) *
+            sizeof(*document->lines)
+    );
+
+    --document->line_count;
+
+    return true;
+}
+```
+
+## Update the callers
+
+The `document_insert_character()` parameter is now `uint32_t`. Existing ASCII character literals continue to work. In `src/main.c`, keep the current input scope explicit by passing the ASCII input value as a code point:
+
+```c
+if (!document_insert_character(
+        &state->document,
+        state->cursor.row,
+        state->cursor.column,
+        (uint32_t)(unsigned char)input))
+{
+    /* Preserve the existing insertion-failure handling. */
+}
+```
+
+Ensure `main.c` includes `<stdint.h>`.
+
+Important: the Document refactor alone does not complete Unicode rendering. The Renderer and Screen Buffer must also retain code points rather than narrowing them to `char`; terminal output must encode them as UTF-8. Those changes belong to the next implementation section, before this milestone can be considered fully verified for non-ASCII file contents.
+
+## Build and regression check
+
+From the repository root, run:
+
+```bash
+cmake -S . -B build/debug
+cmake --build build/debug -j2
+ctest --test-dir build/debug --output-on-failure
+```
+
+The existing editing tests should continue to pass once the Screen Buffer and Renderer interfaces have been updated consistently. Do not treat a successful build as proof that Unicode rendering works: verify that separately with a test containing at least one multibyte code point.
+
+## Invariants established
+
+```
+DocumentLine.data contains uint32_t code points.
+
+DocumentLine.length counts code points, not UTF-8 bytes.
+
+Insert, delete, split, and merge use code-point-sized elements.
+
+Invalid Unicode scalar values are rejected by insertion.
+
+Cursor columns remain logical code-point positions.
+
+Filesystem access remains outside the Document module.
+```
+
+The next section will complete the Screen Buffer and Renderer changes so code points can be represented and emitted correctly, while keeping display-width mapping as an explicit limitation.

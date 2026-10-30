@@ -1,0 +1,684 @@
+---
+title: 50.5 Implement the File Manager
+---
+
+This section introduces the actual file-loading implementation. The File Manager reads a file through POSIX APIs, validates and decodes UTF-8, normalizes CRLF/LF boundaries, and only replaces the destination Document after a complete successful load.
+
+This section assumes the code-point-based Document interface from Section 50.3 has been applied.
+
+## Files introduced and changed
+
+- New: `src/file/file.c`
+- Changed: `CMakeLists.txt`
+- New: `tests/test_file.c`
+
+The `src/file/file.h` interface was established in Section 50.2 and remains unchanged.
+
+## Implement `src/file/file.c`
+
+```c
+/* src/file/file.c */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "file.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#define INITIAL_FILE_BUFFER_CAPACITY 4096
+
+typedef struct
+{
+    unsigned char *data;
+    size_t length;
+    size_t capacity;
+} FileByteBuffer;
+
+static void file_byte_buffer_destroy(FileByteBuffer *buffer)
+{
+    if (buffer == NULL)
+    {
+        return;
+    }
+
+    free(buffer->data);
+    buffer->data = NULL;
+    buffer->length = 0;
+    buffer->capacity = 0;
+}
+
+static bool file_byte_buffer_reserve(
+    FileByteBuffer *buffer,
+    size_t required)
+{
+    size_t new_capacity;
+    unsigned char *new_data;
+
+    if (required <= buffer->capacity)
+    {
+        return true;
+    }
+
+    new_capacity = buffer->capacity == 0
+        ? INITIAL_FILE_BUFFER_CAPACITY
+        : buffer->capacity;
+
+    while (new_capacity < required)
+    {
+        if (new_capacity > SIZE_MAX / 2)
+        {
+            new_capacity = required;
+            break;
+        }
+
+        new_capacity *= 2;
+    }
+
+    new_data = realloc(buffer->data, new_capacity);
+
+    if (new_data == NULL)
+    {
+        return false;
+    }
+
+    buffer->data = new_data;
+    buffer->capacity = new_capacity;
+
+    return true;
+}
+
+static FileLoadResult file_read_all(
+    int descriptor,
+    FileByteBuffer *buffer)
+{
+    unsigned char chunk[4096];
+
+    for (;;)
+    {
+        ssize_t bytes_read = read(
+            descriptor,
+            chunk,
+            sizeof(chunk));
+
+        if (bytes_read < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return FILE_LOAD_READ_FAILED;
+        }
+
+        if (bytes_read == 0)
+        {
+            return FILE_LOAD_OK;
+        }
+
+        if ((size_t)bytes_read > SIZE_MAX - buffer->length)
+        {
+            return FILE_LOAD_OUT_OF_MEMORY;
+        }
+
+        size_t required = buffer->length + (size_t)bytes_read;
+
+        if (!file_byte_buffer_reserve(buffer, required))
+        {
+            return FILE_LOAD_OUT_OF_MEMORY;
+        }
+
+        for (size_t index = 0;
+             index < (size_t)bytes_read;
+             ++index)
+        {
+            buffer->data[buffer->length + index] = chunk[index];
+        }
+
+        buffer->length = required;
+    }
+}
+
+/*
+ * Decode one UTF-8 scalar value.
+ *
+ * Return the number of bytes consumed, or zero for malformed UTF-8.
+ * The caller advances offset only after successful decoding.
+ */
+static size_t file_decode_utf8(
+    const unsigned char *bytes,
+    size_t length,
+    size_t offset,
+    uint32_t *out_code_point)
+{
+    unsigned char first;
+    uint32_t code_point;
+    size_t sequence_length;
+
+    if (bytes == NULL ||
+        out_code_point == NULL ||
+        offset >= length)
+    {
+        return 0;
+    }
+
+    first = bytes[offset];
+
+    if (first <= 0x7F)
+    {
+        *out_code_point = first;
+        return 1;
+    }
+
+    if (first >= 0xC2 && first <= 0xDF)
+    {
+        sequence_length = 2;
+        code_point = first & 0x1F;
+    }
+    else if (first >= 0xE0 && first <= 0xEF)
+    {
+        sequence_length = 3;
+        code_point = first & 0x0F;
+    }
+    else if (first >= 0xF0 && first <= 0xF4)
+    {
+        sequence_length = 4;
+        code_point = first & 0x07;
+    }
+    else
+    {
+        return 0;
+    }
+
+    if (sequence_length > length - offset)
+    {
+        return 0;
+    }
+
+    for (size_t index = 1; index < sequence_length; ++index)
+    {
+        unsigned char continuation = bytes[offset + index];
+
+        if ((continuation & 0xC0) != 0x80)
+        {
+            return 0;
+        }
+
+        /*
+         * Reject overlong encodings, UTF-16 surrogates, and values
+         * above U+10FFFF through checks on the second byte.
+         */
+        if (index == 1)
+        {
+            if (first == 0xE0 && continuation < 0xA0)
+            {
+                return 0;
+            }
+
+            if (first == 0xED && continuation > 0x9F)
+            {
+                return 0;
+            }
+
+            if (first == 0xF0 && continuation < 0x90)
+            {
+                return 0;
+            }
+
+            if (first == 0xF4 && continuation > 0x8F)
+            {
+                return 0;
+            }
+        }
+
+        code_point =
+            (code_point << 6) | (continuation & 0x3F);
+    }
+
+    *out_code_point = code_point;
+
+    return sequence_length;
+}
+
+static bool file_remove_trailing_carriage_return(
+    Document *document)
+{
+    DocumentLine *line;
+
+    if (document == NULL || document->line_count == 0)
+    {
+        return false;
+    }
+
+    line = document_get_line(
+        document,
+        document->line_count - 1);
+
+    if (line == NULL || line->length == 0)
+    {
+        return true;
+    }
+
+    if (line->data[line->length - 1] == UINT32_C(0x0D))
+    {
+        return document_delete_character(
+            document,
+            document->line_count - 1,
+            line->length - 1);
+    }
+
+    return true;
+}
+
+static FileLoadResult file_decode_document(
+    const FileByteBuffer *bytes,
+    Document *document)
+{
+    size_t offset = 0;
+
+    /*
+     * An empty file is represented by a zero-line Document.
+     * A newly created, unsaved document still starts with one blank line.
+     */
+    if (bytes->length == 0)
+    {
+        document_destroy(document);
+        return FILE_LOAD_OK;
+    }
+
+    while (offset < bytes->length)
+    {
+        uint32_t code_point;
+        size_t consumed = file_decode_utf8(
+            bytes->data,
+            bytes->length,
+            offset,
+            &code_point);
+
+        if (consumed == 0)
+        {
+            return FILE_LOAD_INVALID_UTF8;
+        }
+
+        offset += consumed;
+
+        if (code_point == UINT32_C(0x0A))
+        {
+            if (!file_remove_trailing_carriage_return(document))
+            {
+                return FILE_LOAD_OUT_OF_MEMORY;
+            }
+
+            /*
+             * A final line ending terminates the current logical line.
+             * It does not create an additional line beyond that line.
+             *
+             * A non-final line ending splits the current line and creates
+             * the next one.
+             */
+            if (offset < bytes->length)
+            {
+                DocumentLine *line = document_get_line(
+                    document,
+                    document->line_count - 1);
+
+                if (line == NULL ||
+                    !document_split_line(
+                        document,
+                        document->line_count - 1,
+                        line->length))
+                {
+                    return FILE_LOAD_OUT_OF_MEMORY;
+                }
+            }
+
+            continue;
+        }
+
+        if (document->line_count == 0)
+        {
+            /*
+             * Non-empty input always begins with one logical line.
+             * This branch also keeps the decoder safe if its initialization
+             * policy changes in a later implementation.
+             */
+            return FILE_LOAD_INVALID_ARGUMENT;
+        }
+
+        DocumentLine *line = document_get_line(
+            document,
+            document->line_count - 1);
+
+        if (line == NULL ||
+            !document_insert_character(
+                document,
+                document->line_count - 1,
+                line->length,
+                code_point))
+        {
+            return FILE_LOAD_OUT_OF_MEMORY;
+        }
+    }
+
+    return FILE_LOAD_OK;
+}
+
+FileLoadResult file_load_document(
+    const char *path,
+    Document *out_document)
+{
+    int descriptor;
+    FileByteBuffer bytes = {0};
+    Document loaded_document;
+    FileLoadResult result;
+
+    if (path == NULL ||
+        path[0] == '\0' ||
+        out_document == NULL)
+    {
+        return FILE_LOAD_INVALID_ARGUMENT;
+    }
+
+    descriptor = open(path, O_RDONLY);
+
+    if (descriptor < 0)
+    {
+        return FILE_LOAD_OPEN_FAILED;
+    }
+
+    result = file_read_all(descriptor, &bytes);
+
+    if (close(descriptor) != 0 &&
+        result == FILE_LOAD_OK)
+    {
+        result = FILE_LOAD_READ_FAILED;
+    }
+
+    if (result != FILE_LOAD_OK)
+    {
+        file_byte_buffer_destroy(&bytes);
+        return result;
+    }
+
+    if (!document_init(&loaded_document))
+    {
+        file_byte_buffer_destroy(&bytes);
+        return FILE_LOAD_OUT_OF_MEMORY;
+    }
+
+    result = file_decode_document(&bytes, &loaded_document);
+    file_byte_buffer_destroy(&bytes);
+
+    if (result != FILE_LOAD_OK)
+    {
+        document_destroy(&loaded_document);
+        return result;
+    }
+
+    /*
+     * Commit only after reading and decoding the complete file.
+     * The caller's existing Document remains unchanged on failure.
+     */
+    document_destroy(out_document);
+    *out_document = loaded_document;
+
+    return FILE_LOAD_OK;
+}
+
+```
+
+## Add file-loading tests
+
+Create `tests/test_file.c`.
+
+```c
+/* tests/test_file.c */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "document/document.h"
+#include "file/file.h"
+
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+static void write_all(int descriptor,
+                      const unsigned char *data,
+                      size_t length)
+{
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        ssize_t written = write(
+            descriptor,
+            data + offset,
+            length - offset);
+
+        assert(written > 0);
+        offset += (size_t)written;
+    }
+}
+
+static void test_load_utf8_and_line_endings(void)
+{
+    char path[] = "/tmp/tedit-file-XXXXXX";
+    int descriptor = mkstemp(path);
+
+    /* A + U+20AC EURO SIGN + CRLF + B + LF */
+    const unsigned char content[] = {
+        0x41,
+        0xE2, 0x82, 0xAC,
+        0x0D, 0x0A,
+        0x42,
+        0x0A
+    };
+
+    Document document;
+
+    assert(descriptor >= 0);
+
+    write_all(descriptor, content, sizeof(content));
+    assert(close(descriptor) == 0);
+
+    assert(document_init(&document));
+
+    assert(file_load_document(path, &document) == FILE_LOAD_OK);
+
+    assert(document.line_count == 2);
+
+    DocumentLine *first = document_get_line(&document, 0);
+    DocumentLine *second = document_get_line(&document, 1);
+
+    assert(first != NULL);
+    assert(second != NULL);
+
+    assert(first->length == 2);
+    assert(first->data[0] == UINT32_C(0x41));
+    assert(first->data[1] == UINT32_C(0x20AC));
+
+    assert(second->length == 1);
+    assert(second->data[0] == UINT32_C(0x42));
+
+    document_destroy(&document);
+    assert(unlink(path) == 0);
+}
+
+static void test_empty_file_has_zero_lines(void)
+{
+    char path[] = "/tmp/tedit-file-XXXXXX";
+    int descriptor = mkstemp(path);
+    Document document;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+
+    assert(document_init(&document));
+    assert(file_load_document(path, &document) == FILE_LOAD_OK);
+    assert(document.line_count == 0);
+
+    document_destroy(&document);
+    assert(unlink(path) == 0);
+}
+
+static void test_invalid_utf8_preserves_destination(void)
+{
+    char path[] = "/tmp/tedit-file-XXXXXX";
+    int descriptor = mkstemp(path);
+
+    /* C0 AF is an invalid overlong UTF-8 encoding. */
+    const unsigned char invalid[] = {0xC0, 0xAF};
+
+    Document document;
+
+    assert(descriptor >= 0);
+
+    write_all(descriptor, invalid, sizeof(invalid));
+    assert(close(descriptor) == 0);
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'x'));
+
+    assert(file_load_document(path, &document) ==
+           FILE_LOAD_INVALID_UTF8);
+
+    assert(document.line_count == 1);
+
+    DocumentLine *line = document_get_line(&document, 0);
+
+    assert(line != NULL);
+    assert(line->length == 1);
+    assert(line->data[0] == UINT32_C('x'));
+
+    document_destroy(&document);
+    assert(unlink(path) == 0);
+}
+
+static void test_missing_file_preserves_destination(void)
+{
+    Document document;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'z'));
+
+    assert(file_load_document(
+               "/tmp/tedit-file-that-does-not-exist",
+               &document) == FILE_LOAD_OPEN_FAILED);
+
+    assert(document.line_count == 1);
+
+    DocumentLine *line = document_get_line(&document, 0);
+
+    assert(line != NULL);
+    assert(line->length == 1);
+    assert(line->data[0] == UINT32_C('z'));
+
+    document_destroy(&document);
+}
+
+int main(void)
+{
+    test_load_utf8_and_line_endings();
+    test_empty_file_has_zero_lines();
+    test_invalid_utf8_preserves_destination();
+    test_missing_file_preserves_destination();
+
+    puts("File Manager tests passed.");
+
+    return 0;
+}
+
+```
+
+## Update `CMakeLists.txt`
+
+Add the File Manager source to `tedit_core` and register its test. The complete file becomes:
+
+```cmake
+# CMakeLists.txt
+
+cmake_minimum_required(VERSION 3.20)
+enable_testing()
+
+project(
+    terminal_editor
+    VERSION 0.1.0
+    LANGUAGES C
+)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+add_library(
+    tedit_core
+    STATIC
+    src/terminal/terminal.c
+    src/state/editor_state.c
+    src/document/document.c
+    src/cursor/cursor.c
+    src/viewport/viewport.c
+    src/renderer/screen_buffer.c
+    src/renderer/renderer.c
+    src/file/file.c
+)
+
+target_include_directories(tedit_core PUBLIC src)
+
+add_executable(
+    tedit
+    src/main.c
+)
+
+target_link_libraries(tedit PRIVATE tedit_core)
+
+add_executable(test_smoke tests/test_smoke.c)
+add_executable(test_editing tests/test_editing.c)
+add_executable(test_file tests/test_file.c)
+
+target_link_libraries(test_smoke PRIVATE tedit_core)
+target_link_libraries(test_editing PRIVATE tedit_core)
+target_link_libraries(test_file PRIVATE tedit_core)
+
+add_test(NAME smoke COMMAND test_smoke)
+add_test(NAME editing COMMAND test_editing)
+add_test(NAME file COMMAND test_file)
+
+```
+
+## Build and test
+
+Run these commands from the repository root:
+
+```bash
+cmake -S . -B build/debug
+cmake --build build/debug -j2
+ctest --test-dir build/debug --output-on-failure
+```
+
+The expected registered tests are:
+
+```
+smoke
+editing
+file
+```
+
+I have not run this new implementation against your working repository, so treat the test results as expected, not verified. The Document and Renderer changes from Sections 50.3–50.4 must be applied consistently before building.
+
+## Important implementation rules
+
+- UTF-8 validation: rejects invalid leading bytes, invalid continuation bytes, overlong encodings, surrogate values, truncated sequences, and values beyond U+10FFFF.
+- Line endings: CRLF and LF are recognized. CRLF becomes a single logical line boundary.
+- Trailing newline: a final line ending terminates the final logical line rather than creating an extra line after it.
+- Empty files: load into a zero-line Document, preserving the distinction from a new unsaved document with one blank line.
+- Failure safety: the existing Document is replaced only after reading and decoding succeed.
+- Ownership: the File Manager owns temporary byte storage and a temporary Document during loading; the caller owns the resulting Document.
+
+One integration detail remains: an opened empty file now has zero lines, but the existing editing path assumes a line exists at Cursor row zero. The next section must integrate file opening into application initialization and address that state transition before declaring Chapter 50 complete.

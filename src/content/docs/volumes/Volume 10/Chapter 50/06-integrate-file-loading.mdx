@@ -1,0 +1,50 @@
+---
+title: 50.6 Integrate File Loading into Editor State
+---
+
+The File Manager and its tests are now in place. This section connects file loading to the application's state without moving filesystem responsibilities into the Document, Cursor, or Renderer.
+
+## Files changed
+
+- `src/state/editor_state.h`
+- `src/state/editor_state.c`
+- `src/main.c`
+
+Before adding the filename argument to the application, one issue needs to be handled correctly: an empty file produces a zero-line Document, while the current editing loop assumes that row zero exists.
+
+We must preserve both states:
+
+| State                       | Document representation   |
+| --------------------------- | ------------------------- |
+| New, unsaved document       | One empty logical line    |
+| Opened empty file           | Zero logical lines        |
+| Opened file containing text | Its decoded logical lines |
+
+The Cursor can initially remain at `(0, 0)` for an empty file, but ordinary Document operations cannot dereference that position until a line exists. We should not silently convert an empty file into a one-line document, because that would lose the distinction established by ADR-021.
+
+## Required integration behavior
+
+The application startup sequence should become:
+
+1. Initialize the terminal and Editor State.
+2. If a filename was supplied, load it through `file_load_document()`.
+3. On success, replace the Document and reset the Cursor and Viewport to their initial positions.
+4. Keep the Dirty Flag clear because opening a file is not an edit.
+5. Initialize the Renderer and draw the initial frame.
+6. Enter the existing Event Loop.
+7. On failure, report the error and restore the terminal cleanly.
+
+For a missing filename, the application should continue to open a new, one-line empty document.
+
+## Implementation checkpoint
+
+Before modifying `main.c`, complete the zero-line Document handling so that the application can safely accept input after opening an empty file. At minimum, the implementation must ensure:
+
+- Rendering a zero-line Document produces a blank document area.
+- Cursor visibility checks remain within terminal bounds.
+- The first inserted character into a zero-line Document creates its first logical line.
+- Pressing Enter in an empty document follows a defined line-creation rule.
+- Failed loads preserve the existing Document and its ownership.
+- A successful load resets Cursor, Viewport, and Dirty Flag together.
+
+The next section should implement these state-transition and editing changes before wiring the filename into `main()`. This keeps the implementation buildable at each milestone and avoids introducing a startup path that crashes or rejects input when opening a zero-byte file.

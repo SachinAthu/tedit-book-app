@@ -1,0 +1,748 @@
+---
+title: 50.4 Update the Screen Buffer and Renderer for Code Points
+---
+
+This section completes the rendering-side representation change introduced in Section 50.3. The Screen Buffer will store Unicode code points, while the Renderer will encode those code points as UTF-8 when writing to the terminal.
+
+The implementation continues to use one logical code point per ScreenCell. Unicode display-width mapping is still not implemented: combining marks, wide characters, and other characters whose terminal width differs from one column may not align correctly with the Cursor or Viewport.
+
+## Files changed
+
+- `src/renderer/screen_buffer.h`
+- `src/renderer/screen_buffer.c`
+- `src/renderer/renderer.c`
+
+`src/renderer/renderer.h` does not need to change because its public interface uses the `ScreenBuffer` type rather than accessing the cell's character field directly.
+
+## Update `src/renderer/screen_buffer.h`
+
+```c
+/* src/renderer/screen_buffer.h */
+
+#ifndef RENDERER_SCREEN_BUFFER_H
+#define RENDERER_SCREEN_BUFFER_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct
+{
+    uint32_t code_point;
+} ScreenCell;
+
+typedef struct
+{
+    ScreenCell *cells;
+    size_t rows;
+    size_t columns;
+} ScreenBuffer;
+
+bool screen_buffer_init(
+    ScreenBuffer *buffer,
+    size_t rows,
+    size_t columns
+);
+
+void screen_buffer_destroy(ScreenBuffer *buffer);
+
+void screen_buffer_clear(
+    ScreenBuffer *buffer,
+    uint32_t code_point
+);
+
+bool screen_buffer_set(
+    ScreenBuffer *buffer,
+    size_t row,
+    size_t column,
+    uint32_t code_point
+);
+
+const ScreenCell *screen_buffer_get(
+    const ScreenBuffer *buffer,
+    size_t row,
+    size_t column
+);
+
+#endif
+```
+
+## Update `src/renderer/screen_buffer.c`
+
+```c
+/* src/renderer/screen_buffer.c */
+
+#include "screen_buffer.h"
+
+#include <stdint.h>
+#include <stdlib.h>
+
+bool screen_buffer_init(
+    ScreenBuffer *buffer,
+    size_t rows,
+    size_t columns)
+{
+    size_t cell_count;
+
+    if (buffer == NULL || rows == 0 || columns == 0)
+    {
+        return false;
+    }
+
+    buffer->cells = NULL;
+    buffer->rows = 0;
+    buffer->columns = 0;
+
+    if (rows > SIZE_MAX / columns)
+    {
+        return false;
+    }
+
+    cell_count = rows * columns;
+
+    if (cell_count > SIZE_MAX / sizeof(*buffer->cells))
+    {
+        return false;
+    }
+
+    buffer->cells = malloc(cell_count * sizeof(*buffer->cells));
+
+    if (buffer->cells == NULL)
+    {
+        return false;
+    }
+
+    buffer->rows = rows;
+    buffer->columns = columns;
+
+    screen_buffer_clear(buffer, (uint32_t)' ');
+
+    return true;
+}
+
+void screen_buffer_destroy(ScreenBuffer *buffer)
+{
+    if (buffer == NULL)
+    {
+        return;
+    }
+
+    free(buffer->cells);
+
+    buffer->cells = NULL;
+    buffer->rows = 0;
+    buffer->columns = 0;
+}
+
+void screen_buffer_clear(ScreenBuffer *buffer, uint32_t code_point)
+{
+    size_t cell_count;
+
+    if (buffer == NULL || buffer->cells == NULL)
+    {
+        return;
+    }
+
+    cell_count = buffer->rows * buffer->columns;
+
+    for (size_t index = 0; index < cell_count; ++index)
+    {
+        buffer->cells[index].code_point = code_point;
+    }
+}
+
+bool screen_buffer_set(
+    ScreenBuffer *buffer,
+    size_t row,
+    size_t column,
+    uint32_t code_point)
+{
+    size_t index;
+
+    if (buffer == NULL ||
+        buffer->cells == NULL ||
+        row >= buffer->rows ||
+        column >= buffer->columns)
+    {
+        return false;
+    }
+
+    index = row * buffer->columns + column;
+    buffer->cells[index].code_point = code_point;
+
+    return true;
+}
+
+const ScreenCell *screen_buffer_get(
+    const ScreenBuffer *buffer,
+    size_t row,
+    size_t column)
+{
+    size_t index;
+
+    if (buffer == NULL ||
+        buffer->cells == NULL ||
+        row >= buffer->rows ||
+        column >= buffer->columns)
+    {
+        return NULL;
+    }
+
+    index = row * buffer->columns + column;
+
+    return &buffer->cells[index];
+}
+```
+
+## Update `src/renderer/renderer.c`
+
+The Renderer must no longer copy a code point directly into a single `char`. Instead, it encodes each code point into one to four UTF-8 bytes.
+
+The output buffer therefore needs to accommodate more bytes than the number of screen cells. The implementation below measures the encoded frame before allocating or growing the reusable output buffer.
+
+```c
+/* src/renderer/renderer.c */
+
+#include "renderer.h"
+
+#include <errno.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static bool renderer_build_frame(
+    Renderer *renderer,
+    const EditorState *state);
+
+static bool renderer_write_frame(Renderer *renderer);
+
+static bool renderer_ensure_output_capacity(
+    Renderer *renderer,
+    size_t required);
+
+static bool renderer_write_all(
+    const char *data,
+    size_t length);
+
+static bool renderer_write_cursor_position(
+    size_t row,
+    size_t column);
+
+static size_t renderer_utf8_length(uint32_t code_point);
+
+static size_t renderer_encode_utf8(
+    uint32_t code_point,
+    char output[4]);
+
+bool renderer_init(
+    Renderer *renderer,
+    size_t rows,
+    size_t columns)
+{
+    if (renderer == NULL)
+    {
+        return false;
+    }
+
+    renderer->screen_buffer.cells = NULL;
+    renderer->screen_buffer.rows = 0;
+    renderer->screen_buffer.columns = 0;
+    renderer->output_buffer = NULL;
+    renderer->output_capacity = 0;
+
+    return screen_buffer_init(
+        &renderer->screen_buffer,
+        rows,
+        columns);
+}
+
+void renderer_destroy(Renderer *renderer)
+{
+    if (renderer == NULL)
+    {
+        return;
+    }
+
+    screen_buffer_destroy(&renderer->screen_buffer);
+
+    free(renderer->output_buffer);
+    renderer->output_buffer = NULL;
+    renderer->output_capacity = 0;
+}
+
+bool renderer_render(
+    Renderer *renderer,
+    const EditorState *state)
+{
+    bool success;
+
+    if (renderer == NULL ||
+        state == NULL ||
+        renderer->screen_buffer.cells == NULL ||
+        state->cursor.row < state->viewport.viewport_row ||
+        state->cursor.column < state->viewport.viewport_column ||
+        state->cursor.row - state->viewport.viewport_row >=
+            renderer->screen_buffer.rows ||
+        state->cursor.column - state->viewport.viewport_column >=
+            renderer->screen_buffer.columns)
+    {
+        return false;
+    }
+
+    if (!renderer_build_frame(renderer, state))
+    {
+        return false;
+    }
+
+    if (!renderer_write_all("\x1b[?25l", 6))
+    {
+        return false;
+    }
+
+    success = renderer_write_frame(renderer);
+
+    if (success)
+    {
+        success = renderer_write_cursor_position(
+            state->cursor.row - state->viewport.viewport_row,
+            state->cursor.column - state->viewport.viewport_column);
+    }
+
+    if (!renderer_write_all("\x1b[?25h", 6))
+    {
+        success = false;
+    }
+
+    return success;
+}
+
+static bool renderer_build_frame(
+    Renderer *renderer,
+    const EditorState *state)
+{
+    if (renderer == NULL ||
+        state == NULL ||
+        renderer->screen_buffer.cells == NULL)
+    {
+        return false;
+    }
+
+    screen_buffer_clear(
+        &renderer->screen_buffer,
+        (uint32_t)' ');
+
+    for (size_t screen_row = 0;
+         screen_row < renderer->screen_buffer.rows;
+         ++screen_row)
+    {
+        size_t document_row =
+            state->viewport.viewport_row + screen_row;
+
+        const DocumentLine *line;
+
+        if (document_row >= state->document.line_count)
+        {
+            break;
+        }
+
+        line = &state->document.lines[document_row];
+
+        for (size_t screen_column = 0;
+             screen_column < renderer->screen_buffer.columns;
+             ++screen_column)
+        {
+            size_t document_column =
+                state->viewport.viewport_column + screen_column;
+
+            if (document_column >= line->length)
+            {
+                break;
+            }
+
+            if (!screen_buffer_set(
+                    &renderer->screen_buffer,
+                    screen_row,
+                    screen_column,
+                    line->data[document_column]))
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+static bool renderer_ensure_output_capacity(
+    Renderer *renderer,
+    size_t required)
+{
+    char *larger;
+
+    if (renderer == NULL)
+    {
+        return false;
+    }
+
+    if (required <= renderer->output_capacity)
+    {
+        return true;
+    }
+
+    larger = realloc(renderer->output_buffer, required);
+
+    if (larger == NULL)
+    {
+        return false;
+    }
+
+    renderer->output_buffer = larger;
+    renderer->output_capacity = required;
+
+    return true;
+}
+
+/*
+ * Return the number of bytes required to encode a Unicode scalar value
+ * as UTF-8. Invalid scalar values are rejected.
+ */
+static size_t renderer_utf8_length(uint32_t code_point)
+{
+    if (code_point <= UINT32_C(0x7F))
+    {
+        return 1;
+    }
+
+    if (code_point <= UINT32_C(0x7FF))
+    {
+        return 2;
+    }
+
+    if (code_point >= UINT32_C(0xD800) &&
+        code_point <= UINT32_C(0xDFFF))
+    {
+        return 0;
+    }
+
+    if (code_point <= UINT32_C(0xFFFF))
+    {
+        return 3;
+    }
+
+    if (code_point <= UINT32_C(0x10FFFF))
+    {
+        return 4;
+    }
+
+    return 0;
+}
+
+/*
+ * Encode one Unicode scalar value into a four-byte output array.
+ * The returned length is zero if the value is invalid.
+ */
+static size_t renderer_encode_utf8(
+    uint32_t code_point,
+    char output[4])
+{
+    size_t length = renderer_utf8_length(code_point);
+
+    if (length == 0 || output == NULL)
+    {
+        return 0;
+    }
+
+    if (length == 1)
+    {
+        output[0] = (char)code_point;
+    }
+    else if (length == 2)
+    {
+        output[0] = (char)(
+            UINT32_C(0xC0) | (code_point >> 6));
+
+        output[1] = (char)(
+            UINT32_C(0x80) | (code_point & UINT32_C(0x3F)));
+    }
+    else if (length == 3)
+    {
+        output[0] = (char)(
+            UINT32_C(0xE0) | (code_point >> 12));
+
+        output[1] = (char)(
+            UINT32_C(0x80) |
+            ((code_point >> 6) & UINT32_C(0x3F)));
+
+        output[2] = (char)(
+            UINT32_C(0x80) | (code_point & UINT32_C(0x3F)));
+    }
+    else
+    {
+        output[0] = (char)(
+            UINT32_C(0xF0) | (code_point >> 18));
+
+        output[1] = (char)(
+            UINT32_C(0x80) |
+            ((code_point >> 12) & UINT32_C(0x3F)));
+
+        output[2] = (char)(
+            UINT32_C(0x80) |
+            ((code_point >> 6) & UINT32_C(0x3F)));
+
+        output[3] = (char)(
+            UINT32_C(0x80) | (code_point & UINT32_C(0x3F)));
+    }
+
+    return length;
+}
+
+static bool renderer_write_frame(Renderer *renderer)
+{
+    const ScreenBuffer *buffer;
+    char sequence[64];
+    size_t frame_length = 0;
+    size_t position = 0;
+
+    if (renderer == NULL)
+    {
+        return false;
+    }
+
+    buffer = &renderer->screen_buffer;
+
+    if (buffer->cells == NULL)
+    {
+        return false;
+    }
+
+    /*
+     * First pass: measure the ANSI cursor-position sequences and
+     * UTF-8-encoded cell contents.
+     */
+    for (size_t row = 0; row < buffer->rows; ++row)
+    {
+        int sequence_length;
+
+        sequence_length = snprintf(
+            sequence,
+            sizeof(sequence),
+            "\x1b[%zu;1H",
+            row + 1);
+
+        if (sequence_length < 0 ||
+            (size_t)sequence_length >= sizeof(sequence))
+        {
+            return false;
+        }
+
+        if (frame_length >
+            SIZE_MAX - (size_t)sequence_length)
+        {
+            return false;
+        }
+
+        frame_length += (size_t)sequence_length;
+
+        for (size_t column = 0;
+             column < buffer->columns;
+             ++column)
+        {
+            const ScreenCell *cell =
+                screen_buffer_get(buffer, row, column);
+
+            size_t encoded_length;
+
+            if (cell == NULL)
+            {
+                return false;
+            }
+
+            encoded_length =
+                renderer_utf8_length(cell->code_point);
+
+            if (encoded_length == 0 ||
+                frame_length > SIZE_MAX - encoded_length)
+            {
+                return false;
+            }
+
+            frame_length += encoded_length;
+        }
+    }
+
+    if (!renderer_ensure_output_capacity(
+            renderer,
+            frame_length))
+    {
+        return false;
+    }
+
+    /*
+     * Second pass: construct the complete terminal output.
+     */
+    for (size_t row = 0; row < buffer->rows; ++row)
+    {
+        int sequence_length;
+
+        sequence_length = snprintf(
+            sequence,
+            sizeof(sequence),
+            "\x1b[%zu;1H",
+            row + 1);
+
+        if (sequence_length < 0 ||
+            (size_t)sequence_length >= sizeof(sequence))
+        {
+            return false;
+        }
+
+        memcpy(
+            renderer->output_buffer + position,
+            sequence,
+            (size_t)sequence_length);
+
+        position += (size_t)sequence_length;
+
+        for (size_t column = 0;
+             column < buffer->columns;
+             ++column)
+        {
+            const ScreenCell *cell =
+                screen_buffer_get(buffer, row, column);
+
+            char encoded[4];
+            size_t encoded_length;
+
+            if (cell == NULL)
+            {
+                return false;
+            }
+
+            encoded_length = renderer_encode_utf8(
+                cell->code_point,
+                encoded);
+
+            if (encoded_length == 0)
+            {
+                return false;
+            }
+
+            memcpy(
+                renderer->output_buffer + position,
+                encoded,
+                encoded_length);
+
+            position += encoded_length;
+        }
+    }
+
+    return renderer_write_all(
+        renderer->output_buffer,
+        frame_length);
+}
+
+static bool renderer_write_all(
+    const char *data,
+    size_t length)
+{
+    size_t written = 0;
+
+    if (data == NULL)
+    {
+        return false;
+    }
+
+    while (written < length)
+    {
+        ssize_t result = write(
+            STDOUT_FILENO,
+            data + written,
+            length - written);
+
+        if (result < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        if (result == 0)
+        {
+            return false;
+        }
+
+        written += (size_t)result;
+    }
+
+    return true;
+}
+
+static bool renderer_write_cursor_position(
+    size_t row,
+    size_t column)
+{
+    char sequence[64];
+
+    int sequence_length = snprintf(
+        sequence,
+        sizeof(sequence),
+        "\x1b[%zu;%zuH",
+        row + 1,
+        column + 1);
+
+    if (sequence_length < 0 ||
+        (size_t)sequence_length >= sizeof(sequence))
+    {
+        return false;
+    }
+
+    return renderer_write_all(
+        sequence,
+        (size_t)sequence_length);
+}
+```
+
+## Build and run regression tests
+
+From the repository root:
+
+```bash
+cmake -S . -B build/debug
+cmake --build build/debug -j2
+ctest --test-dir build/debug --output-on-failure
+```
+
+The existing `smoke` and `editing` tests should continue to pass after applying the Document and Renderer changes consistently.
+
+To run the editor, use:
+
+```bash
+./build/debug/tedit
+```
+
+The program should still accept the existing ASCII input, navigate the Document, and redraw the screen. The new UTF-8 encoding path is now available for code points stored in the Screen Buffer, but file-loading integration and Unicode display-width behavior still require separate verification.
+
+## Invariants
+
+```
+Each ScreenCell stores one Unicode code point.
+
+The Document and Screen Buffer do not store UTF-8 byte sequences
+as their logical character representation.
+
+The Renderer encodes each valid code point at the terminal boundary.
+
+The Renderer remains a read-only consumer of Editor State.
+
+The output buffer is sized for encoded UTF-8 bytes, not merely
+the number of screen cells.
+
+Cursor and Viewport positions remain logical code-point positions.
+```
+
+**Next:** Section 50.5 will implement the File Manager's UTF-8 decoding and line-ending normalization. It will load into a temporary Document so invalid input, read failures, or allocation failures cannot partially replace the current contents.

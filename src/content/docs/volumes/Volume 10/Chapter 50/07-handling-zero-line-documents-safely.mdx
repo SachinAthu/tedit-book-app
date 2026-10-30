@@ -1,0 +1,137 @@
+---
+title: 50.7 Handling Zero-Line Documents Safely
+---
+
+The File Manager can now load a zero-byte file as a `Document` with no logical lines. Before connecting file loading to the application startup sequence, we need to make sure the existing editing and rendering code can handle that state safely.
+
+This is a distinct state from a new, unsaved document:
+
+- New document: one empty logical line, ready for editing.
+- Empty file: zero logical lines, faithfully representing a file containing no bytes.
+- Non-empty file: one or more logical lines loaded from the file.
+
+We should preserve that distinction rather than silently adding an empty line during loading. Doing so keeps the in-memory representation consistent with the file-loading decisions already established for Chapter 50.
+
+## Implementation goal
+
+Make the editor safe when `Document.line_count == 0`, without changing the normal behavior of documents that already contain lines.
+
+The milestone must address three boundaries:
+
+1. Document operations: an edit must not dereference a line that does not exist.
+2. Rendering: the Renderer must draw a valid empty document area without attempting to retrieve a nonexistent line.
+3. Cursor and Viewport: their coordinates must remain valid for the terminal, even when there is no document row to display.
+
+The intended state transition is:
+
+```
+Empty file loaded
+        |
+        v
+Document has zero lines
+        |
+        +---- Render ----> Empty document area
+        |
+        +---- Insert ----> Create first logical line
+        |
+        +---- Enter -----> Apply the defined empty-document
+                            line-creation rule
+```
+
+The important principle is that loading should preserve the file's representation, while editing should create document structure when necessary.
+
+## Files changed in this milestone
+
+| File                                              | Change                                                           |
+| ------------------------------------------------- | ---------------------------------------------------------------- |
+| `src/document/document.c`                         | Make insertion and line splitting safe for a zero-line Document. |
+| `src/document/document.h`                         | Document the supported zero-line behavior.                       |
+| `src/renderer/renderer.c`                         | Render zero document rows without dereferencing a missing line.  |
+| `tests/test_editing.c` or a focused new test file | Add regression tests for empty-document editing.                 |
+
+Because the repository snapshot available here predates the latest code-point changes you made, I can't safely provide complete replacement versions of these files without risking overwriting your working implementation. The following are the required behavioral changes and tests for the current code.
+
+## Document insertion
+
+`document_insert_character()` must handle the zero-line state before it accesses a `DocumentLine`.
+
+Its behavior should be:
+
+```
+If Document is invalid:
+    Fail.
+
+If Document has zero lines:
+    Accept only row 0, column 0.
+    Create the first empty logical line.
+    Insert the code point at column 0.
+    Return success or a clear failure.
+
+Otherwise:
+    Use the existing insertion implementation.
+```
+
+Creating the first line and inserting the character must be failure-safe. If allocating the line or its character storage fails, the Document must remain valid; it must never contain a partially initialized line.
+
+The operation must continue to reject invalid Unicode scalar values according to the existing Document API. It must not change the behavior of ordinary insertion into an existing line.
+
+## Line splitting
+
+`document_split_line()` needs a defined zero-line case as well.
+
+For a zero-line Document, accept only position `(0, 0)`. Create two empty logical lines. This represents pressing Enter in an empty document: there is now one logical line boundary, which the existing serialization policy will later represent as an LF byte.
+
+For documents that already contain lines, retain the existing split behavior.
+
+Important: line creation should be transactional. If either allocation needed to create the two lines fails, clean up any temporary allocations and leave the original zero-line Document unchanged.
+
+## Renderer behavior
+
+The Renderer must not assume that `document.line_count` is at least one.
+
+When the Document has zero lines, the Renderer should:
+
+- clear the document area as part of its normal frame construction;
+- skip document-line rendering;
+- keep the terminal cursor within valid screen coordinates;
+- continue using the established full-redraw approach.
+
+Do not create a fake empty line inside the Renderer. Rendering is a read-only operation and must not modify the Document.
+
+## Regression tests
+
+Add tests for these cases before moving on to application startup integration.
+
+| Test                                                      | Expected result                              |
+| --------------------------------------------------------- | -------------------------------------------- |
+| Render a zero-line Document                               | Succeeds without invalid line access.        |
+| Insert a code point at `(0, 0)` into a zero-line Document | Creates one line containing that code point. |
+| Insert at an invalid position in a zero-line Document     | Fails without corrupting the Document.       |
+| Split a zero-line Document at `(0, 0)`                    | Creates two empty lines.                     |
+| Split at an invalid position in a zero-line Document      | Fails without changing the Document.         |
+| Edit an ordinary one-line Document                        | Existing behavior remains unchanged.         |
+
+Run the existing build and tests, plus the new regression tests:
+
+```bash
+cmake -S . -B build/debug
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+These are the verification commands for you to run against your current working tree; I have not verified this milestone against your latest source files.
+
+## Invariants established
+
+After this milestone:
+
+- A zero-line Document is a valid state.
+- No Document operation dereferences a nonexistent line.
+- A successful first insertion creates a valid logical line.
+- A failed operation does not leave a partially constructed Document.
+- The Renderer does not mutate the Document or invent lines.
+- Existing editing behavior remains unchanged for non-empty Documents.
+
+## What comes next
+
+Section 50.8 — Loading a File During Application Initialization. Once the zero-line behavior is implemented and tested, we can connect the File Manager to `main()`: accept an optional filename, load it before the first render, reset Cursor and Viewport after a successful load, and keep the Dirty Flag clear. A missing or invalid file must produce a controlled startup failure rather than silently opening a different document.
