@@ -1,0 +1,252 @@
+---
+title: 44.1 From Theory to Implementation
+description: "Explains how Volume X turns the established architecture into a working C program, and prepares the repository, build, and workflow before implementation begins."
+---
+
+The preceding volumes established the editor before we wrote it.
+
+We studied terminal behavior, input processing, text representation, cursor movement, rendering, scrolling, file handling, search, undo and redo, configuration, multiple editing contexts, testing, debugging, portability, and other engineering concerns. Along the way, architectural decisions were recorded and refined through the Software Requirements Specification, architecture documentation, runtime model, project structure, coding standards, and Architecture Decision Records.
+
+That work now changes character.
+
+Volume X is where those decisions become a working program.
+
+The purpose of this chapter is not to introduce another architectural design. The architecture has already been established. Instead, this chapter prepares the development environment and implementation repository so that the implementation can proceed in a controlled and traceable manner.
+
+## From Decisions to Code
+
+A useful distinction must be made between the earlier volumes and the implementation volume.
+
+The earlier volumes primarily answer questions such as:
+
+- What should the editor do?
+- How should its components be organized?
+- Which data structures should represent its state?
+- How should input flow through the system?
+- How should rendering work?
+- How should files be saved safely?
+- What invariants must the system preserve?
+- What trade-offs justify the selected designs?
+
+Volume X asks a different question:
+
+> How do we turn those decisions into a working C program?
+
+The implementation therefore does not begin with an empty design space.
+
+The implementation is governed by the decisions already made.
+
+```text
+Requirements
+     │
+     ▼
+Architecture
+     │
+     ▼
+Design Decisions
+     │
+     ▼
+Architecture Decision Records
+     │
+     ▼
+Implementation
+     │
+     ▼
+Tests
+     │
+     ▼
+Working Editor
+```
+
+This relationship is important. The implementation is not a second opportunity to casually redesign the editor. If implementation reveals a genuine problem in an existing decision, that problem must be investigated deliberately rather than solved silently in source code.
+
+The intended relationship is:
+
+```text
+Book Chapter
+      │
+      ▼
+Architectural Decision
+      │
+      ▼
+Implementation
+      │
+      ▼
+Test
+      │
+      ▼
+Result
+```
+
+This provides traceability between the reasoning in the book and the program that eventually implements it. The implementation project therefore remains connected to the architectural material rather than becoming an independent coding exercise.
+
+## The Implementation Repository
+
+The implementation repository contains the actual C program, headers, tests, build configuration, implementation documentation, and Git history.
+
+This separation gives the two artifacts different responsibilities.
+
+```text
+Implementation Repository
+────────────────────────────
+C source
+Headers
+Tests
+CMake
+Implementation notes
+Git history
+```
+
+## Implementation Is Incremental
+
+A complete text editor will eventually contain many interacting components. Attempting to implement all of them at once would make it difficult to determine where a problem originated.
+
+Instead, implementation proceeds through small, verifiable steps.
+
+The project's implementation workflow is:
+
+```text
+Understand
+    │
+    ▼
+Design
+    │
+    ▼
+Decide
+    │
+    ▼
+Implement a Small Piece
+    │
+    ▼
+Compile
+    │
+    ▼
+Test
+    │
+    ▼
+Run
+    │
+    ▼
+Inspect
+    │
+    ▼
+Refactor if Necessary
+    │
+    ▼
+Record Result
+    │
+    ▼
+Git Commit
+```
+
+This workflow is deliberately repetitive. Each step produces evidence that the previous step is working before additional complexity is introduced.
+
+For example, implementing terminal initialization should not simultaneously introduce text editing, cursor movement, rendering, file loading, and configuration. Each capability should be introduced when its corresponding implementation milestone is reached.
+
+This makes failures easier to localize and keeps the implementation understandable.
+
+## Implementation Does Not Replace Understanding
+
+The implementation phase also changes the role of the developer.
+
+Writing the code is not the same as copying a finished implementation. The developer must understand the architecture, make the implementation decisions required by the existing design, write the code, compile it, observe its behavior, and verify it with tests.
+
+The implementation project therefore follows a deliberate principle:
+
+> **The developer constructs the system; the implementation process provides guidance, verification, and feedback.**
+
+This is particularly important for a book whose purpose is to teach systems programming and software engineering rather than merely provide a finished editor source tree.
+
+The implementation should remain understandable enough that a developer can explain:
+
+- why each major component exists,
+- which part of the architecture owns a particular responsibility,
+- how data moves through the system,
+- which invariants the code preserves,
+- why a particular implementation choice was made, and
+- how the behavior is verified.
+
+## When Implementation Reveals a Problem
+
+Theory-first development does not mean that every decision made earlier must remain unchanged forever.
+
+Implementation can reveal problems that were difficult to see during design.
+
+For example, an implementation might reveal that:
+
+- an interface is insufficient for the required operation,
+- two components have been given overlapping responsibilities,
+- an assumption about terminal behavior was incorrect,
+- a data structure creates an unexpected complexity problem, or
+- an architectural boundary makes a necessary operation unnecessarily difficult.
+
+Such discoveries are valuable, but they must be handled deliberately.
+
+The implementation project establishes the following process:
+
+```text
+Implementation reveals problem
+            │
+            ▼
+        Investigate
+            │
+            ▼
+     Discuss alternatives
+            │
+            ▼
+   Evaluate consequences
+            │
+            ▼
+   Update or create ADR
+            │
+            ▼
+     Update book documents
+            │
+            ▼
+      Update implementation
+```
+
+The important rule is that **code must not silently become the source of architecture**. If an architectural decision genuinely needs to change, the decision should be recorded and the relevant documentation updated before the implementation quietly diverges from the design.
+
+## The Goal of Chapter 44
+
+Before implementing the editor itself, we need a reliable place in which to build it.
+
+By the end of this chapter, the implementation environment should provide:
+
+- a dedicated implementation repository,
+- the initial project structure,
+- a working CMake build,
+- an established compiler and warning policy,
+- development and release build configurations,
+- a testing baseline,
+- Git version control,
+- implementation status and project-context documentation, and
+- a verified initial build.
+
+The result should be a repository that can reliably produce the starting program.
+
+It may not yet be an editor.
+
+That is intentional.
+
+The purpose of this preparation is to establish a trustworthy foundation so that when Chapter 45 begins implementing the runtime, we can distinguish problems in the editor from problems in the development environment.
+
+The transition can therefore be summarized as:
+
+```text
+Volumes I–IX
+Theory + Architecture + Engineering Decisions
+                    │
+                    ▼
+Chapter 44
+Implementation Environment + Repository
+                    │
+                    ▼
+Chapter 45+
+Working Editor
+```
+
+The design phase is complete enough to begin implementation.
+
+Now we build the environment in which that implementation can take place.

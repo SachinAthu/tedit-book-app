@@ -1,0 +1,183 @@
+---
+title: 44.3 Creating the Implementation Repository
+description: "Creates the implementation repository, establishes its initial directory structure, README, and .gitignore, and makes the first baseline commit."
+---
+
+The development workspace provides the environment in which the editor will be built. The next step is to establish the implementation repository itself.
+
+The implementation repository is the authoritative home for the editor's source code, tests, build configuration, and implementation-specific documentation. It is intentionally separate from the repository containing the book.
+
+This separation was established as part of the implementation strategy for Volume X. The book repository remains responsible for the written material and architectural decisions, while the implementation repository contains the working program and its development history.
+
+## Creating the Repository
+
+The implementation repository should be created before the first implementation milestone begins.
+
+A Git repository can be initialized with:
+
+```bash
+mkdir terminal-editor
+cd terminal-editor
+git init
+```
+
+The exact repository name is less important than establishing a dedicated repository whose purpose is clear.
+
+The repository should begin as an intentionally small project. We should not create every directory and source file that the final editor will eventually contain merely because the architecture already describes them.
+
+The implementation structure should grow as implementation milestones require it.
+
+This keeps the initial project understandable and avoids creating empty modules that have no implementation purpose yet.
+
+## The Repository as an Implementation Boundary
+
+The repository establishes a useful boundary around the implementation.
+
+Everything required to build, test, understand, and maintain the implementation should be discoverable from the project itself.
+
+Conceptually:
+
+```text
+Implementation Repository
+│
+├── Source Code
+├── Public Interfaces
+├── Tests
+├── Build Configuration
+├── Implementation Documentation
+└── Version History
+```
+
+External tools such as the compiler, CMake, and Git are development dependencies, but the project itself should contain the configuration necessary to tell those tools how the editor is built and tested.
+
+This makes the project reproducible rather than dependent on a collection of undocumented commands performed manually by the developer.
+
+## Initial Repository Contents
+
+At this stage, the repository does not need to contain the complete editor.
+
+Instead, we establish the initial project-level files and directories that will support development.
+
+The implementation project context identifies the implementation repository as containing source code, headers, tests, CMake configuration, and implementation documentation.
+
+A suitable initial structure is therefore:
+
+```text
+terminal-editor/
+├── src/
+├── tests/
+├── docs/
+├── CMakeLists.txt
+├── README.md
+└── .gitignore
+```
+
+This is a starting structure, not a promise that every directory will remain unchanged.
+
+As implementation progresses, modules can be introduced according to the architecture and project structure established earlier.
+
+For example, the editor's architectural modules will eventually be represented by implementation units such as:
+
+```text
+src/
+├── command/
+├── cursor/
+├── document/
+├── file/
+├── input/
+├── renderer/
+├── state/
+├── terminal/
+└── viewport/
+```
+
+The important distinction is that **architecture defines responsibilities; the implementation repository gives those responsibilities concrete source files**.
+
+## The README
+
+The repository should contain a concise `README.md`.
+
+Its purpose is not to reproduce the book.
+
+Instead, it should answer practical implementation questions:
+
+- What is this repository?
+- What is being implemented?
+- What platform does it target?
+- What language and standard are used?
+- How is the project built?
+- How are tests run?
+- Where can implementation status be found?
+
+The README therefore acts as the entry point for someone encountering the implementation repository without the surrounding conversation.
+
+Detailed architectural reasoning remains in the book and the associated project documentation.
+
+## Ignoring Generated Files
+
+The repository should also establish a `.gitignore` before generated build artifacts appear.
+
+The primary principle is simple:
+
+> **Source and project configuration belong in version control; generated build artifacts generally do not.**
+
+For example, an out-of-source build directory should not become part of the repository's source history.
+
+A typical project may therefore contain:
+
+```text
+terminal-editor/
+├── src/
+├── tests/
+├── docs/
+├── CMakeLists.txt
+├── README.md
+├── .gitignore
+└── build/          ← generated, not committed
+```
+
+The exact ignore rules depend on the selected development tools, but the architectural principle remains independent of those tools.
+
+## The First Repository Commit
+
+Once the initial repository structure exists, it should be committed.
+
+The first commit establishes the initial implementation baseline.
+
+It should represent a meaningful state such as:
+
+```text
+Initial implementation project structure
+```
+
+This is different from committing a partially working editor.
+
+At this point, there may be no useful editor functionality at all.
+
+That is acceptable.
+
+The commit establishes a known starting point from which subsequent implementation changes can be measured.
+
+Future commits should represent focused implementation changes rather than large collections of unrelated modifications. The implementation project recommends meaningful commits such as adding terminal state management, enabling raw mode, restoring terminal state, or adding a corresponding test.
+
+## Repository State Before Implementation
+
+After this stage, the project should have a clear boundary and a known initial state:
+
+```text
+Implementation Repository
+      │
+      ├── Initial structure
+      ├── README
+      ├── .gitignore
+      └── Git history
+      │
+      ▼
+Ready for build configuration
+```
+
+The repository is now established, but it is not yet a buildable editor.
+
+The next step is therefore to connect the repository to the build system.
+
+That begins with CMake.

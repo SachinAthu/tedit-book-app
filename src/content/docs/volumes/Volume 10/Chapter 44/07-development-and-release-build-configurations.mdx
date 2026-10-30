@@ -1,0 +1,329 @@
+---
+title: 44.7 Development and Release Build Configurations
+description: "Creates separate development and release CMake build configurations and verifies that both produce a valid executable."
+---
+
+The compiler policy establishes how the source code should be compiled. The next step is to establish **which kind of build** we are producing.
+
+The implementation project distinguishes between two primary build configurations:
+
+- **Development** — used during normal implementation, debugging, and testing.
+- **Release** — used when producing an optimized build intended to represent the finished program.
+
+This separation was established by ADR-031. The purpose is to prevent development and release requirements from becoming mixed together and to give each build configuration a clearly defined role.
+
+## Why Two Build Modes?
+
+Development and release builds have different priorities.
+
+During development, the most valuable properties are:
+
+- useful compiler diagnostics,
+- debugging information,
+- predictable behavior during testing,
+- easy debugging, and
+- fast iteration.
+
+A release build has a different purpose:
+
+- optimization,
+- reduced debugging overhead,
+- and production-oriented output.
+
+The distinction can be represented as:
+
+```text
+                 Build Configuration
+                        │
+              ┌─────────┴─────────┐
+              ▼                   ▼
+        Development            Release
+              │                   │
+       Debugging              Optimization
+       Diagnostics            Final behavior
+       Testing                Release artifact
+       Iteration
+```
+
+Neither configuration is inherently "better." They answer different development needs.
+
+## Development Builds
+
+The development configuration is the normal configuration while building the editor.
+
+It should favor observability over optimization.
+
+A development build should therefore retain debugging information and the strong compiler diagnostics established in the previous section.
+
+Conceptually:
+
+```text
+Development
+     │
+     ├── C99
+     ├── Strong warnings
+     ├── Debug information
+     ├── Minimal optimization
+     └── Suitable for testing/debugging
+```
+
+This configuration is particularly important during the early implementation stages.
+
+When a terminal-state bug, cursor calculation error, memory problem, or rendering defect appears, we want the resulting executable to remain easy to inspect with development tools.
+
+## Release Builds
+
+The release configuration represents the program as it would be built for normal distribution or final execution.
+
+It therefore places greater emphasis on optimization and release-oriented behavior.
+
+Conceptually:
+
+```text
+Release
+     │
+     ├── C99
+     ├── Appropriate diagnostics
+     ├── Optimization
+     └── Release-oriented executable
+```
+
+A release build should not be confused with "a build in which warnings are ignored."
+
+The compiler policy still applies. Release configuration changes the build's intended optimization and debugging characteristics; it does not remove the project's quality requirements.
+
+## CMake Build Types
+
+CMake provides a standard mechanism for selecting build configurations through `CMAKE_BUILD_TYPE` for single-configuration generators.
+
+For example:
+
+```bash
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
+```
+
+and:
+
+```bash
+cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
+```
+
+The resulting build directories can remain separate:
+
+```text
+build/
+├── debug/
+└── release/
+```
+
+This has a useful property: the development and release artifacts do not overwrite one another.
+
+The exact build directory names are not architecturally significant. What matters is that the configurations remain distinguishable and reproducible.
+
+## Configuring the Development Build
+
+The development configuration should be configured first because it is the configuration we will use throughout most of the implementation.
+
+For a CMake project using a single-configuration generator:
+
+```bash
+cmake \
+    -S . \
+    -B build/debug \
+    -DCMAKE_BUILD_TYPE=Debug
+```
+
+Then build it:
+
+```bash
+cmake --build build/debug
+```
+
+A successful result establishes that:
+
+```text
+CMake
+  │
+  ▼
+Debug Configuration
+  │
+  ▼
+Compiler
+  │
+  ▼
+Executable
+```
+
+The executable should then be run to verify that the development build produces a valid program.
+
+At this stage, the program may still be only the minimal initial executable created in the previous section.
+
+That is sufficient.
+
+## Configuring the Release Build
+
+The release configuration should then be created independently:
+
+```bash
+cmake \
+    -S . \
+    -B build/release \
+    -DCMAKE_BUILD_TYPE=Release
+```
+
+Build it with:
+
+```bash
+cmake --build build/release
+```
+
+This verifies that the project does not depend accidentally on development-only configuration.
+
+The two configurations should therefore both reach the same fundamental result:
+
+```text
+             Source
+                │
+        ┌───────┴───────┐
+        ▼               ▼
+     Debug            Release
+        │               │
+        ▼               ▼
+     Build             Build
+        │               │
+        └───────┬───────┘
+                ▼
+        Valid Executable
+```
+
+The internal compiler behavior may differ, but both configurations must remain valid ways of building the project.
+
+## Do Not Depend on a Single Build Directory
+
+Using separate build directories is especially useful during development.
+
+Suppose the developer configures the project once in `build/` and later changes the build type. Generated CMake state can make it less obvious which configuration is currently active.
+
+Separate directories make the distinction explicit:
+
+```text
+build/debug/
+    → Development configuration
+
+build/release/
+    → Release configuration
+```
+
+This also allows both configurations to coexist.
+
+The developer can build the debug version while retaining a previously generated release build for comparison or testing.
+
+## Verification of Both Modes
+
+Creating two CMake configurations is not enough.
+
+Both configurations should be **verified**.
+
+The minimum verification sequence is:
+
+```text
+Development
+    │
+    ├── Configure
+    ├── Build
+    └── Run
+          │
+          ▼
+       Success
+
+Release
+    │
+    ├── Configure
+    ├── Build
+    └── Run
+          │
+          ▼
+       Success
+```
+
+At this stage, verification is intentionally simple.
+
+We are not yet testing editor behavior. We are verifying the build infrastructure itself.
+
+If the development build succeeds but the release build fails, the problem should be fixed before implementation proceeds.
+
+Likewise, if the release configuration accidentally depends on files generated only by the development build, that dependency should be removed.
+
+## Multi-Configuration Generators
+
+The `CMAKE_BUILD_TYPE` approach applies to **single-configuration generators**.
+
+Some environments use multi-configuration generators, where Debug and Release are selected at build time rather than during the configuration step.
+
+For such a generator, the workflow can instead use:
+
+```bash
+cmake -S . -B build
+cmake --build build --config Debug
+```
+
+and:
+
+```bash
+cmake --build build --config Release
+```
+
+The important concept is not the exact command.
+
+The important concept is that the project provides the two defined configurations and that each can be built independently.
+
+## Configuration Is Part of Reproducibility
+
+The build configuration should not depend on undocumented settings from the developer's machine.
+
+A reproducible project should make the important differences explicit:
+
+```text
+Project
+  │
+  ├── C99 requirement
+  ├── Warning policy
+  ├── Development configuration
+  └── Release configuration
+```
+
+This means another developer can inspect the repository and understand what the two build modes represent.
+
+It also means that a future debugging session can identify which configuration produced a particular executable.
+
+## The Initial Build Baseline
+
+At the end of this section, the project should have two verified build paths:
+
+```text
+                 Implementation Source
+                         │
+                ┌────────┴────────┐
+                ▼                 ▼
+          Development           Release
+                │                 │
+             Debug             Optimized
+             Build               Build
+                │                 │
+                ▼                 ▼
+          Verified             Verified
+          Executable           Executable
+```
+
+This gives us an important baseline before substantial implementation begins.
+
+The project now has:
+
+- a defined C99 language standard,
+- a compiler warning policy,
+- a development configuration,
+- a release configuration,
+- reproducible CMake commands, and
+- independently verified build modes.
+
+The next step is to establish the **testing baseline**. Before implementing editor functionality, we should have a way to build and execute tests so that every later implementation milestone can be verified rather than judged only by whether the program appears to run.

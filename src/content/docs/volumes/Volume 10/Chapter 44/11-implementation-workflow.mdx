@@ -1,0 +1,509 @@
+---
+title: 44.11 The Implementation Workflow
+description: "Defines the incremental implementation workflow—understand, design, decide, implement, compile, test, run, inspect, record, and commit."
+---
+
+A development environment is useful only when it supports a disciplined way of working.
+
+By this point, the implementation project has a repository, build system, compiler policy, development and release configurations, testing infrastructure, and project-context documentation. The next step is to define how these pieces are used together whenever a new part of the editor is implemented.
+
+The implementation project defines a repeatable workflow:
+
+```text
+Understand
+    ↓
+Design
+    ↓
+Decide
+    ↓
+Implement
+    ↓
+Compile
+    ↓
+Test
+    ↓
+Run
+    ↓
+Inspect
+    ↓
+Record
+    ↓
+Commit
+```
+
+This cycle is the basic working method for Volume X. It is deliberately incremental: each implementation step should produce evidence before the next step adds more complexity.
+
+## Understand
+
+Every implementation task begins by understanding what is being built.
+
+The relevant requirements, architecture, previous chapter, and applicable ADRs should be identified before writing code.
+
+For example, if the task is terminal initialization, we should first understand:
+
+- what the terminal component is responsible for,
+- what terminal state the editor must manage,
+- which architectural layer owns that responsibility,
+- which ADRs govern terminal behavior, and
+- what behavior must eventually be tested.
+
+The goal is not to memorize the entire book before writing code.
+
+The goal is to understand the **specific boundary and responsibility of the implementation step**.
+
+```text
+Implementation Task
+       │
+       ▼
+Relevant Requirements
+       │
+       ▼
+Relevant Architecture
+       │
+       ▼
+Relevant Decisions
+```
+
+This prevents implementation from beginning with an incomplete understanding of the problem.
+
+## Design
+
+Once the requirement is understood, determine how the specific implementation should work.
+
+The architecture already provides the major structure. The design step therefore operates within those boundaries.
+
+For example, if implementing terminal state management, we might determine:
+
+```text
+Terminal State
+     │
+     ├── Capture original state
+     ├── Apply required state
+     └── Restore original state
+```
+
+The design should identify:
+
+- required data,
+- ownership,
+- interfaces,
+- control flow,
+- error handling,
+- and relevant invariants.
+
+The design should remain proportional to the implementation task.
+
+A small function does not require a large design document. A component with significant state or architectural consequences may require considerably more analysis.
+
+## Decide
+
+Some implementation tasks contain choices that cannot be resolved merely by translating the architecture into code.
+
+A decision may involve:
+
+- alternative APIs,
+- data representation,
+- error handling,
+- ownership,
+- performance,
+- portability,
+- or interaction between modules.
+
+These decisions should be made consciously.
+
+The distinction between **design** and **decision** is useful:
+
+```text
+Design
+    → How can this be implemented?
+
+Decision
+    → Which implementation approach should we choose?
+```
+
+If the decision changes an established architectural choice, it must not simply be hidden inside the implementation.
+
+The implementation project defines a process for architectural changes:
+
+```text
+Problem
+   ↓
+Investigate
+   ↓
+Evaluate Alternatives
+   ↓
+Update/Create ADR
+   ↓
+Update Documentation
+   ↓
+Update Implementation
+```
+
+Code should not silently become the source of architecture.
+
+## Implement
+
+Only after the required understanding and decisions are established should the code be written.
+
+Implementation should proceed in **small units**.
+
+For example, instead of attempting to implement the entire terminal subsystem at once:
+
+```text
+Terminal Subsystem
+    │
+    ├── State representation
+    ├── Save original state
+    ├── Enter required mode
+    ├── Restore state
+    └── Error handling
+```
+
+each meaningful unit can be implemented and verified progressively.
+
+Small implementation units make failures easier to localize and make Git history more meaningful.
+
+The implementation project explicitly emphasizes small pieces of work rather than attempting to construct the complete editor in a single step.
+
+## Compile
+
+After implementation, compile immediately.
+
+Do not accumulate a large amount of uncompiled code.
+
+The compiler provides the first verification layer:
+
+```text
+Source
+  │
+  ▼
+Compiler
+  │
+  ├── Error → Fix
+  │
+  └── Success
+         │
+         ▼
+       Test
+```
+
+Compilation errors should be resolved before proceeding.
+
+Compiler warnings should also be investigated according to the warning policy established earlier.
+
+This creates a short feedback loop between implementation and verification.
+
+## Test
+
+Once the code compiles, test its behavior.
+
+The appropriate level of testing depends on what was implemented.
+
+A small pure function may require a unit test.
+
+A component involving several modules may require an integration test.
+
+A behavior involving the actual terminal may require a higher-level test or controlled manual verification.
+
+The testing strategy therefore grows with the implementation:
+
+```text
+Implementation
+      │
+      ▼
+Appropriate Test
+      │
+      ├── Unit
+      ├── Integration
+      └── End-to-End
+```
+
+Tests should verify the behavior that matters rather than merely increasing the number of test cases.
+
+## Run
+
+Some behavior cannot be adequately understood from compilation and automated tests alone.
+
+A terminal editor is an interactive system.
+
+Therefore, the actual program must periodically be run and observed.
+
+For example:
+
+```text
+Build
+  │
+  ▼
+Launch Editor
+  │
+  ▼
+Observe Terminal
+  │
+  ├── Input
+  ├── Screen
+  ├── Cursor
+  └── Program behavior
+```
+
+This is particularly important for functionality involving:
+
+- terminal modes,
+- keyboard input,
+- cursor positioning,
+- screen rendering,
+- terminal dimensions,
+- and cleanup behavior.
+
+Running the program provides evidence about behavior that static compilation cannot provide.
+
+## Inspect
+
+Testing and execution produce results.
+
+Those results must be examined rather than assumed to be correct.
+
+Inspection can include:
+
+- compiler output,
+- test results,
+- terminal behavior,
+- program state,
+- generated files,
+- Git changes,
+- and implementation documentation.
+
+For example:
+
+```text
+Run
+ │
+ ▼
+Observed Behavior
+ │
+ ▼
+Inspect
+ │
+ ├── Expected → Continue
+ │
+ └── Unexpected → Investigate
+```
+
+Inspection is especially important when implementing low-level systems behavior. A program can compile successfully and even pass a narrow test while still behaving incorrectly in an actual terminal.
+
+## Record
+
+Once an implementation step has been verified, its result should be recorded.
+
+This may involve updating:
+
+- `current-state.md`,
+- `implementation-status.md`,
+- `implementation-notes.md`,
+- `known-issues.md`,
+- tests,
+- or an ADR when an architectural decision has changed.
+
+The project-context documents exist specifically so that implementation knowledge is preserved across development sessions.
+
+The rule is simple:
+
+> **If an implementation result matters to future work, record it where future work can find it.**
+
+This prevents important discoveries from remaining only in memory.
+
+## Commit
+
+After the implementation unit has been verified and the relevant project context has been updated, commit the change.
+
+A commit should represent a coherent engineering change.
+
+For example:
+
+```text
+feat: add terminal state management
+```
+
+or:
+
+```text
+test: verify terminal restoration
+```
+
+The commit becomes a historical checkpoint.
+
+```text
+Verified Implementation
+        │
+        ▼
+Project Context Updated
+        │
+        ▼
+Git Commit
+        │
+        ▼
+Known Stable Point
+```
+
+The implementation project recommends focused commits that describe the actual engineering change rather than using broad chapter-level commit messages.
+
+## The Complete Cycle
+
+The entire workflow can now be viewed as a feedback loop rather than a straight line:
+
+```text
+              ┌───────────────┐
+              │   Understand  │
+              └───────┬───────┘
+                      ↓
+              ┌───────────────┐
+              │     Design    │
+              └───────┬───────┘
+                      ↓
+              ┌───────────────┐
+              │     Decide    │
+              └───────┬───────┘
+                      ↓
+              ┌───────────────┐
+              │   Implement   │
+              └───────┬───────┘
+                      ↓
+              ┌───────────────┐
+              │    Compile    │
+              └───────┬───────┘
+                      ↓
+              ┌───────────────┐
+              │     Test      │
+              └───────┬───────┘
+                      ↓
+              ┌───────────────┐
+              │      Run      │
+              └───────┬───────┘
+                      ↓
+              ┌───────────────┐
+              │    Inspect    │
+              └───────┬───────┘
+                      ↓
+              ┌───────────────┐
+              │    Record     │
+              └───────┬───────┘
+                      ↓
+              ┌───────────────┐
+              │    Commit     │
+              └───────┬───────┘
+                      │
+                      └──────────→ Next Implementation Unit
+```
+
+The cycle repeats throughout Volume X.
+
+It is not necessary for every tiny code change to produce a separate Git commit. The important principle is that implementation remains incremental and that meaningful, verified units of work are recorded at appropriate boundaries.
+
+## When the Cycle Breaks
+
+Not every cycle will end with a successful implementation.
+
+A test may fail.
+
+The program may behave unexpectedly.
+
+A compiler warning may reveal a deeper problem.
+
+The implementation may expose an architectural weakness.
+
+In these situations, the workflow does not simply continue to the next step.
+
+Instead, the developer moves back to the appropriate earlier stage.
+
+```text
+Unexpected Result
+       │
+       ▼
+    Inspect
+       │
+       ▼
+  Investigate
+       │
+ ┌─────┴─────┐
+ ▼           ▼
+Design      Decision
+problem     problem
+ │           │
+ ▼           ▼
+Redesign    Reconsider
+ │           │
+ └─────┬─────┘
+       ▼
+   Implement
+```
+
+This makes the workflow adaptive.
+
+Implementation is not a one-way pipeline in which every problem is solved by adding more code.
+
+Sometimes the correct response is to rethink the design.
+
+## Implementation as Evidence
+
+The central idea behind this workflow is that each stage should provide evidence for the next.
+
+```text
+Understand
+    → Evidence of correct interpretation
+
+Design
+    → Evidence of a viable approach
+
+Decide
+    → Evidence of a justified choice
+
+Implement
+    → Concrete realization
+
+Compile
+    → Evidence of syntactic/type correctness
+
+Test
+    → Evidence of specified behavior
+
+Run
+    → Evidence of actual runtime behavior
+
+Inspect
+    → Evidence that results are understood
+
+Record
+    → Evidence preserved for future work
+
+Commit
+    → Historical checkpoint
+```
+
+No individual step proves that the editor is correct.
+
+Together, however, they create a disciplined engineering process in which errors are discovered as close as possible to where they are introduced.
+
+## The Working Contract for Volume X
+
+From this point forward, implementation work should follow this cycle.
+
+Before writing code, understand the relevant design.
+
+Before changing architecture, make the decision explicit.
+
+After writing code, compile it.
+
+After compiling, test it.
+
+When appropriate, run the actual program.
+
+Inspect the result.
+
+Record important findings.
+
+Then commit a coherent, verified change.
+
+This is the working contract for Volume X.
+
+The implementation project is no longer merely a collection of source files. It is a controlled engineering process in which architectural decisions, implementation, verification, documentation, and version history remain connected.
+
+The next section will establish **how implementation status is maintained as milestones are completed**, and how the first actual implementation milestone will be prepared so that Chapter 45 can begin with a known and verifiable starting point.

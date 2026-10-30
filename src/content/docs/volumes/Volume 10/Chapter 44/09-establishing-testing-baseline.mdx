@@ -1,0 +1,434 @@
+---
+title: 44.9 Establishing the Testing Baseline
+description: "Sets up a minimal testing baseline with CTest and a smoke test, verifying that the build can both pass and detect a known failure."
+---
+
+A build system tells us whether the project can be compiled. A testing system tells us whether the compiled program behaves as expected.
+
+Before implementing editor functionality, we should establish this second capability.
+
+The testing strategy was already defined during the engineering volumes. The implementation will use multiple levels of testing, including unit, integration, and end-to-end testing, together with regression testing, failure-case testing, deterministic tests, and invariant checking.
+
+Chapter 44 does not implement that complete testing strategy.
+
+Instead, it establishes the **testing baseline** on which the later strategy can be built.
+
+The immediate objective is simple:
+
+> **A test can be compiled, executed, and reported as passing or failing through the project build system.**
+
+## Why Establish Testing Before the Editor?
+
+It is tempting to postpone testing until the editor contains meaningful functionality.
+
+That would create an unnecessary problem.
+
+If the testing infrastructure itself is introduced after hundreds of lines of implementation, a failing test could result from either:
+
+```text
+Editor Implementation
+        │
+        ├── Possible defect
+        │
+        ▼
+Testing Infrastructure
+        │
+        └── Possible defect
+```
+
+We would then have two unknowns.
+
+By establishing testing first, we verify the test mechanism independently:
+
+```text
+Testing Infrastructure
+        │
+        ▼
+Minimal Test
+        │
+        ▼
+Known Passing Result
+        │
+        ▼
+Editor Implementation
+```
+
+Future failures can then be investigated primarily as implementation problems rather than questioning whether the test infrastructure works at all.
+
+## The Testing Directory
+
+The project structure already reserves a dedicated directory for tests:
+
+```text
+tests/
+```
+
+Tests should remain separate from production source code.
+
+The distinction is important:
+
+```text
+src/
+    → Program implementation
+
+tests/
+    → Verification of the implementation
+```
+
+A test may include and exercise production modules, but test-specific code should not become part of the editor's production executable.
+
+## The First Test
+
+The first test should be deliberately trivial.
+
+We do not yet have a Document module, Cursor module, Renderer, or other substantial component to test.
+
+Therefore, the first test should answer a much smaller question:
+
+> Can the test executable be compiled, executed, and recognized as successful?
+
+For example, a minimal C test can use the standard `assert` mechanism:
+
+```c
+#include <assert.h>
+
+int main(void)
+{
+    assert(1 == 1);
+
+    return 0;
+}
+```
+
+This test contains almost no application logic.
+
+That is intentional.
+
+The purpose is to validate the testing pipeline rather than an editor component.
+
+## A Test Is an Executable Program
+
+At the simplest level, a test is a program whose exit status communicates whether the expected condition was satisfied.
+
+```text
+Test Program
+     │
+     ▼
+Execute Assertion
+     │
+ ┌───┴────┐
+ ▼        ▼
+Pass     Fail
+ │        │
+ ▼        ▼
+0       non-zero
+```
+
+A successful test normally exits with status `0`.
+
+A failed assertion causes the program to terminate abnormally, producing a non-zero exit status.
+
+This simple mechanism provides a foundation upon which more sophisticated test infrastructure can be built.
+
+## Integrating Tests with CMake
+
+The test executable should be represented in CMake rather than compiled manually.
+
+The basic structure is:
+
+```cmake
+enable_testing()
+
+add_executable(
+    test_smoke
+    tests/test_smoke.c
+)
+
+add_test(
+    NAME smoke
+    COMMAND test_smoke
+)
+```
+
+This establishes three important relationships:
+
+```text
+CMake
+  │
+  ├── Builds test_smoke
+  │
+  └── Registers smoke test
+          │
+          ▼
+       CTest
+```
+
+CMake provides the project configuration.
+
+The compiler builds the test executable.
+
+CTest executes the registered test and records its result.
+
+The implementation therefore gains a standard mechanism for running tests without requiring developers to remember individual test commands.
+
+## Running the Test
+
+After configuring and building the project, the test suite can be executed through CTest:
+
+```bash
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+The exact command depends on the selected build directory and generator.
+
+The important result is that the test system reports a successful test:
+
+```text
+Test #1: smoke
+    Passed
+```
+
+The output format may differ between CTest versions, but the conceptual result is the same.
+
+The testing pipeline is now:
+
+```text
+CMake Configure
+      │
+      ▼
+Build Production Code
+      │
+      ├───────────────┐
+      ▼               ▼
+Build Tests       Register Tests
+      │               │
+      └───────┬───────┘
+              ▼
+            CTest
+              │
+        ┌─────┴─────┐
+        ▼           ▼
+      Pass         Fail
+```
+
+### Verifying a Failure
+
+A useful testing baseline should demonstrate not only that a test can pass, but also that the framework can detect failure.
+
+Temporarily changing the test to:
+
+```c
+assert(1 == 0);
+```
+
+should cause the test to fail.
+
+This verifies the opposite side of the pipeline:
+
+```text
+Incorrect Condition
+       │
+       ▼
+Assertion Failure
+       │
+       ▼
+Non-zero Exit
+       │
+       ▼
+CTest Reports Failure
+```
+
+After verifying this behavior, the test should be restored to its passing state.
+
+This is an important principle in testing infrastructure:
+
+> **A test system is not verified merely because it reports success. It should also be demonstrated to detect a known failure.**
+
+## Testing Infrastructure Is Not Yet the Test Strategy
+
+The smoke test established here should not be mistaken for meaningful editor testing.
+
+It does not test:
+
+- terminal behavior,
+- input parsing,
+- cursor movement,
+- document operations,
+- rendering,
+- file persistence,
+- configuration,
+- or any other editor behavior.
+
+Those tests will appear when their corresponding components are implemented.
+
+The progression will eventually look like:
+
+```text
+Smoke Test
+    │
+    ▼
+Terminal Tests
+    │
+    ▼
+Input Tests
+    │
+    ▼
+State Tests
+    │
+    ▼
+Document Tests
+    │
+    ▼
+Cursor Tests
+    │
+    ▼
+Viewport Tests
+    │
+    ▼
+Renderer Tests
+    │
+    ▼
+Integration Tests
+    │
+    ▼
+End-to-End Tests
+```
+
+Testing should therefore grow alongside the implementation rather than being postponed until the end.
+
+## Deterministic Tests
+
+The testing strategy established earlier emphasizes deterministic testing.
+
+A deterministic test should produce the same result when executed under the same relevant conditions.
+
+For example:
+
+```text
+Same Input
+    +
+Same Initial State
+    +
+Same Expected Result
+    =
+Same Test Result
+```
+
+This becomes particularly important for the editor because many components manipulate mutable state.
+
+A test that depends on timing, terminal dimensions that were not specified, external files that change unexpectedly, or other uncontrolled conditions can become difficult to trust.
+
+The testing baseline therefore establishes the expectation that future tests should be designed to minimize unnecessary environmental dependencies.
+
+## Tests as Architectural Verification
+
+Tests will not merely verify individual functions.
+
+They will also help verify architectural invariants.
+
+For example:
+
+```text
+Document operations
+        │
+        ▼
+Document remains valid
+
+Cursor operations
+        │
+        ▼
+Cursor remains within valid bounds
+
+Viewport updates
+        │
+        ▼
+Cursor visibility is preserved
+
+Save operation
+        │
+        ▼
+Failed save does not clear Dirty Flag
+```
+
+These properties connect testing to the architectural reasoning established throughout the book.
+
+A passing test therefore provides evidence not only that a particular line of code executes successfully, but that an important system property remains true.
+
+## The Testing Baseline and Git
+
+The testing infrastructure should be committed once it is verified.
+
+A suitable commit might be:
+
+```text
+test: establish initial test infrastructure
+```
+
+The commit should include the test source and the corresponding CMake configuration.
+
+This gives the implementation repository another useful checkpoint:
+
+```text
+Initial Repository
+       │
+       ▼
+Build Baseline
+       │
+       ▼
+Testing Baseline
+       │
+       ▼
+Ready for Implementation
+```
+
+From this point onward, new implementation work can follow a stronger cycle:
+
+```text
+Implement
+    ↓
+Compile
+    ↓
+Test
+    ↓
+Inspect
+    ↓
+Commit
+```
+
+## The Initial Testing Baseline
+
+At the end of this section, the implementation project should have:
+
+- a dedicated test directory,
+- at least one minimal test,
+- CMake integration for tests,
+- a mechanism for executing the test suite,
+- a verified passing test,
+- and evidence that a known failure is correctly detected.
+
+The resulting structure is:
+
+```text
+terminal-editor/
+│
+├── src/
+│
+├── tests/
+│   └── test_smoke.c
+│
+├── docs/
+│
+├── CMakeLists.txt
+├── README.md
+└── .gitignore
+```
+
+The editor still does not need to contain substantial functionality.
+
+That is precisely the point.
+
+We now have a project that can be **built and tested before the editor itself is built**.
+
+The next section establishes the implementation project's living documentation and status tracking, so that progress, current state, decisions, and known problems remain visible throughout Volume X.

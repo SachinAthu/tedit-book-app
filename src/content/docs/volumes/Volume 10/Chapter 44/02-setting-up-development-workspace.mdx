@@ -1,0 +1,222 @@
+---
+title: 44.2 Setting Up the Development Workspace
+description: "Sets up the C99/POSIX development workspace, verifies the compiler, CMake, Git, shell, and terminal, and separates source from generated build files."
+---
+
+Before creating the implementation repository, we need a development environment in which the editor can be built, executed, tested, and inspected.
+
+The development workspace is more than a directory containing source files. It is the environment that connects the source code, compiler, build system, test system, terminal, and version-control system.
+
+A predictable workspace reduces accidental differences between development sessions and makes implementation results easier to reproduce.
+
+The implementation project targets **C99 on Linux/POSIX**. The workspace should therefore provide a native or suitably compatible Linux/POSIX environment with the tools required by the project.
+
+## Required Tools
+
+The implementation requires a small set of fundamental development tools.
+
+At minimum, the workspace should provide:
+
+- a C99-compatible C compiler,
+- CMake,
+- Git,
+- a POSIX-compatible shell,
+- standard POSIX development headers and libraries,
+- a terminal emulator capable of running the editor.
+
+The project does not require a large framework or application platform. The editor is intentionally built close to the operating system and terminal interfaces.
+
+```text
+Development Workspace
+│
+├── C Compiler
+├── CMake
+├── Git
+├── POSIX Environment
+├── Shell
+└── Terminal Emulator
+        │
+        ▼
+   Editor Program
+```
+
+Each tool has a specific responsibility.
+
+The **compiler** translates C source code into executable code and reports compilation errors and warnings.
+
+**CMake** describes and generates the project's build system. As the number of source files and modules increases, maintaining compiler commands manually becomes impractical. The project therefore uses CMake as established earlier in the architecture decisions.
+
+**Git** records the evolution of the implementation and provides checkpoints that allow changes to be reviewed and, when necessary, reverted.
+
+The **terminal emulator** is particularly important because the program being built is itself a terminal application. Terminal behavior is therefore part of the execution environment rather than merely a place from which the program happens to be launched.
+
+## Verify the Environment
+
+Before writing editor code, the required tools should be available from the command line.
+
+For example, the following commands can be used to verify the basic environment:
+
+```bash
+cc --version
+cmake --version
+git --version
+```
+
+The exact compiler executable may differ between systems. The important requirement is that the selected compiler supports the C99 language standard required by the project.
+
+The verification should establish three things:
+
+1. The required tool exists.
+2. The tool can be invoked from the development shell.
+3. Its version is known.
+
+Recording the versions is useful when diagnosing build problems later. A compiler-specific warning, a CMake behavior change, or a system-library difference can otherwise appear to be an unexplained implementation problem.
+
+## Development and Build Directories
+
+The source tree should remain separate from generated build artifacts.
+
+A typical arrangement is:
+
+```text
+editor/
+├── src/
+├── tests/
+├── docs/
+├── CMakeLists.txt
+└── ...
+
+build/
+└── generated build files
+```
+
+The exact project structure will be established in the following sections, but the principle is already important:
+
+> **Generated files should not be confused with source files.**
+
+Keeping build output separate makes the source tree easier to inspect and allows the build directory to be removed and recreated without modifying the source tree.
+
+This is particularly useful when diagnosing build-system problems. If a configuration becomes stale, the generated build directory can be discarded and regenerated from the project's CMake configuration.
+
+## The Terminal Is Part of the Workspace
+
+For an ordinary command-line application, the terminal may simply be the place where the program is launched.
+
+For our editor, it is part of the program's operating environment.
+
+The editor will:
+
+- change terminal input behavior,
+- read keyboard input directly,
+- interpret terminal control sequences,
+- query terminal dimensions,
+- write terminal escape sequences,
+- manage the terminal cursor, and
+- restore the terminal before exiting.
+
+Consequently, testing the editor requires an actual terminal environment.
+
+This is one reason the implementation should be developed and tested on the target POSIX/Linux environment rather than treating the terminal as an abstraction that can be ignored until later.
+
+The terminal interface established in the earlier architecture remains the boundary between the editor and the terminal environment.
+
+```text
+Editor
+   │
+   ▼
+Terminal Interface
+   │
+   ├── Input
+   ├── Output
+   ├── Terminal State
+   └── Terminal Dimensions
+   │
+   ▼
+Operating System / PTY
+   │
+   ▼
+Terminal Emulator
+```
+
+The editor's core logic should not depend directly on terminal-specific operations. Those operations belong to the platform-facing portions of the architecture established earlier.
+
+## Establishing a Known Starting Point
+
+A development environment should have a known starting state before implementation begins.
+
+This means that we should be able to answer:
+
+- Which compiler are we using?
+- Which C standard are we targeting?
+- Which build system are we using?
+- Where is the implementation repository?
+- How is the project built?
+- How are tests executed?
+- How are changes recorded?
+- What is the current implementation milestone?
+
+These questions may appear administrative, but they become increasingly important as the implementation grows.
+
+A project with an undefined development environment can produce confusing failures:
+
+```text
+Unknown Environment
+       │
+       ├── Unknown compiler
+       ├── Unknown flags
+       ├── Unknown build configuration
+       ├── Unknown generated files
+       └── Unknown project state
+                │
+                ▼
+        Difficult to diagnose
+```
+
+A controlled environment produces a much clearer relationship:
+
+```text
+Known Environment
+       │
+       ▼
+Known Build
+       │
+       ▼
+Known Program State
+       │
+       ▼
+Reliable Test Result
+```
+
+This does not eliminate implementation bugs. It makes them easier to identify.
+
+## Preparation Before Implementation
+
+At this stage, we are deliberately resisting the temptation to start writing editor functionality.
+
+No terminal initialization code is required yet.
+
+No input parser is required yet.
+
+No document implementation is required yet.
+
+The purpose of this section is to establish the environment in which those components will eventually be developed.
+
+The implementation process will proceed from this controlled starting point:
+
+```text
+Development Environment
+        │
+        ▼
+Implementation Repository
+        │
+        ▼
+Build System
+        │
+        ▼
+Testing Baseline
+        │
+        ▼
+First Runtime Implementation
+```
+
+Once the development environment is established and verified, the next step is to create the implementation repository itself and give it its initial structure.

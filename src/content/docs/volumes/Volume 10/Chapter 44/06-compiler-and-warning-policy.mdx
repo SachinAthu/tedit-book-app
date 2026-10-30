@@ -1,0 +1,290 @@
+---
+title: 44.6 Compiler and Warning Policy
+description: "Defines the C99 compiler and warning policy, treating warnings as development feedback while separating portable requirements from compiler-specific options."
+---
+
+A working build system tells us that the project can be compiled. A compiler policy tells us **how the project should be compiled**.
+
+This distinction becomes increasingly important as the implementation grows. A compiler can accept code that is technically valid but contains suspicious constructs, implicit conversions, unused values, or other conditions that may indicate defects.
+
+The compiler should therefore be configured to provide strong feedback during development.
+
+The purpose of the warning policy is not to make the compiler an obstacle to development. It is to make the compiler an early source of information about potential problems.
+
+## The C Standard
+
+The implementation targets **C99**.
+
+The build configuration should therefore explicitly request C99 rather than relying on the compiler's default language standard.
+
+The relevant requirement is:
+
+```text
+C99
+ │
+ ├── Explicitly selected
+ ├── Required
+ └── Compiler extensions disabled
+```
+
+This gives the project a known language baseline.
+
+It also prevents the implementation from accidentally depending on features provided only by a compiler's newer default language mode.
+
+## Warnings as Development Feedback
+
+Compiler warnings should be treated as useful engineering feedback.
+
+A warning does not necessarily mean that the program is incorrect. However, many warnings identify situations that deserve attention.
+
+Examples include:
+
+- unused variables,
+- unused parameters,
+- implicit conversions,
+- missing declarations,
+- suspicious comparisons,
+- unreachable code,
+- incorrect format strings, and
+- other constructs that may indicate programming errors.
+
+The important principle is:
+
+> **Warnings should be investigated rather than routinely ignored.**
+
+A clean build should therefore mean more than "the compiler produced an executable."
+
+It should also mean that the implementation satisfies the project's selected warning policy.
+
+## Strictness and Practicality
+
+Compiler warnings should be strong enough to catch common mistakes without turning the build configuration into an unmanageable collection of compiler-specific rules.
+
+The project targets Linux/POSIX and uses C99, so the initial implementation can adopt a strong warning set supported by the selected compiler.
+
+For a GCC- or Clang-based development environment, a typical starting point is:
+
+```text
+-Wall
+-Wextra
+-Wpedantic
+```
+
+These options serve different purposes.
+
+`-Wall` enables a broad set of commonly useful warnings.
+
+`-Wextra` enables additional warnings beyond the standard `-Wall` collection.
+
+`-Wpedantic` requests diagnostics for code that relies on behavior outside the selected language standard.
+
+Together, they provide a useful baseline for a C99 project.
+
+The exact warning set should remain part of the project's documented compiler policy rather than being scattered across individual source files.
+
+## Warnings Are Not Errors by Default
+
+A warning policy must also decide whether warnings should cause compilation to fail.
+
+One possible configuration is:
+
+```text
+-Wall
+-Wextra
+-Wpedantic
+-Werror
+```
+
+With `-Werror`, warnings are treated as errors.
+
+This can produce a very strict development environment, but it also has a potential disadvantage: a new compiler version may introduce a warning for code that previously built successfully, causing the project to fail even when the underlying program remains valid.
+
+For this project, the policy should therefore distinguish between **strong diagnostics** and **automatic build failure**.
+
+Warnings should be visible and should normally be resolved. Whether all warnings are promoted to errors should be an explicit project decision rather than an accidental compiler configuration.
+
+## Compiler-Specific Options
+
+Not every useful compiler option is portable between compilers.
+
+For example, GCC and Clang share many warning options, but a compiler-specific diagnostic should not automatically become a universal project requirement.
+
+This suggests a useful separation:
+
+```text
+Project Policy
+      │
+      ├── C99
+      ├── Required warnings
+      └── General quality requirements
+              │
+              ▼
+Compiler Configuration
+      │
+      ├── GCC options
+      └── Clang options
+```
+
+The project should prefer portable requirements where possible and isolate compiler-specific configuration where necessary.
+
+This keeps the implementation compatible with the portability goals established earlier without preventing the development environment from taking advantage of useful compiler diagnostics.
+
+## Debugging Through Compiler Diagnostics
+
+Compiler warnings become especially valuable during implementation because many editor bugs originate from low-level state manipulation.
+
+The editor will contain:
+
+- structures representing state,
+- pointers to dynamically allocated objects,
+- integer coordinates,
+- indexes into arrays,
+- sizes and counts,
+- file offsets,
+- character and byte values, and
+- conversions between different integer types.
+
+These areas can produce subtle C programming errors.
+
+For example, an apparently harmless conversion between signed and unsigned values can produce unexpected behavior when a value becomes negative.
+
+Strong compiler diagnostics can expose some of these problems before the program is executed.
+
+The compiler therefore becomes one layer of the project's verification process:
+
+```text
+Source Code
+    │
+    ▼
+Compiler Diagnostics
+    │
+    ├── Errors
+    ├── Warnings
+    └── Successful compilation
+            │
+            ▼
+         Tests
+            │
+            ▼
+      Runtime Behavior
+```
+
+Compiler diagnostics do not replace tests. They provide an earlier layer of feedback.
+
+## Keeping the Build Clean
+
+A clean compiler output should become a normal development expectation.
+
+If a warning appears, the developer should determine why it exists.
+
+There are several legitimate outcomes:
+
+```text
+Warning
+  │
+  ├── Genuine defect
+  │       → Fix the code
+  │
+  ├── Unnecessary code
+  │       → Remove the code
+  │
+  ├── Intentional behavior
+  │       → Make the intent explicit
+  │
+  └── Tool-specific false positive
+          → Evaluate and document the exception
+```
+
+The last case should be uncommon.
+
+Silencing warnings indiscriminately with compiler flags or source-level suppression should not become the normal development strategy.
+
+A warning that disappears without understanding why it appeared provides little engineering value.
+
+## Compiler Policy in CMake
+
+The compiler policy should be represented in the build configuration rather than requiring developers to remember a long command-line invocation.
+
+Conceptually:
+
+```text
+CMake
+ │
+ ├── C99
+ ├── Warning configuration
+ └── Build configuration
+       │
+       ▼
+    Compiler
+```
+
+This makes the build reproducible.
+
+A developer should not have to remember:
+
+```text
+cc -std=c99 -Wall -Wextra -Wpedantic ...
+```
+
+The project configuration should provide those requirements automatically.
+
+As the project develops, the compiler configuration can be refined when a concrete need appears.
+
+## Development Versus Release
+
+The warning policy also establishes a foundation for separating development and release builds.
+
+During development, we want maximum useful diagnostics and debugging information.
+
+A release build has different priorities, including optimization and producing the intended distributable artifact.
+
+The distinction can be represented as:
+
+```text
+Development Build
+    │
+    ├── Diagnostics
+    ├── Debug information
+    └── Developer feedback
+
+Release Build
+    │
+    ├── Release configuration
+    ├── Appropriate optimization
+    └── Final artifact
+```
+
+The exact development and release configurations will be established separately.
+
+At this stage, the important point is that compiler behavior should be intentional rather than inherited accidentally from the developer's machine.
+
+## Establishing the Policy
+
+The implementation project should now have an explicit compiler baseline:
+
+```text
+Language:
+    C99
+
+Primary environment:
+    Linux/POSIX
+
+Compiler:
+    C99-compatible compiler
+
+Warnings:
+    Strong development diagnostics
+
+Build configuration:
+    Controlled by CMake
+```
+
+The precise flags should be kept in the project's CMake configuration and documented alongside the build policy.
+
+The goal is straightforward:
+
+> **Every implementation step should be compiled under the same known language and diagnostic rules.**
+
+This gives us a stable foundation for the code that follows.
+
+With the compiler and warning policy established, the next step is to define **development and release builds** so that the project has explicit configurations for everyday implementation work and production-oriented builds.

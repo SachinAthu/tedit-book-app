@@ -1,0 +1,444 @@
+---
+title: 44.10 Implementation Documentation and Status Tracking
+description: "Introduces living implementation documentation for current state, status, notes, and known issues so progress remains visible across sessions."
+---
+
+A growing implementation cannot depend entirely on source code and Git history to communicate its current state.
+
+Git tells us how the implementation changed.
+
+The source code tells us what currently exists.
+
+Tests tell us what behavior has been verified.
+
+However, none of these alone provides a concise answer to questions such as:
+
+- What has been completed?
+- What are we implementing now?
+- What should be implemented next?
+- What important implementation decisions have been made?
+- What problems are currently known?
+- What should we remember when development continues in another session?
+
+The implementation project therefore maintains a small set of living documentation files.
+
+```text
+implementation/
+├── current-state.md
+├── implementation-status.md
+├── implementation-notes.md
+└── known-issues.md
+```
+
+These files are part of the implementation project itself. They are not replacements for the book, the architecture documents, or the ADRs. Each serves a different purpose.
+
+## Why Implementation Documentation Is Necessary
+
+The implementation of the editor will take place over many milestones.
+
+A single implementation session may introduce a small feature, discover a problem, change a test, and commit the result.
+
+The next session should not require reconstructing all of that information from memory or reading the entire Git history.
+
+The implementation documentation provides a current snapshot:
+
+```text
+Book / Architecture
+        │
+        ▼
+Implementation
+        │
+        ├── Source Code
+        ├── Tests
+        └── Implementation Documentation
+                         │
+             ┌───────────┼───────────┐
+             ▼           ▼           ▼
+        Current State  Status      Issues
+```
+
+The implementation project specifically defines these documents as part of its living project context.
+
+## `current-state.md`
+
+The `current-state.md` file provides a concise description of what is true **right now**.
+
+It should answer:
+
+> What does the implementation currently look like?
+
+A typical initial version might contain:
+
+```markdown
+# Current State
+
+## Project
+
+Terminal text editor implementation in C99 for Linux/POSIX.
+
+## Current Milestone
+
+Volume X preparation.
+
+## Completed
+
+- Implementation repository created.
+- Git initialized.
+- CMake build established.
+- Development build verified.
+- Release build verified.
+- Initial test infrastructure established.
+
+## Current Focus
+
+Preparing the implementation environment before beginning runtime implementation.
+
+## Next Step
+
+Begin the first runtime implementation milestone.
+```
+
+The exact contents will change frequently.
+
+The important property is that the file remains short enough to provide a quick orientation.
+
+## `implementation-status.md`
+
+The status document is more structured.
+
+Its purpose is to track implementation milestones and their completion.
+
+For example:
+
+```markdown
+# Implementation Status
+
+| Milestone              | Status      |
+| ---------------------- | ----------- |
+| Repository setup       | Complete    |
+| Git initialization     | Complete    |
+| CMake build            | Complete    |
+| Compiler policy        | Complete    |
+| Development build      | Complete    |
+| Release build          | Complete    |
+| Testing baseline       | Complete    |
+| Runtime initialization | Not started |
+```
+
+The status document can become more detailed as implementation progresses.
+
+A milestone can eventually include:
+
+- current status,
+- completed work,
+- tests,
+- known problems,
+- architectural changes,
+- and the next step.
+
+The project context specifically identifies `implementation-status.md` as the main implementation checkpoint.
+
+## Status Is Not the Same as Git History
+
+The status document should not attempt to reproduce Git history.
+
+Consider the difference:
+
+```text
+Git
+→ What changed and when?
+
+Implementation Status
+→ What is complete and what remains?
+
+Current State
+→ What is true now?
+```
+
+A Git log might contain:
+
+```text
+test: establish initial test infrastructure
+feat: add terminal state management
+feat: enable raw terminal mode
+```
+
+The status document might instead say:
+
+```text
+Terminal initialization
+Status: Complete
+
+Raw terminal mode
+Status: Complete
+
+Terminal restoration
+Status: Complete
+```
+
+The two forms of information complement each other.
+
+## `implementation-notes.md`
+
+Some discoveries are important but do not belong in the current-state summary.
+
+These can be recorded in `implementation-notes.md`.
+
+Examples include:
+
+- observations about platform behavior,
+- implementation lessons,
+- details discovered while debugging,
+- explanations for non-obvious implementation choices,
+- temporary investigation results,
+- or notes that may help future implementation work.
+
+For example:
+
+```markdown
+# Implementation Notes
+
+## Build
+
+The project uses separate Debug and Release build directories.
+
+## Testing
+
+CTest is integrated into the CMake build.
+
+## Terminal
+
+Terminal behavior must be verified in an actual POSIX terminal environment.
+```
+
+Notes should remain useful and factual.
+
+They should not become an uncontrolled diary of every development action.
+
+## `known-issues.md`
+
+The final document records problems that are known but not yet resolved.
+
+For example:
+
+```markdown
+# Known Issues
+
+## None
+
+No known implementation issues at the current milestone.
+```
+
+Later, it might contain:
+
+```markdown
+# Known Issues
+
+## Terminal restoration after abnormal termination
+
+The normal exit path restores terminal settings correctly.
+Unexpected process termination is not yet handled.
+
+Status: Open
+```
+
+The purpose is visibility.
+
+An unresolved issue should not disappear simply because the developer changed tasks.
+
+## Four Documents, Four Questions
+
+The four documents can therefore be understood through four questions:
+
+```text
+current-state.md
+    → Where are we now?
+
+implementation-status.md
+    → What has been completed?
+
+implementation-notes.md
+    → What important things have we learned?
+
+known-issues.md
+    → What remains unresolved?
+```
+
+This separation prevents one file from becoming responsible for every kind of project information.
+
+## Keeping the Documents Current
+
+These files are useful only if they reflect reality.
+
+After a meaningful implementation milestone, the relevant documentation should be updated.
+
+For example:
+
+```text
+Implement
+    ↓
+Compile
+    ↓
+Test
+    ↓
+Inspect
+    ↓
+Update Project Context
+    ↓
+Commit
+```
+
+Updating the project context is therefore part of the implementation workflow rather than an optional administrative task. The implementation process explicitly includes recording results and maintaining project context as the implementation advances.
+
+The documents should not be updated speculatively.
+
+If a feature has not been implemented and tested, it should not be marked as complete.
+
+## Documentation Must Reflect the Implementation
+
+The implementation documentation should describe what the code actually does.
+
+Suppose the status document says:
+
+```text
+Raw terminal mode: Complete
+```
+
+That statement should correspond to an implementation that exists and has been verified.
+
+If the implementation changes, the documentation must change with it.
+
+This creates another useful relationship:
+
+```text
+Source Code
+    │
+    ▼
+Tests
+    │
+    ▼
+Verified Result
+    │
+    ▼
+Implementation Status
+```
+
+Documentation should therefore be based on evidence rather than intention.
+
+## Relationship to the Book
+
+These implementation documents do not replace the book.
+
+The book answers questions such as:
+
+> Why does the editor use this architecture?
+
+The implementation documentation answers questions such as:
+
+> What part of that architecture has actually been implemented?
+
+For example:
+
+```text
+Book
+  → ADR-003: terminal state must be restored
+
+Implementation
+  → terminal state management implemented
+
+Tests
+  → restoration behavior verified
+
+Status
+  → terminal restoration complete
+```
+
+This creates a traceable relationship between architectural intent and implementation evidence.
+
+## The Initial Documentation Baseline
+
+At the end of this section, the implementation repository should contain:
+
+```text
+implementation/
+├── current-state.md
+├── implementation-status.md
+├── implementation-notes.md
+└── known-issues.md
+```
+
+The initial versions should describe the state of the project at the beginning of Volume X.
+
+The status should clearly distinguish preparation work from editor functionality.
+
+For example:
+
+```text
+Volume X Preparation
+    │
+    ├── Repository       Complete
+    ├── Git              Complete
+    ├── CMake             Complete
+    ├── Compiler policy   Complete
+    ├── Build modes       Complete
+    ├── Tests             Complete
+    └── Runtime           Not started
+```
+
+This gives us a precise boundary between **preparation** and **implementation**.
+
+## A Living Implementation Context
+
+As the editor grows, these files become a compact representation of the project's current implementation context.
+
+The overall relationship becomes:
+
+```text
+                Project Context
+                     │
+       ┌─────────────┼─────────────┐
+       ▼             ▼             ▼
+   Architecture   Implementation   History
+       │               │             │
+       ▼               ▼             ▼
+      ADRs        Source + Tests    Git
+                       │
+                       ▼
+              Living Documentation
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+       Current       Status       Issues
+        State
+```
+
+This is particularly valuable when implementation is developed across multiple sessions. A future session can begin by reading the current implementation state instead of reconstructing the entire project from scratch.
+
+The implementation project explicitly treats context management as part of the Volume X workflow.
+
+## The Documentation Checkpoint
+
+The repository now contains not only the mechanisms required to build and test the program, but also the mechanisms required to understand its development state.
+
+The preparation environment can now be summarized as:
+
+```text
+Implementation Repository
+        │
+        ├── Source Structure
+        ├── CMake
+        ├── Compiler Policy
+        ├── Debug / Release Builds
+        ├── Tests
+        ├── Git
+        └── Implementation Context
+                │
+                ├── Current State
+                ├── Status
+                ├── Notes
+                └── Known Issues
+```
+
+The next section will establish the complete implementation workflow that connects these pieces.
+
+We will define how each implementation unit moves from architectural understanding to code, compilation, testing, verification, documentation, and Git commit.

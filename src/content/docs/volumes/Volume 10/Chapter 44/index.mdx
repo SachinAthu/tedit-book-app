@@ -1,0 +1,36 @@
+---
+title: "Chapter 44 — Volume X Preparation"
+description: "Prepares the implementation environment and repository—workspace, Git, CMake, compiler policy, tests, and documentation—before the editor is built."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## Introduction
+
+Volumes I–IX produced the design of the editor: its requirements, architecture, runtime model, project structure, coding standards, and Architecture Decision Records. Chapter 44 marks the transition from that design work to a working C program. The question it answers is:
+
+> **How do we create a development environment and repository in which the editor can be implemented reliably and traceably?**
+
+This chapter does not implement editor features. It prepares the ground: a dedicated implementation workspace and repository, Git version control, a CMake build with an explicit compiler and warning policy, separate development and release configurations, an initial project structure, a testing baseline, and implementation documentation for tracking status. It then defines the workflow that every subsequent implementation step will follow and verifies the result as a clean, buildable, testable baseline. The goal is not an editor yet, but a trustworthy foundation—so that problems in the editor can later be distinguished from problems in the environment.
+
+<Aside>
+The source code presented throughout this book is illustrative and is not complete. It may omit details or contain inaccuracies, and it should not be treated as a finished, buildable implementation. For the complete source code, including detailed comments, refer to the project repository at https://github.com/SachinAthu/tedit.
+
+You can find completed code for each chapter in the relevent branch.
+
+</Aside>
+
+## Sections
+
+- [44.1 From Theory to Implementation](/volumes/volume-10/chapter-44/01-from-theory-to-implementation/)
+- [44.2 Setting Up the Development Workspace](/volumes/volume-10/chapter-44/02-setting-up-development-workspace/)
+- [44.3 Creating the Implementation Repository](/volumes/volume-10/chapter-44/03-creating-implementation-repository/)
+- [44.4 Initializing Git](/volumes/volume-10/chapter-44/04-initializing-git/)
+- [44.5 Establishing the CMake Build](/volumes/volume-10/chapter-44/05-establishing-CMake-build/)
+- [44.6 Compiler and Warning Policy](/volumes/volume-10/chapter-44/06-compiler-and-warning-policy/)
+- [44.7 Development and Release Build Configurations](/volumes/volume-10/chapter-44/07-development-and-release-build-configurations/)
+- [44.8 Establishing the Initial Project Structure](/volumes/volume-10/chapter-44/08-establishing-initial-project-structure/)
+- [44.9 Establishing the Testing Baseline](/volumes/volume-10/chapter-44/09-establishing-testing-baseline/)
+- [44.10 Implementation Documentation and Status Tracking](/volumes/volume-10/chapter-44/10-implementation-documentation-status-tracking/)
+- [44.11 The Implementation Workflow](/volumes/volume-10/chapter-44/11-implementation-workflow/)
+- [44.12 Establishing the Initial Implementation Baseline](/volumes/volume-10/chapter-44/12-establishing-initial-implementation-baseline/)

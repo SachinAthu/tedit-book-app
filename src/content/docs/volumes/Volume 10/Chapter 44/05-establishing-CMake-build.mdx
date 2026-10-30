@@ -1,0 +1,339 @@
+---
+title: 44.5 Establishing the CMake Build
+description: "Establishes a reproducible CMake build for the C99 project and verifies a minimal executable before editor functionality is added."
+---
+
+With the repository and Git baseline established, the next requirement is a reliable way to build the program.
+
+The implementation will contain multiple source files and modules. Managing compiler commands manually would quickly become error-prone as the project grows. The project therefore uses **CMake** as its build-system configuration, as established by the earlier architectural decisions.
+
+The purpose of CMake at this stage is deliberately modest:
+
+> **Establish a repeatable build process before substantial editor functionality is implemented.**
+
+We should be able to configure the project, compile it, and identify build failures without depending on a collection of manually maintained compiler commands.
+
+## What the Build System Does
+
+The build system sits between the project description and the compiler.
+
+```text
+Source Files
+     │
+     ▼
+CMake Configuration
+     │
+     ▼
+Build System
+     │
+     ▼
+C Compiler
+     │
+     ▼
+Executable
+```
+
+CMake does not replace the C compiler.
+
+The compiler remains responsible for translating C source code into object code and eventually an executable. CMake describes how the project should be configured and built, then generates the appropriate build-system files for the selected environment.
+
+This distinction is important because it keeps responsibilities separate:
+
+```text
+CMake
+    → Describes the project and build configuration
+
+Build Tool
+    → Executes the build
+
+Compiler
+    → Compiles the C source code
+```
+
+## The Root `CMakeLists.txt`
+
+The implementation repository should contain a root-level `CMakeLists.txt`.
+
+Conceptually:
+
+```text
+terminal-editor/
+├── CMakeLists.txt
+├── src/
+├── tests/
+└── docs/
+```
+
+The root CMake file becomes the entry point for configuring the implementation project.
+
+At the beginning of implementation, it does not need to describe the entire final editor. It only needs to establish enough configuration for the current project to build.
+
+This is another example of incremental development.
+
+We should not create a large build configuration for modules that have not yet been implemented.
+
+## Declaring the Project
+
+The initial CMake configuration should establish the project and its language.
+
+A minimal configuration can begin with:
+
+```cmake
+cmake_minimum_required(VERSION 3.20)
+
+project(
+    terminal_editor
+    VERSION 0.1.0
+    LANGUAGES C
+)
+```
+
+The exact minimum CMake version and project version should follow the implementation project's final configuration. The important principle is that the project explicitly declares its build-system requirements rather than relying on undocumented defaults.
+
+The project uses C, not C++.
+
+The C language standard should also be explicitly established rather than depending on the compiler's default language mode.
+
+For example:
+
+```cmake
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+```
+
+These settings communicate an important project requirement directly to the build system:
+
+```text
+C Language
+    │
+    ├── C99
+    ├── Required
+    └── Standard C rather than compiler extensions
+```
+
+The resulting configuration is consistent with the project's decision to use C99 as the implementation language.
+
+## Creating the Initial Target
+
+CMake builds programs through targets.
+
+The first target can be deliberately small.
+
+For example:
+
+```cmake
+add_executable(
+    terminal_editor
+    src/main.c
+)
+```
+
+At this point, `main.c` only needs to provide the smallest valid executable required to verify the build.
+
+For example:
+
+```c
+// main.c
+
+#include <stdio.h>
+
+int main(void)
+{
+    return 0;
+}
+```
+
+The purpose of this program is not to begin implementing the editor.
+
+It is a **build-system verification target**.
+
+Once the build system can reliably compile this minimal program, later implementation work can be added to an already verified build pipeline.
+
+## Source and Build Trees
+
+The build should be performed outside the source tree.
+
+For example:
+
+```text
+terminal-editor/
+├── src/
+├── tests/
+├── docs/
+├── CMakeLists.txt
+└── build/
+```
+
+The `build/` directory contains generated files.
+
+A typical configuration sequence is:
+
+```bash
+cmake -S . -B build
+cmake --build build
+```
+
+The first command configures the project.
+
+The second command builds the configured project.
+
+The separation is useful because the source tree remains composed primarily of files that developers intentionally maintain, while generated files remain isolated.
+
+## Verifying the First Build
+
+After configuration and compilation, the executable should exist in the generated build tree.
+
+The exact location depends on the generator and build configuration.
+
+The important test is that:
+
+1. CMake can configure the project.
+2. The compiler can compile the source.
+3. The linker can create the executable.
+4. The resulting program can be launched.
+
+For the initial target, execution should produce no meaningful editor behavior yet. That is expected.
+
+The purpose is simply to establish this chain:
+
+```text
+CMake Configuration
+        │
+        ▼
+Compiler Invocation
+        │
+        ▼
+Successful Compilation
+        │
+        ▼
+Successful Linking
+        │
+        ▼
+Executable
+```
+
+If any stage fails, implementation should stop and the build problem should be resolved before additional editor functionality is introduced.
+
+## Why We Build Before Implementing
+
+A common mistake in software projects is to write a substantial amount of code before verifying the build environment.
+
+That makes failures ambiguous.
+
+Suppose the first attempt to build the editor fails after several thousand lines of implementation have been added. The failure might originate from:
+
+- the compiler,
+- compiler flags,
+- CMake configuration,
+- source discovery,
+- include paths,
+- linking,
+- platform dependencies, or
+- the editor implementation itself.
+
+It becomes difficult to determine which layer is responsible.
+
+By establishing the build first, we create a known-good baseline:
+
+```text
+Known Source
+     │
+     ▼
+Known CMake Configuration
+     │
+     ▼
+Known Compiler
+     │
+     ▼
+Known Successful Build
+```
+
+Later failures can then be compared against this baseline.
+
+## Adding Modules Incrementally
+
+As implementation proceeds, additional source files will be added to the build.
+
+Eventually, the target will include components corresponding to the architecture:
+
+```text
+terminal/
+input/
+command/
+state/
+document/
+cursor/
+viewport/
+renderer/
+file/
+```
+
+However, these modules should be added when they become part of an implementation milestone.
+
+The build system should therefore evolve alongside the implementation rather than attempting to predict the complete final source tree from the beginning.
+
+This also keeps the relationship between the architecture and implementation visible:
+
+```text
+Architectural Component
+          │
+          ▼
+Implementation Module
+          │
+          ▼
+CMake Target
+          │
+          ▼
+Compiled Program
+```
+
+## CMake as Part of the Project Contract
+
+Once established, the build configuration becomes part of the implementation project's contract.
+
+A developer joining the project should not need to discover an undocumented sequence of compiler commands.
+
+The expected workflow should be understandable from the repository:
+
+```text
+Configure:
+cmake -S . -B build
+
+Build:
+cmake --build build
+```
+
+As the project grows, additional build operations such as testing, installation, or release packaging can be incorporated into the same build-system structure.
+
+Those capabilities should be introduced when they become necessary rather than being added prematurely.
+
+## The Build Baseline
+
+At the end of this section, the implementation project should have crossed an important boundary.
+
+Before CMake:
+
+```text
+Repository
+    │
+    └── Source files
+```
+
+After CMake:
+
+```text
+Repository
+    │
+    ├── Source
+    ├── Build Configuration
+    └── Reproducible Build Process
+```
+
+The project can now be configured and built using a defined process.
+
+The editor itself still does almost nothing.
+
+That is intentional.
+
+We have established the infrastructure required to begin implementing it safely. The next concern is the compiler configuration and warning policy, which will determine how strictly the implementation is checked as it is developed.

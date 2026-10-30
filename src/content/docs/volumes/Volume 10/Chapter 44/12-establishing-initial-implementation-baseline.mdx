@@ -1,0 +1,426 @@
+---
+title: 44.12 Establishing the Initial Implementation Baseline
+description: "Verifies the complete preparation baseline—repository, builds, tests, compiler policy, documentation, and clean Git state—before implementation begins."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The purpose of Chapter 44 has been to prepare the implementation environment before the editor itself is built.
+
+We have established the development environment, created the implementation repository, initialized Git, configured CMake, defined the compiler and warning policy, created development and release build configurations, established the initial project structure, configured testing, and created the implementation documentation used to track progress.
+
+The final step is to establish a known baseline.
+
+At the end of this chapter, the repository should be **real, clean, buildable, testable, and version-controlled**.
+
+The editor itself does not need to provide useful editing functionality yet.
+
+That is intentional.
+
+## What the Baseline Represents
+
+The initial implementation baseline represents the point at which the development infrastructure has been verified and the project is ready for actual editor implementation.
+
+Conceptually:
+
+```text
+Development Environment
+        │
+        ▼
+Implementation Repository
+        │
+        ├── Source Structure
+        ├── CMake
+        ├── Compiler Policy
+        ├── Build Configurations
+        ├── Tests
+        ├── Documentation
+        └── Git
+        │
+        ▼
+Verified Build
+        │
+        ▼
+Verified Test
+        │
+        ▼
+Clean Working Tree
+        │
+        ▼
+Ready for Implementation
+```
+
+This is the first meaningful checkpoint of Volume X.
+
+Before this point, we were preparing the environment.
+
+After this point, we begin constructing the editor.
+
+## Repository Structure
+
+The repository should contain the project structure required to begin implementation.
+
+At a high level:
+
+```text
+terminal-editor/
+│
+├── src/
+│   ├── command/
+│   ├── cursor/
+│   ├── document/
+│   ├── file/
+│   ├── input/
+│   ├── renderer/
+│   ├── state/
+│   ├── terminal/
+│   └── viewport/
+│
+├── tests/
+├── docs/
+├── implementation/
+│   ├── current-state.md
+│   ├── implementation-status.md
+│   ├── implementation-notes.md
+│   └── known-issues.md
+│
+├── CMakeLists.txt
+├── README.md
+└── .gitignore
+```
+
+Not every module needs to contain implementation code yet.
+
+The structure establishes the boundaries into which implementation will be added.
+
+As implementation progresses, individual modules will acquire their headers, source files, tests, and CMake configuration when those components become necessary.
+
+## The Build Baseline
+
+The project must be capable of configuring and building successfully.
+
+The development build should be verified first:
+
+```bash
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/debug
+```
+
+The release build should also be independently verified:
+
+```bash
+cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
+cmake --build build/release
+```
+
+The exact commands may vary according to the selected CMake generator, but both configurations must be capable of producing a valid executable.
+
+The important result is:
+
+```text
+Source
+  │
+  ├── Debug Configuration ──→ Successful Build
+  │
+  └── Release Configuration → Successful Build
+```
+
+A build failure at this point must be resolved before proceeding to substantial editor implementation.
+
+## The Testing Baseline
+
+The test infrastructure must also be operational.
+
+The initial smoke test should execute successfully through the project's test system:
+
+```text
+Build
+  │
+  ▼
+CTest
+  │
+  ▼
+Smoke Test
+  │
+  ▼
+Pass
+```
+
+The test system should previously have been verified to detect a deliberately failing assertion as well.
+
+This establishes confidence that both sides of the testing mechanism work:
+
+```text
+Known Good Condition
+       │
+       ▼
+Test Passes
+
+Known Bad Condition
+       │
+       ▼
+Test Fails
+```
+
+From this point forward, tests can be added as implementation components are introduced.
+
+## The Compiler Baseline
+
+The project must also have a known compiler configuration.
+
+The baseline establishes:
+
+```text
+Language Standard
+    → C99
+
+Platform
+    → Linux/POSIX
+
+Warnings
+    → Project-defined warning policy
+
+Build System
+    → CMake
+```
+
+The purpose is reproducibility.
+
+An implementation result should not depend on an undocumented compiler mode or a collection of flags known only to one developer's shell history.
+
+The compiler configuration belongs to the project and should be applied consistently by the build system.
+
+## The Git Baseline
+
+The repository should have a clean Git state after the preparation work has been committed.
+
+The final check is:
+
+```bash
+git status
+```
+
+The working tree should contain no unintended changes.
+
+Conceptually:
+
+```text
+Preparation Work
+      │
+      ▼
+Verify
+      │
+      ▼
+Commit
+      │
+      ▼
+Clean Working Tree
+```
+
+This gives the implementation a precise starting point.
+
+Any modification made after this checkpoint can be understood as part of the editor implementation rather than part of the environment setup.
+
+## The Documentation Baseline
+
+The implementation documentation should describe the same state that the repository actually contains.
+
+At minimum:
+
+```text
+current-state.md
+    → Preparation complete
+
+implementation-status.md
+    → Chapter 44 preparation complete
+
+implementation-notes.md
+    → Important setup observations
+
+known-issues.md
+    → Current unresolved issues
+```
+
+If there are no known issues at this point, that should be stated explicitly rather than leaving the document ambiguous.
+
+The implementation project treats these documents as living project context, so they should be updated whenever the implementation state changes materially.
+
+## The Baseline Commit
+
+The completed preparation state should be recorded as a meaningful Git checkpoint.
+
+For example:
+
+```text
+chore: establish implementation baseline
+```
+
+This commit should represent the final state of the preparation phase.
+
+Afterward, the history can clearly distinguish:
+
+```text
+Preparation
+    │
+    ▼
+Initial Implementation Baseline
+    │
+    ▼
+Editor Implementation
+```
+
+Future commits can then describe actual editor capabilities rather than mixing environment setup with application behavior.
+
+## What "Ready" Means
+
+The repository is ready for Chapter 45 when all of the following are true:
+
+- the implementation repository exists;
+- Git is initialized and the baseline is committed;
+- the source-tree structure is established;
+- CMake can configure the project;
+- the development build succeeds;
+- the release build succeeds;
+- the compiler policy is active;
+- the test infrastructure builds successfully;
+- the initial test passes;
+- the implementation documentation exists;
+- the current project state is recorded;
+- and the working tree is clean.
+
+This can be summarized as:
+
+```text
+Repository       ✓
+Git              ✓
+CMake            ✓
+Compiler         ✓
+Debug Build      ✓
+Release Build    ✓
+Tests            ✓
+Documentation    ✓
+Clean Tree       ✓
+                 │
+                 ▼
+          IMPLEMENTATION READY
+```
+
+## What We Deliberately Have Not Built
+
+It is equally important to understand what this baseline does **not** contain.
+
+We have not yet implemented:
+
+- terminal initialization,
+- raw terminal mode,
+- terminal restoration,
+- the application lifecycle,
+- the event loop,
+- document editing,
+- cursor movement,
+- rendering,
+- file management,
+- or the other editor functionality established by the architecture.
+
+Those belong to the implementation milestones that follow.
+
+The baseline therefore marks a clean boundary:
+
+```text
+Chapter 44
+────────────────────────────
+Development Infrastructure
+Repository
+Build
+Tests
+Documentation
+Git
+────────────────────────────
+             │
+             ▼
+Chapter 45
+────────────────────────────
+Editor Runtime
+────────────────────────────
+```
+
+## The First Real Implementation Step
+
+With the baseline established, we can finally begin implementing the editor.
+
+The first implementation milestone should not begin with text editing.
+
+The runtime must exist before the editor can process input, maintain state, render a screen, or enter its normal event loop.
+
+Therefore, the next chapter begins with the application's relationship to the terminal:
+
+```text
+Program Start
+     │
+     ▼
+Terminal Initialization
+     │
+     ▼
+Application Initialization
+     │
+     ▼
+Event Loop
+     │
+     ▼
+Cleanup
+     │
+     ▼
+Program Exit
+```
+
+This follows the runtime model established earlier: initialization precedes the event loop, and cleanup must restore resources when the application exits.
+
+## The Boundary Between Preparation and Implementation
+
+Chapter 44 has therefore served a specific purpose.
+
+We did not build the editor.
+
+We built the **environment in which the editor can now be built reliably**.
+
+The transition can be summarized as:
+
+```text
+Volumes I–IX
+Theory
+Architecture
+Engineering Decisions
+        │
+        ▼
+Chapter 44
+Implementation Preparation
+        │
+        ├── Workspace
+        ├── Repository
+        ├── Git
+        ├── CMake
+        ├── Compiler
+        ├── Builds
+        ├── Tests
+        └── Project Context
+        │
+        ▼
+Initial Implementation Baseline
+        │
+        ▼
+Chapter 45
+Establishing the Runtime
+        │
+        ▼
+Working Terminal Editor
+```
+
+The implementation environment is now ready.
+
+<Aside>
+  Complete code for this chapter can be found in the relevent branch in the
+  Github repository at
+  https://github.com/SachinAthu/tedit/tree/chapter-44-complete.
+</Aside>
+
+**Chapter 45 begins the construction of the editor itself.**

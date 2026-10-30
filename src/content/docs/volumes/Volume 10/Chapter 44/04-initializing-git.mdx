@@ -1,0 +1,301 @@
+---
+title: 44.4 Initializing Git
+description: "Explains why Git belongs in the implementation environment and how to initialize the repository, ignore build artifacts, and make focused commits."
+---
+
+Version control is part of the implementation environment, not something added after the editor has been completed.
+
+The implementation will evolve through many small changes. Some changes will introduce new functionality, others will correct defects, and some may expose architectural problems that require reconsideration. Git provides the historical record that allows these changes to be identified, reviewed, compared, and, when necessary, reversed.
+
+The implementation project therefore treats Git history as one of the three forms of project truth:
+
+```text
+Architectural Truth
+        │
+        ├── Requirements
+        ├── Architecture
+        └── ADRs
+        │
+Implementation Truth
+        │
+        ├── Source
+        ├── Headers
+        └── Tests
+        │
+Historical Truth
+        │
+        └── Git History
+```
+
+The implementation project specifically identifies Git history as the historical record of how the implementation evolved.
+
+### Initializing the Repository
+
+From the implementation project's root directory, initialize Git:
+
+```bash
+git init
+```
+
+This creates the repository's internal Git metadata.
+
+The project directory now has two related identities:
+
+```text
+Project Directory
+       │
+       ├── Working Files
+       │
+       └── Git Repository
+```
+
+The working files represent the current implementation.
+
+The Git repository records committed versions of that implementation.
+
+Git does not automatically determine which files should belong to the project. That decision remains ours. This is why `.gitignore` and the initial project structure should be established before creating the first commit.
+
+## Establishing `.gitignore`
+
+Build systems generate files that are useful during development but are not part of the source project.
+
+For example:
+
+```text
+build/
+```
+
+may contain generated CMake files, object files, dependency information, and executables.
+
+These files should not normally become part of the repository history.
+
+The `.gitignore` file establishes this boundary.
+
+A minimal initial configuration might therefore contain:
+
+```text
+build/
+```
+
+Additional entries can be introduced when the project acquires other generated artifacts.
+
+The important principle is:
+
+> **Generated artifacts belong to the build environment; source and project configuration belong to version control.**
+
+This keeps Git history focused on information that is necessary to understand and reproduce the implementation.
+
+## Checking the Initial Repository State
+
+Before committing anything, inspect the repository:
+
+```bash
+git status
+```
+
+Git should show the files that are currently untracked.
+
+For example:
+
+```text
+Untracked files:
+    .gitignore
+    CMakeLists.txt
+    README.md
+    src/
+    tests/
+    docs/
+```
+
+The exact list will depend on which files have been created at this point.
+
+This simple command will become one of the most frequently used commands during implementation.
+
+A useful habit is to inspect repository status before and after significant implementation work.
+
+## The First Commit
+
+Once the initial project files are ready, stage them:
+
+```bash
+git add .
+```
+
+Then inspect the staged changes:
+
+```bash
+git status
+```
+
+Only after confirming that the intended files are staged should the first commit be created:
+
+```bash
+git commit -m "chore: initialize implementation project"
+```
+
+The precise commit message can be adjusted to match the project's final commit convention. The important point is that the first commit represents a meaningful project baseline.
+
+It should not contain unrelated experimental files, generated build output, temporary debugging artifacts, or editor-specific clutter.
+
+### 44.4.5 What the First Commit Represents
+
+The first commit does not represent the first working version of the editor.
+
+At this point, there may be no terminal interaction, text editing, rendering, or file management.
+
+Instead, the commit represents:
+
+> **The initial, controlled state of the implementation project.**
+
+This distinction becomes valuable later.
+
+Suppose a future implementation change introduces a build failure. We can compare the current state with the initial baseline and determine exactly what has changed.
+
+```text
+Initial Baseline
+      │
+      ├── Project structure
+      ├── Build configuration
+      └── Documentation
+      │
+      ▼
+Implementation
+      │
+      ├── Terminal
+      ├── Input
+      ├── State
+      ├── Rendering
+      └── Editing
+      │
+      ▼
+Current State
+```
+
+Git therefore provides more than backup. It provides a sequence of implementation states.
+
+### 44.4.6 Focused Commits
+
+As implementation proceeds, commits should remain focused.
+
+A commit should ideally represent one coherent change.
+
+For example:
+
+```text
+feat: add terminal state management
+feat: enable raw terminal mode
+feat: restore terminal state on exit
+test: verify terminal restoration
+```
+
+These commit boundaries make the development history meaningful. The implementation project explicitly recommends this style rather than large commits such as:
+
+```text
+implement chapter 45
+```
+
+A chapter may contain many implementation steps, while a useful Git commit should capture a specific engineering change.
+
+### 44.4.7 Git Is Not a Substitute for Project Documentation
+
+Git history records changes, but it should not become the only place where project knowledge exists.
+
+The implementation repository will also maintain explicit project-context documents such as:
+
+```text
+implementation/
+├── current-state.md
+├── implementation-status.md
+├── implementation-notes.md
+└── known-issues.md
+```
+
+These documents provide the current state and development context, while Git provides the historical sequence of changes.
+
+The distinction is useful:
+
+```text
+Current State
+    → What is true now?
+
+Implementation Status
+    → What has been completed?
+
+Implementation Notes
+    → What important observations were made?
+
+Known Issues
+    → What remains unresolved?
+
+Git History
+    → How did we get here?
+```
+
+Each serves a different purpose.
+
+### 44.4.8 The Git Baseline
+
+After the first commit, the implementation repository should have a known baseline.
+
+Conceptually:
+
+```text
+Git Repository
+      │
+      ▼
+Initial Commit
+      │
+      ├── Project Structure
+      ├── README
+      ├── .gitignore
+      └── Initial Configuration
+      │
+      ▼
+Clean Working Tree
+```
+
+A clean working tree is useful because it provides a precise starting point for the next development step.
+
+We can verify this with:
+
+```bash
+git status
+```
+
+If there are no unintended changes, Git should report that the working tree is clean.
+
+From this point forward, every implementation change can be understood relative to a known state.
+
+## Why We Establish Git Before Writing Editor Code
+
+It may seem unnecessary to initialize version control before the editor does anything useful.
+
+It is not.
+
+The implementation process defined for this project is incremental:
+
+```text
+Understand
+    ↓
+Design
+    ↓
+Implement
+    ↓
+Compile
+    ↓
+Test
+    ↓
+Inspect
+    ↓
+Record
+    ↓
+Commit
+```
+
+Git is the mechanism that records the final step of each completed unit of work.
+
+Starting Git early means that this process applies from the first implementation change rather than being reconstructed later.
+
+The repository is therefore now ready for the build system.
+
+The next step is to establish **CMake**, configure the initial build, and verify that the project can be built before any substantial editor functionality is introduced.

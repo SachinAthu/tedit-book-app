@@ -1,0 +1,356 @@
+---
+title: 44.8 Establishing the Initial Project Structure
+description: "Establishes the initial source tree, mapping architectural responsibilities to modules with clear ownership, headers, tests, and documentation."
+---
+
+The build system now knows how to build the project. The next step is to establish the source-tree structure in which the implementation will grow.
+
+The architecture already defines the major components of the editor, and the project structure established earlier maps those components into modules. Each module owns its implementation files and exposes its public interface through a header.
+
+However, we should not create the entire final implementation simply because the architecture describes it.
+
+The initial project structure should provide the boundaries required for the first implementation milestones while remaining small enough to understand.
+
+## From Architectural Components to Modules
+
+The architecture describes responsibilities such as:
+
+- Terminal Interface
+- Input Handler
+- Input Parser
+- Input Engine
+- Command Engine
+- Editor State
+- Document
+- Cursor
+- Viewport
+- Renderer
+- File Manager
+
+The implementation project represents these responsibilities through modules.
+
+The relationship is:
+
+```text
+Architectural Component
+          │
+          ▼
+       Module
+          │
+          ├── Public Interface
+          │
+          └── Implementation
+```
+
+This does not mean that every architectural concept necessarily requires its own directory immediately.
+
+The project structure should reflect meaningful implementation boundaries rather than mechanically creating one directory for every name in an architecture diagram.
+
+## The Initial Source Tree
+
+The implementation repository can begin with the module structure established by the project documentation:
+
+```text
+terminal-editor/
+├── src/
+│   ├── command/
+│   ├── cursor/
+│   ├── document/
+│   ├── file/
+│   ├── input/
+│   ├── renderer/
+│   ├── state/
+│   ├── terminal/
+│   └── viewport/
+│
+├── tests/
+├── docs/
+├── CMakeLists.txt
+├── README.md
+└── .gitignore
+```
+
+The earlier project structure establishes module-oriented directories, with each module owning its corresponding header and source implementation.
+
+At this stage, some directories may contain no implementation code.
+
+That is acceptable.
+
+The purpose of creating the structure now is to establish the boundaries within which implementation will proceed.
+
+## Why Modules Are Created Before Their Code
+
+Creating an empty directory is not the same as implementing a component.
+
+The distinction matters.
+
+For example:
+
+```text
+terminal/
+```
+
+establishes where terminal-related implementation belongs.
+
+It does not mean that terminal initialization, raw mode, terminal restoration, dimensions, and output handling have already been implemented.
+
+Similarly:
+
+```text
+document/
+```
+
+establishes the future location of the document implementation. It does not imply that the Document data structure already exists.
+
+This allows the repository structure to communicate architectural intent without pretending that unfinished components are complete.
+
+## Module Ownership
+
+Each module should have a clear responsibility.
+
+The project structure establishes rules such as:
+
+```text
+terminal/   → terminal-facing operations
+input/      → input handling, parsing, and input engine
+command/    → command execution
+state/      → centralized editor state
+document/   → document representation and operations
+cursor/     → cursor behavior
+viewport/   → viewport behavior
+renderer/   → rendering
+file/       → file operations
+```
+
+These boundaries are consistent with the layered architecture established earlier.
+
+The important principle is:
+
+> **A module should own a coherent responsibility rather than becoming a convenient container for unrelated code.**
+
+This supports the low-coupling and high-cohesion goals established by the architecture.
+
+## Headers and Source Files
+
+The project coding standards establish a clear separation between public interfaces and implementation details.
+
+A module will normally contain a header and a source file:
+
+```text
+terminal/
+├── terminal.h
+└── terminal.c
+```
+
+The header exposes the module's public interface.
+
+The source file contains the implementation.
+
+The project coding standards explicitly require public interfaces to be placed in headers while implementation details remain private to the source file.
+
+The same pattern will be applied as each module becomes implemented.
+
+## The Input Module
+
+One deliberate structural detail deserves attention.
+
+The architecture distinguishes between:
+
+- Input Handler,
+- Input Parser, and
+- Input Engine.
+
+They are separate responsibilities, but the project structure does not require three separate directories for them.
+
+The established project structure places these responsibilities within the `input/` module.
+
+Conceptually:
+
+```text
+input/
+├── input.h
+└── input.c
+
+        │
+        ├── Input Handler
+        ├── Input Parser
+        └── Input Engine
+```
+
+The architectural separation is therefore preserved at the responsibility level without unnecessarily fragmenting the source tree.
+
+This is an example of why architecture and physical directory structure should not be treated as identical concepts.
+
+## The Common Module
+
+The project structure also defines a `common/` area for genuinely shared functionality.
+
+However, this directory should be treated carefully.
+
+A common module can easily become a dumping ground for functions that do not have an obvious owner:
+
+```text
+Bad:
+common/
+├── random_helpers.c
+├── misc.c
+├── utils.c
+└── things.c
+```
+
+The established architecture intentionally restricts the use of the common module. Shared functionality should belong there only when it is genuinely cross-cutting and does not have a more appropriate module owner.
+
+Therefore, the initial implementation does not need to populate `common/` merely because the architecture allows it.
+
+If no common functionality is required yet, leaving it empty or delaying its creation is preferable.
+
+## Tests and Documentation
+
+The project also reserves dedicated locations for tests and implementation documentation:
+
+```text
+tests/
+docs/
+```
+
+These directories have different purposes.
+
+`tests/` contains verification of the implementation.
+
+`docs/` contains implementation-specific documentation that does not belong in the main book.
+
+This keeps testing and implementation knowledge visible without mixing them into production source modules.
+
+## Do Not Create Artificial Dependencies
+
+The physical source structure must not become an excuse for modules to depend on one another arbitrarily.
+
+The architecture establishes dependency direction and prohibits inappropriate dependencies. The implementation should preserve those boundaries.
+
+For example:
+
+```text
+Application Layer
+       │
+       ▼
+Core Layer
+       │
+       ▼
+Platform Layer
+```
+
+The directory tree represents organization.
+
+The dependency graph represents architecture.
+
+These are related, but they are not the same thing.
+
+A source file should therefore depend on another module because its responsibility requires that dependency, not simply because the other module happens to be nearby in the source tree.
+
+## The Initial `main.c`
+
+The application entry point should remain deliberately small.
+
+The project already establishes `main.c` as the program entry point. At the beginning of implementation, it can remain a minimal executable entry point while the runtime architecture is implemented incrementally.
+
+Conceptually:
+
+```text
+main.c
+   │
+   ▼
+Application Initialization
+   │
+   ▼
+Event Loop
+   │
+   ▼
+Cleanup
+```
+
+We should not place editor logic directly into `main.c` simply because it is the first file that executes.
+
+The architecture requires responsibilities to remain separated into their appropriate components.
+
+## Creating Only What We Need
+
+There is an important balance between an empty project and an over-engineered project.
+
+We should create enough structure to establish:
+
+- module boundaries,
+- source/header separation,
+- tests,
+- documentation,
+- build configuration, and
+- the application entry point.
+
+We should not create:
+
+- speculative utility modules,
+- unused abstractions,
+- empty interfaces for functionality not yet required,
+- duplicate layers,
+- or source files containing placeholder implementations without a current purpose.
+
+The principle is:
+
+> **Establish architectural boundaries early, but implement them when their milestone arrives.**
+
+This keeps the implementation aligned with the architecture without turning the initial repository into a collection of empty scaffolding.
+
+## The Initial Tree as a Contract
+
+After this step, the source tree becomes a visible expression of the architecture.
+
+```text
+src/
+│
+├── command/     Command Engine
+├── cursor/      Cursor
+├── document/    Document
+├── file/        File Manager
+├── input/       Input subsystem
+├── renderer/    Renderer
+├── state/       Editor State
+├── terminal/    Terminal Interface
+└── viewport/    Viewport
+```
+
+This structure should remain understandable as the implementation grows.
+
+If a future implementation requires a new module, that should be treated as an architectural decision rather than casually creating another directory.
+
+Likewise, if an existing module becomes responsible for unrelated functionality, that is a signal to reconsider the design.
+
+## The Initial Implementation Tree
+
+The repository now has a build system, version control, and a defined source structure:
+
+```text
+terminal-editor/
+│
+├── src/
+│   ├── command/
+│   ├── cursor/
+│   ├── document/
+│   ├── file/
+│   ├── input/
+│   ├── renderer/
+│   ├── state/
+│   ├── terminal/
+│   └── viewport/
+│
+├── tests/
+├── docs/
+│
+├── CMakeLists.txt
+├── README.md
+└── .gitignore
+```
+
+The important result is not the number of directories.
+
+It is that the implementation now has a **place for each major responsibility** and a clear distinction between source code, tests, documentation, and generated build artifacts.
+
+The next step is to establish the testing infrastructure. Before we begin implementing editor behavior, we need a minimal mechanism that can compile and execute tests so that future changes can be verified continuously.
