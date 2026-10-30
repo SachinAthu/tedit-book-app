@@ -1,0 +1,1093 @@
+---
+title: Chapter 47 — Editing Text
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## 47.1 Implementation Goal
+
+Extend the Chapter 46 repository with character deletion, horizontal Cursor movement, Backspace handling, and a Dirty Flag. Line splitting and merging remain in Chapter 48; vertical navigation and Viewport behavior remain in Chapter 49. The Input Parser and Input Engine are still deferred to Chapter 52.
+
+## 47.2 Project Changes
+
+```text
+
+tedit-main/
+
+├── CMakeLists.txt                         [modified]
+
+├── src/
+│   ├── main.c                              [modified]
+│   ├── cursor/
+│   │   ├── cursor.h                        [modified]
+│   │   └── cursor.c                        [modified]
+│   ├── document/
+│   │   ├── document.h                      [modified]
+│   │   └── document.c                      [modified]
+│   └── state/
+│       ├── editor_state.h                  [modified]
+│       └── editor_state.c                  [modified]
+└── tests/
+    └── test_editing.c                      [new]
+```
+
+## 47.3 Complete Source Code
+
+The following are the complete contents of every changed or new source/build file. Unchanged Renderer and Terminal files are retained from the prior milestone.
+
+### `CMakeLists.txt` — Modified
+
+```cmake
+# CMakeLists.txt
+
+cmake_minimum_required(VERSION 3.20)
+enable_testing()
+
+project(
+    terminal_editor
+    VERSION 0.1.0
+    LANGUAGES C
+)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+add_executable(
+    tedit
+    src/main.c
+    src/terminal/terminal.c
+    src/state/editor_state.c
+    src/document/document.c
+    src/cursor/cursor.c
+    src/renderer/screen_buffer.c
+    src/renderer/renderer.c
+)
+
+target_include_directories(
+    tedit
+    PRIVATE
+    src
+)
+
+add_executable(test_smoke tests/test_smoke.c)
+add_test(NAME smoke COMMAND test_smoke)
+
+add_executable(
+    test_editing
+    tests/test_editing.c
+)
+
+target_include_directories(test_editing PRIVATE src)
+add_test(NAME editing COMMAND test_editing)
+
+```
+
+### `src/document/document.h` — Modified
+
+```c
+/* src/document/document.h */
+
+#ifndef DOCUMENT_DOCUMENT_H
+#define DOCUMENT_DOCUMENT_H
+
+#include <stdbool.h>
+#include <stddef.h>
+
+typedef struct
+{
+    char *data;
+    size_t length;
+    size_t capacity;
+} DocumentLine;
+
+typedef struct
+{
+    DocumentLine *lines;
+    size_t line_count;
+    size_t line_capacity;
+} Document;
+
+bool document_init(Document *document);
+void document_destroy(Document *document);
+DocumentLine *document_get_line(Document *document, size_t row);
+bool document_insert_character(Document *document, size_t row, size_t column, char character);
+bool document_delete_character(Document *document, size_t row, size_t column);
+
+#endif
+
+```
+
+### `src/document/document.c` — Modified
+
+```c
+/* src/document/document.c */
+
+#include "document.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+/*
+ * A document is a dynamic list of lines. Each line owns a dynamically sized
+ * character buffer. Buffers grow on demand so callers can insert text without
+ * worrying about fixed sizes.
+ */
+
+/* Starting size (in bytes) of a new line's character buffer. */
+#define INITIAL_LINE_CAPACITY 16
+/* Starting size (in lines) of a new document's array of lines. */
+#define INITIAL_DOCUMENT_CAPACITY 8
+
+/*
+ * Prepare a single line for use: allocate its character buffer and set its
+ * bookkeeping fields.
+ *
+ * Parameters:
+ *   line - the line to initialize.
+ *
+ * Returns:
+ *   true on success, false if `line` is NULL or allocation fails.
+ */
+static bool document_line_init(DocumentLine *line)
+{
+    if (line == NULL)
+    {
+        return false;
+    }
+
+    /* Allocate the initial storage that will hold the line's characters. */
+    line->data = malloc(INITIAL_LINE_CAPACITY);
+
+    if (line->data == NULL)
+    {
+        return false;
+    }
+
+    /* A new line is empty but has room for capacity characters. */
+    line->length = 0;
+    line->capacity = INITIAL_LINE_CAPACITY;
+
+    return true;
+}
+
+/*
+ * Release a single line's character buffer and reset its fields so the line
+ * can no longer be used accidentally.
+ *
+ * Parameters:
+ *   line - the line to release; may be NULL.
+ *
+ * Returns:
+ *   void.
+ */
+static void document_line_destroy(DocumentLine *line)
+{
+    if (line == NULL)
+    {
+        return;
+    }
+
+    /* Give the buffer back to the system and clear the pointers/counters. */
+    free(line->data);
+    line->data = NULL;
+    line->length = 0;
+    line->capacity = 0;
+}
+
+/*
+ * Make room in a line's buffer by doubling its capacity. Called when an insert
+ * would otherwise exceed the current capacity.
+ *
+ * Parameters:
+ *   line - the line whose character buffer should be grown.
+ *
+ * Returns:
+ *   true on success, false if reallocation fails.
+ */
+static bool document_grow_line(DocumentLine *line)
+{
+    char *new_data;
+    size_t new_capacity;
+
+    /* A never-initialized line starts at the default capacity; others double. */
+    if (line->capacity == 0)
+    {
+        new_capacity = INITIAL_LINE_CAPACITY;
+    }
+    else
+    {
+        new_capacity = line->capacity * 2;
+    }
+
+    /* Reallocate the existing buffer to the larger size. */
+    new_data = realloc(line->data, new_capacity);
+
+    if (new_data == NULL)
+    {
+        return false;
+    }
+
+    /* realloc may move the block, so store the new pointer and capacity. */
+    line->data = new_data;
+    line->capacity = new_capacity;
+
+    return true;
+}
+
+/*
+ * Make room in a document's array of lines by doubling its capacity. Called
+ * when adding lines would otherwise exceed the current capacity.
+ *
+ * Parameters:
+ *   document - the document whose line array should be grown.
+ *
+ * Returns:
+ *   true on success, false if reallocation fails.
+ */
+static bool document_grow_lines(Document *document)
+{
+    DocumentLine *new_lines;
+    size_t new_capacity;
+
+    /* First allocation uses the default size; later growth doubles. */
+    if (document->line_capacity == 0)
+    {
+        new_capacity = INITIAL_LINE_CAPACITY;
+    }
+    else
+    {
+        new_capacity = document->line_capacity * 2;
+    }
+
+    /* Resize the array; each slot holds one DocumentLine. */
+    new_lines = realloc(document->lines, new_capacity * sizeof(*new_lines));
+
+    if (new_lines == NULL)
+    {
+        return false;
+    }
+
+    document->lines = new_lines;
+    document->line_capacity = new_capacity;
+
+    return true;
+}
+
+/*
+ * Create an empty document containing a single blank line.
+ *
+ * Parameters:
+ *   document - the document to initialize.
+ *
+ * Returns:
+ *   true on success, false if `document` is NULL or any allocation fails.
+ */
+bool document_init(Document *document)
+{
+    if (document == NULL)
+    {
+        return false;
+    }
+
+    /* Start with no lines and no storage; grow_lines will allocate the array. */
+    document->lines = NULL;
+    document->line_count = 0;
+    document->line_capacity = 0;
+
+    /* Allocate room for at least one line. */
+    if (!document_grow_lines(document))
+    {
+        return false;
+    }
+
+    /*
+     * Initialize the first line slot so the document always starts with one
+     * usable (blank) line, like a real text editor.
+     */
+    if (!document_line_init(&document->lines[0]))
+    {
+        /* Clean up the line array we just allocated before giving up. */
+        free(document->lines);
+
+        document->lines = NULL;
+        document->line_capacity = 0;
+
+        return false;
+    }
+
+    /* Exactly one line now exists. */
+    document->line_count = 1;
+
+    return true;
+}
+
+/*
+ * Free every line's buffer plus the array that holds them, then reset the
+ * document to an empty state. Safe to call on a NULL document.
+ *
+ * Parameters:
+ *   document - the document to destroy; may be NULL.
+ *
+ * Returns:
+ *   void.
+ */
+void document_destroy(Document *document)
+{
+    if (document == NULL)
+    {
+        return;
+    }
+
+    /* Release each line's character buffer. */
+    for (size_t index = 0; index < document->line_count; index++)
+    {
+        document_line_destroy(&document->lines[index]);
+    }
+
+    /* Release the array of lines itself and reset bookkeeping. */
+    free(document->lines);
+    document->lines = NULL;
+    document->line_count = 0;
+    document->line_capacity = 0;
+}
+
+/*
+ * Look up a line by its row index.
+ *
+ * Parameters:
+ *   document - the document to read from.
+ *   row      - the zero-based index of the line to fetch.
+ *
+ * Returns:
+ *   a pointer to the line at `row`, or NULL if `document` is NULL or `row` is
+ *   out of range.
+ */
+DocumentLine *document_get_line(Document *document, size_t row)
+{
+    if (document == NULL || row >= document->line_count)
+    {
+        return NULL;
+    }
+
+    return &document->lines[row];
+}
+
+/*
+ * Insert one character into the given line at the given column, shifting the
+ * remaining characters to the right.
+ *
+ * Parameters:
+ *   document  - the document to modify.
+ *   row       - the zero-based index of the target line.
+ *   column    - the zero-based position to insert at (0 to length).
+ *   character - the character to insert.
+ *
+ * Returns:
+ *   true on success, false if the line does not exist, `column` is past the
+ *   end of the line, or growing the line fails.
+ */
+bool document_insert_character(Document *document, size_t row, size_t column, char character)
+{
+    DocumentLine *line = document_get_line(document, row);
+
+    /* Reject invalid rows and columns past the end of the line. */
+    if (line == NULL || column > line->length)
+    {
+        return false;
+    }
+
+    /* Grow the buffer first if inserting would fill or exceed capacity. */
+    if (line->length + 1 >= line->capacity)
+    {
+        if (!document_grow_line(line))
+        {
+            return false;
+        }
+    }
+
+    /*
+     * Shift everything from the insertion point one byte to the right, then
+     * drop the new character into the freed slot and bump the length.
+     */
+    memmove(&line->data[column + 1], &line->data[column], line->length - column);
+    line->data[column] = character;
+    line->length += 1;
+
+    return true;
+}
+
+/* Remove the character at column, preserving the remaining character order. */
+bool document_delete_character(Document *document, size_t row, size_t column)
+{
+    DocumentLine *line = document_get_line(document, row);
+
+    if (line == NULL || column >= line->length)
+    {
+        return false;
+    }
+
+    memmove(&line->data[column], &line->data[column + 1], line->length - column - 1);
+    line->length -= 1;
+
+    return true;
+}
+
+```
+
+### `src/cursor/cursor.h` — Modified
+
+```c
+/* src/cursor/cursor.h */
+
+#ifndef CURSOR_CURSOR_H
+#define CURSOR_CURSOR_H
+
+#include "../document/document.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+
+typedef struct
+{
+    size_t row;
+    size_t column;
+} Cursor;
+
+void cursor_init(Cursor *cursor);
+bool cursor_set_position(Cursor *cursor, const Document *document, size_t row, size_t column);
+bool cursor_advance(Cursor *cursor, const Document *document);
+bool cursor_move_left(Cursor *cursor);
+bool cursor_move_right(Cursor *cursor, const Document *document);
+
+#endif
+
+```
+
+### `src/cursor/cursor.c` — Modified
+
+```c
+/* src/cursor/cursor.c */
+
+#include "cursor.h"
+
+/*
+ * Place the cursor at the start of the document (first row, first column).
+ *
+ * Parameters:
+ *   cursor - the cursor to initialize; may be NULL.
+ *
+ * Returns:
+ *   void.
+ */
+void cursor_init(Cursor *cursor)
+{
+    if (cursor == NULL)
+    {
+        return;
+    }
+
+    cursor->row = 0;
+    cursor->column = 0;
+}
+
+/*
+ * Move the cursor to an explicit position, but only if that position lies
+ * inside the document and within the target line.
+ *
+ * Parameters:
+ *   cursor   - the cursor to move.
+ *   document - the document the cursor refers to.
+ *   row      - the zero-based target line index.
+ *   column   - the zero-based target column (0 to line length).
+ *
+ * Returns:
+ *   true if the cursor was moved, false if `cursor` or `document` is NULL,
+ *   `row` is out of range, or `column` is past the end of the line.
+ */
+bool cursor_set_position(Cursor *cursor, const Document *document, size_t row, size_t column)
+{
+    if (cursor == NULL || document == NULL || row >= document->line_count)
+    {
+        return false;
+    }
+
+    const DocumentLine *line = &document->lines[row];
+
+    if (column > line->length)
+    {
+        return false;
+    }
+
+    cursor->row = row;
+    cursor->column = column;
+
+    return true;
+}
+
+/*
+ * Move the cursor one column to the right, without leaving the current line.
+ *
+ * Parameters:
+ *   cursor   - the cursor to move.
+ *   document - the document the cursor refers to.
+ *
+ * Returns:
+ *   true if the cursor advanced, false if `cursor` or `document` is NULL, the
+ *   current row is out of range, or the cursor is already at the end of the
+ *   line.
+ */
+bool cursor_advance(Cursor *cursor, const Document *document)
+{
+    const DocumentLine *line;
+
+    if (cursor == NULL || document == NULL ||
+        cursor->row >= document->line_count)
+    {
+        return false;
+    }
+
+    line = &document->lines[cursor->row];
+
+    if (cursor->column >= line->length)
+    {
+        return false;
+    }
+
+    cursor->column += 1;
+
+    return true;
+}
+
+/* Move left within the current logical line. */
+bool cursor_move_left(Cursor *cursor)
+{
+    if (cursor == NULL || cursor->column == 0)
+    {
+        return false;
+    }
+
+    cursor->column -= 1;
+    return true;
+}
+
+/* Move right without passing the end of the current logical line. */
+bool cursor_move_right(Cursor *cursor, const Document *document)
+{
+    const DocumentLine *line;
+
+    if (cursor == NULL || document == NULL || cursor->row >= document->line_count)
+    {
+        return false;
+    }
+
+    line = &document->lines[cursor->row];
+    if (cursor->column >= line->length)
+    {
+        return false;
+    }
+
+    cursor->column += 1;
+    return true;
+}
+
+```
+
+### `src/state/editor_state.h` — Modified
+
+```c
+/* src/state/editor_state.h */
+
+#ifndef STATE_EDITOR_STATE_H
+#define STATE_EDITOR_STATE_H
+
+#include "../cursor/cursor.h"
+#include "../document/document.h"
+
+#include <stdbool.h>
+
+typedef struct
+{
+    Document document;
+    Cursor cursor;
+    bool is_dirty;
+} EditorState;
+
+bool editor_state_init(EditorState *state);
+void editor_state_destroy(EditorState *state);
+
+#endif
+
+```
+
+### `src/state/editor_state.c` — Modified
+
+```c
+/* src/state/editor_state.c*/
+
+#include "editor_state.h"
+
+#include <string.h>
+
+/*
+ * Create the initial editor state: an empty document with one blank line and
+ * a cursor placed at the start.
+ *
+ * Parameters:
+ *   state - the editor state to initialize.
+ *
+ * Returns:
+ *   true on success, false if `state` is NULL or the document fails to
+ *   initialize.
+ */
+bool editor_state_init(EditorState *state)
+{
+    if (state == NULL)
+    {
+        return false;
+    }
+
+    /* Zero every field first so partial failures leave a clean state. */
+    memset(state, 0, sizeof(*state));
+
+    if (!document_init(&state->document))
+    {
+        return false;
+    }
+
+    cursor_init(&state->cursor);
+    state->is_dirty = false;
+
+    return true;
+}
+
+/*
+ * Release everything the editor state owns and reset it to an empty state.
+ *
+ * Parameters:
+ *   state - the editor state to destroy; may be NULL.
+ *
+ * Returns:
+ *   void.
+ */
+void editor_state_destroy(EditorState *state)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+
+    document_destroy(&state->document);
+    cursor_init(&state->cursor);
+    state->is_dirty = false;
+}
+
+```
+
+### `src/main.c` — Modified
+
+```c
+/* src/main.c */
+
+#include "terminal/terminal.h"
+#include "state/editor_state.h"
+#include "renderer/renderer.h"
+
+#include <errno.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <sys/ioctl.h>
+#include <sys/select.h>
+#include <unistd.h>
+
+#define CONTROL_Q 0x11
+#define BACKSPACE 0x7F
+#define BACKSPACE_ALT 0x08
+#define ESCAPE 0x1B
+
+static bool get_terminal_size(size_t *rows, size_t *columns)
+{
+    struct winsize window_size;
+
+    if (rows == NULL || columns == NULL ||
+        ioctl(STDOUT_FILENO, TIOCGWINSZ, &window_size) == -1 ||
+        window_size.ws_row == 0 || window_size.ws_col == 0)
+    {
+        return false;
+    }
+
+    *rows = window_size.ws_row;
+    *columns = window_size.ws_col;
+    return true;
+}
+
+/* Read one byte only if it arrives shortly; used to recognize arrow keys. */
+static int read_escape_byte(unsigned char *byte)
+{
+    fd_set read_set;
+    struct timeval timeout;
+    int result;
+
+    FD_ZERO(&read_set);
+    FD_SET(STDIN_FILENO, &read_set);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 50000;
+
+    do
+    {
+        result = select(STDIN_FILENO + 1, &read_set, NULL, NULL, &timeout);
+    } while (result == -1 && errno == EINTR);
+
+    if (result <= 0)
+    {
+        return result;
+    }
+
+    for (;;)
+    {
+        const ssize_t bytes_read = read(STDIN_FILENO, byte, sizeof(*byte));
+
+        if (bytes_read == 1)
+        {
+            return 1;
+        }
+
+        if (bytes_read == 0)
+        {
+            return 0;
+        }
+
+        if (errno != EINTR)
+        {
+            return -1;
+        }
+    }
+}
+
+static bool redraw_after_action(Renderer *renderer, const EditorState *state)
+{
+    return renderer_render(renderer, state);
+}
+
+static bool application_event_loop(EditorState *state, Renderer *renderer)
+{
+    while (true)
+    {
+        unsigned char input;
+        const ssize_t bytes_read = read(STDIN_FILENO, &input, sizeof(input));
+
+        if (bytes_read < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return false;
+        }
+
+        if (bytes_read == 0 || input == CONTROL_Q)
+        {
+            return true;
+        }
+
+        if (input == ESCAPE)
+        {
+            unsigned char first;
+            unsigned char second;
+
+            if (read_escape_byte(&first) != 1 || first != '[' ||
+                read_escape_byte(&second) != 1)
+            {
+                continue;
+            }
+
+            bool moved = false;
+            if (second == 'D')
+            {
+                moved = cursor_move_left(&state->cursor);
+            }
+            else if (second == 'C')
+            {
+                moved = cursor_move_right(&state->cursor, &state->document);
+            }
+
+            if (moved && !redraw_after_action(renderer, state))
+            {
+                return false;
+            }
+            continue;
+        }
+
+        if (input == BACKSPACE || input == BACKSPACE_ALT)
+        {
+            if (state->cursor.column == 0)
+            {
+                continue;
+            }
+
+            const size_t delete_column = state->cursor.column - 1;
+            if (!document_delete_character(&state->document, state->cursor.row, delete_column))
+            {
+                continue;
+            }
+
+            state->cursor.column = delete_column;
+            state->is_dirty = true;
+
+            if (!redraw_after_action(renderer, state))
+            {
+                return false;
+            }
+            continue;
+        }
+
+        if (input < 0x20 || input > 0x7E)
+        {
+            continue;
+        }
+
+        /* Scrolling is not implemented yet, so keep insertion on-screen. */
+        if (renderer->screen_buffer.columns < 2 ||
+            state->cursor.column >= renderer->screen_buffer.columns - 1)
+        {
+            continue;
+        }
+
+        if (!document_insert_character(&state->document, state->cursor.row,
+                                       state->cursor.column, (char)input))
+        {
+            return false;
+        }
+
+        if (!cursor_advance(&state->cursor, &state->document))
+        {
+            return false;
+        }
+
+        state->is_dirty = true;
+
+        if (!redraw_after_action(renderer, state))
+        {
+            return false;
+        }
+    }
+}
+
+int main(void)
+{
+    TerminalState terminal;
+    EditorState state;
+    Renderer renderer;
+    size_t rows;
+    size_t columns;
+    bool state_initialized = false;
+    bool renderer_initialized = false;
+    int exit_status = 1;
+
+    if (!terminal_init(&terminal))
+    {
+        return 1;
+    }
+
+    if (!terminal_enable_raw_mode(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+
+    if (!terminal_enter_alternate_screen(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+
+    if (!get_terminal_size(&rows, &columns))
+    {
+        goto cleanup;
+    }
+
+    if (!editor_state_init(&state))
+    {
+        goto cleanup;
+    }
+    state_initialized = true;
+
+    if (!renderer_init(&renderer, rows, columns))
+    {
+        goto cleanup;
+    }
+    renderer_initialized = true;
+
+    if (!renderer_render(&renderer, &state))
+    {
+        goto cleanup;
+    }
+
+    if (application_event_loop(&state, &renderer))
+    {
+        exit_status = 0;
+    }
+
+cleanup:
+    if (renderer_initialized)
+    {
+        renderer_destroy(&renderer);
+    }
+
+    if (state_initialized)
+    {
+        editor_state_destroy(&state);
+    }
+
+    terminal_restore(&terminal);
+    terminal_leave_alternate_screen(&terminal);
+
+    return exit_status;
+}
+
+```
+
+### `tests/test_editing.c` — New
+
+```c
+/* tests/test_editing.c */
+
+#include "document/document.h"
+#include "cursor/cursor.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <string.h>
+
+static void test_document_insert_and_delete(void)
+{
+    Document document;
+    DocumentLine *line;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'c'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+
+    line = document_get_line(&document, 0);
+    assert(line != NULL);
+    assert(line->length == 3);
+    assert(memcmp(line->data, "abc", 3) == 0);
+
+    assert(document_delete_character(&document, 0, 1));
+    assert(line->length == 2);
+    assert(memcmp(line->data, "ac", 2) == 0);
+
+    assert(!document_delete_character(&document, 0, 2));
+    assert(!document_delete_character(&document, 1, 0));
+    assert(line->length == 2);
+    assert(memcmp(line->data, "ac", 2) == 0);
+
+    document_destroy(&document);
+}
+
+static void test_cursor_horizontal_movement(void)
+{
+    Document document;
+    Cursor cursor;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'x'));
+    assert(document_insert_character(&document, 0, 1, 'y'));
+    cursor_init(&cursor);
+
+    assert(!cursor_move_left(&cursor));
+    assert(cursor.column == 0);
+    assert(cursor_move_right(&cursor, &document));
+    assert(cursor.column == 1);
+    assert(cursor_move_left(&cursor));
+    assert(cursor.column == 0);
+    assert(cursor_move_right(&cursor, &document));
+    assert(cursor_move_right(&cursor, &document));
+    assert(cursor.column == 2);
+    assert(!cursor_move_right(&cursor, &document));
+    assert(cursor.column == 2);
+
+    document_destroy(&document);
+}
+
+static void test_dirty_flag_initial_state(void)
+{
+    EditorState state;
+
+    assert(editor_state_init(&state));
+    assert(!state.is_dirty);
+    state.is_dirty = true;
+    assert(state.is_dirty);
+    editor_state_destroy(&state);
+}
+
+int main(void)
+{
+    test_document_insert_and_delete();
+    test_cursor_horizontal_movement();
+    test_dirty_flag_initial_state();
+    return 0;
+}
+
+```
+
+## 47.4 Build and Test
+
+Run these commands from the repository root:
+
+```bash
+cmake -S . -B build/debug
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+./build/debug/tedit
+```
+
+The configure and build completed successfully in the implementation environment. Both registered tests passed: `smoke` and `editing` (2/2). Interactive behavior should still be checked in the target terminal.
+
+## 47.5 Explanation of the Implementation
+
+### Document deletion
+
+`document_delete_character()` removes the byte at a specified logical row and column. It rejects a missing row and any column at or beyond the line length. `memmove()` shifts the trailing bytes left, and the explicit line length is decremented. A rejected operation leaves the line unchanged.
+
+### Cursor movement
+
+`cursor_move_left()` refuses to move before column zero. `cursor_move_right()` checks the current row and refuses to move past the line length. Both operations are deliberately line-local: crossing line boundaries is implemented in Chapter 48.
+
+### Dirty Flag
+
+`EditorState.is_dirty` begins as `false`. The application sets it to `true` only after insertion or deletion succeeds. Navigation does not change it. Because saving is not implemented yet, this milestone has no transition back to `false` other than initial state creation; Chapter 51 must clear it only after a successful save.
+
+### Temporary input handling
+
+`main.c` handles printable ASCII, Backspace bytes `0x7F` and `0x08`, and common left/right arrow sequences. Escape-sequence handling is temporary application code, not the final Input Parser. A short timeout prevents a lone Escape byte from blocking indefinitely while waiting for the rest of an arrow sequence.
+
+Backspace at column zero is ignored rather than merging with the previous line. The last visible column remains reserved because Viewport scrolling has not yet been implemented.
+
+## 47.6 Invariants
+
+- Document deletion accepts only an existing row and a column strictly less than the line length.
+- Failed deletion does not alter line contents or length.
+- Cursor movement stays within the current logical line.
+- Cursor column remains between zero and the current line length during supported editing actions.
+- The Dirty Flag changes to `true` only after a successful text modification.
+- Rendering remains a read-only consumer of Editor State.
+
+## 47.7 Testing
+
+`tests/test_editing.c` verifies insertion order, deletion and resulting content, invalid deletion positions, left/right Cursor boundaries, and initial Dirty Flag state. The test is registered in CTest as `editing`. Automated tests do not replace manual verification of terminal arrow-key and Backspace behavior.
+
+## 47.8 What We Have Now
+
+The editor can insert printable ASCII characters, move left and right within a line, and delete the character immediately before the Cursor. Successful edits set the Dirty Flag. It still cannot split or merge lines, navigate vertically, scroll, open files, or save files.
+
+## 47.9 Next Step
+
+<Aside>
+  Complete code for this chapter can be found in the relevent branch in the
+  Github repository at
+  https://github.com/SachinAthu/tedit/tree/chapter-47-complete.
+</Aside>
+
+**Chapter 48 — Working with Lines** will implement line splitting, line merging, end-of-line behavior, and Cursor transitions across logical line boundaries.
