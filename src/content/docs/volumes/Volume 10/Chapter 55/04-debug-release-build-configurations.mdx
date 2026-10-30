@@ -1,0 +1,113 @@
+---
+title: 55.4 Debug and Release Build Configurations
+description: "Validates Debug and Release configurations, including logging enabled and disabled, to confirm both build the same implementation and pass the test suite."
+---
+
+## Implementation goal
+
+A reliable editor needs build configurations that serve different purposes without changing the architecture or weakening the test suite.
+
+A Debug build supports development by retaining useful diagnostics and avoiding aggressive optimization. A Release build evaluates the program under the optimization settings intended for normal use. Neither configuration replaces the other: both should compile the same implementation and satisfy the same behavioral requirements.
+
+For this project, build configuration also controls diagnostic logging. That option must be verified independently so that disabling logging does not break the editor or its tests.
+
+## Debug builds
+
+A Debug build is the primary configuration for implementation and diagnosis. It makes it easier to inspect state transitions, reproduce failures, and investigate incorrect behavior.
+
+Configure and build it with:
+
+```bash
+cmake -S . -B build/debug \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DTEDIT_ENABLE_LOGGING=ON
+
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+This configuration enables diagnostic logging and uses CMake's Debug build type. The exact compiler flags depend on the compiler and CMake toolchain, so developers should inspect the generated build commands rather than assume every toolchain behaves identically.
+
+A Debug build should help diagnose failures without changing the editor's required behavior. For example, an assertion may expose an invalid cursor position, but it must not be used to conceal a state-transition defect.
+
+## Release builds
+
+A Release build checks that the editor also works with the compiler's Release configuration. Optimization can expose defects that are less visible in a Debug build, particularly when code relies on undefined behavior or incorrect assumptions about execution.
+
+Configure and test it separately:
+
+```bash
+cmake -S . -B build/release \
+    -DCMAKE_BUILD_TYPE=Release
+
+cmake --build build/release
+ctest --test-dir build/release --output-on-failure
+```
+
+A separate build directory is important. It prevents generated files and configuration values from one build type from being reused accidentally by another.
+
+The Release configuration must not be treated as an excuse to skip testing. The same behavioral tests should run against both Debug and Release builds.
+
+## Diagnostic logging
+
+Diagnostic logging is controlled separately from the CMake build type. This allows developers to distinguish the effects of optimization and build configuration from the effects of logging.
+
+To build with logging enabled:
+
+```bash
+cmake -S . -B build/debug \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DTEDIT_ENABLE_LOGGING=ON
+
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+To verify the logging-disabled configuration:
+
+```bash
+cmake -S . -B build/no-logging \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DTEDIT_ENABLE_LOGGING=OFF
+
+cmake --build build/no-logging
+ctest --test-dir build/no-logging --output-on-failure
+```
+
+Use a distinct directory for each configuration. CMake caches configuration values inside the build directory, so changing an option in a reused directory can make verification less clear.
+
+Logging should remain a diagnostic facility, not a dependency of editor correctness. Disabling it must not disable file operations, alter the Dirty Flag, change rendering behavior, or interfere with terminal restoration.
+
+## Configuration verification matrix
+
+The release candidate was verified against the following configurations:
+
+| Configuration           | Build  | Tests        |
+| ----------------------- | ------ | ------------ |
+| Debug, logging enabled  | Passed | 11/11 passed |
+| Release                 | Passed | 11/11 passed |
+| Debug, logging disabled | Passed | 11/11 passed |
+
+The warning-clean and sanitizer configurations were also verified separately, as described in Section 55.3.
+
+These results demonstrate that the available test suite passes across the tested configurations. They do not prove that every logging path, optimization-sensitive code path, or terminal failure condition has been exercised.
+
+## Recommended developer workflow
+
+Use the following sequence during normal development:
+
+1. Debug first. Implement the change and run the focused tests.
+2. Run the full test suite. Check for regressions across module boundaries.
+3. Check strict warnings. Resolve compiler diagnostics rather than suppressing them without justification.
+4. Check Release. Confirm that optimization does not expose defects.
+5. Check logging-disabled behavior when modifying diagnostics or code that uses the logging interface.
+6. Run sanitizers when modifying memory management, buffer operations, or ownership.
+7. Record the result. Document the configuration and tests actually run.
+
+Not every small change requires every expensive check immediately. However, all required release checks should be completed before producing a release candidate.
+
+## Section conclusion
+
+The editor now has a verified Debug and Release workflow, and the logging-enabled and logging-disabled configurations pass the available test suite. Separate build directories make these results reproducible and easier to audit.
+
+The next section, 55.5 Clean Build and Reproducibility Checks, will verify that the repository can be built from a fresh extraction without relying on stale build products or undeclared files from the development environment.

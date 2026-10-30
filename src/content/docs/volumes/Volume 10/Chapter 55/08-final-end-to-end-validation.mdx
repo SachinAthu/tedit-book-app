@@ -1,0 +1,232 @@
+---
+title: 55.8 Final End-to-End Validation
+description: "Validates the complete editor lifecycle end to end, from startup and interactive editing through saving, shutdown, and terminal restoration."
+---
+
+## Implementation goal
+
+End-to-end validation verifies that the editor works as a complete application, from startup through interactive editing and file persistence to shutdown.
+
+Unit tests establish confidence in individual modules. Integration tests verify interactions between modules. End-to-end validation examines the user-visible workflow across the entire runtime: terminal initialization, input processing, command execution, document updates, rendering, saving, and terminal restoration.
+
+For this project, the final validation must follow the established requirements and runtime model. It must also distinguish between behavior already verified by automated tests and behavior that still requires explicit manual or automated coverage.
+
+## Validate the complete application lifecycle
+
+The application lifecycle defined in the Runtime Model is:
+
+```
+Program Start
+      │
+      ▼
+Initialization
+      │
+      ├── Initialize Editor State
+      ├── Prepare Terminal
+      ├── Load Initial Document, if requested
+      └── Initialize Viewport
+      │
+      ▼
+Event Loop
+      │
+      ├── Read Input
+      ├── Parse Input
+      ├── Execute Command
+      ├── Update State
+      └── Render Frame
+      │
+      ▼
+Exit and Cleanup
+      │
+      └── Restore Terminal
+```
+
+Each phase must be considered in the final validation.
+
+- Startup: The application initializes its state and terminal environment correctly.
+- Editing: Keyboard events reach the appropriate commands and produce the expected document changes.
+- Rendering: The visible document, cursor, status bar, and message bar reflect the current state.
+- Saving: Successful saves persist the current document, while failed saves preserve the unsaved-state indication.
+- Shutdown: The application releases resources and restores terminal settings.
+
+A successful build alone cannot establish these behaviors. They must be exercised through tests or a documented manual procedure.
+
+## Run the automated regression suite
+
+Begin by building the release configuration and running all registered tests:
+
+```bash
+cmake -S . -B build/release \
+    -DCMAKE_BUILD_TYPE=Release
+
+cmake --build build/release
+
+ctest --test-dir build/release --output-on-failure
+```
+
+The Chapter 55 release candidate passed all 11 registered tests in the verified environment. The suite includes ten C test executables and a Python-based POSIX pseudo-terminal integration test.
+
+This is the first validation gate. If a test fails, investigate the failure before continuing to manual validation or publishing the release.
+
+The regression suite should be run again after any final source or configuration change that could affect the build or runtime.
+
+## Validate interactive editing
+
+A manual end-to-end test should exercise the editor through a real terminal interface.
+
+### Interactive validation checklist
+
+Manual test progress
+
+- Launch the editor in a compatible terminal.
+- Confirm the initial screen, status bar, and message bar render correctly.
+- Insert printable characters and verify their position in the document.
+- Test Backspace, Delete, and Enter at valid cursor positions.
+- Move the cursor and scroll through a document that exceeds the viewport.
+- Verify the displayed cursor position and filename information.
+- Save a document and verify its contents on disk.
+- Modify the document again and confirm the unsaved state is reflected.
+- Attempt a file operation that fails and verify the application reports the error.
+- Exit the editor and confirm the terminal behaves normally afterward.
+
+This checklist is a procedure to execute, not evidence that every item has already been manually verified. Record the actual results and investigate any discrepancy with the expected behavior.
+
+## Validate file persistence and failure behavior
+
+File handling deserves special attention because a defect can cause data loss even when the editor appears to work normally.
+
+Test at least these cases:
+
+| Scenario                               | Expected behavior                                                                |
+| -------------------------------------- | -------------------------------------------------------------------------------- |
+| Open a readable text file              | The document contents load correctly.                                            |
+| Open a nonexistent or unreadable file  | An error is reported without corrupting the existing editing state.              |
+| Edit and save a document               | The saved file contains the edited contents.                                     |
+| Attempt a save that fails              | The Dirty Flag remains set.                                                      |
+| Save under a new filename              | The new file association is adopted only after the operation succeeds.           |
+| Fail a Save As operation               | The previous file association and unsaved state are preserved.                   |
+| Save a document containing line breaks | The saved representation follows the established encoding and line-ending rules. |
+
+These expectations follow the project's file-safety and state-management decisions. The automated file and command tests provide coverage for parts of this behavior, but they do not imply that every possible file-system failure has been injected and tested.
+
+In particular, exhaustive terminal-output failure injection and deterministic allocation-failure testing remain outstanding hardening work.
+
+## Validate terminal restoration
+
+Terminal restoration is a critical lifecycle requirement. The editor switches the terminal into a mode suitable for interactive input and must restore its previous settings when it exits normally.
+
+Validation should include:
+
+1. Launching the editor from a terminal.
+2. Exiting through the supported exit command.
+3. Confirming that normal shell input and terminal echo work afterward.
+4. Checking that the cursor is visible and the shell prompt renders correctly.
+5. Repeating the test after ordinary editing and file-saving operations.
+
+The pseudo-terminal integration test provides automated coverage for the application lifecycle. Manual testing remains useful because terminal emulators and real terminal sessions may behave differently.
+
+A process terminated forcibly by an external signal or system failure is a different case from normal shutdown. The release documentation must not claim guaranteed recovery from every possible termination scenario unless that behavior has been explicitly implemented and verified.
+
+## Verify the packaged release
+
+The release artifact itself must be tested, not just the development working tree.
+
+Use this sequence:
+
+```
+Final Source Revision
+        │
+        ▼
+Create Release Archive
+        │
+        ▼
+Generate SHA-256 Checksum
+        │
+        ▼
+Extract Into Fresh Directory
+        │
+        ▼
+Configure and Build
+        │
+        ▼
+Run Automated Tests
+        │
+        ▼
+Launch and Validate
+```
+
+For a source archive, the fresh-directory build should follow the documented build instructions. If the release also includes binary or operating-system packages, test those artifacts independently in their intended environments.
+
+For example, a package that builds correctly from source but installs its executable into an incorrect location is still a defective release.
+
+After the archive is finalized, regenerate its checksum and verify that the published checksum matches the actual downloadable artifact.
+
+## Review the final architecture
+
+Before approving the release, confirm that the dependency correction made in Section 55.2 remains intact.
+
+The expected application flow is:
+
+```
+Input Handler
+      │
+      ▼
+Input Parser
+      │
+      ▼
+Input Engine
+      │
+      ▼
+Command Engine ─────► File Manager
+      │
+      ▼
+Editor State
+      │
+      ▼
+Renderer
+      │
+      ▼
+Terminal Output
+```
+
+This is a conceptual representation of responsibilities, not a claim that every runtime operation follows a single linear path.
+
+The final review should confirm that:
+
+- The Core Layer does not depend directly on the File Manager.
+- The Command Engine coordinates application-level file operations.
+- The File Manager remains responsible for persistence and safe-save behavior.
+- The Renderer reads state without modifying it.
+- The Input Parser converts input into events rather than executing editing commands.
+- Diagnostic logging does not become a dependency of editing correctness.
+- The Dirty Flag and file-association invariants remain intact.
+
+The architecture review is important because a change can pass existing tests while still violating the dependency direction or ownership rules established earlier in the book.
+
+## Define release acceptance criteria
+
+The release should be accepted only when its required checks have been completed and the results recorded.
+
+## Release acceptance criteria
+
+- The intended source revision builds successfully.
+- The required automated tests pass.
+- The documented compiler-warning and sanitizer checks pass.
+- Interactive editing, saving, and shutdown have been validated.
+- The release archive builds successfully in a fresh directory.
+- Published checksums match the final artifacts.
+- Documentation matches the actual capabilities and limitations.
+- No unresolved release-blocking defect is being concealed.
+- The release has an appropriate license and distribution terms before public distribution.
+
+Use this checklist to record actual release evidence. Checking an item here does not run or verify the underlying test.
+
+A release candidate can pass its technical checks and still be unsuitable for public distribution if its licensing or packaging requirements are unresolved. Release acceptance must account for both engineering verification and distribution readiness.
+
+## Section conclusion
+
+Final end-to-end validation brings together the tests, runtime requirements, file-safety guarantees, architecture rules, and release procedures established throughout the implementation.
+
+The current release candidate has demonstrated successful builds and 11 passing automated tests across the recorded configurations, including a fresh build from the source archive. The remaining manual checks should be recorded explicitly rather than inferred from automated results. Known hardening gaps and platform limitations remain part of the release assessment.
+
+The next and final section, 55.9 Final Implementation Status, will summarize what has been implemented, what has been verified, which limitations remain, and what conditions must be met before the editor can be considered ready for public distribution.

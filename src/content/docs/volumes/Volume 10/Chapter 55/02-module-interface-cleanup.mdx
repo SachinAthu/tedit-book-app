@@ -1,0 +1,2690 @@
+---
+title: 55.2 Module and Interface Cleanup
+description: "Moves file-operation coordination from Editor State into the Command Engine, restoring the intended dependency direction while preserving file and state ownership."
+---
+
+## Dependency correction implemented
+
+The refactor is complete in the working repository. The previous dependency was:
+
+```
+Editor State ──► File Manager
+```
+
+The corrected dependency is:
+
+```
+Application Layer
+  Command Engine
+      │
+      ├──────────► File Manager
+      │
+      ▼
+  Editor State
+```
+
+The Command Engine now coordinates file operations and the resulting state transitions. The Core Layer no longer calls file-system operations directly.
+
+## Source changes
+
+| File                           | Change                                                                                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/state/editor_state.h`     | Removed file-operation APIs and introduced state-transition APIs.                                                                                                  |
+| `src/state/editor_state.c`     | Removed the File Manager and logger dependencies; added operations for adopting a loaded document, transferring file-path ownership, and marking a document clean. |
+| `src/command/command_engine.h` | Added application-level load, save, and Save As APIs.                                                                                                              |
+| `src/command/command_engine.c` | Added transactional file-operation coordination and retained the existing save-failure guarantees.                                                                 |
+| `src/main.c`                   | Routed startup-file loading through the Command Engine.                                                                                                            |
+| `tests/test_file.c`            | Updated state-level file-loading tests to use the application coordinator.                                                                                         |
+| `tests/test_file_save.c`       | Updated state-level save tests to use the application coordinator.                                                                                                 |
+| `tests/test_command_engine.c`  | Updated the Save As test to use the application coordinator.                                                                                                       |
+
+The File Manager still owns UTF-8 decoding, serialization, temporary-file creation, and atomic replacement. The Editor State still owns the document, file association, cursor, viewport, and Dirty Flag.
+
+The refactor preserves the important transaction guarantees: failed loads leave the existing editing state unchanged, failed saves preserve the Dirty Flag, and failed Save As operations preserve the previous file association.
+
+## Complete updated files
+
+### `src/state/editor_state.h`
+
+```c
+/* src/state/editor_state.h */
+
+#ifndef STATE_EDITOR_STATE_H
+#define STATE_EDITOR_STATE_H
+
+#include "cursor/cursor.h"
+#include "document/document.h"
+#include "viewport/viewport.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+
+#define EDITOR_MESSAGE_CAPACITY 256
+#define EDITOR_FILENAME_CAPACITY 4096
+#define DEFAULT_TAB_WIDTH 4
+
+typedef struct
+{
+    size_t tab_width;
+} EditorConfiguration;
+
+typedef struct
+{
+    Document document;
+    Cursor cursor;
+    Viewport viewport;
+    EditorConfiguration configuration;
+    bool is_dirty;
+    char *file_path;
+    char message[EDITOR_MESSAGE_CAPACITY];
+    bool filename_entry_active;
+    char filename_entry[EDITOR_FILENAME_CAPACITY];
+    size_t filename_entry_length;
+    size_t filename_entry_cursor;
+    bool quit_confirmation_active;
+    bool quit_after_save;
+} EditorState;
+
+bool editor_state_init(EditorState *state);
+
+bool editor_state_adopt_loaded_document(EditorState *state,
+                                        Document *replacement,
+                                        char *owned_file_path);
+
+void editor_state_take_file_path(EditorState *state, char *owned_file_path);
+
+void editor_state_mark_clean(EditorState *state);
+
+bool editor_state_set_message(EditorState *state, const char *message);
+
+void editor_state_destroy(EditorState *state);
+
+#endif
+```
+
+### `src/state/editor_state.c`
+
+```c
+/* src/state/editor_state.c */
+
+#include "editor_state.h"
+#include <string.h>
+#include <stdlib.h>
+
+bool editor_state_init(EditorState *state)
+{
+    if (state == NULL)
+    {
+        return false;
+    }
+
+    /* Zero every field first so partial failures leave a clean state. */
+    memset(state, 0, sizeof(*state));
+
+    if (!document_init(&state->document))
+    {
+        return false;
+    }
+
+    cursor_init(&state->cursor);
+    viewport_init(&state->viewport);
+    state->configuration.tab_width = DEFAULT_TAB_WIDTH;
+    state->is_dirty = false;
+    state->file_path = NULL;
+    state->message[0] = '\0';
+    state->filename_entry_active = false;
+    state->filename_entry[0] = '\0';
+    state->filename_entry_length = 0;
+    state->filename_entry_cursor = 0;
+    state->quit_confirmation_active = false;
+    state->quit_after_save = false;
+
+    return true;
+}
+
+bool editor_state_adopt_loaded_document(EditorState *state,
+                                        Document *replacement,
+                                        char *owned_file_path)
+{
+    if (state == NULL || replacement == NULL || owned_file_path == NULL)
+    {
+        return false;
+    }
+
+    document_destroy(&state->document);
+    state->document = *replacement;
+    memset(replacement, 0, sizeof(*replacement));
+
+    free(state->file_path);
+    state->file_path = owned_file_path;
+    cursor_init(&state->cursor);
+    viewport_init(&state->viewport);
+    state->is_dirty = false;
+    state->filename_entry_active = false;
+    state->filename_entry[0] = '\0';
+    state->filename_entry_length = 0;
+    state->filename_entry_cursor = 0;
+    state->quit_confirmation_active = false;
+    state->quit_after_save = false;
+    return true;
+}
+
+void editor_state_take_file_path(EditorState *state, char *owned_file_path)
+{
+    if (state == NULL)
+    {
+        free(owned_file_path);
+        return;
+    }
+
+    if (state->file_path != owned_file_path)
+    {
+        free(state->file_path);
+        state->file_path = owned_file_path;
+    }
+}
+
+void editor_state_mark_clean(EditorState *state)
+{
+    if (state != NULL)
+    {
+        state->is_dirty = false;
+    }
+}
+
+bool editor_state_set_message(EditorState *state, const char *message)
+{
+    size_t length;
+
+    if (state == NULL || message == NULL)
+    {
+        return false;
+    }
+
+    /* Copy at most a full buffer's worth, leaving room for the terminator. */
+    length = strlen(message);
+    if (length >= sizeof(state->message))
+    {
+        length = sizeof(state->message) - 1;
+    }
+
+    memmove(state->message, message, length);
+    state->message[length] = '\0';
+    return true;
+}
+
+void editor_state_destroy(EditorState *state)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+
+    document_destroy(&state->document);
+    free(state->file_path);
+    state->file_path = NULL;
+    cursor_init(&state->cursor);
+    viewport_init(&state->viewport);
+    state->is_dirty = false;
+    state->message[0] = '\0';
+    state->filename_entry_active = false;
+    state->filename_entry[0] = '\0';
+    state->filename_entry_length = 0;
+    state->filename_entry_cursor = 0;
+    state->quit_confirmation_active = false;
+    state->quit_after_save = false;
+}
+```
+
+### `src/command/command_engine.h`
+
+```c
+/* src/command/command_engine.h */
+
+#ifndef COMMAND_COMMAND_ENGINE_H
+#define COMMAND_COMMAND_ENGINE_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "state/editor_state.h"
+
+typedef enum
+{
+    EDITOR_COMMAND_NONE = 0,
+    EDITOR_COMMAND_INSERT_CHARACTER,
+    EDITOR_COMMAND_INSERT_TAB,
+    EDITOR_COMMAND_BACKSPACE,
+    EDITOR_COMMAND_INSERT_NEWLINE,
+    EDITOR_COMMAND_CANCEL,
+    EDITOR_COMMAND_MOVE_LEFT,
+    EDITOR_COMMAND_MOVE_RIGHT,
+    EDITOR_COMMAND_MOVE_UP,
+    EDITOR_COMMAND_MOVE_DOWN,
+    EDITOR_COMMAND_PAGE_UP,
+    EDITOR_COMMAND_PAGE_DOWN,
+    EDITOR_COMMAND_MOVE_HOME,
+    EDITOR_COMMAND_MOVE_END,
+    EDITOR_COMMAND_DELETE_CHARACTER,
+    EDITOR_COMMAND_SAVE,
+    EDITOR_COMMAND_QUIT
+} EditorCommandType;
+
+typedef struct
+{
+    EditorCommandType type;
+    uint32_t character;
+    size_t page_rows;
+} EditorCommand;
+
+bool command_engine_load_file(EditorState *state, const char *path);
+bool command_engine_save_file(EditorState *state, const char *path);
+bool command_engine_save_as(EditorState *state, const char *path);
+
+bool command_engine_execute(EditorState *state,
+                            const EditorCommand *command,
+                            const char *save_path,
+                            bool *redraw,
+                            bool *should_quit);
+
+#endif
+```
+
+### `src/command/command_engine.c`
+
+```c
+/* src/command/command_engine.c */
+
+#include "command/command_engine.h"
+#include "common/logger.h"
+
+#include "cursor/cursor.h"
+#include "document/document.h"
+#include "file/file.h"
+#include "state/editor_state.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+bool command_engine_load_file(EditorState *state, const char *path)
+{
+    Document replacement;
+    char *owned_path;
+    size_t path_length;
+    FileLoadResult result;
+
+    if (state == NULL || path == NULL || path[0] == '\0')
+    {
+        return false;
+    }
+
+    path_length = strlen(path);
+    if (path_length == SIZE_MAX)
+    {
+        return false;
+    }
+    owned_path = malloc(path_length + 1);
+    if (owned_path == NULL)
+    {
+        return false;
+    }
+    memcpy(owned_path, path, path_length + 1);
+
+    if (!document_init(&replacement))
+    {
+        free(owned_path);
+        return false;
+    }
+
+    result = file_load_document(path, &replacement);
+    if (result != FILE_LOAD_OK)
+    {
+        TEDIT_LOG_WARN("file", "load failed: path=\"%s\" result=%d", path, (int)result);
+        document_destroy(&replacement);
+        free(owned_path);
+        return false;
+    }
+
+    if (!editor_state_adopt_loaded_document(state, &replacement, owned_path))
+    {
+        document_destroy(&replacement);
+        free(owned_path);
+        return false;
+    }
+    TEDIT_LOG_INFO("file", "loaded file: path=\"%s\"", path);
+    return true;
+}
+
+bool command_engine_save_file(EditorState *state, const char *path)
+{
+    FileSaveResult result;
+
+    if (state == NULL || path == NULL || path[0] == '\0')
+    {
+        return false;
+    }
+
+    result = file_save_document(path, &state->document);
+    if (result != FILE_SAVE_OK)
+    {
+        TEDIT_LOG_WARN("file", "save failed: path=\"%s\" result=%d dirty=%s",
+                       path, (int)result, state->is_dirty ? "true" : "false");
+        return false;
+    }
+
+    TEDIT_LOG_INFO("file", "saved file: path=\"%s\"", path);
+    if (state->is_dirty)
+    {
+        TEDIT_LOG_INFO("state", "Dirty Flag changed: dirty -> clean after save");
+    }
+    editor_state_mark_clean(state);
+    return true;
+}
+
+bool command_engine_save_as(EditorState *state, const char *path)
+{
+    char *owned_path;
+    size_t path_length;
+    FileSaveResult result;
+
+    if (state == NULL || path == NULL || path[0] == '\0')
+    {
+        return false;
+    }
+
+    path_length = strlen(path);
+    if (path_length == SIZE_MAX)
+    {
+        return false;
+    }
+    owned_path = malloc(path_length + 1);
+    if (owned_path == NULL)
+    {
+        return false;
+    }
+    memcpy(owned_path, path, path_length + 1);
+
+    result = file_save_document(path, &state->document);
+    if (result != FILE_SAVE_OK)
+    {
+        TEDIT_LOG_WARN("file", "save failed: path=\"%s\" result=%d dirty=%s",
+                       path, (int)result, state->is_dirty ? "true" : "false");
+        free(owned_path);
+        return false;
+    }
+
+    TEDIT_LOG_INFO("file", "saved file: path=\"%s\"", path);
+    editor_state_take_file_path(state, owned_path);
+    if (state->is_dirty)
+    {
+        TEDIT_LOG_INFO("state", "Dirty Flag changed: dirty -> clean after save");
+    }
+    editor_state_mark_clean(state);
+    return true;
+}
+
+static void command_mark_document_dirty(EditorState *state)
+{
+    if (state != NULL && !state->is_dirty)
+    {
+        TEDIT_LOG_INFO("state", "Dirty Flag changed: clean -> dirty");
+    }
+    if (state != NULL)
+    {
+        state->is_dirty = true;
+    }
+}
+
+static bool command_backspace(EditorState *state, bool *changed)
+{
+    if (state->cursor.column > 0)
+    {
+        const size_t delete_column = state->cursor.column - 1;
+        if (!document_delete_character(&state->document, state->cursor.row, delete_column))
+        {
+            return true;
+        }
+        if (!cursor_set_position(&state->cursor, &state->document,
+                                 state->cursor.row, delete_column))
+        {
+            return false;
+        }
+    }
+    else if (state->cursor.row > 0)
+    {
+        const size_t previous_row = state->cursor.row - 1;
+        const DocumentLine *previous_line = document_get_line(&state->document, previous_row);
+        if (previous_line == NULL)
+        {
+            return true;
+        }
+
+        const size_t previous_length = previous_line->length;
+        if (!document_merge_lines(&state->document, previous_row))
+        {
+            return true;
+        }
+        if (!cursor_set_position(&state->cursor, &state->document, previous_row, previous_length))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return true;
+    }
+
+    command_mark_document_dirty(state);
+    *changed = true;
+    return true;
+}
+
+static bool command_delete_character(EditorState *state, bool *changed)
+{
+    const DocumentLine *line = document_get_line(&state->document, state->cursor.row);
+
+    if (line == NULL)
+    {
+        return true;
+    }
+
+    if (state->cursor.column < line->length)
+    {
+        if (!document_delete_character(&state->document, state->cursor.row,
+                                       state->cursor.column))
+        {
+            return true;
+        }
+    }
+    else if (state->cursor.row + 1 < state->document.line_count)
+    {
+        if (!document_merge_lines(&state->document, state->cursor.row))
+        {
+            return true;
+        }
+    }
+    else
+    {
+        return true;
+    }
+
+    if (!cursor_set_position(&state->cursor, &state->document,
+                             state->cursor.row, state->cursor.column))
+    {
+        return false;
+    }
+
+    command_mark_document_dirty(state);
+    *changed = true;
+    return true;
+}
+
+static size_t encode_utf8(uint32_t character, unsigned char bytes[4])
+{
+    if (character <= 0x7F)
+    {
+        bytes[0] = (unsigned char)character;
+        return 1;
+    }
+    if (character <= 0x7FF)
+    {
+        bytes[0] = (unsigned char)(0xC0 | (character >> 6));
+        bytes[1] = (unsigned char)(0x80 | (character & 0x3F));
+        return 2;
+    }
+    if (character <= 0xFFFF && !(character >= 0xD800 && character <= 0xDFFF))
+    {
+        bytes[0] = (unsigned char)(0xE0 | (character >> 12));
+        bytes[1] = (unsigned char)(0x80 | ((character >> 6) & 0x3F));
+        bytes[2] = (unsigned char)(0x80 | (character & 0x3F));
+        return 3;
+    }
+    if (character <= 0x10FFFF)
+    {
+        bytes[0] = (unsigned char)(0xF0 | (character >> 18));
+        bytes[1] = (unsigned char)(0x80 | ((character >> 12) & 0x3F));
+        bytes[2] = (unsigned char)(0x80 | ((character >> 6) & 0x3F));
+        bytes[3] = (unsigned char)(0x80 | (character & 0x3F));
+        return 4;
+    }
+    return 0;
+}
+
+static size_t filename_previous_boundary(const char *text, size_t position)
+{
+    if (position == 0)
+    {
+        return 0;
+    }
+
+    --position;
+    while (position > 0 && (((unsigned char)text[position] & 0xC0) == 0x80))
+    {
+        --position;
+    }
+    return position;
+}
+
+static size_t filename_next_boundary(const char *text, size_t length, size_t position)
+{
+    if (position >= length)
+    {
+        return length;
+    }
+
+    ++position;
+    while (position < length && (((unsigned char)text[position] & 0xC0) == 0x80))
+    {
+        ++position;
+    }
+    return position;
+}
+
+static void filename_entry_clear(EditorState *state)
+{
+    state->filename_entry_active = false;
+    state->filename_entry_length = 0;
+    state->filename_entry_cursor = 0;
+    state->filename_entry[0] = '\0';
+}
+
+static void filename_entry_start(EditorState *state, bool quit_after_save)
+{
+    state->filename_entry_active = true;
+    state->filename_entry_length = 0;
+    state->filename_entry_cursor = 0;
+    state->filename_entry[0] = '\0';
+    state->quit_after_save = quit_after_save;
+    (void)editor_state_set_message(state, "Enter: save  Esc: cancel");
+}
+
+static bool command_save(EditorState *state, const char *save_path, bool quitting, bool *redraw, bool *should_quit)
+{
+    const char *current_path = state->file_path != NULL ? state->file_path : save_path;
+
+    if (current_path == NULL)
+    {
+        filename_entry_start(state, quitting);
+        *redraw = true;
+        return true;
+    }
+
+    if (command_engine_save_file(state, current_path))
+    {
+        (void)editor_state_set_message(state, "Saved successfully.");
+        state->quit_after_save = false;
+        if (quitting)
+        {
+            *should_quit = true;
+        }
+    }
+    else
+    {
+        (void)editor_state_set_message(state, "Save failed; document remains modified.");
+        state->quit_after_save = false;
+    }
+
+    *redraw = true;
+    return true;
+}
+
+static bool filename_entry_execute(EditorState *state, const EditorCommand *command, bool *redraw, bool *should_quit)
+{
+    if (command->type == EDITOR_COMMAND_CANCEL)
+    {
+        const bool was_quitting = state->quit_after_save;
+        filename_entry_clear(state);
+        state->quit_after_save = false;
+        (void)editor_state_set_message(state, was_quitting ? "Quit cancelled." : "Save As cancelled.");
+        *redraw = true;
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_MOVE_LEFT)
+    {
+        const size_t previous = filename_previous_boundary(state->filename_entry,
+                                                           state->filename_entry_cursor);
+        if (previous != state->filename_entry_cursor)
+        {
+            state->filename_entry_cursor = previous;
+            *redraw = true;
+        }
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_MOVE_RIGHT)
+    {
+        const size_t next = filename_next_boundary(state->filename_entry,
+                                                   state->filename_entry_length,
+                                                   state->filename_entry_cursor);
+        if (next != state->filename_entry_cursor)
+        {
+            state->filename_entry_cursor = next;
+            *redraw = true;
+        }
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_BACKSPACE)
+    {
+        if (state->filename_entry_cursor > 0)
+        {
+            const size_t previous = filename_previous_boundary(state->filename_entry, state->filename_entry_cursor);
+            const size_t removed = state->filename_entry_cursor - previous;
+            memmove(state->filename_entry + previous,
+                    state->filename_entry + state->filename_entry_cursor,
+                    state->filename_entry_length - state->filename_entry_cursor + 1);
+            state->filename_entry_length -= removed;
+            state->filename_entry_cursor = previous;
+            *redraw = true;
+        }
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_DELETE_CHARACTER)
+    {
+        if (state->filename_entry_cursor < state->filename_entry_length)
+        {
+            const size_t next = filename_next_boundary(state->filename_entry,
+                                                       state->filename_entry_length,
+                                                       state->filename_entry_cursor);
+            const size_t removed = next - state->filename_entry_cursor;
+            memmove(state->filename_entry + state->filename_entry_cursor,
+                    state->filename_entry + next,
+                    state->filename_entry_length - next + 1);
+            state->filename_entry_length -= removed;
+            *redraw = true;
+        }
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_INSERT_CHARACTER)
+    {
+        unsigned char encoded[4];
+        const size_t encoded_length = encode_utf8(command->character, encoded);
+
+        if (encoded_length == 0)
+        {
+            return true;
+        }
+        if (encoded_length > EDITOR_FILENAME_CAPACITY - 1 - state->filename_entry_length)
+        {
+            (void)editor_state_set_message(state, "Filename is too long.");
+            *redraw = true;
+            return true;
+        }
+
+        memmove(state->filename_entry + state->filename_entry_cursor + encoded_length,
+                state->filename_entry + state->filename_entry_cursor,
+                state->filename_entry_length - state->filename_entry_cursor + 1);
+        memcpy(state->filename_entry + state->filename_entry_cursor, encoded, encoded_length);
+        state->filename_entry_length += encoded_length;
+        state->filename_entry_cursor += encoded_length;
+        (void)editor_state_set_message(state, "Enter: save  Esc: cancel");
+        *redraw = true;
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_INSERT_NEWLINE)
+    {
+        if (state->filename_entry_length == 0)
+        {
+            (void)editor_state_set_message(state, "Enter a file name.");
+            *redraw = true;
+            return true;
+        }
+
+        if (command_engine_save_as(state, state->filename_entry))
+        {
+            const bool should_quit_after_save = state->quit_after_save;
+            filename_entry_clear(state);
+            state->quit_after_save = false;
+            (void)editor_state_set_message(state, "Saved successfully.");
+            if (should_quit_after_save)
+            {
+                *should_quit = true;
+            }
+        }
+        else
+        {
+            (void)editor_state_set_message(
+                state, "Save failed; check path and try again, or Esc to cancel.");
+        }
+        *redraw = true;
+        return true;
+    }
+
+    /* Ignore commands not meaningful while a filename is being entered. */
+    return true;
+}
+
+static bool quit_confirmation_execute(EditorState *state, const EditorCommand *command, const char *save_path, bool *redraw, bool *should_quit)
+{
+    if (command->type == EDITOR_COMMAND_CANCEL)
+    {
+        state->quit_confirmation_active = false;
+        (void)editor_state_set_message(state, "Quit cancelled.");
+        *redraw = true;
+        return true;
+    }
+
+    if (command->type != EDITOR_COMMAND_INSERT_CHARACTER)
+    {
+        return true;
+    }
+
+    if (command->character == 'n' || command->character == 'N')
+    {
+        state->quit_confirmation_active = false;
+        state->quit_after_save = false;
+        *should_quit = true;
+        return true;
+    }
+
+    if (command->character == 'y' || command->character == 'Y')
+    {
+        state->quit_confirmation_active = false;
+        return command_save(state, save_path, true, redraw, should_quit);
+    }
+
+    return true;
+}
+
+bool command_engine_execute(EditorState *state, const EditorCommand *command, const char *save_path, bool *redraw, bool *should_quit)
+{
+    bool changed = false;
+
+    if (state == NULL || command == NULL || redraw == NULL || should_quit == NULL)
+    {
+        return false;
+    }
+
+    *redraw = false;
+    *should_quit = false;
+
+    if (state->filename_entry_active)
+    {
+        return filename_entry_execute(state, command, redraw, should_quit);
+    }
+
+    if (state->quit_confirmation_active)
+    {
+        return quit_confirmation_execute(state, command, save_path, redraw, should_quit);
+    }
+
+    switch (command->type)
+    {
+    case EDITOR_COMMAND_NONE:
+        break;
+    case EDITOR_COMMAND_QUIT:
+        if (state->is_dirty)
+        {
+            state->quit_confirmation_active = true;
+            state->quit_after_save = false;
+            (void)editor_state_set_message(state, "Save changes before quitting?");
+            *redraw = true;
+        }
+        else
+        {
+            *should_quit = true;
+        }
+        break;
+    case EDITOR_COMMAND_SAVE:
+        return command_save(state, save_path, false, redraw, should_quit);
+    case EDITOR_COMMAND_CANCEL:
+        break;
+    case EDITOR_COMMAND_INSERT_CHARACTER:
+    case EDITOR_COMMAND_INSERT_TAB:
+    {
+        const uint32_t character = command->type == EDITOR_COMMAND_INSERT_TAB
+                                       ? (uint32_t)'\t'
+                                       : command->character;
+        if (!document_insert_character(&state->document, state->cursor.row, state->cursor.column, character))
+        {
+            return true;
+        }
+        if (!cursor_advance(&state->cursor, &state->document))
+        {
+            return false;
+        }
+        command_mark_document_dirty(state);
+        changed = true;
+        break;
+    }
+    case EDITOR_COMMAND_BACKSPACE:
+        if (!command_backspace(state, &changed))
+        {
+            return false;
+        }
+        break;
+    case EDITOR_COMMAND_INSERT_NEWLINE:
+        if (!document_split_line(&state->document, state->cursor.row, state->cursor.column))
+        {
+            return true;
+        }
+        if (!cursor_set_position(&state->cursor, &state->document, state->cursor.row + 1, 0))
+        {
+            return false;
+        }
+        command_mark_document_dirty(state);
+        changed = true;
+        break;
+    case EDITOR_COMMAND_MOVE_LEFT:
+        changed = cursor_move_left(&state->cursor);
+        break;
+    case EDITOR_COMMAND_MOVE_RIGHT:
+        changed = cursor_move_right(&state->cursor, &state->document);
+        break;
+    case EDITOR_COMMAND_MOVE_UP:
+        changed = cursor_move_up(&state->cursor, &state->document, state->configuration.tab_width);
+        break;
+    case EDITOR_COMMAND_MOVE_DOWN:
+        changed = cursor_move_down(&state->cursor, &state->document, state->configuration.tab_width);
+        break;
+    case EDITOR_COMMAND_PAGE_UP:
+        changed = cursor_move_page_up(&state->cursor, &state->document, command->page_rows, state->configuration.tab_width);
+        break;
+    case EDITOR_COMMAND_PAGE_DOWN:
+        changed = cursor_move_page_down(&state->cursor, &state->document, command->page_rows, state->configuration.tab_width);
+        break;
+    case EDITOR_COMMAND_MOVE_HOME:
+        changed = cursor_move_home(&state->cursor);
+        break;
+    case EDITOR_COMMAND_MOVE_END:
+        changed = cursor_move_end(&state->cursor, &state->document);
+        break;
+    case EDITOR_COMMAND_DELETE_CHARACTER:
+        if (!command_delete_character(state, &changed))
+        {
+            return false;
+        }
+        break;
+    default:
+        return false;
+    }
+
+    switch (command->type)
+    {
+    case EDITOR_COMMAND_INSERT_CHARACTER:
+    case EDITOR_COMMAND_INSERT_TAB:
+    case EDITOR_COMMAND_BACKSPACE:
+    case EDITOR_COMMAND_INSERT_NEWLINE:
+    case EDITOR_COMMAND_MOVE_LEFT:
+    case EDITOR_COMMAND_MOVE_RIGHT:
+    case EDITOR_COMMAND_MOVE_HOME:
+    case EDITOR_COMMAND_MOVE_END:
+    case EDITOR_COMMAND_DELETE_CHARACTER:
+        state->cursor.preferred_visual_column_valid = false;
+        break;
+    default:
+        break;
+    }
+
+    *redraw = *redraw || changed;
+    return true;
+}
+```
+
+### `src/main.c`
+
+```c
+/* src/main.c */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "command/command_engine.h"
+#include "common/logger.h"
+#include "cursor/cursor.h"
+#include "document/document.h"
+#include "input/input_engine.h"
+#include "input/input_parser.h"
+#include "renderer/renderer.h"
+#include "state/editor_state.h"
+#include "terminal/terminal.h"
+
+#include <errno.h>
+#include <locale.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/select.h>
+#include <unistd.h>
+
+/*
+ * How long to wait for the bytes that may follow an ESC key press before
+ * deciding the user pressed Escape alone. Long enough for terminals to
+ * deliver the rest of an arrow-key sequence, short enough that a lone ESC
+ * press still feels instant.
+ */
+#define ESCAPE_TIMEOUT_MICROSECONDS 50000
+
+/* Signal handlers only set flags; all terminal and allocation work remains in
+ * the ordinary event-loop context, never inside an asynchronous handler. */
+static volatile sig_atomic_t resize_requested = 0;
+static volatile sig_atomic_t termination_requested = 0;
+static struct sigaction previous_winch_action;
+static struct sigaction previous_int_action;
+static struct sigaction previous_term_action;
+static struct sigaction previous_hup_action;
+static bool signal_handlers_installed = false;
+
+/*
+ * Return a human-readable name for an input event, used only in log output.
+ * Unknown values are reported as "unknown" so a bad enum value never crashes
+ * a logging call.
+ */
+static const char *application_input_event_name(InputEventType type)
+{
+    switch (type)
+    {
+    case INPUT_EVENT_NONE:
+        return "none";
+    case INPUT_EVENT_CHARACTER:
+        return "character";
+    case INPUT_EVENT_CTRL_Q:
+        return "ctrl-q";
+    case INPUT_EVENT_CTRL_S:
+        return "ctrl-s";
+    case INPUT_EVENT_BACKSPACE:
+        return "backspace";
+    case INPUT_EVENT_ENTER:
+        return "enter";
+    case INPUT_EVENT_ESCAPE:
+        return "escape";
+    case INPUT_EVENT_ARROW_LEFT:
+        return "left";
+    case INPUT_EVENT_ARROW_RIGHT:
+        return "right";
+    case INPUT_EVENT_ARROW_UP:
+        return "up";
+    case INPUT_EVENT_ARROW_DOWN:
+        return "down";
+    case INPUT_EVENT_HOME:
+        return "home";
+    case INPUT_EVENT_END:
+        return "end";
+    case INPUT_EVENT_PAGE_UP:
+        return "page-up";
+    case INPUT_EVENT_PAGE_DOWN:
+        return "page-down";
+    case INPUT_EVENT_TAB:
+        return "tab";
+    case INPUT_EVENT_DELETE:
+        return "delete";
+    default:
+        return "unknown";
+    }
+}
+
+/*
+ * Return a human-readable name for an editor command, used only in log
+ * output. Unknown values are reported as "unknown".
+ */
+static const char *application_command_name(EditorCommandType type)
+{
+    switch (type)
+    {
+    case EDITOR_COMMAND_NONE:
+        return "none";
+    case EDITOR_COMMAND_INSERT_CHARACTER:
+        return "insert-character";
+    case EDITOR_COMMAND_INSERT_TAB:
+        return "insert-tab";
+    case EDITOR_COMMAND_BACKSPACE:
+        return "backspace";
+    case EDITOR_COMMAND_INSERT_NEWLINE:
+        return "insert-newline";
+    case EDITOR_COMMAND_CANCEL:
+        return "cancel";
+    case EDITOR_COMMAND_MOVE_LEFT:
+        return "move-left";
+    case EDITOR_COMMAND_MOVE_RIGHT:
+        return "move-right";
+    case EDITOR_COMMAND_MOVE_UP:
+        return "move-up";
+    case EDITOR_COMMAND_MOVE_DOWN:
+        return "move-down";
+    case EDITOR_COMMAND_PAGE_UP:
+        return "page-up";
+    case EDITOR_COMMAND_PAGE_DOWN:
+        return "page-down";
+    case EDITOR_COMMAND_MOVE_HOME:
+        return "home";
+    case EDITOR_COMMAND_MOVE_END:
+        return "end";
+    case EDITOR_COMMAND_DELETE_CHARACTER:
+        return "delete";
+    case EDITOR_COMMAND_SAVE:
+        return "save";
+    case EDITOR_COMMAND_QUIT:
+        return "quit";
+    default:
+        return "unknown";
+    }
+}
+
+/*
+ * Shared handler for the signals we install. A signal can arrive between any
+ * two machine instructions, so it must do almost nothing: it only sets a
+ * `volatile sig_atomic_t` flag, which the C standard guarantees is safe to
+ * modify from an asynchronous handler. The main loop checks these flags and
+ * performs the actual work (resize, cleanup, exit) at a safe point.
+ */
+static void application_signal_handler(int signal_number)
+{
+    if (signal_number == SIGWINCH)
+    {
+        resize_requested = 1;
+    }
+    else
+    {
+        termination_requested = 1;
+    }
+}
+
+/*
+ * Install handlers for the signals the editor must react to: window resize
+ * (SIGWINCH) and termination (SIGINT, SIGTERM, SIGHUP). The previous handler
+ * for each signal is saved so it can be restored on exit. If installing one
+ * handler fails, any already-installed handlers are rolled back before
+ * returning false.
+ */
+static bool application_install_signal_handlers(void)
+{
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = application_signal_handler;
+    sigemptyset(&action.sa_mask);
+
+    if (sigaction(SIGWINCH, &action, &previous_winch_action) == -1)
+    {
+        TEDIT_LOG_ERROR("lifecycle", "failed to install SIGWINCH handler");
+        return false;
+    }
+    if (sigaction(SIGINT, &action, &previous_int_action) == -1)
+    {
+        (void)sigaction(SIGWINCH, &previous_winch_action, NULL);
+        return false;
+    }
+    if (sigaction(SIGTERM, &action, &previous_term_action) == -1)
+    {
+        (void)sigaction(SIGINT, &previous_int_action, NULL);
+        (void)sigaction(SIGWINCH, &previous_winch_action, NULL);
+        return false;
+    }
+    if (sigaction(SIGHUP, &action, &previous_hup_action) == -1)
+    {
+        (void)sigaction(SIGTERM, &previous_term_action, NULL);
+        (void)sigaction(SIGINT, &previous_int_action, NULL);
+        (void)sigaction(SIGWINCH, &previous_winch_action, NULL);
+        return false;
+    }
+
+    signal_handlers_installed = true;
+    return true;
+}
+
+/*
+ * Put back the signal handlers that were active before the editor started.
+ * This is the reverse of application_install_signal_handlers() and is safe
+ * to call even if no handlers were installed.
+ */
+static void application_restore_signal_handlers(void)
+{
+    if (!signal_handlers_installed)
+    {
+        return;
+    }
+
+    (void)sigaction(SIGHUP, &previous_hup_action, NULL);
+    (void)sigaction(SIGTERM, &previous_term_action, NULL);
+    (void)sigaction(SIGINT, &previous_int_action, NULL);
+    (void)sigaction(SIGWINCH, &previous_winch_action, NULL);
+    signal_handlers_installed = false;
+}
+
+/*
+ * Read a single byte from standard input, waiting at most
+ * ESCAPE_TIMEOUT_MICROSECONDS for it to arrive.
+ *
+ * Used only while the Input Parser is inside an incomplete Escape sequence.
+ * Arrow keys and friends arrive as several bytes, but a lone ESC key is
+ * followed by nothing; the timeout lets us report it as an Escape event
+ * instead of blocking forever.
+ *
+ * Parameters:
+ *   byte - out-parameter: receives the byte read on success.
+ *
+ * Returns:
+ *   1 if one byte was read, 0 if the wait timed out or the input stream
+ *   closed, -1 on a read error. `byte` is written only when 1 is returned.
+ */
+static int read_escape_byte(unsigned char *byte)
+{
+    fd_set read_set;
+    struct timeval timeout;
+    int result;
+
+    FD_ZERO(&read_set);
+    FD_SET(STDIN_FILENO, &read_set);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = ESCAPE_TIMEOUT_MICROSECONDS;
+
+    do
+    {
+        result = select(STDIN_FILENO + 1, &read_set, NULL, NULL, &timeout);
+    } while (result == -1 && errno == EINTR);
+
+    if (result <= 0)
+    {
+        return result;
+    }
+
+    for (;;)
+    {
+        const ssize_t bytes_read = read(STDIN_FILENO, byte, sizeof(*byte));
+
+        if (bytes_read == 1)
+        {
+            return 1;
+        }
+        if (bytes_read == 0)
+        {
+            return 0;
+        }
+        if (errno != EINTR)
+        {
+            return -1;
+        }
+    }
+}
+
+/*
+ * Bring the cursor back into view (scrolling the Viewport if needed) and
+ * redraw the whole screen.
+ *
+ * Called after every command that may have moved the cursor or changed the
+ * document, so what is shown always matches the editor state.
+ *
+ * Parameters:
+ *   renderer - the renderer that owns the off-screen frame buffer.
+ *   state    - the current editor state to scroll and draw; not modified.
+ *
+ * Returns:
+ *   true if the frame was drawn, false on NULL arguments or if scrolling or
+ *   rendering failed.
+ */
+static bool redraw_after_action(Renderer *renderer, EditorState *state)
+{
+    if (renderer == NULL || state == NULL)
+    {
+        return false;
+    }
+
+    size_t cursor_visual_column;
+    if (!renderer_cursor_visual_column(state, &cursor_visual_column) ||
+        !viewport_ensure_cursor_visible(
+            &state->viewport,
+            state->cursor.row,
+            cursor_visual_column,
+            renderer->document_rows,
+            renderer->screen_buffer.columns))
+    {
+        return false;
+    }
+
+    return renderer_render(renderer, state);
+}
+
+/*
+ * Rebuild the Renderer for the latest terminal dimensions. A replacement is
+ * allocated first, so allocation failure leaves the existing Renderer valid
+ * for cleanup. The terminal dimensions are committed only after initialization
+ * succeeds.
+ *
+ * Parameters:
+ *   terminal - the terminal state whose dimensions are re-read.
+ *   state    - the editor state to redraw after resizing.
+ *   renderer - the renderer to replace; on success it holds the new frame
+ *              buffer.
+ *
+ * Returns:
+ *   true on success, false on NULL arguments, an unchanged or unusably small
+ *   terminal size, allocation failure, or a redraw failure.
+ */
+static bool application_handle_resize(TerminalState *terminal, EditorState *state, Renderer *renderer)
+{
+    size_t rows;
+    size_t columns;
+    Renderer replacement;
+
+    if (terminal == NULL || state == NULL || renderer == NULL ||
+        !terminal_get_size(&rows, &columns))
+    {
+        return false;
+    }
+
+    if (rows == terminal->rows && columns == terminal->columns)
+    {
+        return true;
+    }
+    TEDIT_LOG_INFO("terminal", "resize requested: rows=%zu columns=%zu", rows, columns);
+
+    /* The Renderer needs at least one document row and reserves the last
+     * physical terminal column to avoid delayed-wrap behavior. */
+    if (rows < 4 || columns < 2)
+    {
+        TEDIT_LOG_WARN("terminal", "rejected terminal size rows=%zu columns=%zu", rows, columns);
+        return false;
+    }
+
+    if (!renderer_init(&replacement, rows, columns - 1))
+    {
+        TEDIT_LOG_ERROR("renderer", "failed to allocate replacement after terminal resize");
+        return false;
+    }
+
+    Renderer previous = *renderer;
+    *renderer = replacement;
+    terminal->rows = rows;
+    terminal->columns = columns;
+    renderer_destroy(&previous);
+    TEDIT_LOG_INFO("renderer", "renderer resized to rows=%zu columns=%zu", rows, columns - 1);
+
+    if (!redraw_after_action(renderer, state))
+    {
+        TEDIT_LOG_ERROR("renderer", "redraw failed after terminal resize");
+        return false;
+    }
+    return true;
+}
+
+/*
+ * Run the editor's main loop until the user quits.
+ *
+ * Each iteration performs the whole pipeline: read one byte, let the Input
+ * Parser turn bytes into a key event, translate that event into a command,
+ * execute the command against the editor state, and redraw when anything
+ * changed.
+ *
+ * Parameters:
+ *   terminal  - the terminal state used to query dimensions on resize.
+ *   state     - the editor state to operate on.
+ *   renderer  - the renderer used to redraw after each command.
+ *   save_path - path passed on the command line; used as the save target
+ *               when the document has no file path of its own yet. May be
+ *               NULL.
+ *
+ * Returns:
+ *   true when the user quit normally, false on an unrecoverable error.
+ */
+static bool application_event_loop(TerminalState *terminal, EditorState *state, Renderer *renderer, const char *save_path)
+{
+    InputParser parser;
+    input_parser_init(&parser);
+
+    while (true)
+    {
+        if (termination_requested)
+        {
+            return true;
+        }
+        if (resize_requested)
+        {
+            resize_requested = 0;
+            if (!application_handle_resize(terminal, state, renderer))
+            {
+                return false;
+            }
+        }
+
+        unsigned char byte;
+        int read_result;
+        InputEvent event;
+        bool should_quit;
+        bool event_ready = false;
+
+        /*
+         * While the parser is in the middle of an Escape sequence, the next
+         * byte must arrive quickly or not at all: read with a timeout so a
+         * lone ESC press is handled promptly. Otherwise a plain blocking
+         * read is enough.
+         */
+        if (input_parser_is_waiting(&parser))
+        {
+            read_result = read_escape_byte(&byte);
+
+            if (read_result == 0)
+            {
+                if (!input_parser_timeout(&parser, &event))
+                {
+                    TEDIT_LOG_ERROR("input", "parser timeout handling failed");
+                    return false;
+                }
+
+                if (event.type == INPUT_EVENT_NONE)
+                {
+                    continue;
+                }
+
+                event_ready = true;
+                read_result = 1;
+            }
+        }
+        else
+        {
+            const ssize_t bytes_read = read(STDIN_FILENO, &byte, sizeof(byte));
+
+            if (bytes_read < 0)
+            {
+                if (errno == EINTR)
+                {
+                    continue;
+                }
+                TEDIT_LOG_ERROR("input", "terminal input read failed: errno=%d", errno);
+                return false;
+            }
+
+            if (bytes_read == 0)
+            {
+                return true;
+            }
+            read_result = 1;
+        }
+
+        if (read_result < 0)
+        {
+            return false;
+        }
+        if (read_result == 0)
+        {
+            return true;
+        }
+
+        /*
+         * Feed the byte into the parser; it returns true once a complete key
+         * event is ready (or when a timeout already produced one above).
+         */
+        if (!event_ready && !input_parser_feed(&parser, byte, &event))
+        {
+            TEDIT_LOG_ERROR("input", "Input Parser rejected byte 0x%02X", (unsigned int)byte);
+            return false;
+        }
+
+        if (event.type != INPUT_EVENT_NONE)
+        {
+            if (event.type == INPUT_EVENT_CHARACTER)
+            {
+                TEDIT_LOG_DEBUG("input", "recognized event=%s codepoint=U+%04X", application_input_event_name(event.type), (unsigned int)event.character);
+            }
+            else
+            {
+                TEDIT_LOG_DEBUG("input", "recognized event=%s", application_input_event_name(event.type));
+            }
+        }
+
+        EditorCommand command;
+        bool redraw;
+
+        /* Pipeline step by step: event -> command -> state change -> redraw. */
+        if (!input_engine_translate(&event, &command))
+        {
+            TEDIT_LOG_ERROR("input", "Input Engine failed to translate event=%s",
+                            application_input_event_name(event.type));
+            return false;
+        }
+
+        if (command.type != EDITOR_COMMAND_NONE)
+        {
+            TEDIT_LOG_DEBUG("command", "executing command=%s", application_command_name(command.type));
+        }
+        command.page_rows = renderer->document_rows;
+
+        if (!command_engine_execute(state, &command, save_path, &redraw, &should_quit))
+        {
+            TEDIT_LOG_ERROR("command", "Command Engine failed for command=%s", application_command_name(command.type));
+            return false;
+        }
+        if (redraw && !redraw_after_action(renderer, state))
+        {
+            TEDIT_LOG_ERROR("renderer", "redraw failed after command=%s", application_command_name(command.type));
+            return false;
+        }
+        if (should_quit)
+        {
+            return true;
+        }
+    }
+}
+
+/*
+ * Program entry point.
+ *
+ * Sets up the terminal (raw mode + alternate screen), initializes the editor
+ * state, optionally loads the file named on the command line, runs the event
+ * loop, and then restores everything - including after errors - before
+ * returning to the shell.
+ *
+ * Parameters:
+ *   argc - number of command-line arguments.
+ *   argv - argument vector; argv[1] may name a file to open.
+ *
+ * Returns:
+ *   0 on a clean exit, 1 on any startup or runtime error.
+ */
+int main(int argc, char *argv[])
+{
+    (void)setlocale(LC_CTYPE, "");
+
+#ifdef TEDIT_ENABLE_LOGGING
+#ifdef NDEBUG
+    (void)logger_init("log.txt", LOGGER_LEVEL_INFO);
+#else
+    (void)logger_init("log.txt", LOGGER_LEVEL_DEBUG);
+#endif
+    TEDIT_LOG_INFO("lifecycle", "editor process started");
+#endif
+
+    if (argc > 2)
+    {
+        TEDIT_LOG_ERROR("lifecycle", "invalid command-line argument count: %d", argc);
+        fprintf(stderr, "Usage: %s [filename]\n", argv[0]);
+#ifdef TEDIT_ENABLE_LOGGING
+        logger_shutdown();
+#endif
+        return 1;
+    }
+
+    const char *startup_path = argc == 2 ? argv[1] : NULL;
+    bool startup_load_failed = false;
+    TerminalState terminal;
+    EditorState state;
+    Renderer renderer;
+    bool state_initialized = false;
+    bool renderer_initialized = false;
+    int exit_status = 1;
+
+    if (!application_install_signal_handlers())
+    {
+        TEDIT_LOG_ERROR("lifecycle", "failed to install signal handlers");
+        goto early_cleanup;
+    }
+    if (!terminal_init(&terminal))
+    {
+        TEDIT_LOG_ERROR("terminal", "terminal initialization failed");
+        application_restore_signal_handlers();
+        goto early_cleanup;
+    }
+    if (!terminal_enable_raw_mode(&terminal))
+    {
+        TEDIT_LOG_ERROR("terminal", "failed to enable raw mode");
+        terminal_restore(&terminal);
+        application_restore_signal_handlers();
+        goto early_cleanup;
+    }
+    if (!terminal_enter_alternate_screen(&terminal))
+    {
+        TEDIT_LOG_ERROR("terminal", "failed to enter alternate screen");
+        terminal_restore(&terminal);
+        application_restore_signal_handlers();
+        goto early_cleanup;
+    }
+    if (!editor_state_init(&state))
+    {
+        TEDIT_LOG_ERROR("state", "Editor State initialization failed");
+        goto cleanup;
+    }
+    TEDIT_LOG_INFO("state", "Editor State initialized");
+    state_initialized = true;
+
+    if (startup_path != NULL && !command_engine_load_file(&state, startup_path))
+    {
+        startup_load_failed = true;
+        TEDIT_LOG_ERROR("file", "startup file load failed: path=\"%s\"", startup_path);
+        goto cleanup;
+    }
+    if (terminal.columns < 2 || !renderer_init(&renderer, terminal.rows, terminal.columns - 1))
+    {
+        TEDIT_LOG_ERROR("renderer", "initialization failed for terminal rows=%zu columns=%zu", terminal.rows, terminal.columns);
+        goto cleanup;
+    }
+    TEDIT_LOG_INFO("renderer", "initialized rows=%zu columns=%zu", terminal.rows, terminal.columns - 1);
+    renderer_initialized = true;
+
+    if (!redraw_after_action(&renderer, &state))
+    {
+        TEDIT_LOG_ERROR("renderer", "initial frame rendering failed");
+        goto cleanup;
+    }
+    if (!application_event_loop(&terminal, &state, &renderer, startup_path))
+    {
+        TEDIT_LOG_ERROR("lifecycle", "event loop terminated after an unrecoverable error");
+        goto cleanup;
+    }
+
+    exit_status = 0;
+
+cleanup:
+    if (renderer_initialized)
+    {
+        renderer_destroy(&renderer);
+        TEDIT_LOG_DEBUG("renderer", "Renderer resources released");
+    }
+    if (state_initialized)
+    {
+        editor_state_destroy(&state);
+        TEDIT_LOG_DEBUG("state", "Editor State resources released");
+    }
+    terminal_restore(&terminal);
+    terminal_leave_alternate_screen(&terminal);
+    application_restore_signal_handlers();
+
+    if (startup_load_failed)
+    {
+        fprintf(stderr, "tedit: unable to open or decode '%s'.\n", startup_path);
+    }
+
+    TEDIT_LOG_INFO("lifecycle", "editor process stopped with status=%d", exit_status);
+#ifdef TEDIT_ENABLE_LOGGING
+    logger_shutdown();
+#endif
+    return exit_status;
+
+early_cleanup:
+    TEDIT_LOG_INFO("lifecycle", "editor process stopped during startup with status=1");
+#ifdef TEDIT_ENABLE_LOGGING
+    logger_shutdown();
+#endif
+    return 1;
+}
+```
+
+### `tests/test_file.c`
+
+```c
+/* tests/test_file.c */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "command/command_engine.h"
+#include "document/document.h"
+#include "file/file.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static void write_all(int descriptor, const unsigned char *data, size_t length)
+{
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        ssize_t written = write(
+            descriptor,
+            data + offset,
+            length - offset);
+
+        assert(written > 0);
+        offset += (size_t)written;
+    }
+}
+
+static void test_load_utf8_and_line_endings(void)
+{
+    char path[] = "/tmp/tedit-file-XXXXXX";
+    int descriptor = mkstemp(path);
+
+    /* A + U+20AC EURO SIGN + CRLF + B + LF */
+    const unsigned char content[] = {
+        0x41,
+        0xE2, 0x82, 0xAC,
+        0x0D, 0x0A,
+        0x42,
+        0x0A};
+
+    Document document;
+
+    assert(descriptor >= 0);
+
+    write_all(descriptor, content, sizeof(content));
+    assert(close(descriptor) == 0);
+
+    assert(document_init(&document));
+
+    assert(file_load_document(path, &document) == FILE_LOAD_OK);
+
+    assert(document.line_count == 2);
+
+    DocumentLine *first = document_get_line(&document, 0);
+    DocumentLine *second = document_get_line(&document, 1);
+
+    assert(first != NULL);
+    assert(second != NULL);
+
+    assert(first->length == 2);
+    assert(first->data[0] == UINT32_C(0x41));
+    assert(first->data[1] == UINT32_C(0x20AC));
+
+    assert(second->length == 1);
+    assert(second->data[0] == UINT32_C(0x42));
+
+    document_destroy(&document);
+    assert(unlink(path) == 0);
+}
+
+static void test_empty_file_has_zero_lines(void)
+{
+    char path[] = "/tmp/tedit-file-XXXXXX";
+    int descriptor = mkstemp(path);
+    Document document;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+
+    assert(document_init(&document));
+    assert(file_load_document(path, &document) == FILE_LOAD_OK);
+    assert(document.line_count == 0);
+
+    document_destroy(&document);
+    assert(unlink(path) == 0);
+}
+
+static void test_invalid_utf8_preserves_destination(void)
+{
+    char path[] = "/tmp/tedit-file-XXXXXX";
+    int descriptor = mkstemp(path);
+
+    /* C0 AF is an invalid overlong UTF-8 encoding. */
+    const unsigned char invalid[] = {0xC0, 0xAF};
+
+    Document document;
+
+    assert(descriptor >= 0);
+
+    write_all(descriptor, invalid, sizeof(invalid));
+    assert(close(descriptor) == 0);
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'x'));
+
+    assert(file_load_document(path, &document) ==
+           FILE_LOAD_INVALID_UTF8);
+
+    assert(document.line_count == 1);
+
+    DocumentLine *line = document_get_line(&document, 0);
+
+    assert(line != NULL);
+    assert(line->length == 1);
+    assert(line->data[0] == 'x');
+
+    document_destroy(&document);
+    assert(unlink(path) == 0);
+}
+
+static void test_missing_file_preserves_destination(void)
+{
+    Document document;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'z'));
+
+    assert(file_load_document(
+               "/tmp/tedit-file-that-does-not-exist",
+               &document) == FILE_LOAD_OPEN_FAILED);
+
+    assert(document.line_count == 1);
+
+    DocumentLine *line = document_get_line(&document, 0);
+
+    assert(line != NULL);
+    assert(line->length == 1);
+    assert(line->data[0] == 'z');
+
+    document_destroy(&document);
+}
+
+static void test_read_failure_preserves_destination_document(void)
+{
+    Document document;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'q'));
+
+    /* POSIX permits opening a directory, but reading it fails on Linux. */
+    assert(file_load_document("/tmp", &document) == FILE_LOAD_READ_FAILED);
+    assert(document.line_count == 1);
+    assert(document_get_line(&document, 0)->length == 1);
+    assert(document_get_line(&document, 0)->data[0] == (uint32_t)'q');
+
+    document_destroy(&document);
+}
+
+static void test_editor_state_load_resets_cursor_viewport_and_dirty_flag(void)
+{
+    char path[] = "/tmp/tedit-state-load-XXXXXX";
+    int descriptor = mkstemp(path);
+    const unsigned char content[] = {'a', '\n', 'b', 'c'};
+    EditorState state;
+
+    assert(descriptor >= 0);
+    write_all(descriptor, content, sizeof(content));
+    assert(close(descriptor) == 0);
+
+    assert(editor_state_init(&state));
+    state.cursor.row = 12;
+    state.cursor.column = 7;
+    state.cursor.preferred_column = 7;
+    state.viewport.viewport_row = 5;
+    state.viewport.viewport_column = 9;
+    state.is_dirty = true;
+
+    assert(command_engine_load_file(&state, path));
+    assert(state.document.line_count == 2);
+    assert(state.cursor.row == 0);
+    assert(state.cursor.column == 0);
+    assert(state.cursor.preferred_column == 0);
+    assert(state.viewport.viewport_row == 0);
+    assert(state.viewport.viewport_column == 0);
+    assert(!state.is_dirty);
+    assert(state.file_path != NULL);
+    assert(strcmp(state.file_path, path) == 0);
+
+    assert(document_get_line(&state.document, 0)->length == 1);
+    assert(document_get_line(&state.document, 0)->data[0] == (uint32_t)'a');
+    assert(document_get_line(&state.document, 1)->length == 2);
+    assert(document_get_line(&state.document, 1)->data[0] == (uint32_t)'b');
+    assert(document_get_line(&state.document, 1)->data[1] == (uint32_t)'c');
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_editor_state_failed_load_preserves_state(void)
+{
+    EditorState state;
+
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'x'));
+    state.cursor.row = 0;
+    state.cursor.column = 1;
+    state.cursor.preferred_column = 1;
+    state.viewport.viewport_row = 3;
+    state.viewport.viewport_column = 4;
+    state.is_dirty = true;
+    state.file_path = malloc(sizeof("original.txt"));
+    assert(state.file_path != NULL);
+    memcpy(state.file_path, "original.txt", sizeof("original.txt"));
+
+    assert(!command_engine_load_file(&state, "/tmp/tedit-no-such-file"));
+
+    assert(state.document.line_count == 1);
+    assert(document_get_line(&state.document, 0)->length == 1);
+    assert(document_get_line(&state.document, 0)->data[0] == (uint32_t)'x');
+    assert(state.cursor.row == 0 && state.cursor.column == 1);
+    assert(state.cursor.preferred_column == 1);
+    assert(state.viewport.viewport_row == 3);
+    assert(state.viewport.viewport_column == 4);
+    assert(state.is_dirty);
+    assert(state.file_path != NULL);
+    assert(strcmp(state.file_path, "original.txt") == 0);
+
+    editor_state_destroy(&state);
+}
+
+int main(void)
+{
+    test_load_utf8_and_line_endings();
+    test_empty_file_has_zero_lines();
+    test_invalid_utf8_preserves_destination();
+    test_missing_file_preserves_destination();
+    test_read_failure_preserves_destination_document();
+    test_editor_state_load_resets_cursor_viewport_and_dirty_flag();
+    test_editor_state_failed_load_preserves_state();
+
+    puts("File Manager tests passed.");
+
+    return 0;
+}
+```
+
+### `tests/test_file_save.c`
+
+```c
+/* tests/test_file_save.c */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "command/command_engine.h"
+#include "document/document.h"
+#include "file/file.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <dirent.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static void write_all(int descriptor, const unsigned char *data, size_t length)
+{
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        ssize_t written = write(descriptor, data + offset, length - offset);
+        assert(written > 0);
+        offset += (size_t)written;
+    }
+}
+
+static size_t read_file(const char *path, unsigned char *buffer, size_t capacity)
+{
+    FILE *file = fopen(path, "rb");
+    size_t length;
+
+    assert(file != NULL);
+    length = fread(buffer, 1, capacity, file);
+    assert(!ferror(file));
+    assert(feof(file) || length == capacity);
+    assert(fclose(file) == 0);
+    return length;
+}
+
+static void test_editor_state_save_clears_dirty_flag_after_success(void)
+{
+    char path[] = "/tmp/tedit-save-state-XXXXXX";
+    int descriptor = mkstemp(path);
+    const unsigned char expected[] = {'A', 0xE2, 0x82, 0xAC, '\n', 'B', '\n'};
+    unsigned char actual[32];
+    EditorState state;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'A'));
+    assert(document_insert_character(&state.document, 0, 1, UINT32_C(0x20AC)));
+    assert(document_split_line(&state.document, 0, 2));
+    assert(document_insert_character(&state.document, 1, 0, 'B'));
+    state.is_dirty = true;
+
+    assert(command_engine_save_file(&state, path));
+    assert(!state.is_dirty);
+    assert(state.document.line_count == 2);
+    assert(document_get_line(&state.document, 0)->length == 2);
+    assert(document_get_line(&state.document, 0)->data[1] == UINT32_C(0x20AC));
+    assert(read_file(path, actual, sizeof(actual)) == sizeof(expected));
+    assert(memcmp(actual, expected, sizeof(expected)) == 0);
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_failed_save_preserves_dirty_flag_document_and_destination(void)
+{
+    char path[] = "/tmp/tedit-save-failure-XXXXXX";
+    int descriptor = mkstemp(path);
+    const unsigned char original[] = {'o', 'l', 'd'};
+    unsigned char actual[16];
+    EditorState state;
+
+    assert(descriptor >= 0);
+    write_all(descriptor, original, sizeof(original));
+    assert(close(descriptor) == 0);
+
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'x'));
+    state.is_dirty = true;
+    /* Simulate corrupted internal state to exercise the serializer's guard. */
+    document_get_line(&state.document, 0)->data[0] = UINT32_C(0xD800);
+
+    assert(!command_engine_save_file(&state, path));
+    assert(state.is_dirty);
+    assert(state.document.line_count == 1);
+    assert(document_get_line(&state.document, 0)->length == 1);
+    assert(document_get_line(&state.document, 0)->data[0] == UINT32_C(0xD800));
+    assert(read_file(path, actual, sizeof(actual)) == sizeof(original));
+    assert(memcmp(actual, original, sizeof(original)) == 0);
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_invalid_save_arguments_preserve_dirty_flag(void)
+{
+    EditorState state;
+
+    assert(editor_state_init(&state));
+    state.is_dirty = true;
+    assert(!command_engine_save_file(&state, NULL));
+    assert(!command_engine_save_file(NULL, "/tmp/tedit-save-invalid"));
+    assert(state.is_dirty);
+    editor_state_destroy(&state);
+}
+
+static void test_replace_failure_preserves_state_and_cleans_temporary_file(void)
+{
+    char path[] = "/tmp/tedit-save-replace-XXXXXX";
+    int descriptor = mkstemp(path);
+    const char *base_name;
+    char temporary_prefix[128];
+    DIR *directory;
+    struct dirent *entry;
+    struct stat status;
+    EditorState state;
+    bool temporary_file_found = false;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(path) == 0);
+    assert(mkdir(path, 0700) == 0);
+
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'x'));
+    state.is_dirty = true;
+
+    /* Renaming a temporary regular file over a directory must fail. */
+    assert(!command_engine_save_file(&state, path));
+    assert(state.is_dirty);
+    assert(state.document.line_count == 1);
+    assert(document_get_line(&state.document, 0)->length == 1);
+    assert(document_get_line(&state.document, 0)->data[0] == 'x');
+    assert(stat(path, &status) == 0);
+    assert(S_ISDIR(status.st_mode));
+
+    base_name = strrchr(path, '/');
+    assert(base_name != NULL);
+    ++base_name;
+    assert(snprintf(temporary_prefix, sizeof(temporary_prefix), "%s.tedit-", base_name) > 0);
+
+    directory = opendir("/tmp");
+    assert(directory != NULL);
+    while ((entry = readdir(directory)) != NULL)
+    {
+        if (strncmp(entry->d_name, temporary_prefix, strlen(temporary_prefix)) == 0)
+        {
+            temporary_file_found = true;
+            break;
+        }
+    }
+    assert(closedir(directory) == 0);
+    assert(!temporary_file_found);
+
+    editor_state_destroy(&state);
+    assert(rmdir(path) == 0);
+}
+
+static void test_malformed_document_storage_is_rejected_without_touching_destination(void)
+{
+    char path[] = "/tmp/tedit-save-malformed-XXXXXX";
+    int descriptor = mkstemp(path);
+    const unsigned char original[] = {'s', 'a', 'f', 'e'};
+    unsigned char actual[16];
+    EditorState state;
+    Document malformed;
+    DocumentLine malformed_line;
+
+    assert(descriptor >= 0);
+    write_all(descriptor, original, sizeof(original));
+    assert(close(descriptor) == 0);
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'x'));
+    state.is_dirty = true;
+
+    malformed = state.document;
+    malformed.line_count = malformed.line_capacity + 1;
+    assert(file_save_document(path, &malformed) == FILE_SAVE_INVALID_ARGUMENT);
+
+    malformed = state.document;
+    malformed_line = state.document.lines[0];
+    malformed_line.length = malformed_line.capacity + 1;
+    malformed.lines = &malformed_line;
+    assert(file_save_document(path, &malformed) == FILE_SAVE_INVALID_ARGUMENT);
+
+    malformed = state.document;
+    malformed_line = state.document.lines[0];
+    malformed_line.data = NULL;
+    malformed.lines = &malformed_line;
+    assert(file_save_document(path, &malformed) == FILE_SAVE_INVALID_ARGUMENT);
+
+    assert(state.is_dirty);
+    assert(document_get_line(&state.document, 0)->length == 1);
+    assert(document_get_line(&state.document, 0)->data[0] == (uint32_t)'x');
+    assert(read_file(path, actual, sizeof(actual)) == sizeof(original));
+    assert(memcmp(actual, original, sizeof(original)) == 0);
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_temporary_file_creation_failure_preserves_dirty_state(void)
+{
+    EditorState state;
+
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'x'));
+    state.is_dirty = true;
+
+    assert(!command_engine_save_file(&state, "/tmp/tedit-missing-directory/file.txt"));
+    assert(state.is_dirty);
+    assert(document_get_line(&state.document, 0)->length == 1);
+    assert(document_get_line(&state.document, 0)->data[0] == (uint32_t)'x');
+
+    editor_state_destroy(&state);
+}
+
+static void test_zero_line_document_saves_empty_file(void)
+{
+    char path[] = "/tmp/tedit-save-empty-XXXXXX";
+    int descriptor = mkstemp(path);
+    unsigned char actual[4];
+    Document document;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(document_init(&document));
+    assert(file_load_document(path, &document) == FILE_LOAD_OK);
+    assert(document.line_count == 0);
+
+    assert(file_save_document(path, &document) == FILE_SAVE_OK);
+    assert(read_file(path, actual, sizeof(actual)) == 0);
+
+    assert(unlink(path) == 0);
+}
+
+
+static void test_save_as_association_changes_only_after_success(void)
+{
+    char original_path[] = "/tmp/tedit-save-as-original-XXXXXX";
+    char new_path[] = "/tmp/tedit-save-as-new-XXXXXX";
+    char failure_path[] = "/tmp/tedit-save-as-failure-XXXXXX";
+    int original_descriptor = mkstemp(original_path);
+    int new_descriptor = mkstemp(new_path);
+    int failure_descriptor = mkstemp(failure_path);
+    EditorState state;
+    const DocumentLine *line;
+
+    assert(original_descriptor >= 0 && new_descriptor >= 0 && failure_descriptor >= 0);
+    write_all(original_descriptor, (const unsigned char *)"old", 3);
+    assert(close(original_descriptor) == 0);
+    assert(close(new_descriptor) == 0);
+    assert(close(failure_descriptor) == 0);
+    assert(unlink(new_path) == 0);
+    assert(unlink(failure_path) == 0);
+    assert(mkdir(failure_path, 0700) == 0);
+
+    assert(editor_state_init(&state));
+    assert(command_engine_load_file(&state, original_path));
+    assert(state.file_path != NULL && strcmp(state.file_path, original_path) == 0);
+    assert(document_insert_character(&state.document, 0, 3, 'x'));
+    state.is_dirty = true;
+
+    assert(!command_engine_save_as(&state, failure_path));
+    assert(state.file_path != NULL && strcmp(state.file_path, original_path) == 0);
+    assert(state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 4 && line->data[3] == 'x');
+
+    assert(command_engine_save_as(&state, new_path));
+    assert(state.file_path != NULL && strcmp(state.file_path, new_path) == 0);
+    assert(!state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 4 && line->data[3] == 'x');
+
+    editor_state_destroy(&state);
+    assert(unlink(original_path) == 0);
+    assert(unlink(new_path) == 0);
+    assert(rmdir(failure_path) == 0);
+}
+
+int main(void)
+{
+    test_editor_state_save_clears_dirty_flag_after_success();
+    test_failed_save_preserves_dirty_flag_document_and_destination();
+    test_invalid_save_arguments_preserve_dirty_flag();
+    test_replace_failure_preserves_state_and_cleans_temporary_file();
+    test_malformed_document_storage_is_rejected_without_touching_destination();
+    test_temporary_file_creation_failure_preserves_dirty_state();
+    test_zero_line_document_saves_empty_file();
+    test_save_as_association_changes_only_after_success();
+    puts("File save tests passed.");
+    return 0;
+}
+```
+
+### `tests/test_command_engine.c`
+
+```c
+/* tests/test_command_engine.c */
+
+#define _POSIX_C_SOURCE 200809L
+#include "command/command_engine.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static void execute(EditorState *state, EditorCommandType type, uint32_t character,
+                    bool *redraw, bool *should_quit)
+{
+    EditorCommand command = {type, character, 3};
+    assert(command_engine_execute(state, &command, NULL, redraw, should_quit));
+}
+
+static void test_editing_commands(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'a', &redraw, &should_quit);
+    assert(redraw && !should_quit && state.is_dirty);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'b', &redraw, &should_quit);
+    assert(redraw);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.column == 1);
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.column == 0);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'b');
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+    assert(redraw && state.document.line_count == 2 && state.cursor.row == 1);
+    editor_state_destroy(&state);
+}
+
+static void test_tab_insertion_uses_document_code_point(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    assert(state.configuration.tab_width == DEFAULT_TAB_WIDTH);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (uint32_t)'a', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_TAB, 0, &redraw, &should_quit);
+
+    line = document_get_line(&state.document, 0);
+    assert(redraw && !should_quit && state.is_dirty);
+    assert(line != NULL && line->length == 2);
+    assert(line->data[0] == (uint32_t)'a' && line->data[1] == (uint32_t)'\t');
+    assert(state.cursor.column == 2);
+
+    editor_state_destroy(&state);
+}
+
+static void test_home_and_end_commands(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'a', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'b', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'c', &redraw, &should_quit);
+    assert(state.cursor.column == 3);
+
+    execute(&state, EDITOR_COMMAND_MOVE_HOME, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && state.cursor.row == 0 && state.cursor.column == 0);
+    execute(&state, EDITOR_COMMAND_MOVE_HOME, 0, &redraw, &should_quit);
+    assert(!redraw && state.cursor.column == 0);
+
+    execute(&state, EDITOR_COMMAND_MOVE_END, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && state.cursor.column == 3);
+    execute(&state, EDITOR_COMMAND_MOVE_END, 0, &redraw, &should_quit);
+    assert(!redraw && state.cursor.column == 3);
+    assert(state.is_dirty);
+
+    editor_state_destroy(&state);
+}
+
+
+static void test_page_navigation_commands(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+
+    /* Build eight logical lines, each with four code points. */
+    for (size_t row = 0; row < 8; row++)
+    {
+        for (size_t column = 0; column < 4; column++)
+        {
+            execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (uint32_t)('a' + column),
+                    &redraw, &should_quit);
+        }
+        if (row + 1 < 8)
+        {
+            execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+        }
+    }
+
+    assert(state.cursor.row == 7 && state.cursor.column == 4);
+
+    /* Make one destination line shorter to verify preferred-column recovery. */
+    assert(document_delete_character(&state.document, 4, 1));
+    assert(document_delete_character(&state.document, 4, 1));
+    assert(document_delete_character(&state.document, 4, 1));
+    state.is_dirty = false;
+
+    execute(&state, EDITOR_COMMAND_PAGE_UP, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit);
+    assert(state.cursor.row == 4 && state.cursor.column == 1);
+    assert(state.cursor.preferred_column == 4);
+    assert(!state.is_dirty);
+
+    execute(&state, EDITOR_COMMAND_PAGE_UP, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.row == 1 && state.cursor.column == 4);
+    execute(&state, EDITOR_COMMAND_PAGE_UP, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.row == 0 && state.cursor.column == 4);
+    execute(&state, EDITOR_COMMAND_PAGE_UP, 0, &redraw, &should_quit);
+    assert(!redraw && state.cursor.row == 0);
+
+    execute(&state, EDITOR_COMMAND_PAGE_DOWN, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.row == 3 && state.cursor.column == 4);
+    execute(&state, EDITOR_COMMAND_PAGE_DOWN, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.row == 6 && state.cursor.column == 4);
+    execute(&state, EDITOR_COMMAND_PAGE_DOWN, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.row == 7 && state.cursor.column == 4);
+    execute(&state, EDITOR_COMMAND_PAGE_DOWN, 0, &redraw, &should_quit);
+    assert(!redraw && state.cursor.row == 7);
+    assert(!state.is_dirty);
+
+    editor_state_destroy(&state);
+}
+
+static void test_document_delete_command(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'a', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 0x20AC, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'c', &redraw, &should_quit);
+    assert(state.cursor.column == 3 && state.is_dirty);
+
+    state.is_dirty = false;
+    execute(&state, EDITOR_COMMAND_MOVE_HOME, 0, &redraw, &should_quit);
+    assert(redraw && !state.is_dirty);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    line = document_get_line(&state.document, 0);
+    assert(redraw && !should_quit && state.is_dirty);
+    assert(line != NULL && line->length == 2);
+    assert(line->data[0] == 0x20AC && line->data[1] == 'c');
+    assert(state.cursor.row == 0 && state.cursor.column == 0);
+
+    state.is_dirty = false;
+    execute(&state, EDITOR_COMMAND_MOVE_END, 0, &redraw, &should_quit);
+    assert(redraw && !state.is_dirty);
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'z', &redraw, &should_quit);
+    state.is_dirty = false;
+    execute(&state, EDITOR_COMMAND_MOVE_HOME, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_MOVE_UP, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_MOVE_END, 0, &redraw, &should_quit);
+    assert(state.cursor.row == 0 && state.cursor.column == 2);
+
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(redraw && state.is_dirty && state.document.line_count == 1);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 3);
+    assert(line->data[0] == 0x20AC && line->data[1] == 'c' && line->data[2] == 'z');
+    assert(state.cursor.row == 0 && state.cursor.column == 2);
+
+    state.is_dirty = false;
+    execute(&state, EDITOR_COMMAND_MOVE_END, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(!redraw && !state.is_dirty && state.document.line_count == 1);
+
+    editor_state_destroy(&state);
+}
+
+static void test_backspace_deletes_one_unicode_code_point(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 0x1F600, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (uint32_t)'x', &redraw, &should_quit);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 2);
+    assert(line->data[0] == 0x1F600 && line->data[1] == (uint32_t)'x');
+    assert(state.cursor.column == 2);
+
+    state.is_dirty = false;
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    line = document_get_line(&state.document, 0);
+    assert(redraw && state.is_dirty && line != NULL && line->length == 1);
+    assert(line->data[0] == 0x1F600 && state.cursor.column == 1);
+
+    state.is_dirty = false;
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    line = document_get_line(&state.document, 0);
+    assert(redraw && state.is_dirty && line != NULL && line->length == 0);
+    assert(state.cursor.column == 0);
+
+    editor_state_destroy(&state);
+}
+
+static void test_quit_and_noop(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_NONE, 0, &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(!redraw && should_quit);
+    editor_state_destroy(&state);
+}
+
+
+static void test_filename_entry_cursor_editing(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_SAVE, 0, &redraw, &should_quit);
+    assert(state.filename_entry_active && redraw);
+
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'a', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'b', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'c', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    assert(state.filename_entry_cursor == 2);
+
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'X', &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "abXc") == 0);
+    assert(state.filename_entry_cursor == 3);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "abc") == 0);
+    assert(state.filename_entry_cursor == 2);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "ab") == 0);
+
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "b") == 0);
+    assert(state.filename_entry_cursor == 0);
+
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 0x20AC, &redraw, &should_quit);
+    assert(state.filename_entry_length == 4);
+    assert(state.filename_entry_cursor == 3);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "b") == 0);
+    assert(state.filename_entry_length == 1 && state.filename_entry_cursor == 0);
+
+    execute(&state, EDITOR_COMMAND_CANCEL, 0, &redraw, &should_quit);
+    assert(!state.filename_entry_active && !state.is_dirty && state.file_path == NULL);
+    editor_state_destroy(&state);
+}
+
+static void test_dirty_quit_confirmation(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'q', &redraw, &should_quit);
+    assert(state.is_dirty);
+
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && state.quit_confirmation_active);
+    assert(strstr(state.message, "Save changes before quitting?") != NULL);
+
+    execute(&state, EDITOR_COMMAND_CANCEL, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && !state.quit_confirmation_active);
+    assert(state.is_dirty);
+    assert(strcmp(state.message, "Quit cancelled.") == 0);
+
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'n', &redraw, &should_quit);
+    assert(!redraw && should_quit && !state.quit_confirmation_active);
+    assert(state.is_dirty);
+    editor_state_destroy(&state);
+}
+
+static void test_dirty_quit_saves_unnamed_document(void)
+{
+    char path[] = "/tmp/tedit-quit-save-XXXXXX";
+    int descriptor = mkstemp(path);
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    FILE *file;
+    char contents[16];
+    size_t length;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(path) == 0);
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'z', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(state.quit_confirmation_active && !should_quit);
+
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'y', &redraw, &should_quit);
+    assert(state.filename_entry_active && state.quit_after_save && !should_quit);
+    for (size_t index = 0; path[index] != '\0'; ++index)
+    {
+        execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (unsigned char)path[index],
+                &redraw, &should_quit);
+    }
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+    assert(redraw && should_quit && !state.filename_entry_active);
+    assert(state.file_path != NULL && strcmp(state.file_path, path) == 0);
+    assert(!state.is_dirty && !state.quit_after_save);
+
+    file = fopen(path, "rb");
+    assert(file != NULL);
+    length = fread(contents, 1, sizeof(contents), file);
+    assert(!ferror(file));
+    assert(fclose(file) == 0);
+    assert(length == 2 && contents[0] == 'z' && contents[1] == '\n');
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_invalid_arguments(void)
+{
+    EditorState state;
+    EditorCommand command = {EDITOR_COMMAND_NONE, 0, 0};
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    assert(!command_engine_execute(NULL, &command, NULL, &redraw, &should_quit));
+    assert(!command_engine_execute(&state, NULL, NULL, &redraw, &should_quit));
+    assert(!command_engine_execute(&state, &command, NULL, NULL, &should_quit));
+    assert(!command_engine_execute(&state, &command, NULL, &redraw, NULL));
+    editor_state_destroy(&state);
+}
+
+
+static void test_save_as_success_and_backspace(void)
+{
+    char path[] = "/tmp/tedit-save-as-XXXXXX";
+    int descriptor = mkstemp(path);
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    unsigned char saved[8];
+    FILE *file;
+    size_t length;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(path) == 0);
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'x', &redraw, &should_quit);
+    assert(state.is_dirty);
+    execute(&state, EDITOR_COMMAND_SAVE, 0, &redraw, &should_quit);
+    assert(redraw && state.filename_entry_active && state.is_dirty);
+
+    for (size_t index = 0; path[index] != '\0'; ++index)
+    {
+        execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (unsigned char)path[index],
+                &redraw, &should_quit);
+        assert(redraw && state.filename_entry_active);
+    }
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'x', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, path) == 0);
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+
+    assert(redraw && !state.filename_entry_active);
+    assert(state.file_path != NULL && strcmp(state.file_path, path) == 0);
+    assert(!state.is_dirty);
+    assert(strcmp(state.message, "Saved successfully.") == 0);
+
+    file = fopen(path, "rb");
+    assert(file != NULL);
+    length = fread(saved, 1, sizeof(saved), file);
+    assert(!ferror(file));
+    assert(fclose(file) == 0);
+    assert(length == 2 && saved[0] == 'x' && saved[1] == '\n');
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_save_as_failure_and_cancel_preserve_document(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+    char invalid_path[] = "/tmp/tedit-save-as-fail-XXXXXX";
+    int descriptor = mkstemp(invalid_path);
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(invalid_path) == 0);
+    assert(mkdir(invalid_path, 0700) == 0);
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'q', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_SAVE, 0, &redraw, &should_quit);
+    assert(state.filename_entry_active && state.is_dirty);
+
+    for (size_t index = 0; invalid_path[index] != '\0'; ++index)
+    {
+        execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (unsigned char)invalid_path[index],
+                &redraw, &should_quit);
+    }
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+
+    assert(redraw && state.filename_entry_active);
+    assert(state.file_path == NULL);
+    assert(state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'q');
+    assert(strstr(state.message, "Save failed") != NULL);
+
+    execute(&state, EDITOR_COMMAND_CANCEL, 0, &redraw, &should_quit);
+    assert(redraw && !state.filename_entry_active);
+    assert(state.file_path == NULL && state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'q');
+    assert(strcmp(state.message, "Save As cancelled.") == 0);
+    editor_state_destroy(&state);
+    assert(rmdir(invalid_path) == 0);
+}
+
+
+static void test_dirty_quit_saves_named_document(void)
+{
+    char path[] = "/tmp/tedit-quit-named-XXXXXX";
+    int descriptor = mkstemp(path);
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    FILE *file;
+    char contents[16];
+    size_t length;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(path) == 0);
+    assert(editor_state_init(&state));
+    assert(command_engine_save_as(&state, path));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'n', &redraw, &should_quit);
+    assert(state.is_dirty);
+
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && state.quit_confirmation_active);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'Y', &redraw, &should_quit);
+    assert(redraw && should_quit && !state.quit_confirmation_active);
+    assert(!state.is_dirty && state.file_path != NULL && strcmp(state.file_path, path) == 0);
+
+    file = fopen(path, "rb");
+    assert(file != NULL);
+    length = fread(contents, 1, sizeof(contents), file);
+    assert(!ferror(file));
+    assert(fclose(file) == 0);
+    assert(length == 2 && contents[0] == 'n' && contents[1] == '\n');
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+int main(void)
+{
+    test_editing_commands();
+    test_tab_insertion_uses_document_code_point();
+    test_home_and_end_commands();
+    test_page_navigation_commands();
+    test_document_delete_command();
+    test_backspace_deletes_one_unicode_code_point();
+    test_quit_and_noop();
+    test_invalid_arguments();
+    test_save_as_success_and_backspace();
+    test_save_as_failure_and_cancel_preserve_document();
+    test_filename_entry_cursor_editing();
+    test_dirty_quit_confirmation();
+    test_dirty_quit_saves_unnamed_document();
+    test_dirty_quit_saves_named_document();
+    return 0;
+}
+```
+
+## Remaining release gates
+
+- License: No license has been selected. The archive does not grant permission to redistribute or reuse the code; a license decision is required before public distribution.
+- Platform coverage: GCC and Clang were tested on this Linux/POSIX environment. Other operating systems and POSIX implementations were not tested.
+- Hardening: Deterministic allocation-failure injection and exhaustive terminal-output failure injection remain incomplete.
+- Known behavior limitations: Unicode display width, non-ASCII filename display, user configuration loading, and incremental rendering remain as documented.
+
+Chapter 55’s implementation and verification work is complete for this scope. The remaining step before calling this publicly distributable is to decide on a license and repeat the final release checks against that licensed snapshot.

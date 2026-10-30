@@ -1,0 +1,116 @@
+---
+title: 55.3 Portability Checks
+description: "Checks C99 portability by building with GCC and Clang under strict warnings, reviewing platform boundaries, and documenting what remains unverified."
+---
+
+## Implementation goal
+
+Portability checks establish which environments can build and run the editor, which compiler assumptions it makes, and which platform-specific interfaces define its boundaries.
+
+A successful build on one machine does not prove universal portability. For this project, the goal is narrower and measurable: verify the C99 implementation with multiple compilers on the supported Linux/POSIX environment, avoid unnecessary compiler extensions, and document what remains untested.
+
+## Language and compiler requirements
+
+The project uses C99. Its CMake configuration makes that requirement explicit:
+
+```cmake
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+```
+
+These settings request the C99 standard without relying on compiler-specific language extensions.
+
+They do not, by themselves, guarantee portability. Source code may still depend on operating-system APIs, library behavior, or implementation-defined details. Compiler diagnostics and inspection of platform-facing modules remain necessary.
+
+## Compiler verification
+
+The release candidate was built using GCC and Clang on the current Linux/POSIX host.
+
+The strict-warning configuration is particularly useful:
+
+```bash
+cmake -S . -B build/warnings \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DTEDIT_ENABLE_LOGGING=ON \
+    -DCMAKE_C_FLAGS="-Wall -Wextra -Wpedantic -Werror"
+
+cmake --build build/warnings
+ctest --test-dir build/warnings --output-on-failure
+```
+
+The flags serve different purposes:
+
+- `-Wall` enables a broad set of common warnings.
+- `-Wextra` enables additional warnings.
+- `-Wpedantic` diagnoses departures from the selected language standard.
+- `-Werror` makes enabled warnings fail the build.
+
+The Clang check exposed missing final newline characters in existing source files. Those formatting defects were corrected, and the strict-warning build and all 11 tests subsequently passed.
+
+A warning-clean build is useful evidence, but it is not a proof that the program has no undefined behavior or portability defects.
+
+## Inspect platform-specific dependencies
+
+The editor is not a freestanding C program. It is a terminal application whose runtime depends on POSIX facilities.
+
+The portability review should concentrate on the modules that cross the platform boundary:
+
+| Area               | Portability concern                                                                                             |
+| ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Terminal Interface | Raw terminal mode, terminal attributes, terminal size, escape-sequence handling, and restoration during cleanup |
+| File Manager       | POSIX file operations, temporary-file handling, and atomic replacement semantics                                |
+| Text layout        | Locale-sensitive character-width behavior and differences between terminals                                     |
+| Input Parser       | Terminal-specific key sequences and incomplete or malformed input                                               |
+| Integration tests  | Pseudo-terminal facilities and Python availability                                                              |
+
+These dependencies are not automatically defects. They define the environment the application currently targets. The important requirement is that they remain concentrated in the appropriate modules rather than spreading throughout the Core Layer.
+
+## CMake and test portability
+
+The CMake configuration conditionally registers the pseudo-terminal integration test when running on a UNIX-like platform and when Python 3 is available.
+
+This separation is intentional:
+
+- The editor itself is implemented in C.
+- The ten C test executables verify individual modules and application behavior.
+- The Python integration harness exercises the application through a POSIX pseudo-terminal.
+- Environments without Python can still build and run the C tests, although the full 11-test suite will not be available.
+
+Consequently, the reported result of 11 passing tests applies to the verified environment where the integration test is available.
+
+## Run a portability verification matrix
+
+The following matrix captures the release candidate's actual verification scope.
+
+| Check                                                         | Result     |
+| ------------------------------------------------------------- | ---------- |
+| GCC Debug build                                               | Passed     |
+| GCC strict-warning build                                      | Passed     |
+| GCC Release build                                             | Passed     |
+| Clang strict-warning build                                    | Passed     |
+| Logging-enabled and logging-disabled builds                   | Passed     |
+| AddressSanitizer and UndefinedBehaviorSanitizer configuration | Passed     |
+| POSIX pseudo-terminal integration test                        | Passed     |
+| Clean build from extracted release archive                    | Passed     |
+| Other operating systems and POSIX implementations             | Not tested |
+
+The last row matters. GCC and Clang provide two compiler implementations, but both were tested on the same operating-system environment. That does not establish compatibility with macOS, BSD variants, or non-POSIX platforms.
+
+## Record known portability limitations
+
+The implementation still has constraints that should not be hidden by successful compiler results:
+
+- Unicode display width is incomplete for complex grapheme clusters, emoji sequences, and terminal-specific width differences.
+- Non-ASCII filenames are not fully represented in the filename display.
+- Terminal behavior can vary by emulator.
+- Allocation-failure injection and exhaustive terminal-write failure testing remain incomplete.
+- No cross-operating-system test environment was used.
+
+These issues should be treated as explicit limitations or future work—not as reasons to claim that the current verified configuration is unreliable.
+
+## Section conclusion
+
+The portability review supports a specific conclusion: the release candidate builds cleanly with GCC and Clang under strict warnings and passes the available test suite on the tested Linux/POSIX environment. Its C99 language settings and layered architecture help constrain portability risks, but they do not make the implementation universally portable.
+
+The next section, 55.4 Debug and Release Build Configurations, will establish how development diagnostics, logging, compiler optimization, and test behavior differ between build types—and how to verify those differences without accidentally weakening the tests.

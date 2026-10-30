@@ -1,0 +1,86 @@
+---
+title: 55.1 Architecture and Dependency Review
+description: "Reviews module responsibilities and dependency direction across the Core, Application, and Platform layers, identifying the Editor State-to-File Manager coupling to correct."
+---
+
+## Implementation goal
+
+Before changing code, we need evidence that the repository still respects the architecture established in the earlier chapters. The review checks module responsibilities, dependency direction, state ownership, and the boundary between the Core, Application, and Platform layers.
+
+## Architectural boundaries to preserve
+
+The existing implementation has distinct modules for the Document, Cursor, Editor State, Viewport, Screen Buffer, Renderer, File Manager, Input Parser, Input Engine, Command Engine, Terminal Interface, Diagnostics, and Logger.
+
+The central data flow remains:
+
+```
+Terminal Input
+      |
+      v
+Input Handler
+      |
+      v
+Input Parser
+      |
+      v
+Input Engine
+      |
+      v
+Command Engine
+      |
+      v
+Editor State and owned components
+      |
+      v
+Renderer
+      |
+      v
+Terminal Output
+```
+
+The File Manager provides the separate file-persistence boundary. Diagnostics and logging support verification without becoming alternative owners of editor state.
+
+The critical rules remain:
+
+- The Renderer reads editor state; it does not edit the Document.
+- The Input Parser handles terminal sequences and UTF-8 input rather than executing editing commands.
+- The Command Engine coordinates operations without reading raw terminal bytes or drawing the interface.
+- The File Manager owns file-system operations and safe-save behavior.
+- Terminal restoration and cleanup remain part of the application lifecycle.
+- Logging must not record document contents or interfere with editing when logging fails.
+
+## Dependency review finding
+
+The review identified one architectural inconsistency that should be resolved before calling the repository release-ready.
+
+`src/state/editor_state.c` includes `file/file.h` and directly invokes the File Manager through these functions:
+
+- `editor_state_load_file()`
+- `editor_state_save_file()`
+- `editor_state_save_as()`
+
+This makes the Editor State module depend on the File Manager, even though the architecture explicitly requires the Core Layer to remain independent of the Platform Layer. The current code builds and passes its tests, but successful tests do not eliminate this dependency-direction violation.
+
+The ownership and coordination rules can be preserved while correcting the dependency.
+
+Recommended correction
+
+Move file-operation coordination into the Application Layer, principally the Command Engine, while keeping file encoding, decoding, and persistence inside the File Manager.
+
+Before
+
+```text
+Editor State → File Manager
+```
+
+After
+
+```text
+Command Engine → File Manager
+```
+
+Command Engine coordinates successful state transitions through Editor State.
+
+The Document, file association, Dirty Flag, and safe-save guarantees must remain unchanged. Startup loading must also follow the corrected dependency direction.
+
+This is a proposed implementation correction, not a completed change. It should be evaluated against the existing APIs and tests before implementation; we should not conceal the discrepancy or weaken the architecture merely to avoid refactoring.

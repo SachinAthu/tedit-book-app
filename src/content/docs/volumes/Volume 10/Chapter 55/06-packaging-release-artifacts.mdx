@@ -1,0 +1,424 @@
+---
+title: 55.6 Packaging, Checksums, and Release Publication
+description: "Covers versioning, checksums, Git and GitHub releases, Debian and RPM packages, Snap packaging, and release publication procedures."
+---
+
+## Implementation goal
+
+A release is more than a compiled executable or a ZIP archive. It is a versioned, verified, documented set of artifacts that users can obtain and install, and that developers can reproduce and inspect.
+
+This section follows the release process from the verified source tree to distribution:
+
+```
+Verified Source
+      │
+      ▼
+Select Version and Artifacts
+      │
+      ▼
+Build and Test
+      │
+      ▼
+Package Release Artifacts
+      │
+      ▼
+Generate Checksums
+      │
+      ▼
+Publish Release
+      │
+      ▼
+User Downloads and Verifies
+      │
+      ▼
+Install and Run
+```
+
+The examples use Linux, C99, CMake, Git, and common Linux distribution tools. They distinguish the release process that can be performed with the current repository from optional distribution formats that require additional packaging configuration.
+
+The current editor release candidate has a source archive, a review patch, and SHA-256 checksum files. It does not yet have published `.deb`, RPM, or Snap packages. Those formats are covered as distribution targets, not as existing release artifacts.
+
+## Choose the release artifacts
+
+Before publishing, decide what users and developers need to download.
+
+| Artifact                        | Purpose                                                                     |
+| ------------------------------- | --------------------------------------------------------------------------- |
+| Source archive                  | Allows users to inspect, compile, and test the source                       |
+| Linux executable                | Allows users to run a precompiled version compatible with their environment |
+| `.deb` package                  | Supports installation on Debian-family systems                              |
+| RPM package                     | Supports installation on Fedora and other RPM-based systems                 |
+| Snap package                    | Provides installation through the Snap ecosystem                            |
+| SHA-256 checksum file           | Helps users detect accidental corruption or modification                    |
+| Release notes                   | Describe changes, known limitations, and compatibility                      |
+| License and third-party notices | State the applicable permissions and obligations                            |
+
+Not every release needs every artifact. A small educational project can begin with a source archive and documented build instructions. Binary and operating-system packages can be added when their build and testing processes are ready.
+
+Choose a version identifier before packaging. For example, a project might use `v1.0.0` for its first stable release and `v1.1.0` for a later compatible feature release. The exact versioning policy is a project decision; the important requirement is that the Git tag, archive name, executable version, and release notes agree.
+
+A release candidate should be identified as such rather than presented as a final stable release.
+
+## Create and verify SHA-256 checksums
+
+A checksum is a fixed-length value calculated from the bytes of a file. SHA-256 is a cryptographic hash function that produces a 256-bit digest, normally displayed as 64 hexadecimal characters.
+
+Checksums are useful when distributing release artifacts because even a small change to the archive will normally produce a different digest.
+
+### Generate the checksum
+
+After creating the final source archive, run:
+
+```bash
+sha256sum tedit-v1.0.0.tar.gz \
+    > tedit-v1.0.0.tar.gz.sha256
+```
+
+This command calculates the digest and redirects the result into a checksum file. The output normally includes both the digest and the filename.
+
+For a ZIP archive, the command is similar:
+
+```bash
+sha256sum tedit-v1.0.0.zip \
+    > tedit-v1.0.0.zip.sha256
+```
+
+Use the filename that actually exists. Do not rename an archive after generating its checksum unless the checksum file is updated accordingly.
+
+To display a digest without writing a checksum file, use:
+
+```bash
+sha256sum tedit-v1.0.0.zip
+```
+
+### Verify the downloaded archive
+
+Suppose a user downloads both the archive and its checksum file into the same directory. The user can run:
+
+```bash
+sha256sum -c tedit-v1.0.0.zip.sha256
+```
+
+If the archive matches the recorded digest, the command reports success. If the file has been corrupted or changed, verification fails.
+
+The checksum file should be published alongside the archive. However, a checksum alone does not establish authenticity if an attacker can replace both files. A trusted digital signature, or a checksum obtained through an independently trusted channel, provides stronger assurance about the origin of the artifact.
+
+Release rule: Generate checksums only after the artifacts have reached their final form. If an archive is rebuilt or changed, regenerate its checksum and publish the updated checksum file.
+
+## Prepare a Git release
+
+Git provides the version history needed to identify exactly which source revision was released. A release should be based on a reviewed and tested commit, not an arbitrary working directory.
+
+First, inspect the repository:
+
+```bash
+git status
+git diff --check
+git diff
+```
+
+Review the changes and confirm that the intended files are included. Then commit the approved changes:
+
+```bash
+git add .
+git commit -m "Prepare v1.0.0 release"
+```
+
+The `git add .` command stages all eligible changes under the current directory. In a real release, inspect the staged changes with `git diff --cached` and stage only the intended files, especially if generated artifacts or local files are present.
+
+Create an annotated tag:
+
+```bash
+git tag -a v1.0.0 -m "Release v1.0.0"
+```
+
+An annotated tag records a release label and message. Before publishing, verify the tag points to the intended commit:
+
+```bash
+git show v1.0.0
+```
+
+Push the commit and tag to the remote repository:
+
+```bash
+git push origin main
+git push origin v1.0.0
+```
+
+Replace `main` if the repository uses a different primary branch. These commands assume that the remote named `origin` is configured and that the user has permission to push.
+
+The source archive should be generated from the tagged revision, rather than from an unrelated working tree. This makes the source version behind the release easier to identify and audit.
+
+### Important project-specific limitation
+
+The repository snapshot supplied for this chapter did not contain Git metadata. Consequently, the Chapter 55 archive and review patch are available, but the commands above have not created a real project commit or tag. They describe the release procedure to perform after the changes have been imported into the actual Git repository.
+
+## Publish a GitHub Release
+
+A GitHub Release associates a published version with a Git tag and provides a place to distribute artifacts and release notes.
+
+A typical manual workflow is:
+
+1. Push the reviewed commit and version tag to the GitHub repository.
+2. Open the repository's Releases page.
+3. Choose the option to draft a new release.
+4. Select the intended tag, such as `v1.0.0`.
+5. Enter the release title and user-facing release notes.
+6. Attach the source archive, precompiled binaries, and checksum files that have actually been produced.
+7. Review the assets and version information before publishing.
+
+A release note should summarize the changes, state relevant platform requirements, list known limitations, and explain how users can verify and install the download.
+
+Do not upload build outputs simply because they exist on a developer's machine. Each binary should be built from the intended source revision and tested in the environment it claims to support.
+
+### Example release notes
+
+```
+# tedit v1.0.0
+
+## Highlights
+- Initial stable release of the terminal text editor.
+- C99 implementation with a CMake build system.
+- Keyboard-driven editing in a POSIX terminal.
+
+## Requirements
+- Linux or a compatible POSIX environment.
+- A supported C compiler and CMake when building from source.
+
+## Verification
+- See the published SHA-256 checksum file.
+- Follow the README instructions to build and run the tests.
+
+## Known limitations
+- Unicode display-width support is incomplete.
+- Other operating systems have not been verified for this release.
+```
+
+This is an illustrative template, not a claim that the current release candidate has been approved as `v1.0.0`. The version number and claims must reflect the actual release decision.
+
+GitHub's automatically generated source archives are convenient for source distribution, but a project may also create its own archive to control its contents and naming. If the project publishes a separately generated archive, it should document which artifact is authoritative.
+
+## Package for Debian and Ubuntu (`.deb`)
+
+A Debian package contains installed files and package metadata, including the package name, version, architecture, dependencies, and installation layout. The package manager uses that metadata to install, upgrade, and remove the application.
+
+A `.deb` package is not simply a ZIP archive with a different extension. It follows the Debian package format and needs a defined filesystem layout and metadata.
+
+For a small terminal editor, an illustrative installed layout might be:
+
+```
+/usr/bin/tedit
+/usr/share/doc/tedit/README.md
+/usr/share/doc/tedit/copyright
+```
+
+The executable belongs in a directory intended for commands. Documentation and licensing information belong in appropriate documentation locations.
+
+A Debian packaging workflow commonly includes:
+
+1. Define the package name and version.
+2. Build the executable from the selected source revision.
+3. Define the installation paths and package metadata.
+4. Declare runtime dependencies, if any.
+5. Build the `.deb` package.
+6. Install it in a test environment and verify launch, operation, and removal.
+7. Publish the package with its checksum and release notes.
+
+The Debian packaging system commonly uses a `debian/` directory containing control metadata and build rules. The exact files and build commands depend on the packaging method selected for the project.
+
+### Debian packaging documentation
+
+- [Guide for Debian Maintainers](https://www.debian.org/doc/manuals/debmake-doc/) — official guide to creating Debian packages, including a CMake single-binary example.
+- [Debian New Maintainers' Guide](https://www.debian.org/doc/manuals/maint-guide/) — introduction to the `debian/` directory and the package build workflow.
+- [Debian Policy Manual](https://www.debian.org/doc/debian-policy/) — required package layout, metadata, and policy rules.
+
+### Install a downloaded package
+
+For a trusted, locally downloaded package:
+
+```bash
+sudo apt install ./tedit_1.0.0_amd64.deb
+```
+
+The `./` prefix tells APT to install the local file rather than interpret the argument as a repository package name. The package filename and architecture must match the actual artifact.
+
+To install from a configured repository, a user would instead use the package name:
+
+```bash
+sudo apt install tedit
+```
+
+That command works only if a configured repository provides the package. Publishing a GitHub Release does not automatically add the package to the user's APT repositories.
+
+The project should not claim that APT installation is supported until a package has been built, tested, and made available through a documented distribution channel.
+
+## Package for Fedora and RPM-based distributions
+
+RPM is a package format used by Fedora and other RPM-based Linux distributions. Like Debian packages, RPM packages include metadata and a defined installation layout, but the format and tooling are different.
+
+A project targeting both Debian-family and RPM-based distributions should not assume that a `.deb` package can be converted into a reliable RPM package by renaming it. Each package should be built and tested using the relevant packaging workflow.
+
+An RPM packaging definition commonly includes a specification file, often named `tedit.spec`. It describes metadata, dependencies, build instructions, installation paths, and files to include.
+
+A simplified build and test workflow is:
+
+1. Prepare the source archive.
+2. Create or update the RPM specification.
+3. Build the package in a suitable RPM build environment.
+4. Inspect the generated package metadata.
+5. Install it in a test environment.
+6. Verify that the executable runs and the package can be removed cleanly.
+7. Publish the package and checksum alongside the release notes.
+
+The exact build commands depend on the distribution and build environment. For example, Fedora packaging workflows commonly use RPM build tools and a prepared build tree.
+
+### Fedora and RPM packaging documentation
+
+- [Fedora Packaging Guidelines](https://docs.fedoraproject.org/en-US/packaging-guidelines/) — Fedora's required conventions for spec files and package contents.
+- [RPM Packaging Guide](https://rpm-packaging-guide.github.io/) — practical guide to writing spec files and building source and binary RPMs.
+- [RPM Packaging for Fedora](https://developer.fedoraproject.org/deployment/rpm/about.html) — Fedora Developer Portal walkthrough with a complete example.
+- [rpmbuild(8) manual](https://man7.org/linux/man-pages/man8/rpmbuild.8.html) — reference for build stages and command-line options.
+
+### Install a downloaded RPM
+
+On a compatible Fedora system, a user can install a local package with:
+
+```bash
+sudo dnf install ./tedit-1.0.0-1.x86_64.rpm
+```
+
+The filename is illustrative. The actual name, version, release number, and architecture must match the produced package.
+
+If the package is available from a configured repository, the user can install it by package name:
+
+```bash
+sudo dnf install tedit
+```
+
+As with APT, this repository command works only after the package has been published to a repository that the user's system is configured to use. Attaching an RPM to a GitHub Release does not automatically make it available through DNF.
+
+## Package with Snap
+
+Snap is another Linux application distribution system. A Snap package can be distributed through the Snap Store and installed on systems that have Snap support configured.
+
+Snap packaging introduces its own metadata, build process, runtime environment, and confinement considerations. It is not simply another extension for the existing source archive.
+
+A Snap project typically defines its package in a file named `snapcraft.yaml`. That definition describes the application, version, build process, commands, required interfaces, and confinement settings.
+
+A typical workflow is:
+
+1. Create a Snap packaging definition.
+2. Build the application using the intended source revision.
+3. Build the Snap package with Snapcraft.
+4. Test the package locally in a compatible environment.
+5. Review the requested interfaces and confinement.
+6. Upload and publish the package through the Snap Store when ready.
+7. Verify the published channel and installation instructions.
+
+The correct confinement model must be selected for the application. A terminal editor should not request broader system access than its operation requires.
+
+### Snap packaging documentation
+
+- [Snap documentation](https://snapcraft.io/docs/) — overview of snap packaging, snapd, and publishing.
+- [Craft a snap](https://ubuntu.com/docs/snapcraft/latest/tutorials/craft-a-snap/) — step-by-step Snapcraft project and build tutorial.
+- [Craft a C or C++ app](https://ubuntu.com/docs/snapcraft/latest/how-to/integrations/craft-a-c-or-cpp-app/) — guidance for building a CMake-based C application as a snap.
+- [About snapcraft.yaml](https://ubuntu.com/docs/snapcraft/latest/explanation/snapcraft-yaml/) — explanation of the project-file keys for apps, parts, platforms, and confinement.
+
+### Install a published Snap
+
+If the project publishes a Snap named `tedit`, the installation command would be:
+
+```bash
+sudo snap install tedit
+```
+
+This command is illustrative until the package exists in the Snap Store under that name. Users should follow the actual release instructions if the published name or channel differs.
+
+Once installed, the package can generally be updated through Snap's update mechanism and removed with:
+
+```bash
+sudo snap remove tedit
+```
+
+Publishing a Snap requires an actual package and publication workflow. The current source release candidate does not establish that Snap installation is available.
+
+## Automate release preparation with continuous integration
+
+Once the manual release process is reliable, continuous integration (CI) can automate repetitive checks.
+
+A release workflow can be triggered by a version tag. It may then:
+
+1. Check out the tagged source revision.
+2. Configure the CMake project.
+3. Build the application.
+4. Run the unit and integration tests.
+5. Build the release artifacts.
+6. Generate SHA-256 checksum files.
+7. Store the artifacts for review or attach them to a release.
+8. Publish only when the required checks succeed and the release process authorizes publication.
+
+A conceptual workflow is:
+
+```
+Version Tag
+    │
+    ▼
+Checkout Tagged Source
+    │
+    ▼
+Configure and Build
+    │
+    ▼
+Run Tests
+    │
+    ├── Failure ──► Stop Release
+    │
+    ▼
+Build Artifacts
+    │
+    ▼
+Generate Checksums
+    │
+    ▼
+Review and Publish
+```
+
+The key principle is that a failed build or test must stop the release workflow. Automation should make the verified procedure repeatable, not bypass review or conceal failures.
+
+For this editor, CI can begin with Linux builds and tests. Additional jobs for other operating systems, architectures, `.deb`, RPM, or Snap should be introduced only when the project has the relevant build definitions and can verify the resulting artifacts.
+
+Publishing should use appropriately scoped credentials and permissions. A build job that only needs to test source code should not automatically receive permission to publish releases.
+
+## Final release checklist
+
+Before publishing a release, verify each applicable item.
+
+### Release readiness
+
+- The release version and Git tag identify the intended source revision.
+- The source archive contains the required source, tests, and documentation.
+- Debug, Release, and required warning/sanitizer checks have passed.
+- A clean build and the available integration tests have passed.
+- Each published binary or operating-system package has been tested in its intended environment.
+- SHA-256 checksums were generated after the final artifacts were created.
+- Release notes describe supported platforms, changes, and known limitations.
+- The license and any required third-party notices have been reviewed.
+- Download links, package names, and installation instructions match the published artifacts.
+- The publication process has been reviewed and authorized.
+
+Not every release target requires every packaging step. A source-only release does not need an RPM build, for example. However, every artifact that is actually published must be covered by the checks appropriate to that artifact.
+
+## Section conclusion
+
+Packaging and publication form a chain of responsibilities. The developer identifies the source revision, builds and tests the application, creates the appropriate artifacts, calculates checksums, publishes the release, and documents how users can verify and install it.
+
+The release methods differ in what they provide:
+
+- GitHub Releases distribute versioned artifacts and release notes.
+- APT and DNF install packages through configured repositories or from local package files.
+- Snap distributes applications through its own package and channel system.
+- SHA-256 checksums help users verify artifact integrity, while trusted signatures provide stronger authenticity guarantees.
+
+For the current editor, the source archive and checksum workflow provide the immediate foundation. Debian, RPM, and Snap distribution remain future packaging targets until their package definitions, builds, and installation tests have been completed.
+
+The next section, 55.7 User and Developer Documentation, will turn these release procedures into practical instructions: how a user finds and downloads an actual release, verifies it, installs or builds the editor, runs it, and removes it—and how a developer can build, test, and contribute to the project.

@@ -1,0 +1,123 @@
+---
+title: 55.5 Clean Build and Reproducibility Checks
+description: "Verifies that the release archive builds and tests from a clean directory without cached CMake state or stale artifacts."
+---
+
+## Implementation goal
+
+A release should be buildable from the repository itself, not just from the developer's existing working directory.
+
+During development, generated files, cached CMake settings, previously compiled objects, and locally available dependencies can hide problems. A clean build removes reliance on those existing artifacts and checks whether the supplied source repository contains what is needed to configure, compile, and test the application.
+
+For this editor, reproducibility means being able to extract the release archive into a fresh directory, configure it using the documented commands, build it, and run the available test suite without relying on the original build directories.
+
+## Why an incremental build is insufficient
+
+An ordinary incremental build may reuse object files and generated build-system data from earlier compilations. Although this is efficient during development, it is not sufficient evidence for a release.
+
+Consider this sequence:
+
+```
+Working repository
+    │
+    ├── Existing object files
+    ├── Cached CMake configuration
+    ├── Previously generated test files
+    └── Current source changes
+              │
+              ▼
+       Incremental build
+              │
+              ▼
+       Tests pass
+```
+
+The tests passing is useful, but it does not independently establish that a fresh checkout or source archive will build correctly.
+
+A clean verification instead starts with the release artifact and creates a new build directory.
+
+## Verify the extracted repository
+
+Extract the release archive into a fresh directory and inspect its top-level contents.
+
+The repository should include the source tree, public headers, CMake configuration, tests, project context, and user/developer documentation. It should not depend on generated object files or previously configured build directories.
+
+The expected structure is conceptually:
+
+```
+tedit/
+├── CMakeLists.txt
+├── README.md
+├── RELEASE_NOTES.md
+├── src/
+├── tests/
+└── context/
+```
+
+This is a conceptual outline, not a complete listing of every repository file.
+
+## Configure and build from scratch
+
+Run the following commands from the extracted repository root:
+
+```bash
+cmake -S . -B build/clean \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DTEDIT_ENABLE_LOGGING=ON
+
+cmake --build build/clean
+
+ctest --test-dir build/clean --output-on-failure
+```
+
+The commands perform three distinct operations:
+
+1. Configure: CMake discovers the compiler, evaluates the project configuration, and generates the build system.
+2. Build: The compiler compiles the source files and links the application and test executables.
+3. Test: CTest executes the registered tests and reports failures.
+
+Keeping these steps separate makes failures easier to diagnose. A configuration error, compilation error, linker error, and failing test indicate different classes of problems.
+
+## Check dependencies and generated artifacts
+
+A clean build also provides an opportunity to identify undocumented environmental requirements.
+
+For this project, check that:
+
+- The required C compiler and CMake are installed.
+- Python 3 is available if the pseudo-terminal integration test is expected to run.
+- The test harness does not rely on files outside the extracted repository.
+- No test requires an existing editor configuration, previously created temporary file, or stale log.
+- Build outputs are generated within the selected build directory.
+- The README commands work from the repository root as documented.
+
+The Python integration test deserves particular attention because a machine without Python may still build the C code while lacking that test. A successful partial test run must not be reported as equivalent to the full 11-test suite.
+
+## Reproducibility results
+
+The release candidate was extracted into a fresh directory, configured, built, and tested independently of the original working build directories.
+
+| Check                                         | Result       |
+| --------------------------------------------- | ------------ |
+| Fresh extraction of the release archive       | Passed       |
+| CMake configuration from the extracted source | Passed       |
+| Compilation and linking                       | Passed       |
+| Full available CTest suite                    | 11/11 passed |
+| Reliance on the original build directory      | Not required |
+
+These results establish that the archive is buildable in the verified environment. They do not establish bit-for-bit reproducibility of binaries across machines: compiler versions, build paths, timestamps, and toolchain details may affect generated artifacts.
+
+## Build reproducibility versus binary reproducibility
+
+These two terms describe different guarantees.
+
+- Build reproducibility: Another developer can obtain the supplied source, follow the documented process, and successfully build and test the application.
+- Binary reproducibility: Independent builds from the same inputs produce identical binary artifacts.
+
+This release process verifies the first guarantee. It does not claim the second, because deterministic binary output has not been established as a project requirement or independently verified.
+
+## Section conclusion
+
+The clean-build check confirms that the release archive can be extracted, configured, compiled, and tested without depending on the original development build directories. This is a stronger release check than relying on an incremental build alone.
+
+The next section, 55.6 Packaging and Release Artifacts, will define what belongs in the distributable source archive, how to identify the exact release contents, and which metadata or files should be excluded from a clean package.
