@@ -1,5 +1,6 @@
 ---
 title: 50.3 Refactor the Document to Store Unicode Code Points
+description: "Refactors the Document from byte arrays to Unicode code points, updating storage, insertion, splitting, merging, callers, and regression tests."
 ---
 
 This section changes the Document's character storage from UTF-8-compatible byte arrays to arrays of Unicode code points, as required by ADR-021. Existing editing and navigation behavior must remain intact.

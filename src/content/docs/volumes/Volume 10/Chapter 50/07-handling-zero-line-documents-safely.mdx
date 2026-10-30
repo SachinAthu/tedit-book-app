@@ -1,5 +1,6 @@
 ---
 title: 50.7 Handling Zero-Line Documents Safely
+description: "Makes editing and rendering safe for zero-line Documents so empty files load without crashes or invented lines."
 ---
 
 The File Manager can now load a zero-byte file as a `Document` with no logical lines. Before connecting file loading to the application startup sequence, we need to make sure the existing editing and rendering code can handle that state safely.

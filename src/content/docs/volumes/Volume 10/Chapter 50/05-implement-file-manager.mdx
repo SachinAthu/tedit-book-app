@@ -1,5 +1,6 @@
 ---
 title: 50.5 Implement the File Manager
+description: "Implements the File Manager: POSIX reads, UTF-8 validation and decoding, CRLF/LF normalization, and atomic replacement of the destination Document."
 ---
 
 This section introduces the actual file-loading implementation. The File Manager reads a file through POSIX APIs, validates and decodes UTF-8, normalizes CRLF/LF boundaries, and only replaces the destination Document after a complete successful load.

@@ -1,0 +1,485 @@
+---
+title: 51.4 Integrating Saving with the Event Loop
+description: "Connects Ctrl-S to the editor's event loop, passing the startup filename through and preserving the existing architecture."
+---
+
+## Changes made
+
+- Added Ctrl-S (`0x13`) handling to the existing Event Loop.
+- Passed the optional startup filename into the Event Loop.
+- Connected Ctrl-S to `editor_state_save_file()`.
+- Preserved the existing architecture; no premature Input Parser or Command Engine changes.
+
+## Updated files
+
+### `src/main.c`
+
+```c
+/* src/main.c */
+
+#include "terminal/terminal.h"
+#include "state/editor_state.h"
+#include "renderer/renderer.h"
+
+#include <stdio.h>
+#include <unistd.h>
+#include <stdbool.h>
+#include <sys/ioctl.h>
+#include <errno.h>
+#include <stddef.h>
+#include <sys/select.h>
+#include <stdint.h>
+
+
+#define CONTROL_Q 0x11
+#define CONTROL_S 0x13
+#define BACKSPACE 0x7F
+#define BACKSPACE_ALT 0x08
+#define ESCAPE 0x1B
+#define ESCAPE_TIMEOUT 50000
+#define ENTER 0x0D
+#define LINE_FEED 0x0A
+
+static bool get_terminal_size(size_t *rows, size_t *columns)
+{
+    struct winsize window_size;
+
+    /* Writing through a NULL pointer would crash, so reject bad arguments. */
+    if (rows == NULL || columns == NULL)
+    {
+        return false;
+    }
+
+    /* Ask the kernel to fill window_size with the terminal's dimensions. */
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &window_size) == -1)
+    {
+        return false;
+    }
+
+    /* A zero dimension means the size is unknown, so treat it as a failure. */
+    if (window_size.ws_row == 0 || window_size.ws_col == 0)
+    {
+        return false;
+    }
+
+    /* Hand the sizes back through the caller's out-parameters. */
+    *rows = window_size.ws_row;
+    *columns = window_size.ws_col;
+
+    return true;
+}
+
+static int read_escape_byte(unsigned char *byte)
+{
+    fd_set read_set;
+    struct timeval timeout;
+    int result;
+
+    FD_ZERO(&read_set);
+    FD_SET(STDIN_FILENO, &read_set);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = ESCAPE_TIMEOUT;
+
+    do
+    {
+        result = select(STDIN_FILENO + 1, &read_set, NULL, NULL, &timeout);
+    } while (result == -1 && errno == EINTR);
+
+    if (result <= 0)
+    {
+        return result;
+    }
+
+    for (;;)
+    {
+        const ssize_t bytes_read = read(STDIN_FILENO, byte, sizeof(*byte));
+
+        if (bytes_read == 1)
+        {
+            return 1;
+        }
+
+        if (bytes_read == 0)
+        {
+            return 0;
+        }
+
+        if (errno != EINTR)
+        {
+            return -1;
+        }
+    }
+}
+
+static bool redraw_after_action(Renderer *renderer, EditorState *state)
+{
+    if (renderer == NULL || state == NULL)
+    {
+        return false;
+    }
+
+    if (!viewport_ensure_cursor_visible(
+            &state->viewport,
+            state->cursor.row,
+            state->cursor.column,
+            renderer->screen_buffer.rows,
+            renderer->screen_buffer.columns))
+    {
+        return false;
+    }
+
+    return renderer_render(renderer, state);
+}
+
+static bool application_event_loop(EditorState *state, Renderer *renderer, const char *save_path)
+{
+    if (state == NULL || renderer == NULL)
+    {
+        return false;
+    }
+
+    while (true)
+    {
+
+        /* One keystroke is a single byte. unsigned char holds 0..255, which is
+         * the full range of byte values we can read. Declared inside the loop
+         * so it is freshly created on every pass. */
+        unsigned char input;
+
+        /* read() waits for input, then copies up to sizeof(input) bytes into
+         * &input (its address) and returns how many bytes it actually read.
+         * ssize_t is a signed size type: it can be negative on error (-1).
+         * const means we will not modify bytes_read after this line. */
+        const ssize_t bytes_read = read(STDIN_FILENO, &input, sizeof(input));
+
+        /* A negative result means read() failed. A signal may have interrupted
+         * it, which is harmless, so retry; any other error is fatal. */
+        if (bytes_read < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        /* Zero bytes means end-of-input (the stream closed), so stop. */
+        /* Ctrl-Q is the temporary command that quits the editor. */
+        if (bytes_read == 0 || input == CONTROL_Q)
+        {
+            return true;
+        }
+
+        /*
+         * Ctrl-S saves back to the path supplied at startup. Save As for a
+         * new, unnamed Document is not part of this milestone. Save failures
+         * leave Editor State unchanged. The Message Bar will provide visible
+         * feedback when the interface is implemented in the next chapter.
+         */
+        if (input == CONTROL_S)
+        {
+            if (save_path != NULL)
+            {
+                (void)editor_state_save_file(state, save_path);
+            }
+
+            continue;
+        }
+
+        if (input == ESCAPE)
+        {
+            unsigned char first;
+            unsigned char second;
+
+            if (read_escape_byte(&first) != 1 || first != '[' || read_escape_byte(&second) != 1)
+            {
+                continue;
+            }
+
+            bool moved = false;
+            if (second == 'D')
+            {
+                moved = cursor_move_left(&state->cursor);
+            }
+            else if (second == 'C')
+            {
+                moved = cursor_move_right(&state->cursor, &state->document);
+            }
+            else if (second == 'A')
+            {
+                moved = cursor_move_up(&state->cursor, &state->document);
+            }
+            else if (second == 'B')
+            {
+                moved = cursor_move_down(&state->cursor, &state->document);
+            }
+
+            if (moved && !redraw_after_action(renderer, state))
+            {
+                return false;
+            }
+
+            continue;
+        }
+
+        if (input == BACKSPACE || input == BACKSPACE_ALT)
+        {
+            if (state->cursor.column > 0)
+            {
+                const size_t delete_column = state->cursor.column - 1;
+
+                if (!document_delete_character(&state->document, state->cursor.row, delete_column))
+                {
+                    continue;
+                }
+
+                if (!cursor_set_position(&state->cursor, &state->document,
+                                         state->cursor.row, delete_column))
+                {
+                    return false;
+                }
+            }
+            else if (state->cursor.row > 0)
+            {
+                const size_t previous_row = state->cursor.row - 1;
+
+                const DocumentLine *previous_line = document_get_line(&state->document, previous_row);
+
+                if (previous_line == NULL)
+                {
+                    continue;
+                }
+
+                const size_t previous_length = previous_line->length;
+
+                if (!document_merge_lines(&state->document, previous_row))
+                {
+                    continue;
+                }
+
+                if (!cursor_set_position(&state->cursor, &state->document,
+                                         previous_row, previous_length))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                continue;
+            }
+
+            state->is_dirty = true;
+
+            if (!redraw_after_action(renderer, state))
+            {
+                return false;
+            }
+
+            continue;
+        }
+
+        if (input == ENTER || input == LINE_FEED)
+        {
+            if (!document_split_line(&state->document, state->cursor.row, state->cursor.column))
+            {
+                continue;
+            }
+
+            if (!cursor_set_position(&state->cursor, &state->document,
+                                     state->cursor.row + 1, 0))
+            {
+                return false;
+            }
+            state->is_dirty = true;
+
+            if (!redraw_after_action(renderer, state))
+            {
+                return false;
+            }
+
+            continue;
+        }
+
+        /*
+         * Accept printable ASCII characters only.
+         */
+        if (input < 0x20 || input > 0x7E)
+        {
+            continue;
+        }
+
+        /* Insert the typed character at the Cursor's position. */
+        if (!document_insert_character(&state->document, state->cursor.row, state->cursor.column, (uint32_t)(unsigned char)input))
+        {
+            return false;
+        }
+
+        /*
+         * A successful insertion increases the line
+         * length, allowing the Cursor to advance.
+         */
+        if (!cursor_advance(&state->cursor, &state->document))
+        {
+            return false;
+        }
+
+        state->is_dirty = true;
+
+        /*
+         * Render the updated Editor State.
+         */
+        if (!redraw_after_action(renderer, state))
+        {
+            return false;
+        }
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    /*
+     * This implementation accepts either no filename (a new document) or
+     * exactly one filename (an existing document to open).
+     */
+    if (argc > 2)
+    {
+        fprintf(stderr, "Usage: %s [filename]\n", argv[0]);
+        return 1;
+    }
+
+    const char *startup_path = argc == 2 ? argv[1] : NULL;
+    bool startup_load_failed = false;
+
+    /* The three main objects the editor needs while running. */
+    TerminalState terminal;
+    EditorState state;
+    Renderer renderer;
+
+    /* Terminal dimensions, filled in by get_terminal_size() below. */
+    size_t rows;
+    size_t columns;
+
+    /* "Initialized" flags remember how far setup got. The cleanup block at
+     * the bottom uses them so it only frees things that were actually
+     * created, and never touches an uninitialized object. */
+    bool state_initialized = false;
+    bool renderer_initialized = false;
+
+    /* Start by assuming failure (non-zero). We only switch to 0 once the
+     * editor has run and shut down cleanly. */
+    int exit_status = 1;
+
+    /* Set up the terminal. If this fails there is nothing to clean up, so we
+     * can return immediately. */
+    if (!terminal_init(&terminal))
+    {
+        return 1;
+    }
+
+    /* Put the terminal into "raw mode" so it passes keystrokes to us directly
+     * instead of line-buffering them. On failure we restore the terminal
+     * before returning, since it is already initialized. */
+    if (!terminal_enable_raw_mode(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+
+    /* Enter the alternate screen. */
+    if (!terminal_enter_alternate_screen(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+
+    /* From here on, any failure jumps to the shared 'cleanup' block instead
+     * of returning right away. This keeps the shutdown code in one place. */
+    if (!get_terminal_size(&rows, &columns))
+    {
+        goto cleanup;
+    }
+
+    /* Create the editor state (the document and the cursor). */
+    if (!editor_state_init(&state))
+    {
+        goto cleanup;
+    }
+
+    /* Mark the state as created so cleanup will free it. */
+    state_initialized = true;
+
+    /*
+     * Load the requested file before initializing the Renderer or drawing
+     * the first frame. If loading fails, the shared cleanup path restores
+     * the terminal and reports the failure after leaving the alternate screen.
+     */
+    if (startup_path != NULL && !editor_state_load_file(&state, startup_path))
+    {
+        startup_load_failed = true;
+        goto cleanup;
+    }
+
+    /*
+     * Reserve the terminal's final physical column. Some terminal emulators,
+     * including terminals used through WSL, treat output at the right edge as
+     * a pending-wrap condition even when auto-wrap is disabled. Keeping the
+     * editor's Screen Buffer one column narrower avoids writing to that edge.
+     */
+    if (columns < 2 || !renderer_init(&renderer, rows, columns - 1))
+    {
+        goto cleanup;
+    }
+
+    /* Mark the renderer as created so cleanup will free it. */
+    renderer_initialized = true;
+
+    /* Draw the first frame before waiting for input. */
+    if (!redraw_after_action(&renderer, &state))
+    {
+        goto cleanup;
+    }
+
+    /* Hand control to the main loop until the user quits. */
+    if (application_event_loop(&state, &renderer, startup_path))
+    {
+        exit_status = 0;
+    }
+
+cleanup:
+    /* Free resources in reverse order of creation, skipping any that were
+     * never successfully initialized. */
+    if (renderer_initialized)
+    {
+        renderer_destroy(&renderer);
+    }
+
+    if (state_initialized)
+    {
+        editor_state_destroy(&state);
+    }
+
+    /* Always restore the terminal, because we switched it to raw mode. */
+    terminal_restore(&terminal);
+
+    /* Leave the alternate screen. */
+    terminal_leave_alternate_screen(&terminal);
+
+    if (startup_load_failed)
+    {
+        fprintf(stderr, "tedit: unable to open or decode '%s'.\n", startup_path);
+    }
+
+    return exit_status;
+}
+
+```
+
+## Current limitations
+
+- Ctrl-S saves to the filename supplied at startup. Save As is not implemented, so Ctrl-S does nothing for an unnamed Document.
+- Visible save success/failure feedback remains pending the Message Bar. Failed saves preserve the Dirty Flag and do not terminate the Event Loop.
+
+## Next step
+
+Continue Chapter 51 with the remaining failure-path review and integration checks. Then proceed to Chapter 52, where the Status Bar and Message Bar can provide proper save feedback without adding a competing terminal-output path.

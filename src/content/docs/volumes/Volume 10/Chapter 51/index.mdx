@@ -1,0 +1,20 @@
+---
+title: Chapter 51 — Saving Files
+description: "Adds UTF-8 serialization and atomic file replacement, connects Ctrl-S saving through Editor State, and verifies save failure paths."
+---
+
+## Introduction
+
+Chapter 50 let the editor open a file and edit it in memory, but no edit could be persisted. The Dirty Flag recorded that changes existed; nothing yet turned those changes back into bytes on disk.
+
+> **How should the editor safely serialize a document back to UTF-8, replace a file without corrupting it, and know when saving has actually succeeded?**
+
+This chapter adds saving to the File Manager following the project's decisions on encoding and file safety. It serializes the Document to UTF-8 with LF endings, writes to a temporary file in the destination directory, handles partial writes and errors, and atomically replaces the target with `rename()`. The Dirty Flag clears only after that replacement succeeds; failures preserve both the in-memory document and the existing file. It then connects saving to Editor State and the event loop through Ctrl-S, and reviews the failure paths, including zero-line documents and replacement errors. Durability via `fsync()`, metadata preservation, Save As, and unnamed-file saving remain out of scope.
+
+## Sections
+
+- [51.1 Implementation Goal](/volumes/volume-10/chapter-51/01-implementation-goal/)
+- [51.2 Implementing UTF-8 Serialization and Safe Saving](/volumes/volume-10/chapter-51/02-utf-8-serialization-and-safe-saving/)
+- [51.3 Integrating Saving with Editor State](/volumes/volume-10/chapter-51/03-integrating-saving-with-editor-state/)
+- [51.4 Integrating Saving with the Event Loop](/volumes/volume-10/chapter-51/04-integrating-saving-with-event-loop/)
+- [51.5 Failure-Path Review](/volumes/volume-10/chapter-51/05-failure-path-review/)

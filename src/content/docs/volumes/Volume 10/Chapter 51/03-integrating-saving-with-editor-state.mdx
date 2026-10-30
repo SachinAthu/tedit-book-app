@@ -1,0 +1,170 @@
+---
+title: 51.3 Integrating Saving with Editor State
+description: "Adds editor_state_save_file() so saving delegates to the File Manager and clears the Dirty Flag only after a successful replacement."
+---
+
+This section connects the File Manager’s save operation to `EditorState`. The key requirement is that the Dirty Flag is cleared only after the file has been saved successfully. A failed save must preserve the current Document and leave `is_dirty` unchanged.
+
+The implementation will keep file-system operations inside the File Manager and let Editor State coordinate the result. I’ll verify the changes with focused tests and the existing CTest suite before updating the implementation context files.
+
+## Implemented
+
+1\. Editor State save API
+
+Added `editor_state_save_file()` to `src/state/editor_state.h` and `src/state/editor_state.c`. It delegates saving to the File Manager and clears `is_dirty` only after success.
+
+2\. Failure handling
+
+Invalid arguments or a failed save return `false`. The in-memory Document and Dirty Flag remain unchanged. The tests also verify that a failed serialization does not replace the existing file.
+
+3\. Regression tests
+
+Added `tests/test_file_save.c` and registered the `file_save` test in `CMakeLists.txt`. The tests cover successful saves, UTF-8 output, invalid code points, zero-line Documents, and Dirty Flag behavior.
+
+## Updated files
+
+### `src/state/editor_state.h`
+
+```c
+/* src/state/editor_state.h */
+
+#ifndef STATE_EDITOR_STATE_H
+#define STATE_EDITOR_STATE_H
+
+#include "cursor/cursor.h"
+#include "document/document.h"
+#include "viewport/viewport.h"
+
+#include <stdbool.h>
+
+typedef struct
+{
+    Document document;
+    Cursor cursor;
+    Viewport viewport;
+    bool is_dirty;
+} EditorState;
+
+/*
+ * Create the initial editor state: an empty document with one blank line and
+ * a cursor placed at the start.
+ *
+ * Parameters:
+ *   state - the editor state to initialize.
+ *
+ * Returns:
+ *   true on success, false if `state` is NULL or the document fails to
+ *   initialize.
+ */
+bool editor_state_init(EditorState *state);
+
+/*
+ * Load a file into an initialized Editor State. On success, replace the
+ * Document, reset Cursor and Viewport, and clear the Dirty Flag. On failure,
+ * preserve the existing Editor State.
+ */
+bool editor_state_load_file(EditorState *state, const char *path);
+
+/* Save the current Document. Clear the Dirty Flag only after success. */
+bool editor_state_save_file(EditorState *state, const char *path);
+
+/*
+ * Release everything the editor state owns and reset it to an empty state.
+ *
+ * Parameters:
+ *   state - the editor state to destroy; may be NULL.
+ */
+void editor_state_destroy(EditorState *state);
+
+#endif
+```
+
+### `src/state/editor_state.c`
+
+```c
+/* src/state/editor_state.c */
+
+#include "editor_state.h"
+#include "file/file.h"
+
+#include <string.h>
+
+bool editor_state_init(EditorState *state)
+{
+    if (state == NULL)
+    {
+        return false;
+    }
+
+    /* Zero every field first so partial failures leave a clean state. */
+    memset(state, 0, sizeof(*state));
+
+    if (!document_init(&state->document))
+    {
+        return false;
+    }
+
+    cursor_init(&state->cursor);
+    viewport_init(&state->viewport);
+    state->is_dirty = false;
+
+    return true;
+}
+
+bool editor_state_load_file(EditorState *state, const char *path)
+{
+    if (state == NULL || path == NULL)
+    {
+        return false;
+    }
+
+    /*
+     * The File Manager stages the complete load and changes the Document
+     * only on success. Do not reset the rest of the Editor State until then.
+     */
+    if (file_load_document(path, &state->document) != FILE_LOAD_OK)
+    {
+        return false;
+    }
+
+    cursor_init(&state->cursor);
+    viewport_init(&state->viewport);
+    state->is_dirty = false;
+
+    return true;
+}
+
+bool editor_state_save_file(EditorState *state, const char *path)
+{
+    if (state == NULL || path == NULL)
+    {
+        return false;
+    }
+
+    if (file_save_document(path, &state->document) != FILE_SAVE_OK)
+    {
+        return false;
+    }
+
+    state->is_dirty = false;
+    return true;
+}
+
+void editor_state_destroy(EditorState *state)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+
+    document_destroy(&state->document);
+    cursor_init(&state->cursor);
+    viewport_init(&state->viewport);
+    state->is_dirty = false;
+}
+
+```
+
+## Next section: 51.4 — Integrating Saving with the Event Loop
+
+The next implementation step is to connect `editor_state_save_file()` to the existing input loop, provide a minimal save interaction, and verify saving and reopening a file end to end. We will keep the current input architecture rather than introducing later components prematurely.

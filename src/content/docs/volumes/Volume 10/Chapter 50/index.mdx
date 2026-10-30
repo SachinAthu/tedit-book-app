@@ -1,6 +1,15 @@
 ---
 title: Chapter 50 — Opening Files
+description: "Adds file opening through a dedicated File Manager, UTF-8 decoding, line-ending normalization, and safe startup integration for loading files."
 ---
+
+## Introduction
+
+The editor can now edit and navigate an in-memory document, but every session starts with the same empty buffer. A text editor becomes useful when it can open an existing file and present its contents as editable text.
+
+> **How should file bytes become editor state without letting file-system concerns leak into the document, cursor, or renderer?**
+
+This chapter introduces a dedicated File Manager, loads a path supplied at startup, decodes UTF-8 into Unicode code points, and normalizes LF and CRLF endings into logical document lines. Because the existing Document and Screen Buffer were written around ASCII bytes, the chapter refactors them for code points, updates the renderer, and handles empty files and zero-line documents safely. It finishes by wiring loading into application initialization so the first frame shows the requested file, while missing files, invalid UTF-8, and allocation failures fail cleanly without entering the editing loop. Saving remains the subject of the next chapter.
 
 ## Sections
 

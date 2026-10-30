@@ -1,0 +1,39 @@
+---
+title: 51.1 Implementation Goal
+description: "Defines the save milestone: serialize the Document to UTF-8, write a temporary file, atomically replace the destination, and clear the Dirty Flag only on success."
+---
+
+The Chapter 50 repository is the starting point for this milestone. I extracted the attached repository, configured the existing CMake project, built all targets, and ran the registered tests. All three tests—`smoke`, `editing`, and `file`—passed.
+
+Chapter 51 will extend the existing implementation without replacing working modules or introducing the final input architecture prematurely.
+
+## Implementation milestone
+
+The File Manager will gain a complete save workflow:
+
+1. Serialize the current `Document` into UTF-8, using LF line endings and the established trailing-newline policy.
+2. Create a temporary file in the destination file's directory.
+3. Write the complete serialized document, handling partial writes and interrupted system calls.
+4. Close the temporary file successfully and atomically replace the destination using `rename()`.
+5. Clear `EditorState.is_dirty` only after the replacement succeeds.
+6. Preserve the in-memory document and Dirty Flag when saving fails.
+7. Return control to the Event Loop after recoverable save errors, allowing the user to continue editing.
+
+The implementation will follow ADR-020, ADR-021, and ADR-022. Durability through `fsync()`, file-metadata preservation, and automatic recovery of abandoned temporary files remain outside this milestone.
+
+## Repository changes for the first coding milestone
+
+The first code milestone adds File Manager serialization and atomic replacement. Editor State and the interactive save command will be connected in the next implementation step.
+
+```
+tedit-main/
+├── src/
+│   └── file/
+│       ├── file.h             [MODIFIED]
+│       ├── file.c             [UNCHANGED]
+│       └── file_save.c        [NEW]
+├── tests/
+│   ├── test_file.c            [UNCHANGED]
+│   └── test_file_save.c        [NEW]
+└── CMakeLists.txt             [MODIFIED]
+```

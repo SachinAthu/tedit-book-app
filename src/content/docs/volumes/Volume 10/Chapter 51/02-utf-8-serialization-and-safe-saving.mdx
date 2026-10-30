@@ -1,0 +1,608 @@
+---
+title: 51.2 Implementing UTF-8 Serialization and Safe Saving
+description: "Implements file_save.c and the save API: UTF-8 serialization, temporary-file creation, partial-write handling, atomic rename, and save tests."
+---
+
+## `src/file/file.h` — complete updated file
+
+Add the save-result type and public save function while preserving the existing loading API.
+
+```c
+/* src/file/file.h */
+
+#ifndef FILE_FILE_H
+#define FILE_FILE_H
+
+#include "document/document.h"
+
+typedef enum
+{
+    FILE_LOAD_OK,
+    FILE_LOAD_INVALID_ARGUMENT,
+    FILE_LOAD_OPEN_FAILED,
+    FILE_LOAD_READ_FAILED,
+    FILE_LOAD_INVALID_UTF8,
+    FILE_LOAD_OUT_OF_MEMORY
+} FileLoadResult;
+
+typedef enum
+{
+    FILE_SAVE_OK,
+    FILE_SAVE_INVALID_ARGUMENT,
+    FILE_SAVE_TEMPORARY_CREATE_FAILED,
+    FILE_SAVE_INVALID_CODE_POINT,
+    FILE_SAVE_WRITE_FAILED,
+    FILE_SAVE_CLOSE_FAILED,
+    FILE_SAVE_REPLACE_FAILED,
+    FILE_SAVE_OUT_OF_MEMORY
+} FileSaveResult;
+
+/*
+ * Load a UTF-8 file into a Document.
+ *
+ * On success, replace the contents of the output Document with the
+ * decoded file contents. Recognize LF and CRLF line endings.
+ * On failure, leave the caller's existing Document unchanged.
+ */
+FileLoadResult file_load_document(const char *path, Document *out_document);
+
+/*
+ * Save the complete Document as UTF-8 with canonical LF line endings.
+ * Each logical line receives a trailing LF. A zero-line Document
+ * produces an empty file.
+ *
+ * The destination is replaced atomically after the temporary file
+ * has been written and closed successfully.
+ *
+ * The caller retains ownership of the Document. Editor State and
+ * its Dirty Flag are not modified by this function.
+ */
+FileSaveResult file_save_document(
+    const char *path,
+    const Document *document);
+
+#endif
+```
+
+## `src/file/file_save.c` — new complete file
+
+The implementation uses a reusable output buffer, UTF-8 encoding, `mkstemp()`, `write()`, `close()`, `rename()`, and `unlink()`.
+
+```c
+/* src/file/file_save.c */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "file.h"
+
+#include <errno.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#define FILE_SAVE_BUFFER_CAPACITY 4096
+#define TEMPORARY_PATH_SUFFIX ".tedit-XXXXXX"
+
+typedef struct
+{
+    int descriptor;
+    unsigned char data[FILE_SAVE_BUFFER_CAPACITY];
+    size_t length;
+} FileOutputBuffer;
+
+static bool file_write_all(
+    int descriptor,
+    const unsigned char *data,
+    size_t length)
+{
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        ssize_t bytes_written = write(
+            descriptor,
+            data + offset,
+            length - offset);
+
+        if (bytes_written < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        if (bytes_written == 0)
+        {
+            return false;
+        }
+
+        offset += (size_t)bytes_written;
+    }
+
+    return true;
+}
+
+static bool file_output_flush(FileOutputBuffer *buffer)
+{
+    if (buffer->length == 0)
+    {
+        return true;
+    }
+
+    if (!file_write_all(
+            buffer->descriptor,
+            buffer->data,
+            buffer->length))
+    {
+        return false;
+    }
+
+    buffer->length = 0;
+    return true;
+}
+
+static bool file_output_byte(
+    FileOutputBuffer *buffer,
+    unsigned char byte)
+{
+    if (buffer->length == sizeof(buffer->data) &&
+        !file_output_flush(buffer))
+    {
+        return false;
+    }
+
+    buffer->data[buffer->length++] = byte;
+    return true;
+}
+
+static bool file_output_code_point(
+    FileOutputBuffer *buffer,
+    uint32_t code_point)
+{
+    if (code_point <= UINT32_C(0x7F))
+    {
+        return file_output_byte(
+            buffer, (unsigned char)code_point);
+    }
+
+    if (code_point <= UINT32_C(0x7FF))
+    {
+        return file_output_byte(
+                   buffer,
+                   (unsigned char)(0xC0 | (code_point >> 6))) &&
+               file_output_byte(
+                   buffer,
+                   (unsigned char)(0x80 | (code_point & 0x3F)));
+    }
+
+    if (code_point <= UINT32_C(0xFFFF))
+    {
+        return file_output_byte(
+                   buffer,
+                   (unsigned char)(0xE0 | (code_point >> 12))) &&
+               file_output_byte(
+                   buffer,
+                   (unsigned char)(
+                       0x80 | ((code_point >> 6) & 0x3F))) &&
+               file_output_byte(
+                   buffer,
+                   (unsigned char)(0x80 | (code_point & 0x3F)));
+    }
+
+    if (code_point <= UINT32_C(0x10FFFF))
+    {
+        return file_output_byte(
+                   buffer,
+                   (unsigned char)(0xF0 | (code_point >> 18))) &&
+               file_output_byte(
+                   buffer,
+                   (unsigned char)(
+                       0x80 | ((code_point >> 12) & 0x3F))) &&
+               file_output_byte(
+                   buffer,
+                   (unsigned char)(
+                       0x80 | ((code_point >> 6) & 0x3F))) &&
+               file_output_byte(
+                   buffer,
+                   (unsigned char)(0x80 | (code_point & 0x3F)));
+    }
+
+    return false;
+}
+
+static FileSaveResult file_write_document(
+    int descriptor,
+    const Document *document)
+{
+    FileOutputBuffer output = {
+        .descriptor = descriptor,
+        .length = 0
+    };
+
+    for (size_t row = 0; row < document->line_count; ++row)
+    {
+        const DocumentLine *line = &document->lines[row];
+
+        if (line->length > 0 && line->data == NULL)
+        {
+            return FILE_SAVE_INVALID_ARGUMENT;
+        }
+
+        for (size_t column = 0; column < line->length; ++column)
+        {
+            uint32_t code_point = line->data[column];
+
+            if ((code_point >= UINT32_C(0xD800) &&
+                 code_point <= UINT32_C(0xDFFF)) ||
+                code_point > UINT32_C(0x10FFFF))
+            {
+                return FILE_SAVE_INVALID_CODE_POINT;
+            }
+
+            if (!file_output_code_point(&output, code_point))
+            {
+                return FILE_SAVE_WRITE_FAILED;
+            }
+        }
+
+        if (!file_output_byte(&output, (unsigned char)'\n'))
+        {
+            return FILE_SAVE_WRITE_FAILED;
+        }
+    }
+
+    return file_output_flush(&output)
+        ? FILE_SAVE_OK
+        : FILE_SAVE_WRITE_FAILED;
+}
+
+FileSaveResult file_save_document(
+    const char *path,
+    const Document *document)
+{
+    static const char temporary_suffix[] =
+        TEMPORARY_PATH_SUFFIX;
+
+    size_t path_length;
+    char *temporary_path;
+    int descriptor;
+    FileSaveResult result;
+    bool close_succeeded;
+
+    if (path == NULL || path[0] == '\0' ||
+        document == NULL ||
+        (document->line_count > 0 &&
+         document->lines == NULL))
+    {
+        return FILE_SAVE_INVALID_ARGUMENT;
+    }
+
+    path_length = strlen(path);
+
+    if (path_length > SIZE_MAX - sizeof(temporary_suffix))
+    {
+        return FILE_SAVE_OUT_OF_MEMORY;
+    }
+
+    temporary_path = malloc(
+        path_length + sizeof(temporary_suffix));
+
+    if (temporary_path == NULL)
+    {
+        return FILE_SAVE_OUT_OF_MEMORY;
+    }
+
+    memcpy(temporary_path, path, path_length);
+    memcpy(
+        temporary_path + path_length,
+        temporary_suffix,
+        sizeof(temporary_suffix));
+
+    descriptor = mkstemp(temporary_path);
+
+    if (descriptor < 0)
+    {
+        free(temporary_path);
+        return FILE_SAVE_TEMPORARY_CREATE_FAILED;
+    }
+
+    result = file_write_document(descriptor, document);
+    close_succeeded = close(descriptor) == 0;
+
+    if (result == FILE_SAVE_OK && !close_succeeded)
+    {
+        result = FILE_SAVE_CLOSE_FAILED;
+    }
+
+    if (result == FILE_SAVE_OK &&
+        rename(temporary_path, path) != 0)
+    {
+        result = FILE_SAVE_REPLACE_FAILED;
+    }
+
+    if (result != FILE_SAVE_OK)
+    {
+        (void)unlink(temporary_path);
+    }
+
+    free(temporary_path);
+    return result;
+}
+```
+
+## `CMakeLists.txt` — complete updated file
+
+```cmake
+# CMakeLists.txt
+
+cmake_minimum_required(VERSION 3.20)
+enable_testing()
+
+project(
+    terminal_editor
+    VERSION 0.1.0
+    LANGUAGES C
+)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+add_library(
+    tedit_core
+    STATIC
+    src/terminal/terminal.c
+    src/state/editor_state.c
+    src/document/document.c
+    src/cursor/cursor.c
+    src/viewport/viewport.c
+    src/renderer/screen_buffer.c
+    src/renderer/renderer.c
+    src/file/file.c
+    src/file/file_save.c
+)
+
+target_include_directories(tedit_core PUBLIC src)
+
+add_executable(tedit src/main.c)
+target_link_libraries(tedit PRIVATE tedit_core)
+
+# Tests
+add_executable(test_smoke tests/test_smoke.c)
+add_executable(test_editing tests/test_editing.c)
+add_executable(test_file tests/test_file.c)
+add_executable(test_file_save tests/test_file_save.c)
+
+target_link_libraries(test_smoke PRIVATE tedit_core)
+target_link_libraries(test_editing PRIVATE tedit_core)
+target_link_libraries(test_file PRIVATE tedit_core)
+target_link_libraries(test_file_save PRIVATE tedit_core)
+
+add_test(NAME smoke COMMAND test_smoke)
+add_test(NAME editing COMMAND test_editing)
+add_test(NAME file COMMAND test_file)
+add_test(NAME file_save COMMAND test_file_save)
+```
+
+## `tests/test_file_save.c` — new complete file
+
+These tests check exact serialized bytes, Unicode encoding, trailing newlines, empty Documents, and preservation of the original file when the Document contains an invalid Unicode scalar value.
+
+```c
+/* tests/test_file_save.c*/
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "document/document.h"
+#include "file/file.h"
+
+#include <assert.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static void read_file_exactly(
+    const char *path,
+    const unsigned char *expected,
+    size_t expected_length)
+{
+    unsigned char actual[256];
+    int descriptor = open(path, O_RDONLY);
+    size_t length = 0;
+
+    assert(descriptor >= 0);
+
+    for (;;)
+    {
+        assert(length < sizeof(actual));
+
+        ssize_t count = read(
+            descriptor,
+            actual + length,
+            sizeof(actual) - length);
+
+        assert(count >= 0);
+
+        if (count == 0)
+        {
+            break;
+        }
+
+        length += (size_t)count;
+    }
+
+    assert(close(descriptor) == 0);
+    assert(length == expected_length);
+    assert(memcmp(actual, expected, expected_length) == 0);
+}
+
+static void test_save_utf8_and_trailing_newlines(void)
+{
+    char path[] = "/tmp/tedit-save-XXXXXX";
+    int descriptor = mkstemp(path);
+    Document document;
+
+    const unsigned char expected[] = {
+        'A', 0xE2, 0x82, 0xAC, '\n', 'B', '\n'
+    };
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(document_init(&document));
+
+    assert(document_insert_character(
+        &document, 0, 0, UINT32_C(0x41)));
+
+    assert(document_insert_character(
+        &document, 0, 1, UINT32_C(0x20AC)));
+
+    assert(document_split_line(&document, 0, 2));
+
+    assert(document_insert_character(
+        &document, 1, 0, UINT32_C(0x42)));
+
+    assert(file_save_document(path, &document) == FILE_SAVE_OK);
+
+    read_file_exactly(path, expected, sizeof(expected));
+
+    document_destroy(&document);
+    assert(unlink(path) == 0);
+}
+
+static void test_zero_line_document_saves_empty_file(void)
+{
+    char path[] = "/tmp/tedit-save-empty-XXXXXX";
+    int descriptor = mkstemp(path);
+    Document document;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(document_init(&document));
+
+    document_destroy(&document);
+
+    assert(file_save_document(path, &document) == FILE_SAVE_OK);
+
+    read_file_exactly(path, (const unsigned char *)"", 0);
+
+    document_destroy(&document);
+    assert(unlink(path) == 0);
+}
+
+static void test_invalid_code_point_preserves_destination(void)
+{
+    char path[] = "/tmp/tedit-save-preserve-XXXXXX";
+    int descriptor = mkstemp(path);
+
+    const unsigned char original[] = {'o', 'l', 'd'};
+    Document document;
+
+    assert(descriptor >= 0);
+
+    assert(write(
+        descriptor,
+        original,
+        sizeof(original)) == (ssize_t)sizeof(original));
+
+    assert(close(descriptor) == 0);
+    assert(document_init(&document));
+
+    assert(document_insert_character(
+        &document, 0, 0, UINT32_C(0x41)));
+
+    /*
+     * Deliberately corrupt the internal value to exercise the
+     * File Manager's defensive validation.
+     */
+    document_get_line(&document, 0)->data[0] = UINT32_C(0xD800);
+
+    assert(
+        file_save_document(path, &document) ==
+        FILE_SAVE_INVALID_CODE_POINT);
+
+    read_file_exactly(path, original, sizeof(original));
+
+    document_destroy(&document);
+    assert(unlink(path) == 0);
+}
+
+static void test_invalid_path_is_rejected(void)
+{
+    Document document;
+
+    assert(document_init(&document));
+
+    assert(
+        file_save_document("", &document) ==
+        FILE_SAVE_INVALID_ARGUMENT);
+
+    assert(
+        file_save_document(NULL, &document) ==
+        FILE_SAVE_INVALID_ARGUMENT);
+
+    assert(
+        file_save_document(
+            "/tmp/tedit-no-such-dir/file",
+            &document) ==
+        FILE_SAVE_TEMPORARY_CREATE_FAILED);
+
+    document_destroy(&document);
+}
+
+int main(void)
+{
+    test_save_utf8_and_trailing_newlines();
+    test_zero_line_document_saves_empty_file();
+    test_invalid_code_point_preserves_destination();
+    test_invalid_path_is_rejected();
+
+    puts("File save tests passed.");
+
+    return 0;
+}
+```
+
+## Build and test
+
+Run these commands from the repository root:
+
+```bash
+cmake -S . -B build/debug
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+## Implementation review
+
+The new File Manager implementation establishes these rules:
+
+- The Document remains unchanged during saving.
+- The original destination is not deliberately truncated while the replacement is being prepared.
+- A failed write, close, or replacement does not report a successful save.
+- Temporary files are removed on handled failure paths.
+- UTF-8 serialization rejects invalid Unicode scalar values.
+- The File Manager does not change `EditorState.is_dirty`; that responsibility belongs to the next integration step.
+
+The save function is now implemented, but the editor cannot invoke it interactively yet. We have not modified `main.c` or introduced the final input-processing architecture.
+
+## Next implementation step
+
+Section 51.3 — Integrating Saving with Editor State
+
+The next milestone will:
+
+1. Add `editor_state_save_file()` to the Editor State interface.
+2. Call `file_save_document()` through the existing File Manager boundary.
+3. Clear `is_dirty` only after `FILE_SAVE_OK`.
+4. Preserve the Dirty Flag and current Document on failure.
+5. Add tests for successful saves, failed saves, and Dirty Flag transitions.
+
+After that, we will connect saving to the current Event Loop, verify save-and-reopen behavior, and continue through the remaining Chapter 51 requirements before moving to Chapter 52.
