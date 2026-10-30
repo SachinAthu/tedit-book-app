@@ -1,0 +1,61 @@
+---
+title: 49.4 Testing Navigation and Viewport Invariants
+description: "Strengthens automated tests for scrolling boundaries, cursor visibility, line-edit transitions, and renderer coordinates to complete Chapter 49."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Implemented and verified. This section strengthens the automated tests around scrolling, Cursor visibility, editing transitions, and Renderer coordinates. Chapter 49 is now complete for the current ASCII-only implementation.
+
+## Tests added
+
+Repeated scrolling and screen boundaries
+
+Tests repeatedly move the Cursor across a larger document region and verify that it remains visible within the configured screen dimensions. They also verify that the last visible cell does not trigger unnecessary scrolling and that crossing a boundary scrolls the Viewport by one position.
+
+Cursor positioning after line edits
+
+The line-splitting and line-merging tests now use `cursor_set_position()` after successful Document mutations. They verify that the Cursor and preferred column are consistent with the updated Document, and that the Viewport follows the Cursor.
+
+Renderer integration
+
+A new test renders a document through a small Screen Buffer with nonzero Viewport offsets. It checks that the visible cells contain the correct document characters and that the terminal Cursor position is relative to the visible area.
+
+Invalid dimensions
+
+Tests verify that zero-sized screen dimensions are rejected without modifying existing Viewport offsets.
+
+## Files changed
+
+- `tests/test_editing.c` — added repeated-scrolling, boundary, edit-transition, and Renderer integration tests.
+
+No new production modules or architectural changes were needed in this section.
+
+## Build and test results
+
+Executed from the implementation repository:
+
+```bash
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+## Chapter 49 completion checkpoint
+
+The editor now supports:
+
+- Up and Down navigation with preferred-column preservation.
+- Vertical and horizontal Viewport scrolling.
+- Cursor visibility maintenance after navigation and editing.
+- Rendering of the visible document region using Viewport offsets.
+- Automated tests for navigation boundaries, scrolling, line edits, and Renderer positioning.
+
+Known limitations remain: input is printable ASCII only, tab expansion and Unicode display-width mapping are not implemented, and terminal resizing is not handled by this milestone.
+
+<Aside>
+  Complete code for this chapter can be found in the relevent branch in the
+  Github repository at
+  https://github.com/SachinAthu/tedit/tree/chapter-49-complete.
+</Aside>
+
+Next milestone: Chapter 50 — Opening Files. This will build on the existing Document, Editor State, and event loop to load file contents into the editor.

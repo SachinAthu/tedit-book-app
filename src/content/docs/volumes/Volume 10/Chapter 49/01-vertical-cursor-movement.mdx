@@ -1,0 +1,713 @@
+---
+title: 49.1 Implementing Vertical Cursor Movement
+description: "Implements Up and Down cursor movement with preferred-column preservation, stopping at document boundaries and clamping to shorter lines, with tests."
+---
+
+## Implementation Goal
+
+This first implementation milestone adds Up and Down Cursor movement with preferred-column preservation, following ADR-014.
+
+For this milestone, the Cursor must:
+
+- Move between logical lines using Up and Down operations.
+- Stop at the first and last lines without changing position.
+- Clamp its actual column when moving to a shorter line.
+- Restore its preferred column when moving back to a longer line.
+- Preserve the existing Left and Right movement behavior.
+
+## Files changed
+
+```
+tedit-main/
+├── src/
+│   └── cursor/
+│       ├── cursor.h          [MODIFIED]
+│       └── cursor.c          [MODIFIED]
+└── tests/
+    └── test_editing.c        [MODIFIED]
+```
+
+`main.c` and the Renderer remain unchanged in this step. The new Cursor operations will be integrated into the interactive input loop in the next implementation step.
+
+## Complete source code
+
+`src/cursor/cursor.h`
+
+Replace the entire file with:
+
+```c
+/* src/cursor/cursor.h */
+
+#ifndef CURSOR_CURSOR_H
+#define CURSOR_CURSOR_H
+
+#include "document/document.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+
+typedef struct
+{
+    size_t row;
+    size_t column;
+    size_t preferred_column;
+} Cursor;
+
+void cursor_init(Cursor *cursor);
+
+bool cursor_set_position(
+    Cursor *cursor,
+    const Document *document,
+    size_t row,
+    size_t column
+);
+
+bool cursor_advance(Cursor *cursor, const Document *document);
+
+bool cursor_move_left(Cursor *cursor);
+
+bool cursor_move_right(Cursor *cursor, const Document *document);
+
+bool cursor_move_up(Cursor *cursor, const Document *document);
+
+bool cursor_move_down(Cursor *cursor, const Document *document);
+
+#endif
+```
+
+`src/cursor/cursor.c`
+
+Replace the entire file with:
+
+```c
+/* src/cursor/cursor.c */
+
+#include "cursor.h"
+
+void cursor_init(Cursor *cursor)
+{
+    if (cursor == NULL)
+    {
+        return;
+    }
+
+    cursor->row = 0;
+    cursor->column = 0;
+    cursor->preferred_column = 0;
+}
+
+bool cursor_set_position(
+    Cursor *cursor,
+    const Document *document,
+    size_t row,
+    size_t column
+)
+{
+    if (cursor == NULL || document == NULL ||
+        row >= document->line_count)
+    {
+        return false;
+    }
+
+    const DocumentLine *line = &document->lines[row];
+
+    if (column > line->length)
+    {
+        return false;
+    }
+
+    cursor->row = row;
+    cursor->column = column;
+    cursor->preferred_column = column;
+
+    return true;
+}
+
+bool cursor_advance(Cursor *cursor, const Document *document)
+{
+    if (cursor == NULL || document == NULL ||
+        cursor->row >= document->line_count)
+    {
+        return false;
+    }
+
+    const DocumentLine *line = &document->lines[cursor->row];
+
+    if (cursor->column >= line->length)
+    {
+        return false;
+    }
+
+    cursor->column += 1;
+    cursor->preferred_column = cursor->column;
+
+    return true;
+}
+
+bool cursor_move_left(Cursor *cursor)
+{
+    if (cursor == NULL || cursor->column == 0)
+    {
+        return false;
+    }
+
+    cursor->column -= 1;
+    cursor->preferred_column = cursor->column;
+
+    return true;
+}
+
+bool cursor_move_right(Cursor *cursor, const Document *document)
+{
+    if (cursor == NULL || document == NULL ||
+        cursor->row >= document->line_count)
+    {
+        return false;
+    }
+
+    const DocumentLine *line = &document->lines[cursor->row];
+
+    if (cursor->column >= line->length)
+    {
+        return false;
+    }
+
+    cursor->column += 1;
+    cursor->preferred_column = cursor->column;
+
+    return true;
+}
+
+bool cursor_move_up(Cursor *cursor, const Document *document)
+{
+    if (cursor == NULL || document == NULL ||
+        cursor->row >= document->line_count ||
+        cursor->row == 0)
+    {
+        return false;
+    }
+
+    const size_t target_row = cursor->row - 1;
+    const DocumentLine *target_line = &document->lines[target_row];
+
+    cursor->row = target_row;
+    cursor->column = cursor->preferred_column;
+
+    if (cursor->column > target_line->length)
+    {
+        cursor->column = target_line->length;
+    }
+
+    return true;
+}
+
+bool cursor_move_down(Cursor *cursor, const Document *document)
+{
+    if (cursor == NULL || document == NULL ||
+        cursor->row >= document->line_count ||
+        cursor->row + 1 >= document->line_count)
+    {
+        return false;
+    }
+
+    const size_t target_row = cursor->row + 1;
+    const DocumentLine *target_line = &document->lines[target_row];
+
+    cursor->row = target_row;
+    cursor->column = cursor->preferred_column;
+
+    if (cursor->column > target_line->length)
+    {
+        cursor->column = target_line->length;
+    }
+
+    return true;
+}
+```
+
+## Update the editing tests
+
+In `tests/test_editing.c`, keep the existing tests and add the following three functions before `main()`. Then add their calls to `main()` as shown below.
+
+```c
+static void test_cursor_vertical_movement_preserves_preferred_column(void)
+{
+    Document document;
+    Cursor cursor;
+
+    assert(document_init(&document));
+
+    /* Build lines with lengths 6, 2, 0, and 6. */
+    for (size_t column = 0; column < 6; ++column)
+    {
+        assert(document_insert_character(
+            &document, 0, column, 'a'));
+    }
+
+    assert(document_split_line(&document, 0, 6));
+    assert(document_insert_character(&document, 1, 0, 'b'));
+    assert(document_insert_character(&document, 1, 1, 'b'));
+    assert(document_split_line(&document, 1, 2));
+    assert(document_split_line(&document, 2, 0));
+
+    for (size_t column = 0; column < 6; ++column)
+    {
+        assert(document_insert_character(
+            &document, 3, column, 'd'));
+    }
+
+    cursor_init(&cursor);
+    assert(cursor_set_position(&cursor, &document, 0, 5));
+    assert(cursor.preferred_column == 5);
+
+    assert(cursor_move_down(&cursor, &document));
+    assert(cursor.row == 1);
+    assert(cursor.column == 2);
+    assert(cursor.preferred_column == 5);
+
+    assert(cursor_move_down(&cursor, &document));
+    assert(cursor.row == 2);
+    assert(cursor.column == 0);
+    assert(cursor.preferred_column == 5);
+
+    assert(cursor_move_down(&cursor, &document));
+    assert(cursor.row == 3);
+    assert(cursor.column == 5);
+    assert(cursor.preferred_column == 5);
+
+    assert(!cursor_move_down(&cursor, &document));
+    assert(cursor.row == 3 && cursor.column == 5);
+
+    assert(cursor_move_up(&cursor, &document));
+    assert(cursor.row == 2 && cursor.column == 0);
+    assert(cursor.preferred_column == 5);
+
+    assert(cursor_move_up(&cursor, &document));
+    assert(cursor.row == 1 && cursor.column == 2);
+    assert(cursor.preferred_column == 5);
+
+    assert(cursor_move_up(&cursor, &document));
+    assert(cursor.row == 0 && cursor.column == 5);
+    assert(cursor.preferred_column == 5);
+
+    assert(!cursor_move_up(&cursor, &document));
+    assert(cursor.row == 0 && cursor.column == 5);
+
+    document_destroy(&document);
+}
+
+static void test_horizontal_movement_resets_preferred_column(void)
+{
+    Document document;
+    Cursor cursor;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+    assert(document_insert_character(&document, 0, 2, 'c'));
+    assert(document_split_line(&document, 0, 3));
+    assert(document_insert_character(&document, 1, 0, 'x'));
+    assert(document_insert_character(&document, 1, 1, 'y'));
+
+    cursor_init(&cursor);
+    assert(cursor_set_position(&cursor, &document, 0, 3));
+    assert(cursor_move_down(&cursor, &document));
+    assert(cursor.row == 1 && cursor.column == 2);
+    assert(cursor.preferred_column == 3);
+
+    assert(cursor_move_left(&cursor));
+    assert(cursor.column == 1);
+    assert(cursor.preferred_column == 1);
+
+    assert(cursor_move_up(&cursor, &document));
+    assert(cursor.row == 0 && cursor.column == 1);
+    assert(cursor.preferred_column == 1);
+
+    document_destroy(&document);
+}
+
+static void test_vertical_movement_rejects_invalid_arguments(void)
+{
+    Document document;
+    Cursor cursor;
+
+    assert(document_init(&document));
+    cursor_init(&cursor);
+
+    assert(!cursor_move_up(&cursor, &document));
+    assert(!cursor_move_down(&cursor, &document));
+    assert(!cursor_move_up(NULL, &document));
+    assert(!cursor_move_down(NULL, &document));
+    assert(!cursor_move_up(&cursor, NULL));
+    assert(!cursor_move_down(&cursor, NULL));
+
+    document_destroy(&document);
+}
+```
+
+Add these calls to the existing `main()` function:
+
+```c
+test_cursor_vertical_movement_preserves_preferred_column();
+test_horizontal_movement_resets_preferred_column();
+test_vertical_movement_rejects_invalid_arguments();
+```
+
+The existing test functions and their calls must remain in place.
+
+## Build and test
+
+Run these commands from the implementation repository root:
+
+```bash
+cmake -S . -B build/debug
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+## How the implementation works
+
+The `Cursor` structure now contains three fields:
+
+| Field              | Purpose                                |
+| ------------------ | -------------------------------------- |
+| `row`              | Current logical line                   |
+| `column`           | Current position within that line      |
+| `preferred_column` | Desired column for vertical navigation |
+
+The two new functions, `cursor_move_up()` and `cursor_move_down()`, use the Document to validate the current row and locate the destination line. They preserve `preferred_column` while limiting `column` to the destination line's length.
+
+For example, moving down from column 5 through lines of lengths 2, 0, and 6 produces:
+
+| Destination line | Actual column | Preferred column |
+| ---------------- | ------------- | ---------------- |
+| Length 2         | 2             | 5                |
+| Empty line       | 0             | 5                |
+| Length 6         | 5             | 5                |
+
+Horizontal movement resets the preferred column to the new actual column. This prevents a previous vertical-navigation target from unexpectedly affecting subsequent movement after the user moves left or right.
+
+## Implementation invariants
+
+The new Cursor operations maintain these rules:
+
+- A successful vertical movement changes the row by exactly one.
+- Vertical movement does not change the preferred column.
+- The actual column never exceeds the destination line's length.
+- Movement beyond the first or last line returns `false` without changing the Cursor.
+- Invalid arguments are rejected without modifying the Cursor.
+- Horizontal movement updates the preferred column when movement succeeds.
+
+One integration detail remains: `main.c` still handles keyboard input directly, and some editing operations assign `cursor.column` directly. Before enabling vertical navigation interactively, those paths must keep `preferred_column` consistent with insertion, deletion, splitting, and merging.
+
+## Complete `tests/test_editing.c`
+
+For a reproducible repository state, replace the entire test file with the following version. It retains the Chapter 48 tests and includes the new vertical-navigation tests.
+
+```c
+/* tests/test_editing.c */
+
+#include "document/document.h"
+#include "cursor/cursor.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <string.h>
+
+static void test_document_insert_and_delete(void)
+{
+    Document document;
+    DocumentLine *line;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'c'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+
+    line = document_get_line(&document, 0);
+    assert(line != NULL);
+    assert(line->length == 3);
+    assert(memcmp(line->data, "abc", 3) == 0);
+
+    assert(document_delete_character(&document, 0, 1));
+    assert(line->length == 2);
+    assert(memcmp(line->data, "ac", 2) == 0);
+
+    assert(!document_delete_character(&document, 0, 2));
+    assert(!document_delete_character(&document, 1, 0));
+    assert(line->length == 2);
+    assert(memcmp(line->data, "ac", 2) == 0);
+
+    document_destroy(&document);
+}
+
+static void test_cursor_horizontal_movement(void)
+{
+    Document document;
+    Cursor cursor;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'x'));
+    assert(document_insert_character(&document, 0, 1, 'y'));
+    cursor_init(&cursor);
+
+    assert(!cursor_move_left(&cursor));
+    assert(cursor.column == 0);
+    assert(cursor_move_right(&cursor, &document));
+    assert(cursor.column == 1);
+    assert(cursor_move_left(&cursor));
+    assert(cursor.column == 0);
+    assert(cursor_move_right(&cursor, &document));
+    assert(cursor_move_right(&cursor, &document));
+    assert(cursor.column == 2);
+    assert(!cursor_move_right(&cursor, &document));
+    assert(cursor.column == 2);
+
+    document_destroy(&document);
+}
+
+static void test_dirty_flag_initial_state(void)
+{
+    EditorState state;
+
+    assert(editor_state_init(&state));
+    assert(!state.is_dirty);
+    state.is_dirty = true;
+    assert(state.is_dirty);
+    editor_state_destroy(&state);
+}
+
+static void test_document_split_line(void)
+{
+    Document document;
+    DocumentLine *first_line;
+    DocumentLine *second_line;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+    assert(document_insert_character(&document, 0, 2, 'c'));
+
+    assert(document_split_line(&document, 0, 1));
+    assert(document.line_count == 2);
+    first_line = document_get_line(&document, 0);
+    second_line = document_get_line(&document, 1);
+    assert(first_line != NULL && second_line != NULL);
+    assert(first_line->length == 1);
+    assert(memcmp(first_line->data, "a", 1) == 0);
+    assert(second_line->length == 2);
+    assert(memcmp(second_line->data, "bc", 2) == 0);
+
+    assert(document_split_line(&document, 1, 0));
+    assert(document.line_count == 3);
+    assert(document_get_line(&document, 1)->length == 0);
+    assert(document_get_line(&document, 2)->length == 2);
+
+    assert(document_split_line(&document, 2, 2));
+    assert(document.line_count == 4);
+    assert(document_get_line(&document, 2)->length == 2);
+    assert(document_get_line(&document, 3)->length == 0);
+    assert(!document_split_line(&document, 4, 0));
+    assert(!document_split_line(&document, 0, 2));
+
+    document_destroy(&document);
+}
+
+static void test_document_merge_lines(void)
+{
+    Document document;
+    DocumentLine *line;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+    assert(document_split_line(&document, 0, 2));
+    assert(document_insert_character(&document, 1, 0, 'c'));
+    assert(document_insert_character(&document, 1, 1, 'd'));
+
+    assert(document_merge_lines(&document, 0));
+    assert(document.line_count == 1);
+    line = document_get_line(&document, 0);
+    assert(line != NULL && line->length == 4);
+    assert(memcmp(line->data, "abcd", 4) == 0);
+    assert(!document_merge_lines(&document, 0));
+    assert(!document_merge_lines(&document, 1));
+
+    document_destroy(&document);
+}
+
+static void test_line_editing_cursor_transitions(void)
+{
+    EditorState state;
+    const DocumentLine *previous_line;
+
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'a'));
+    assert(document_insert_character(&state.document, 0, 1, 'b'));
+    assert(cursor_set_position(&state.cursor, &state.document, 0, 1));
+
+    assert(document_split_line(
+        &state.document, state.cursor.row, state.cursor.column));
+    state.cursor.row += 1;
+    state.cursor.column = 0;
+    state.is_dirty = true;
+    assert(state.cursor.row == 1 && state.cursor.column == 0);
+    assert(state.document.line_count == 2);
+
+    assert(document_insert_character(&state.document, 1, 0, 'c'));
+    assert(cursor_set_position(&state.cursor, &state.document, 1, 0));
+    previous_line = document_get_line(&state.document, 0);
+    assert(previous_line != NULL);
+    state.cursor.row -= 1;
+    state.cursor.column = previous_line->length;
+    assert(document_merge_lines(&state.document, state.cursor.row));
+    assert(state.cursor.row == 0 && state.cursor.column == 1);
+    assert(state.document.line_count == 1);
+    assert(state.is_dirty);
+
+    editor_state_destroy(&state);
+}
+
+static void test_cursor_vertical_movement_preserves_preferred_column(void)
+{
+    Document document;
+    Cursor cursor;
+
+    assert(document_init(&document));
+
+    /* Build lines with lengths 6, 2, 0, and 6. */
+    for (size_t column = 0; column < 6; ++column)
+    {
+        assert(document_insert_character(
+            &document, 0, column, 'a'));
+    }
+
+    assert(document_split_line(&document, 0, 6));
+    assert(document_insert_character(&document, 1, 0, 'b'));
+    assert(document_insert_character(&document, 1, 1, 'b'));
+    assert(document_split_line(&document, 1, 2));
+    assert(document_split_line(&document, 2, 0));
+
+    for (size_t column = 0; column < 6; ++column)
+    {
+        assert(document_insert_character(
+            &document, 3, column, 'd'));
+    }
+
+    cursor_init(&cursor);
+    assert(cursor_set_position(&cursor, &document, 0, 5));
+    assert(cursor.preferred_column == 5);
+
+    assert(cursor_move_down(&cursor, &document));
+    assert(cursor.row == 1);
+    assert(cursor.column == 2);
+    assert(cursor.preferred_column == 5);
+
+    assert(cursor_move_down(&cursor, &document));
+    assert(cursor.row == 2);
+    assert(cursor.column == 0);
+    assert(cursor.preferred_column == 5);
+
+    assert(cursor_move_down(&cursor, &document));
+    assert(cursor.row == 3);
+    assert(cursor.column == 5);
+    assert(cursor.preferred_column == 5);
+
+    assert(!cursor_move_down(&cursor, &document));
+    assert(cursor.row == 3 && cursor.column == 5);
+
+    assert(cursor_move_up(&cursor, &document));
+    assert(cursor.row == 2 && cursor.column == 0);
+    assert(cursor.preferred_column == 5);
+
+    assert(cursor_move_up(&cursor, &document));
+    assert(cursor.row == 1 && cursor.column == 2);
+    assert(cursor.preferred_column == 5);
+
+    assert(cursor_move_up(&cursor, &document));
+    assert(cursor.row == 0 && cursor.column == 5);
+    assert(cursor.preferred_column == 5);
+
+    assert(!cursor_move_up(&cursor, &document));
+    assert(cursor.row == 0 && cursor.column == 5);
+
+    document_destroy(&document);
+}
+
+static void test_horizontal_movement_resets_preferred_column(void)
+{
+    Document document;
+    Cursor cursor;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+    assert(document_insert_character(&document, 0, 2, 'c'));
+    assert(document_split_line(&document, 0, 3));
+    assert(document_insert_character(&document, 1, 0, 'x'));
+    assert(document_insert_character(&document, 1, 1, 'y'));
+
+    cursor_init(&cursor);
+    assert(cursor_set_position(&cursor, &document, 0, 3));
+    assert(cursor_move_down(&cursor, &document));
+    assert(cursor.row == 1 && cursor.column == 2);
+    assert(cursor.preferred_column == 3);
+
+    assert(cursor_move_left(&cursor));
+    assert(cursor.column == 1);
+    assert(cursor.preferred_column == 1);
+
+    assert(cursor_move_up(&cursor, &document));
+    assert(cursor.row == 0 && cursor.column == 1);
+    assert(cursor.preferred_column == 1);
+
+    document_destroy(&document);
+}
+
+static void test_vertical_movement_rejects_invalid_arguments(void)
+{
+    Document document;
+    Cursor cursor;
+
+    assert(document_init(&document));
+    cursor_init(&cursor);
+
+    assert(!cursor_move_up(&cursor, &document));
+    assert(!cursor_move_down(&cursor, &document));
+    assert(!cursor_move_up(NULL, &document));
+    assert(!cursor_move_down(NULL, &document));
+    assert(!cursor_move_up(&cursor, NULL));
+    assert(!cursor_move_down(&cursor, NULL));
+
+    document_destroy(&document);
+}
+
+int main(void)
+{
+    test_document_insert_and_delete();
+    test_cursor_horizontal_movement();
+    test_dirty_flag_initial_state();
+    test_document_split_line();
+    test_document_merge_lines();
+    test_line_editing_cursor_transitions();
+    test_cursor_vertical_movement_preserves_preferred_column();
+    test_horizontal_movement_resets_preferred_column();
+    test_vertical_movement_rejects_invalid_arguments();
+
+    return 0;
+}
+
+```
+
+## Git checkpoint
+
+After applying the changes and confirming the tests pass, record this milestone:
+
+```bash
+git add src/cursor/cursor.h src/cursor/cursor.c tests/test_editing.c
+git commit -m "feat: implement vertical cursor movement"
+```
+
+This checkpoint covers the Cursor API and its automated tests. It does not yet claim that Up and Down Arrow keys work in the running editor.
+
+Next section: 49.2 — Integrating Vertical Movement into the Event Loop. We will connect the arrow-key sequences to the new Cursor functions, update editing paths to maintain the preferred column, and redraw after successful movement.

@@ -1,0 +1,166 @@
+---
+title: 49.2 Integrating Vertical Movement into the Event Loop
+description: "Connects Up and Down arrow handling to the event loop and keeps the cursor's preferred column consistent across editing operations."
+---
+
+The Cursor module now supports vertical movement while preserving the preferred column. This section connects those operations to the application's input loop and ensures that editing operations keep the Cursor state consistent.
+
+## Recognize the Up and Down arrow keys
+
+The terminal sends arrow keys as escape sequences. The existing event loop already recognizes the `ESC [` prefix and dispatches Left and Right.
+
+Extend the existing dispatch block in `src/main.c`:
+
+```c
+bool moved = false;
+
+if (second == 'D')
+{
+    moved = cursor_move_left(&state->cursor);
+}
+else if (second == 'C')
+{
+    moved = cursor_move_right(
+        &state->cursor,
+        &state->document
+    );
+}
+else if (second == 'A')
+{
+    moved = cursor_move_up(
+        &state->cursor,
+        &state->document
+    );
+}
+else if (second == 'B')
+{
+    moved = cursor_move_down(
+        &state->cursor,
+        &state->document
+    );
+}
+
+if (moved && !redraw_after_action(renderer, state))
+{
+    return false;
+}
+```
+
+The escape-sequence final bytes are:
+
+| Key   | Final byte |
+| ----- | ---------- |
+| Up    | `A`        |
+| Down  | `B`        |
+| Right | `C`        |
+| Left  | `D`        |
+
+The event loop delegates movement rules to the Cursor module. It does not calculate target rows or clamp columns itself.
+
+The existing redraw path runs only when movement succeeds. Pressing Up at the first line or Down at the last line therefore leaves the screen unchanged.
+
+## Keep the preferred column consistent
+
+Vertical movement introduces a distinction between the preferred column and the actual column.
+
+For example, when the Cursor is at column 5 and moves to a line with only two characters, its actual column becomes 2, but its preferred column remains 5. Moving to a subsequent longer line restores the actual column to 5.
+
+Horizontal movement resets the preferred column to the new actual column. Editing operations that reposition the Cursor must follow the same rule.
+
+The `cursor_set_position()` function now updates all three coordinates together:
+
+```c
+cursor->row = row;
+cursor->column = column;
+cursor->preferred_column = column;
+```
+
+Use this function when an editing operation moves the Cursor to a known, valid position instead of assigning `row` and `column` independently.
+
+## Update Backspace and Enter handling
+
+In `src/main.c`, replace direct Cursor assignments after successful editing operations with `cursor_set_position()`.
+
+After deleting a character:
+
+```c
+if (!cursor_set_position(
+        &state->cursor,
+        &state->document,
+        state->cursor.row,
+        delete_column))
+{
+    return false;
+}
+```
+
+After merging the current line into the previous line:
+
+```c
+if (!cursor_set_position(
+        &state->cursor,
+        &state->document,
+        previous_row,
+        previous_length))
+{
+    return false;
+}
+```
+
+After splitting a line with Enter:
+
+```c
+if (!cursor_set_position(
+        &state->cursor,
+        &state->document,
+        state->cursor.row + 1,
+        0))
+{
+    return false;
+}
+```
+
+Each call occurs after the corresponding Document operation succeeds, so the new Cursor position is validated against the updated Document.
+
+Character insertion already advances the Cursor through `cursor_advance()`. That function now also updates the preferred column.
+
+These changes ensure that Up and Down behave predictably after inserting text, deleting characters, splitting lines, or joining lines.
+
+## Test the integrated behavior
+
+The implementation adds tests in `tests/test_editing.c` for the following cases:
+
+- Moving vertically between lines of different lengths.
+- Preserving the preferred column when passing through short and empty lines.
+- Restoring the preferred column when returning to a longer line.
+- Resetting the preferred column after horizontal movement.
+- Rejecting movement beyond document boundaries and handling invalid arguments.
+
+Run the build and test suite from the project root:
+
+```bash
+cmake -S . -B build/debug
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+Build successful
+
+Smoke test passed
+
+Editing tests passed
+
+All 2 registered CTest tests passed.
+
+## Files changed
+
+- `src/cursor/cursor.h` — added the preferred column and vertical movement declarations.
+- `src/cursor/cursor.c` — implemented vertical movement and preferred-column handling.
+- `src/main.c` — connected Up and Down to the event loop and synchronized Cursor positioning after edits.
+- `tests/test_editing.c` — added vertical movement and preferred-column tests.
+
+## Implementation checkpoint
+
+At the end of this section, Up and Down are connected to the event loop, and preferred-column behavior is covered by automated tests. The renderer still uses its existing behavior; viewport management and scrolling remain separate work.
+
+Next section: 49.3 — Implementing the Viewport and Scrolling.

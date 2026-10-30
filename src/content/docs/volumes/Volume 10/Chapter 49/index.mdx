@@ -1,0 +1,19 @@
+---
+title: Chapter 49 — Navigating the Document
+description: "Adds vertical cursor movement with preferred-column preservation, viewport scrolling, and cursor-visibility handling, with navigation tests."
+---
+
+## Introduction
+
+Chapter 48 made it possible to create and remove logical lines, but the cursor could still only move within a single line. Navigating a real document requires vertical movement and a view that follows the cursor as it moves beyond the visible screen.
+
+> **How should the cursor move between lines, and how should the viewport follow it without changing the document or losing the user's intended column?**
+
+This chapter adds Up and Down movement with preferred-column preservation: the cursor clamps to the end of a shorter line and returns to its preferred column on a longer line. It then connects the arrow keys to the event loop, introduces a Viewport with row and column offsets, and makes rendering use those offsets so the cursor stays visible during navigation and editing. The chapter closes with tests for scrolling, boundaries, edit transitions, and renderer coordinates. Input remains printable ASCII, and tab expansion, Unicode display width, and terminal resizing remain outside this milestone.
+
+## Sections
+
+- [49.1 Implementing Vertical Cursor Movement](/volumes/volume-10/chapter-49/01-vertical-cursor-movement/)
+- [49.2 Integrating Vertical Movement into the Event Loop](/volumes/volume-10/chapter-49/02-integrating-vertical-movement-event-loop/)
+- [49.3 Implementing the Viewport and Scrolling](/volumes/volume-10/chapter-49/03-viewport-scrolling/)
+- [49.4 Navigating the Document](/volumes/volume-10/chapter-49/04-navigating-document/)

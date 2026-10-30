@@ -1,0 +1,125 @@
+---
+title: 49.3 Implementing the Viewport and Scrolling
+description: "Adds a Viewport with row and column offsets so the editor scrolls to keep the cursor visible, and integrates those offsets into rendering."
+---
+
+Implemented in the project. The editor can now scroll vertically and horizontally to keep the Cursor visible, rather than preventing text insertion near the terminal's right edge.
+
+Download the updated project — Chapter 49.3
+
+## Files changed
+
+| File                       | Implementation                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| `src/viewport.h`           | New Viewport structure and public API                                                       |
+| `src/viewport.c`           | Cursor visibility and scrolling logic                                                       |
+| `src/state/editor_state.h` | Added Viewport to Editor State                                                              |
+| `src/state/editor_state.c` | Initializes and resets Viewport                                                             |
+| `src/renderer/renderer.c`  | Renders document content using Viewport offsets and positions the terminal Cursor correctly |
+| `src/main.c`               | Maintains Cursor visibility before redraws and permits insertion beyond the visible columns |
+| `CMakeLists.txt`           | Adds `src/viewport.c` to the build                                                          |
+| `tests/test_editing.c`     | Adds Viewport visibility and invalid-dimension tests                                        |
+
+## Viewport implementation
+
+The Viewport stores two offsets, consistent with ADR-019:
+
+```c
+typedef struct
+{
+    size_t viewport_row;
+    size_t viewport_column;
+} Viewport;
+```
+
+- `viewport_row` identifies the first visible logical document row.
+- `viewport_column` identifies the first visible display column.
+
+The Viewport does not copy or modify the Document.
+
+The central function is `viewport_ensure_cursor_visible()`:
+
+```c
+bool viewport_ensure_cursor_visible(
+    Viewport *viewport,
+    size_t cursor_row,
+    size_t cursor_visual_column,
+    size_t screen_rows,
+    size_t screen_columns)
+{
+    if (viewport == NULL ||
+        screen_rows == 0 ||
+        screen_columns == 0)
+    {
+        return false;
+    }
+
+    if (cursor_row < viewport->viewport_row)
+    {
+        viewport->viewport_row = cursor_row;
+    }
+    else if (cursor_row - viewport->viewport_row >= screen_rows)
+    {
+        viewport->viewport_row = cursor_row - screen_rows + 1;
+    }
+
+    if (cursor_visual_column < viewport->viewport_column)
+    {
+        viewport->viewport_column = cursor_visual_column;
+    }
+    else if (cursor_visual_column - viewport->viewport_column >= screen_columns)
+    {
+        viewport->viewport_column = cursor_visual_column - screen_columns + 1;
+    }
+
+    return true;
+}
+```
+
+The function adjusts the offsets only when the Cursor would otherwise fall outside the visible area. It rejects invalid arguments and zero-sized screen dimensions.
+
+## Renderer integration
+
+The Renderer now maps screen coordinates to document coordinates:
+
+```c
+size_t document_row = state->viewport.viewport_row + screen_row;
+
+size_t document_column = state->viewport.viewport_column + screen_column;
+```
+
+The Renderer copies only the visible portion of each logical line into the Screen Buffer. It also positions the terminal Cursor relative to the Viewport offsets.
+
+The application calls `viewport_ensure_cursor_visible()` before rendering. This keeps the Viewport update in the application flow while the Renderer remains a read-only consumer of Editor State.
+
+## Build and verification
+
+The project builds successfully, and both registered CTest targets pass.
+
+CMake build successful
+
+Smoke test passed
+
+Editing and Viewport tests passed
+
+Pseudo-terminal interaction check passed
+
+The pseudo-terminal check used a small terminal, entered text across multiple lines and columns, sent arrow-key sequences, and exited cleanly with status zero.
+
+Run the tests yourself with:
+
+```bash
+cmake -S . -B build/debug
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+## Current implementation boundary
+
+The current input implementation accepts printable ASCII only. Consequently, logical columns and visual columns coincide for the supported input.
+
+Tab expansion and Unicode display-width mapping are not implemented yet. Those must be handled at the Renderer boundary before horizontal scrolling can correctly support variable-width characters.
+
+## Next section: 49.4 — Testing Navigation and Viewport Invariants
+
+The next step is to strengthen tests for repeated scrolling, Cursor visibility at screen boundaries, and Cursor positioning after line splitting and merging. Chapter 49 remains in progress until these navigation behaviors have been verified more thoroughly.
