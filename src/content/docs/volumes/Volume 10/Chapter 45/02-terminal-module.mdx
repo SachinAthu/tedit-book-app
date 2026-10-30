@@ -1,0 +1,397 @@
+---
+title: 45.2 Terminal Module
+description: "Implements the first runtime module—terminal state, initialization, raw mode, restoration, and alternate-screen handling—behind a clean platform boundary."
+---
+
+The first runtime component is the `terminal` module.
+
+Its responsibility is limited to managing the terminal's process-level state:
+
+```text
+Terminal Module
+├── initialize terminal state
+├── save original terminal attributes
+├── enable raw mode
+└── restore original terminal attributes
+```
+
+The module does **not** handle keyboard parsing, commands, rendering, or editor state. Those responsibilities belong to later modules.
+
+The runtime model already establishes terminal raw mode as part of initialization, followed by the event loop and eventual cleanup. 04-runtime-model
+
+## Directory
+
+Create:
+
+```text
+src/
+└── terminal/
+    ├── terminal.h
+    └── terminal.c
+```
+
+The existing project already follows the module-oriented source layout, so `terminal/` becomes the first runtime module actually implemented.
+
+## Terminal State
+
+The terminal module needs to retain the original terminal configuration.
+
+Create `src/terminal/terminal.h`:
+
+```c
+/* src/terminal/terminal.h */
+
+#ifndef TERMINAL_TERMINAL_H
+#define TERMINAL_TERMINAL_H
+
+#include <stdbool.h>
+#include <termios.h>
+
+typedef struct {
+    struct termios original_attributes;
+    bool initialized;
+    bool raw_mode_enabled;
+} TerminalState;
+
+bool terminal_init(TerminalState *terminal);
+
+bool terminal_enable_raw_mode(TerminalState *terminal);
+
+void terminal_restore(TerminalState *terminal);
+
+bool terminal_enter_alternate_screen(TerminalState *terminal);
+
+void terminal_leave_alternate_screen(TerminalState *terminal);
+
+#endif
+```
+
+`TerminalState` contains three pieces of information:
+
+```text
+original_attributes
+        │
+        └── terminal configuration before modification
+
+initialized
+        │
+        └── original configuration was successfully obtained
+
+raw_mode_enabled
+        │
+        └── raw mode was successfully applied
+```
+
+The original `termios` structure must remain available throughout the lifetime of the terminal session because cleanup needs to restore it.
+
+## Terminal Initialization
+
+Create `src/terminal/terminal.c`:
+
+```c
+#include "terminal.h"
+
+#include <string.h>
+#include <unistd.h>
+
+bool terminal_init(TerminalState *terminal)
+{
+    if (terminal == NULL) {
+        return false;
+    }
+
+    memset(terminal, 0, sizeof(*terminal));
+
+    if (tcgetattr(STDIN_FILENO, &terminal->original_attributes) == -1) {
+        return false;
+    }
+
+    terminal->initialized = true;
+
+    return true;
+}
+```
+
+The first operation validates the state pointer:
+
+```c
+if (terminal == NULL) {
+    return false;
+}
+```
+
+The state is then initialized to a known value:
+
+```c
+memset(terminal, 0, sizeof(*terminal));
+```
+
+The current terminal attributes are obtained from standard input:
+
+```c
+tcgetattr(
+    STDIN_FILENO,
+    &terminal->original_attributes
+);
+```
+
+If this fails, initialization fails.
+
+If it succeeds:
+
+```c
+terminal->initialized = true;
+```
+
+The module now has a valid saved terminal state.
+
+## Enabling Raw Mode
+
+Add the following function to `terminal.c`:
+
+```c
+bool terminal_enable_raw_mode(TerminalState *terminal)
+{
+    struct termios raw_attributes;
+
+    if (terminal == NULL || !terminal->initialized) {
+        return false;
+    }
+
+    raw_attributes = terminal->original_attributes;
+
+    raw_attributes.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw_attributes.c_oflag &= ~(OPOST);
+    raw_attributes.c_cflag |= CS8;
+    raw_attributes.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+
+    raw_attributes.c_cc[VMIN] = 1;
+    raw_attributes.c_cc[VTIME] = 0;
+
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw_attributes) == -1) {
+        return false;
+    }
+
+    terminal->raw_mode_enabled = true;
+
+    return true;
+}
+```
+
+The function first verifies that terminal initialization succeeded:
+
+```c
+if (terminal == NULL || !terminal->initialized) {
+    return false;
+}
+```
+
+Raw mode is constructed from the saved configuration:
+
+```c
+raw_attributes = terminal->original_attributes;
+```
+
+This is important because the original configuration remains intact.
+
+The modified configuration is then applied with:
+
+```c
+tcsetattr(
+    STDIN_FILENO,
+    TCSAFLUSH,
+    &raw_attributes
+);
+```
+
+Only after `tcsetattr()` succeeds do we record:
+
+```c
+terminal->raw_mode_enabled = true;
+```
+
+Therefore, the state flag represents an actual successful terminal transition rather than an attempted one.
+
+## Terminal Restoration
+
+Complete `terminal.c` with:
+
+```c
+void terminal_restore(TerminalState *terminal)
+{
+    if (terminal == NULL ||
+        !terminal->initialized ||
+        !terminal->raw_mode_enabled) {
+        return;
+    }
+
+    (void)tcsetattr(
+        STDIN_FILENO,
+        TCSAFLUSH,
+        &terminal->original_attributes
+    );
+
+    terminal->raw_mode_enabled = false;
+}
+```
+
+Restoration is deliberately safe to call when the terminal has not entered raw mode.
+
+The guard:
+
+```c
+if (terminal == NULL ||
+    !terminal->initialized ||
+    !terminal->raw_mode_enabled) {
+    return;
+}
+```
+
+prevents an invalid restoration attempt.
+
+Once restoration succeeds, the module records:
+
+```c
+terminal->raw_mode_enabled = false;
+```
+
+## Complete `terminal.c`
+
+The complete file at this point is:
+
+```c
+/* src/terminal/terminal.c */
+
+#include "terminal.h"
+
+#include <errno.h>
+#include <string.h>
+#include <unistd.h>
+
+bool terminal_init(TerminalState *terminal)
+{
+    if (terminal == NULL) {
+        return false;
+    }
+
+    memset(terminal, 0, sizeof(*terminal));
+
+    if (tcgetattr(STDIN_FILENO, &terminal->original_attributes) == -1) {
+        return false;
+    }
+
+    terminal->initialized = true;
+
+    return true;
+}
+
+bool terminal_enable_raw_mode(TerminalState *terminal)
+{
+    struct termios raw_attributes;
+
+    if (terminal == NULL || !terminal->initialized) {
+        return false;
+    }
+
+    raw_attributes = terminal->original_attributes;
+
+    raw_attributes.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw_attributes.c_oflag &= ~(OPOST);
+    raw_attributes.c_cflag |= CS8;
+    raw_attributes.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+
+    raw_attributes.c_cc[VMIN] = 1;
+    raw_attributes.c_cc[VTIME] = 0;
+
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw_attributes) == -1) {
+        return false;
+    }
+
+    terminal->raw_mode_enabled = true;
+
+    return true;
+}
+
+void terminal_restore(TerminalState *terminal)
+{
+    if (terminal == NULL ||
+        !terminal->initialized ||
+        !terminal->raw_mode_enabled) {
+        return;
+    }
+
+    (void)tcsetattr(
+        STDIN_FILENO,
+        TCSAFLUSH,
+        &terminal->original_attributes
+    );
+
+    terminal->raw_mode_enabled = false;
+}
+
+bool terminal_enter_alternate_screen(TerminalState *terminal)
+{
+    if (!terminal_write_all("\x1b[?1049h", 8))
+    {
+        return false;
+    }
+
+    terminal->alternate_screen_enabled = true;
+    return true;
+}
+
+void terminal_leave_alternate_screen(TerminalState *terminal)
+{
+    if (!terminal->alternate_screen_enabled)
+    {
+        return;
+    }
+
+    (void)terminal_write_all("\x1b[?1049l", 8);
+    terminal->alternate_screen_enabled = false;
+}
+```
+
+## Module Boundary
+
+At this stage, the boundary is:
+
+```text
+main.c
+   │
+   │ terminal_init()
+   │ terminal_enable_raw_mode()
+   │ terminal_restore()
+   ▼
+terminal/
+   │
+   └── POSIX termios
+```
+
+`main.c` does not manipulate `struct termios` directly.
+
+The POSIX terminal details remain inside the terminal module.
+
+This is the first concrete implementation of the platform boundary that will allow the rest of the editor to remain independent of terminal-specific operations.
+
+## Current Files
+
+After this section:
+
+```text
+src/
+├── command/
+├── cursor/
+├── document/
+├── file/
+├── input/
+├── renderer/
+├── state/
+├── terminal/
+│   ├── terminal.h
+│   └── terminal.c
+├── viewport/
+└── main.c
+```
+
+The next section is **45.3 Saving and Restoring Terminal State**, where we integrate this module into the application's startup and shutdown path and handle the failure cases between initialization and raw-mode activation.

@@ -1,0 +1,205 @@
+---
+title: 45.7 Manual Verification
+description: "Verifies the runtime by hand in a real terminal: raw input, Ctrl-Q exit, terminal restoration, and the existing smoke test."
+---
+
+The runtime now builds as a complete executable. Before moving to the invariants and implementation review, we need to verify its behavior from the terminal.
+
+This section is intentionally a **manual runtime test**. The existing smoke test verifies the build/test baseline, but it does not exercise terminal state transitions or interactive input.
+
+## Start the Program
+
+From the project root:
+
+```bash
+./build/debug/tedit
+```
+
+Expected behavior:
+
+```text
+Program starts
+     │
+     ▼
+Terminal state captured
+     │
+     ▼
+Raw mode enabled
+     │
+     ▼
+Event loop waits for input
+```
+
+The program should appear to do nothing.
+
+This is expected.
+
+There is currently no renderer and therefore no screen content to display.
+
+## Verify Raw Input
+
+While `tedit` is running, type a few ordinary characters:
+
+```text
+hello
+```
+
+Nothing should appear on the terminal.
+
+This confirms that terminal echo has been disabled.
+
+The characters are being delivered directly to the process rather than being echoed by the terminal's normal line discipline.
+
+At this stage, the application intentionally ignores ordinary input.
+
+## Verify the Exit Input
+
+Press:
+
+```text
+Ctrl-Q
+```
+
+The event loop should terminate:
+
+```text
+Ctrl-Q
+   │
+   ▼
+running = 0
+   │
+   ▼
+event loop returns
+```
+
+Then:
+
+```text
+terminal_restore()
+```
+
+is executed.
+
+Finally:
+
+```c
+return 0;
+```
+
+returns control to the shell.
+
+## Verify Terminal Restoration
+
+After `tedit` exits, type:
+
+```bash
+echo terminal-ok
+```
+
+Expected output:
+
+```text
+terminal-ok
+```
+
+Also verify that:
+
+- typed characters are visible normally;
+- Enter creates a normal new line;
+- shell commands behave normally;
+- the terminal does not remain in non-canonical mode.
+
+This confirms that the original terminal configuration was restored.
+
+## Verify the Smoke Test
+
+The implementation must still pass the existing test baseline:
+
+```bash
+ctest --test-dir build/debug --output-on-failure
+```
+
+Expected result:
+
+```text
+100% tests passed, 0 tests failed
+```
+
+The Chapter 45 runtime must not break the testing infrastructure established in Chapter 44.
+
+## Verification Matrix
+
+The manual checks can be recorded as:
+
+| Test                     | Expected Result              |
+| ------------------------ | ---------------------------- |
+| Start `tedit`            | Program remains running      |
+| Type ordinary character  | Character is not echoed      |
+| Type multiple characters | Characters remain unrendered |
+| Press `Ctrl-Q`           | Event loop terminates        |
+| Return to shell          | Shell becomes usable         |
+| Type shell command       | Normal terminal behavior     |
+| Run CTest                | Smoke test passes            |
+
+The current implementation does **not** yet provide visual feedback, cursor movement, file loading, editing, or command processing. Those are intentionally outside this milestone.
+
+## Failure Cases to Check
+
+There are also two startup paths worth verifying at the implementation level.
+
+### Terminal initialization failure
+
+If `terminal_init()` returns `false`:
+
+```c
+if (!terminal_init(&terminal)) {
+    return 1;
+}
+```
+
+the event loop must never start.
+
+### Raw-mode activation failure
+
+If `terminal_enable_raw_mode()` returns `false`:
+
+```c
+if (!terminal_enable_raw_mode(&terminal)) {
+    terminal_restore(&terminal);
+    return 1;
+}
+```
+
+the application must not enter the event loop.
+
+These paths ensure that the runtime never proceeds as though the terminal were ready when initialization has failed.
+
+## Manual Verification Result
+
+The Chapter 45 runtime is considered manually verified when the following sequence succeeds:
+
+```text
+Build
+  │
+  ▼
+Start tedit
+  │
+  ▼
+Input is not echoed
+  │
+  ▼
+Ctrl-Q
+  │
+  ▼
+Terminal restored
+  │
+  ▼
+Shell works normally
+  │
+  ▼
+CTest passes
+```
+
+At this point, the runtime has moved beyond merely compiling: its complete startup → execution → shutdown path has been exercised.
+
+**Next: 45.10 Runtime Invariants.**

@@ -1,0 +1,357 @@
+---
+title: 45.4 Enabling Raw Mode
+description: "Connects terminal initialization and raw-mode activation to main.c, adds the temporary Ctrl-Q exit, and builds the first interactive runtime."
+---
+
+The terminal module is now responsible for applying the raw-mode configuration. This section connects that operation to the application startup path.
+
+The runtime must not enter the event loop until raw mode has been successfully enabled.
+
+The startup sequence is therefore:
+
+```text
+main()
+  │
+  ▼
+terminal_init()
+  │
+  ├── failure → exit
+  │
+  ▼
+terminal_enable_raw_mode()
+  │
+  ├── failure → cleanup → exit
+  │
+  ▼
+event loop
+```
+
+This matches the runtime lifecycle defined for the implementation: initialization occurs before normal event-loop execution. 04-runtime-model
+
+## Updating `main.c`
+
+The current baseline `main.c` is only an empty `main()` function. main
+
+Replace it with:
+
+```c
+/* src/main.c */
+
+#include "terminal/terminal.h"
+
+#include <unistd.h>
+
+#define CONTROL_Q 0x11
+
+static void application_event_loop(void)
+{
+    int running = 1;
+
+    while (running) {
+        unsigned char input;
+        const ssize_t bytes_read =
+            read(STDIN_FILENO, &input, sizeof(input));
+
+        if (bytes_read == 1 && input == CONTROL_Q) {
+            running = 0;
+        } else if (bytes_read == 0) {
+            running = 0;
+        }
+    }
+}
+
+int main(void)
+{
+    TerminalState terminal;
+
+    if (!terminal_init(&terminal)) {
+        return 1;
+    }
+
+    if (!terminal_enable_raw_mode(&terminal)) {
+        terminal_restore(&terminal);
+        return 1;
+    }
+
+    application_event_loop();
+
+    terminal_restore(&terminal);
+
+    return 0;
+}
+```
+
+There are now three distinct startup stages.
+
+## Stage 1 — Initialize
+
+```c
+if (!terminal_init(&terminal)) {
+    return 1;
+}
+```
+
+If the original terminal attributes cannot be obtained, the application does not continue.
+
+No raw-mode change has occurred, so there is nothing to restore.
+
+## Stage 2 — Enable Raw Mode
+
+```c
+if (!terminal_enable_raw_mode(&terminal)) {
+    terminal_restore(&terminal);
+    return 1;
+}
+```
+
+If raw mode fails to activate, cleanup is still called.
+
+Because `terminal_restore()` checks `raw_mode_enabled`, it is safe even if `terminal_enable_raw_mode()` failed before actually modifying the terminal.
+
+## Stage 3 — Enter the Event Loop
+
+Only after both operations succeed does execution reach:
+
+```c
+application_event_loop();
+```
+
+At this point:
+
+```text
+terminal.initialized      == true
+terminal.raw_mode_enabled == true
+```
+
+The application can therefore safely depend on raw input behavior.
+
+## The Temporary Exit Input
+
+The runtime needs a way to leave the event loop before the complete command system exists.
+
+For this milestone:
+
+```c
+#define CONTROL_Q 0x11
+```
+
+represents `Ctrl-Q`.
+
+The event loop checks:
+
+```c
+if (bytes_read == 1 && input == CONTROL_Q) {
+    running = 0;
+}
+```
+
+This is deliberately local to the temporary runtime.
+
+It is **not** the final input architecture.
+
+Later:
+
+```text
+Input Handler
+      ↓
+Input Parser
+      ↓
+Input Engine
+      ↓
+Command Engine
+```
+
+will replace this direct byte check.
+
+The current implementation exists only to provide a deterministic way to exercise startup, raw input, event-loop execution, and shutdown.
+
+## Why `read()` Is Blocking
+
+The current loop uses:
+
+```c
+read(STDIN_FILENO, &input, sizeof(input));
+```
+
+with the raw-mode configuration:
+
+```c
+raw_attributes.c_cc[VMIN] = 1;
+raw_attributes.c_cc[VTIME] = 0;
+```
+
+Therefore the application waits until input is available.
+
+The runtime is not continuously polling the terminal:
+
+```text
+Incorrect for this stage:
+
+while (running) {
+    check_terminal();
+    check_terminal();
+    check_terminal();
+    ...
+}
+```
+
+Instead:
+
+```text
+while (running) {
+    wait for input
+    process one byte
+}
+```
+
+This provides the minimal blocking event loop needed at this implementation stage.
+
+The project's runtime model specifies a single-threaded event-driven loop that waits for an event and processes it before returning to the wait state. 04-runtime-model
+
+## Build Configuration
+
+The terminal source must now be part of the executable.
+
+Update `CMakeLists.txt`:
+
+```cmake
+/* /CMakeLists.txt */
+cmake_minimum_required(VERSION 3.20)
+enable_testing()
+
+project(
+    terminal_editor
+    VERSION 0.1.0
+    LANGUAGES C
+)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+add_executable(
+    tedit
+    src/main.c
+    src/terminal/terminal.c
+)
+
+target_include_directories(
+    tedit
+    PRIVATE
+        src
+)
+
+add_executable(
+    test_smoke
+    tests/test_smoke.c
+)
+
+add_test(
+    NAME smoke
+    COMMAND test_smoke
+)
+```
+
+The original project already requires C99 and disables compiler extensions. CMakeLists Those settings remain unchanged.
+
+## Build
+
+Reconfigure:
+
+```bash
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
+```
+
+Build:
+
+```bash
+cmake --build build/debug
+```
+
+Then run the smoke test:
+
+```bash
+ctest --test-dir build/debug --output-on-failure
+```
+
+The existing smoke test must remain passing.
+
+## Manual Runtime Test
+
+Start:
+
+```bash
+./build/debug/tedit
+```
+
+The application should remain running without printing anything.
+
+Press:
+
+```text
+Ctrl-Q
+```
+
+The application should:
+
+```text
+receive Ctrl-Q
+      ↓
+leave event loop
+      ↓
+restore terminal
+      ↓
+return from main()
+      ↓
+exit
+```
+
+After returning to the shell, verify that:
+
+- characters are echoed normally;
+- the shell accepts normal input;
+- Enter behaves normally;
+- the terminal is not left in raw mode.
+
+This test is particularly important because terminal-state corruption can make the shell appear broken even though the process itself has exited.
+
+## Current Runtime
+
+The implementation now has:
+
+```text
+                    ┌─────────────────────┐
+                    │       main()        │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  terminal_init()    │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ enable_raw_mode()   │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │    Event Loop       │
+                    │                     │
+                    │     read()          │
+                    │       │             │
+                    │    Ctrl-Q?          │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ terminal_restore()  │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                             exit
+```
+
+The terminal runtime is now operational.
+
+**Next: 45.5 Application Lifecycle.**

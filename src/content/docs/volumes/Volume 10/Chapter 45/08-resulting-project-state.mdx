@@ -1,0 +1,268 @@
+---
+title: 45.8 Resulting Project State
+description: "Reviews the project state after the first runtime—working terminal handling and event loop—and the editor features deliberately left for later chapters."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Chapter 45 has established the first executable runtime of the editor.
+
+At this point, the project is no longer only a buildable skeleton. It has a real application lifecycle, a terminal abstraction, raw-mode handling, a minimal event loop, and deterministic terminal cleanup.
+
+No document, cursor, renderer, input parser, or editing logic has been introduced yet. Those components remain future implementation stages.
+
+## Current Source Tree
+
+The relevant project structure is now:
+
+```text
+editor/
+├── src/
+│   ├── command/
+│   ├── cursor/
+│   ├── document/
+│   ├── file/
+│   ├── input/
+│   ├── renderer/
+│   ├── state/
+│   ├── terminal/
+│   │   ├── terminal.c
+│   │   └── terminal.h
+│   ├── viewport/
+│   ├── common/
+│   └── main.c
+│
+├── tests/
+│   └── test_smoke.c
+│
+├── docs/
+│
+├── CMakeLists.txt
+└── README.md
+```
+
+Only the `terminal/` implementation and `main.c` have been added to the runtime so far. The other directories remain part of the planned project structure and are not yet connected to the executable.
+
+## Runtime Components
+
+The executable currently contains three implementation units:
+
+```text
+main.c
+  │
+  ├── application_event_loop()
+  │
+  └── TerminalState
+          │
+          ├── terminal_init()
+          ├── terminal_enable_raw_mode()
+          └── terminal_restore()
+```
+
+The responsibilities are intentionally narrow.
+
+| Component      | Current responsibility                         |
+| -------------- | ---------------------------------------------- |
+| `main.c`       | Application lifecycle and temporary event loop |
+| `terminal.c`   | Terminal state management and raw mode         |
+| `terminal.h`   | Public terminal interface                      |
+| `test_smoke.c` | Build/test baseline                            |
+
+The terminal module does not know about editor state or editing operations. The application does not directly manipulate `termios`; it uses the terminal module.
+
+## Current Runtime
+
+The complete runtime is currently:
+
+```text
+Program Start
+     │
+     ▼
+terminal_init()
+     │
+     ├── failure ──► exit
+     │
+     ▼
+terminal_enable_raw_mode()
+     │
+     ├── failure ──► restore/exit
+     │
+     ▼
+application_event_loop()
+     │
+     ├── read one byte
+     ├── Ctrl-Q ───────► exit loop
+     └── EOF ──────────► exit loop
+     │
+     ▼
+terminal_restore()
+     │
+     ▼
+Program Exit
+```
+
+This is deliberately smaller than the final editor runtime.
+
+The future event loop will eventually become responsible for the complete sequence:
+
+```text
+Wait for Event
+      ↓
+Parse Input
+      ↓
+Execute Command
+      ↓
+Update Editor State
+      ↓
+Render Frame
+```
+
+For Chapter 45, only the event-waiting mechanism and termination condition exist.
+
+## Terminal State
+
+`TerminalState` now provides explicit ownership of the terminal lifecycle:
+
+```c
+typedef struct {
+    struct termios original_attributes;
+    bool initialized;
+    bool raw_mode_enabled;
+} TerminalState;
+```
+
+The state records two important transitions:
+
+```text
+Uninitialized
+      │
+      │ terminal_init()
+      ▼
+Initialized
+      │
+      │ terminal_enable_raw_mode()
+      ▼
+Raw Mode Active
+      │
+      │ terminal_restore()
+      ▼
+Restored
+```
+
+The original terminal configuration is retained throughout the runtime and is used when restoring the terminal.
+
+## Temporary Input Behavior
+
+The editor does not yet interpret terminal input as editor commands.
+
+For this milestone, input handling is intentionally limited to:
+
+```text
+Input byte
+    │
+    ├── Ctrl-Q → terminate
+    │
+    ├── EOF    → terminate
+    │
+    └── other  → ignore
+```
+
+This is temporary.
+
+The direct `Ctrl-Q` check will later be removed when the Input Handler, Input Parser, Input Engine, and Command Engine are introduced.
+
+## What the Editor Can Do Now
+
+The current executable can:
+
+- start successfully from a terminal,
+- capture the terminal's original settings,
+- enter raw terminal mode,
+- prevent normal character echo,
+- wait for input,
+- terminate on `Ctrl-Q`,
+- terminate when standard input reaches EOF,
+- restore the original terminal settings,
+- return control to the shell cleanly.
+
+It cannot yet:
+
+- display editor content,
+- create or load a document,
+- move a cursor,
+- insert or delete text,
+- scroll,
+- render a screen,
+- parse escape sequences,
+- execute editor commands,
+- save files.
+
+Those capabilities belong to later implementation milestones.
+
+## Chapter 45 Boundary
+
+The implementation boundary is therefore clear:
+
+```text
+                 IMPLEMENTED
+┌─────────────────────────────────────────┐
+│ Program Startup                         │
+│ Terminal Initialization                 │
+│ Raw Mode                                │
+│ Minimal Event Loop                      │
+│ Terminal Restoration                    │
+│ Program Exit                            │
+└─────────────────────────────────────────┘
+                     │
+                     ▼
+                 NOT YET IMPLEMENTED
+┌─────────────────────────────────────────┐
+│ Editor State                            │
+│ Document                                │
+│ Cursor                                  │
+│ Viewport                                │
+│ Screen Buffer                           │
+│ Renderer                                │
+│ Input Parser                            │
+│ Command Engine                          │
+│ File Manager                            │
+└─────────────────────────────────────────┘
+```
+
+This boundary is important. Chapter 45 establishes the runtime foundation without prematurely introducing the editor itself.
+
+## Result
+
+The first implementation milestone is complete:
+
+```text
+Source
+  ↓
+Build
+  ↓
+Start
+  ↓
+Initialize Terminal
+  ↓
+Enter Raw Mode
+  ↓
+Wait for Input
+  ↓
+Exit
+  ↓
+Restore Terminal
+  ↓
+Return to Shell
+```
+
+The project now has a **minimal but functioning terminal application runtime**.
+
+The next chapter can therefore build the first visible editor behavior on top of this runtime rather than continuing to modify the terminal foundation.
+
+<Aside>
+  Complete code for this chapter can be found in the relevent branch in the
+  Github repository at
+  https://github.com/SachinAthu/tedit/tree/chapter-45-complete.
+</Aside>
+
+**Next section: 45.13 Git Commit — Recording the Runtime Milestone**

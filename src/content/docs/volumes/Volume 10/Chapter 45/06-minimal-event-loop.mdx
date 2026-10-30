@@ -1,0 +1,325 @@
+---
+title: 45.6 Minimal Event Loop
+description: "Isolates a single-threaded, blocking event loop that reads one byte at a time and exits on Ctrl-Q until the full input pipeline exists."
+---
+
+The application lifecycle is now established. The next step is to isolate the minimal event loop that keeps the program running until an exit input is received.
+
+The current runtime model defines the editor as a single-threaded event-driven application. Each iteration waits for an event, processes it, and then returns to waiting for the next event. 04-runtime-model
+
+At this stage, the complete editor pipeline does not exist yet. Therefore, the loop will only perform the minimum operation required to keep the runtime interactive.
+
+## Event Loop Structure
+
+The current loop is:
+
+```c
+static void application_event_loop(void)
+{
+    int running = 1;
+
+    while (running) {
+        unsigned char input;
+        const ssize_t bytes_read =
+            read(STDIN_FILENO, &input, sizeof(input));
+
+        if (bytes_read == 1 && input == CONTROL_Q) {
+            running = 0;
+        } else if (bytes_read == 0) {
+            running = 0;
+        }
+    }
+}
+```
+
+Its execution is:
+
+```text
+while (running)
+    │
+    ▼
+wait for input
+    │
+    ▼
+read one byte
+    │
+    ▼
+check input
+    │
+    ├── Ctrl-Q → stop
+    │
+    └── other input → continue
+    │
+    ▼
+next iteration
+```
+
+There is deliberately no continuous polling.
+
+## Waiting for Input
+
+The event loop waits using:
+
+```c
+const ssize_t bytes_read =
+    read(STDIN_FILENO, &input, sizeof(input));
+```
+
+Because raw mode has configured:
+
+```c
+raw_attributes.c_cc[VMIN] = 1;
+raw_attributes.c_cc[VTIME] = 0;
+```
+
+the read waits until input is available.
+
+For the current runtime this gives us a simple blocking event loop:
+
+```text
+No input
+   │
+   ▼
+read() waits
+   │
+   ▼
+input arrives
+   │
+   ▼
+process input
+```
+
+There is no timer, background worker, polling loop, or second thread.
+
+## One Input at a Time
+
+The buffer is intentionally only one byte:
+
+```c
+unsigned char input;
+```
+
+and the read requests:
+
+```c
+sizeof(input)
+```
+
+which is one byte.
+
+This is sufficient for the current milestone because the loop does not yet interpret complete keyboard events.
+
+Later, the Input Handler and Input Parser will deal with:
+
+```text
+raw bytes
+   │
+   ▼
+input events
+   │
+   ▼
+commands
+```
+
+The current event loop therefore stops at the raw-byte boundary.
+
+## Temporary Exit Condition
+
+The only input with application-level meaning at this stage is:
+
+```c
+#define CONTROL_Q 0x11
+```
+
+The loop checks:
+
+```c
+if (bytes_read == 1 && input == CONTROL_Q) {
+    running = 0;
+}
+```
+
+Everything else is ignored:
+
+```text
+'a'        → continue
+'b'        → continue
+Escape     → continue
+Arrow byte → continue
+Ctrl-Q     → exit
+```
+
+This behavior is temporary and exists only until the actual input pipeline is implemented.
+
+We should not introduce the future Input Parser or Command Engine here prematurely.
+
+## End-of-Input
+
+The loop also handles:
+
+```c
+else if (bytes_read == 0) {
+    running = 0;
+}
+```
+
+A zero-byte read indicates that no further input is available.
+
+The application therefore leaves the loop rather than remaining indefinitely in the runtime.
+
+The subsequent lifecycle code then performs:
+
+```c
+terminal_restore(&terminal);
+```
+
+before returning from `main()`.
+
+## Read Errors
+
+The current minimal loop does not yet distinguish individual read errors.
+
+For this milestone, a negative return value does not cause an additional application-level action.
+
+This is intentional: Chapter 45 is establishing the runtime, while detailed failure-path handling belongs to the hardening work later in the implementation sequence.
+
+We should therefore avoid adding speculative error-handling infrastructure before the corresponding runtime components exist.
+
+## Complete Current Runtime
+
+With the event loop included, the current `main.c` is:
+
+```c
+/* /src/main.c */
+
+#include "terminal/terminal.h"
+
+#include <unistd.h>
+
+#define CONTROL_Q 0x11
+
+static void application_event_loop(void)
+{
+    int running = 1;
+
+    while (running) {
+        unsigned char input;
+        const ssize_t bytes_read =
+            read(STDIN_FILENO, &input, sizeof(input));
+
+        if (bytes_read == 1 && input == CONTROL_Q) {
+            running = 0;
+        } else if (bytes_read == 0) {
+            running = 0;
+        }
+    }
+}
+
+int main(void)
+{
+    TerminalState terminal;
+
+    if (!terminal_init(&terminal)) {
+        return 1;
+    }
+
+    if (!terminal_enable_raw_mode(&terminal)) {
+        terminal_restore(&terminal);
+        return 1;
+    }
+
+    if (!terminal_enter_alternate_screen(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+
+    application_event_loop();
+
+    terminal_restore(&terminal);
+
+    return 0;
+}
+```
+
+The resulting runtime is:
+
+```text
+                         ┌──────────────┐
+                         │    main()    │
+                         └──────┬───────┘
+                                │
+                                ▼
+                       terminal_init()
+                                │
+                                ▼
+                  terminal_enable_raw_mode()
+                                │
+                                ▼
+                     ┌──────────────────┐
+                     │   Event Loop     │
+                     │                  │
+                     │     read()       │
+                     │        │         │
+                     │        ▼         │
+                     │   process byte   │
+                     │        │         │
+                     │   Ctrl-Q? ───────┼── yes ──┐
+                     │        │         │          │
+                     │        └─ no ───┘          │
+                     └─────────────────────────────┘
+                                                  │
+                                                  ▼
+                                      terminal_restore()
+                                                  │
+                                                  ▼
+                                               exit
+```
+
+## Event Loop Invariants
+
+The minimal event loop now establishes:
+
+```text
+The event loop runs only after terminal initialization succeeds.
+
+The loop waits for terminal input rather than continuously polling.
+
+Each iteration reads at most one byte.
+
+Ctrl-Q terminates the loop.
+
+Other input does not terminate the loop.
+
+Leaving the event loop returns control to application cleanup.
+
+Terminal restoration occurs after the event loop ends.
+```
+
+The implementation now has the complete Stage 1 runtime path:
+
+```text
+Program Start
+     │
+     ▼
+Terminal Initialization
+     │
+     ▼
+Raw Mode
+     │
+     ▼
+Minimal Event Loop
+     │
+     ▼
+Exit Condition
+     │
+     ▼
+Terminal Restoration
+     │
+     ▼
+Process Exit
+```
+
+This is the first point at which `tedit` behaves as a real interactive terminal process rather than simply being an executable that immediately terminates.
+
+**Next: 45.7 Exit and Cleanup.**

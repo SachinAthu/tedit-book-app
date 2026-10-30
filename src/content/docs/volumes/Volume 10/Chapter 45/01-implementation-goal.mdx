@@ -1,0 +1,77 @@
+---
+title: 45.1 Implementation Goal
+description: "Defines Chapter 45's goal: turning the empty main() into a runtime that initializes the terminal, enables raw mode, runs an event loop, and exits cleanly."
+---
+
+Chapter 45 establishes the first executable runtime of `tedit`.
+
+At the beginning of this chapter, `src/main.c` contains only an empty `main()` function. The CMake configuration already builds the executable and the smoke test, so the implementation work begins by extending that existing baseline rather than replacing it. CMakeLists main
+
+The goal of this chapter is to make `tedit` capable of entering the terminal, accepting raw input, running an event loop, and exiting cleanly.
+
+The implementation will establish these components:
+
+```text
+src/
+├── terminal/
+│   ├── terminal.h
+│   └── terminal.c
+└── main.c
+```
+
+The runtime sequence will be:
+
+```text
+main()
+  │
+  ├── Initialize terminal
+  │
+  ├── Enable raw mode
+  │
+  ├── Run event loop
+  │
+  └── Restore terminal
+```
+
+The event loop will initially have only one temporary command:
+
+```text
+Ctrl-Q → terminate application
+```
+
+This gives us a minimal but real runtime on which the following chapters can build.
+
+## Files introduced in this section
+
+| File                      | Purpose                                                          |
+| ------------------------- | ---------------------------------------------------------------- |
+| `src/terminal/terminal.h` | Public terminal interface and terminal state                     |
+| `src/terminal/terminal.c` | Terminal initialization, raw-mode configuration, and restoration |
+| `src/main.c`              | Application lifecycle and minimal event loop                     |
+| `CMakeLists.txt`          | Adds the terminal implementation to `tedit`                      |
+
+## Chapter 45 completion condition
+
+We consider the chapter's runtime implementation successful when:
+
+```text
+CMake configuration succeeds
+        ↓
+tedit builds
+        ↓
+tedit starts
+        ↓
+terminal enters raw mode
+        ↓
+input is received
+        ↓
+Ctrl-Q exits the loop
+        ↓
+original terminal state is restored
+        ↓
+process exits normally
+```
+
+The existing smoke test must continue to pass throughout the implementation.
+
+The next section is **45.2 Terminal Module**, where we implement the first two files: `terminal.h` and `terminal.c`.

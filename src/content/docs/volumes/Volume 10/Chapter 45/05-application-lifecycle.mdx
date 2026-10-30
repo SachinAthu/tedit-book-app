@@ -1,0 +1,338 @@
+---
+title: 45.5 Application Lifecycle
+description: "Makes the application lifecycle explicit in main.c—initialization, event loop, and cleanup—with correct ordering and terminal restoration on error paths."
+---
+
+The terminal initialization and raw-mode activation are now implemented. The next step is to make the application's lifecycle explicit in `main.c`.
+
+The lifecycle must follow the established runtime order:
+
+```text
+Program Start
+      │
+      ▼
+Initialization
+      │
+      ▼
+Event Loop
+      │
+      ▼
+Exit & Cleanup
+```
+
+This is the canonical runtime sequence defined for the editor. 04-runtime-model
+
+At this stage, the lifecycle contains only terminal-related work.
+
+## Startup
+
+The application begins with:
+
+```c
+int main(void)
+{
+    TerminalState terminal;
+
+    if (!terminal_init(&terminal)) {
+        return 1;
+    }
+
+    ...
+}
+```
+
+`TerminalState` is local to `main()`.
+
+The application therefore owns the lifetime of the terminal state:
+
+```text
+main()
+ │
+ └── TerminalState
+```
+
+The terminal module operates on that state but does not own it.
+
+## Initialization Sequence
+
+Initialization currently consists of two operations:
+
+```c
+if (!terminal_init(&terminal)) {
+    return 1;
+}
+
+if (!terminal_enable_raw_mode(&terminal)) {
+    terminal_restore(&terminal);
+    return 1;
+}
+```
+
+The ordering is intentional.
+
+Raw mode cannot be enabled until the original terminal attributes have been captured.
+
+Therefore:
+
+```text
+terminal_init()
+       │
+       ▼
+original state saved
+       │
+       ▼
+terminal_enable_raw_mode()
+       │
+       ▼
+raw mode active
+```
+
+Only after both operations succeed can the application enter its normal runtime.
+
+## Running State
+
+The event loop owns the application's temporary running state:
+
+```c
+static void application_event_loop(void)
+{
+    int running = 1;
+
+    while (running) {
+        ...
+    }
+}
+```
+
+For this first runtime, `running` is local to the event loop.
+
+The application remains active while:
+
+```text
+running == 1
+```
+
+and terminates when:
+
+```text
+running == 0
+```
+
+The current implementation reaches that state when `Ctrl-Q` is received.
+
+## Shutdown
+
+After the event loop returns:
+
+```c
+application_event_loop();
+
+terminal_restore(&terminal);
+
+return 0;
+```
+
+The order is important.
+
+The application must leave the event loop before restoring the terminal:
+
+```text
+Event Loop
+    │
+    ▼
+Event Loop returns
+    │
+    ▼
+Restore terminal
+    │
+    ▼
+main() returns
+```
+
+The terminal therefore remains in the required runtime configuration for the entire duration of the event loop.
+
+## Complete Lifecycle
+
+The current `main.c` is:
+
+```c
+/* /src/main.c */
+
+#include "terminal/terminal.h"
+
+#include <unistd.h>
+
+#define CONTROL_Q 0x11
+
+static void application_event_loop(void)
+{
+    int running = 1;
+
+    while (running) {
+        unsigned char input;
+        const ssize_t bytes_read =
+            read(STDIN_FILENO, &input, sizeof(input));
+
+        if (bytes_read == 1 && input == CONTROL_Q) {
+            running = 0;
+        } else if (bytes_read == 0) {
+            running = 0;
+        }
+    }
+}
+
+int main(void)
+{
+    TerminalState terminal;
+
+    if (!terminal_init(&terminal)) {
+        return 1;
+    }
+
+    if (!terminal_enable_raw_mode(&terminal)) {
+        terminal_restore(&terminal);
+        return 1;
+    }
+
+    application_event_loop();
+
+    terminal_restore(&terminal);
+
+    return 0;
+}
+```
+
+The lifecycle can now be represented directly from the source:
+
+```text
+main()
+ │
+ ├── terminal_init()
+ │
+ ├── terminal_enable_raw_mode()
+ │
+ ├── application_event_loop()
+ │      │
+ │      └── read input
+ │
+ ├── terminal_restore()
+ │
+ └── return 0
+```
+
+## Initialization Failure
+
+If `terminal_init()` fails:
+
+```c
+if (!terminal_init(&terminal)) {
+    return 1;
+}
+```
+
+the program exits immediately.
+
+No raw-mode configuration has been applied.
+
+If raw-mode activation fails:
+
+```c
+if (!terminal_enable_raw_mode(&terminal)) {
+    terminal_restore(&terminal);
+    return 1;
+}
+```
+
+cleanup is attempted before exiting.
+
+`terminal_restore()` is safe here because it checks whether raw mode was actually enabled.
+
+This gives the runtime a consistent failure rule:
+
+```text
+Initialization failure
+        │
+        ├── no terminal modification
+        │       └── exit
+        │
+        └── terminal modification may have occurred
+                └── cleanup
+                    └── exit
+```
+
+The runtime model specifies that fatal initialization failures must terminate safely after restoring terminal state when necessary. 04-runtime-model
+
+## Normal Exit
+
+The normal exit path is:
+
+```text
+Ctrl-Q
+   │
+   ▼
+running = 0
+   │
+   ▼
+event loop ends
+   │
+   ▼
+terminal_restore()
+   │
+   ▼
+main() returns 0
+```
+
+No component after `terminal_restore()` should depend on raw terminal behavior.
+
+## Current Lifecycle Invariants
+
+The implementation now establishes these rules:
+
+```text
+Terminal initialization occurs before raw-mode activation.
+
+Raw mode is enabled before the event loop starts.
+
+The event loop runs only after successful initialization.
+
+Terminal state remains active throughout the event loop.
+
+Normal shutdown restores the terminal before process exit.
+
+Raw-mode initialization failure does not enter the event loop.
+
+Terminal restoration is performed before normal application exit.
+```
+
+These rules will remain valid as the runtime grows.
+
+Later chapters will insert additional initialization and shutdown operations around this structure:
+
+```text
+Initialize Terminal
+        │
+        ▼
+Initialize Editor State
+        │
+        ▼
+Load Document
+        │
+        ▼
+Initialize Viewport
+        │
+        ▼
+Event Loop
+        │
+        ▼
+Save / Finalize State
+        │
+        ▼
+Restore Terminal
+        │
+        ▼
+Exit
+```
+
+For now, only the terminal portion exists.
+
+**Next: 45.6 Minimal Event Loop.**

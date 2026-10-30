@@ -1,0 +1,23 @@
+---
+title: "Chapter 45 — Establishing the Runtime"
+description: "Builds the editor's first executable runtime—terminal state handling, raw mode, application lifecycle, and a minimal event loop."
+---
+
+## Introduction
+
+Chapter 44 prepared a repository that could build and test a program, but that program did not yet do anything. Chapter 45 begins the editor itself by establishing its first executable runtime: the program must enter the terminal, accept raw input, run an event loop, and exit cleanly.
+
+> **How does a terminal program take control of the terminal, remain interactive, and return the terminal to its original state?**
+
+This chapter implements that foundation in small, verifiable steps. It creates the `terminal` module, saves and restores the original `termios` state, enables raw mode, makes the application lifecycle explicit in `main.c`, and adds a minimal event loop whose only command is Ctrl-Q. It then verifies the runtime manually in a real terminal and reviews the resulting project state. No document, cursor, renderer, input parser, or editing logic is introduced yet; the goal is a trustworthy runtime on which later chapters can build, with the existing build and smoke-test baseline still passing.
+
+## Sections
+
+- [45.1 Implementation Goal](/volumes/volume-10/chapter-45/01-implementation-goal/)
+- [45.2 Terminal Module](/volumes/volume-10/chapter-45/02-terminal-module/)
+- [45.3 Saving and Restoring Terminal State](/volumes/volume-10/chapter-45/03-saving-restoring-terminal-state/)
+- [45.4 Enabling Raw Mode](/volumes/volume-10/chapter-45/04-enabling-raw-mode/)
+- [45.5 Application Lifecycle](/volumes/volume-10/chapter-45/05-application-lifecycle/)
+- [45.6 Minimal Event Loop](/volumes/volume-10/chapter-45/06-minimal-event-loop/)
+- [45.7 Manual Verification](/volumes/volume-10/chapter-45/07-manual-verification/)
+- [45.8 Resulting Project State](/volumes/volume-10/chapter-45/08-resulting-project-state/)

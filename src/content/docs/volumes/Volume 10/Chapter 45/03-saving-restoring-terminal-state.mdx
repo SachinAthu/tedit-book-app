@@ -1,0 +1,313 @@
+---
+title: 45.3 Saving and Restoring Terminal State
+description: "Explains how terminal state is owned and preserved, why initialization and raw-mode flags differ, and how restoration stays safe on every shutdown path."
+---
+
+The terminal configuration is temporary application state.
+
+The implementation must preserve the user's original terminal configuration before making any changes and restore it when the editor leaves the terminal.
+
+This is an explicit project decision: the original `termios` settings must be saved before raw mode is enabled and restored before exit, including error paths. 07-adrs
+
+## Saved State
+
+The `TerminalState` structure already provides the required storage:
+
+```c
+typedef struct {
+    struct termios original_attributes;
+    bool initialized;
+    bool raw_mode_enabled;
+} TerminalState;
+```
+
+The lifecycle is:
+
+```text
+TerminalState
+     │
+     │ terminal_init()
+     ▼
+initialized = true
+original_attributes = current terminal settings
+     │
+     │ terminal_enable_raw_mode()
+     ▼
+raw_mode_enabled = true
+     │
+     │ application runs
+     ▼
+terminal_restore()
+     │
+     ▼
+raw_mode_enabled = false
+```
+
+The important point is that the original attributes are never replaced by the raw-mode attributes.
+
+## Why the State Flags Matter
+
+The two boolean fields represent different states.
+
+```text
+initialized
+    │
+    └── We successfully captured the original terminal state.
+
+raw_mode_enabled
+    │
+    └── We successfully changed the terminal to raw mode.
+```
+
+They must not be treated as interchangeable.
+
+For example, this sequence is possible:
+
+```text
+terminal_init()
+    │
+    └── succeeds
+
+terminal_enable_raw_mode()
+    │
+    └── fails
+```
+
+In that case:
+
+```text
+initialized       = true
+raw_mode_enabled  = false
+```
+
+The terminal was never modified, so restoration does not need to call `tcsetattr()`.
+
+The existing `terminal_restore()` implementation handles exactly this case:
+
+```c
+if (terminal == NULL ||
+    !terminal->initialized ||
+    !terminal->raw_mode_enabled) {
+    return;
+}
+```
+
+## Restoration Must Be Safe
+
+Cleanup functions are frequently called from error paths.
+
+Therefore, `terminal_restore()` must be safe to call when:
+
+```text
+terminal == NULL
+```
+
+or:
+
+```text
+terminal was never initialized
+```
+
+or:
+
+```text
+raw mode was never enabled
+```
+
+It must also be safe to call after raw mode has already been restored.
+
+The current implementation achieves this by checking `raw_mode_enabled` before attempting restoration.
+
+After a successful restoration:
+
+```c
+terminal->raw_mode_enabled = false;
+```
+
+This makes repeated cleanup harmless.
+
+## Failure During Initialization
+
+The application lifecycle must distinguish between:
+
+```text
+Initialization failed
+```
+
+and:
+
+```text
+Raw mode was enabled and execution later failed.
+```
+
+The first case does not require terminal restoration if the terminal was never modified.
+
+The second case does.
+
+The intended lifecycle is therefore:
+
+```text
+main()
+ │
+ ├── terminal_init()
+ │       │
+ │       └── failure → exit
+ │
+ ├── terminal_enable_raw_mode()
+ │       │
+ │       └── failure → restore/cleanup → exit
+ │
+ ├── event loop
+ │
+ └── restore terminal → exit
+```
+
+This is consistent with the runtime model's requirement that fatal initialization failures terminate only after terminal state has been restored when necessary. 04-runtime-model
+
+## No Global Terminal State
+
+The terminal state remains explicitly owned by the application:
+
+```c
+TerminalState terminal;
+```
+
+rather than being stored in a global variable.
+
+This gives the runtime a clear ownership relationship:
+
+```text
+main()
+ │
+ └── owns TerminalState
+          │
+          └── terminal module operates on it
+```
+
+The terminal module therefore does not secretly own application-wide mutable state.
+
+This is important for the implementation because later runtime components will similarly receive their state explicitly rather than relying on unrelated global variables.
+
+## Complete Terminal Module After This Section
+
+No additional source change is required in this section.
+
+The complete terminal module remains:
+
+```c
+/* src/terminal/terminal.h */
+
+#ifndef TERMINAL_TERMINAL_H
+#define TERMINAL_TERMINAL_H
+
+#include <stdbool.h>
+#include <termios.h>
+
+typedef struct {
+    struct termios original_attributes;
+    bool initialized;
+    bool raw_mode_enabled;
+} TerminalState;
+
+bool terminal_init(TerminalState *terminal);
+bool terminal_enable_raw_mode(TerminalState *terminal);
+void terminal_restore(TerminalState *terminal);
+
+#endif
+```
+
+```c
+/* src/terminal/terminal.c */
+
+#include "terminal.h"
+
+#include <string.h>
+#include <unistd.h>
+
+bool terminal_init(TerminalState *terminal)
+{
+    if (terminal == NULL) {
+        return false;
+    }
+
+    memset(terminal, 0, sizeof(*terminal));
+
+    if (tcgetattr(STDIN_FILENO, &terminal->original_attributes) == -1) {
+        return false;
+    }
+
+    terminal->initialized = true;
+
+    return true;
+}
+
+bool terminal_enable_raw_mode(TerminalState *terminal)
+{
+    struct termios raw_attributes;
+
+    if (terminal == NULL || !terminal->initialized) {
+        return false;
+    }
+
+    raw_attributes = terminal->original_attributes;
+
+    raw_attributes.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw_attributes.c_oflag &= ~(OPOST);
+    raw_attributes.c_cflag |= CS8;
+    raw_attributes.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+
+    raw_attributes.c_cc[VMIN] = 1;
+    raw_attributes.c_cc[VTIME] = 0;
+
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw_attributes) == -1) {
+        return false;
+    }
+
+    terminal->raw_mode_enabled = true;
+
+    return true;
+}
+
+void terminal_restore(TerminalState *terminal)
+{
+    if (terminal == NULL ||
+        !terminal->initialized ||
+        !terminal->raw_mode_enabled) {
+        return;
+    }
+
+    (void)tcsetattr(
+        STDIN_FILENO,
+        TCSAFLUSH,
+        &terminal->original_attributes
+    );
+
+    terminal->raw_mode_enabled = false;
+}
+```
+
+## Implementation Invariants
+
+At the end of this section:
+
+```text
+TerminalState is explicitly owned by the application.
+
+Original terminal attributes are preserved.
+
+Raw-mode attributes are derived from the original attributes.
+
+original_attributes is never overwritten by raw-mode configuration.
+
+raw_mode_enabled becomes true only after tcsetattr() succeeds.
+
+Terminal restoration is safe on partial initialization.
+
+Terminal restoration is safe to call more than once.
+
+Normal and fatal shutdown paths can restore terminal state.
+```
+
+The terminal module is now ready to be connected to the application lifecycle.
+
+**Next: 45.4 Enabling Raw Mode in the Runtime.**
