@@ -1,0 +1,18 @@
+---
+title: Chapter 48 — Working with Lines
+description: "Adds line splitting and merging so Enter creates logical lines and Backspace at column zero joins them, with cursor transitions and tests."
+---
+
+## Introduction
+
+Chapter 47 gave the editor character insertion, deletion, horizontal movement, and a Dirty Flag, but every edit still happened within a single logical line. Real text editing requires lines to begin and end where the user decides.
+
+> **How should the editor create, split, and merge logical lines while keeping the document, cursor, and screen consistent?**
+
+This chapter extends the existing Document and application loop so that Enter splits the current line at the cursor and Backspace at column zero merges it into the preceding line. It covers splitting in the middle, at the start, and at the end of a line, along with the cursor transitions and Dirty Flag updates each operation requires. It then verifies that text order and line counts remain correct through automated tests and manual terminal checks. Vertical navigation, viewport scrolling, and file saving remain outside this milestone.
+
+## Sections
+
+- [48.1 Implementation Goal](/volumes/volume-10/chapter-48/01-implementation-goal/)
+- [48.2 Implementing Line Splitting and Merging](/volumes/volume-10/chapter-48/02-line-splitting-merging/)
+- [48.3 Verifying Line-Editing Behavior](/volumes/volume-10/chapter-48/03-verifying-line-editing-behavior/)

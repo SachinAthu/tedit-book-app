@@ -1,0 +1,553 @@
+---
+title: 48.2 Implementing Line Splitting and Merging
+description: "Implements document_split_line() and document_merge_lines(), connects Enter and Backspace in the input loop, and adds line-editing tests."
+---
+
+This section modifies the existing Document implementation and input loop. No new module is introduced.
+
+The implementation adds two Document operations:
+
+- `document_split_line()` — splits one logical line into two.
+- `document_merge_lines()` — appends one logical line to the preceding line and removes the second line.
+
+The input loop connects these operations to Enter and Backspace. The Cursor is updated only after the corresponding Document operation succeeds.
+
+## Update the Document Interface
+
+Add the following declarations to `src/document/document.h`, alongside the existing insertion and deletion functions.
+
+```c
+bool document_split_line(Document *document, size_t row, size_t column);
+
+bool document_merge_lines(Document *document, size_t row);
+```
+
+The functions use zero-based row and column indexes. `document_merge_lines(document, row)` merges `row + 1` into `row`.
+
+## Implement Line Splitting
+
+Add the following function to `src/document/document.c`.
+
+```c
+bool document_split_line(Document *document, size_t row, size_t column)
+{
+    DocumentLine *line;
+    DocumentLine new_line;
+    size_t suffix_length;
+    size_t new_line_capacity;
+
+    line = document_get_line(document, row);
+
+    if (line == NULL || column > line->length)
+    {
+        return false;
+    }
+
+    suffix_length = line->length - column;
+    new_line_capacity = suffix_length + 1;
+
+    if (new_line_capacity < INITIAL_LINE_CAPACITY)
+    {
+        new_line_capacity = INITIAL_LINE_CAPACITY;
+    }
+
+    new_line.data = malloc(new_line_capacity);
+
+    if (new_line.data == NULL)
+    {
+        return false;
+    }
+
+    new_line.length = suffix_length;
+    new_line.capacity = new_line_capacity;
+
+    if (suffix_length > 0)
+    {
+        memcpy(new_line.data,
+               &line->data[column],
+               suffix_length);
+    }
+
+    /*
+     * Reserve a line-array slot before changing the document.
+     * If allocation fails, the existing document remains unchanged.
+     */
+    if (document->line_count == document->line_capacity &&
+        !document_grow_lines(document))
+    {
+        document_line_destroy(&new_line);
+        return false;
+    }
+
+    /*
+     * Shift the lines after the split point one slot to the right.
+     */
+    memmove(&document->lines[row + 2],
+            &document->lines[row + 1],
+            (document->line_count - row - 1) *
+                sizeof(*document->lines));
+
+    /*
+     * Keep the prefix in the original line and insert the suffix
+     * as the new following line.
+     */
+    line = &document->lines[row];
+    line->length = column;
+    document->lines[row + 1] = new_line;
+    document->line_count += 1;
+
+    return true;
+}
+```
+
+The original line buffer retains the prefix. The new line owns a separate buffer containing the suffix.
+
+For example, splitting `hello` at column `2` produces:
+
+```
+Before:
+row 0: hello
+       01234
+         ^
+
+After:
+row 0: he
+row 1: llo
+```
+
+The operation also supports splitting at either boundary:
+
+```
+Split at column 0:
+row 0: ""
+row 1: hello
+
+Split at the line length:
+row 0: hello
+row 1: ""
+```
+
+An invalid row or a column beyond the line length is rejected without modifying the Document.
+
+## Implement Line Merging
+
+Add the following function to `src/document/document.c`.
+
+```c
+bool document_merge_lines(Document *document, size_t row)
+{
+    DocumentLine *first_line;
+    DocumentLine *second_line;
+    size_t combined_length;
+    char *new_data;
+
+    if (document == NULL ||
+        row >= document->line_count ||
+        row + 1 >= document->line_count)
+    {
+        return false;
+    }
+
+    first_line = &document->lines[row];
+    second_line = &document->lines[row + 1];
+
+    if (second_line->length >
+        (size_t)-1 - first_line->length)
+    {
+        return false;
+    }
+
+    combined_length =
+        first_line->length + second_line->length;
+
+    if (combined_length >= first_line->capacity)
+    {
+        if (combined_length == (size_t)-1)
+        {
+            return false;
+        }
+
+        new_data = realloc(
+            first_line->data,
+            combined_length + 1);
+
+        if (new_data == NULL)
+        {
+            return false;
+        }
+
+        first_line->data = new_data;
+        first_line->capacity = combined_length + 1;
+    }
+
+    if (second_line->length > 0)
+    {
+        memcpy(
+            &first_line->data[first_line->length],
+            second_line->data,
+            second_line->length);
+    }
+
+    first_line->length = combined_length;
+
+    /*
+     * Release the removed line's buffer.
+     */
+    document_line_destroy(second_line);
+
+    /*
+     * Close the gap in the line array.
+     */
+    memmove(
+        &document->lines[row + 1],
+        &document->lines[row + 2],
+        (document->line_count - row - 2) *
+            sizeof(*document->lines));
+
+    document->line_count -= 1;
+
+    return true;
+}
+```
+
+For example:
+
+```
+Before:
+row 0: hello
+row 1: world
+
+After document_merge_lines(document, 0):
+row 0: helloworld
+```
+
+The function rejects a row without a following line. It also checks for length overflow and handles allocation failure before removing the second line.
+
+## Connect Enter and Backspace to the Document
+
+Modify the input handling in `src/main.c`.
+
+Add these constants alongside the existing key definitions:
+
+```c
+#define ENTER 0x0D
+#define LINE_FEED 0x0A
+```
+
+Replace the existing Backspace handling with the following block:
+
+```c
+if (input == BACKSPACE || input == BACKSPACE_ALT)
+{
+    if (state->cursor.column > 0)
+    {
+        const size_t delete_column =
+            state->cursor.column - 1;
+
+        if (!document_delete_character(
+                &state->document,
+                state->cursor.row,
+                delete_column))
+        {
+            continue;
+        }
+
+        state->cursor.column = delete_column;
+    }
+    else if (state->cursor.row > 0)
+    {
+        const size_t previous_row =
+            state->cursor.row - 1;
+
+        const DocumentLine *previous_line =
+            document_get_line(
+                &state->document,
+                previous_row);
+
+        if (previous_line == NULL)
+        {
+            continue;
+        }
+
+        const size_t previous_length =
+            previous_line->length;
+
+        if (!document_merge_lines(
+                &state->document,
+                previous_row))
+        {
+            continue;
+        }
+
+        state->cursor.row = previous_row;
+        state->cursor.column = previous_length;
+    }
+    else
+    {
+        continue;
+    }
+
+    state->is_dirty = true;
+
+    if (!redraw_after_action(renderer, state))
+    {
+        return false;
+    }
+
+    continue;
+}
+```
+
+Backspace now has three outcomes:
+
+- If the Cursor is inside a line, delete the character immediately before it.
+- If the Cursor is at column zero and not on the first line, merge the current line into the previous line and position the Cursor at the joining point.
+- If the Cursor is at the beginning of the first line, do nothing.
+
+Next, add Enter handling to the input loop:
+
+```c
+if (input == ENTER || input == LINE_FEED)
+{
+    if (!document_split_line(
+            &state->document,
+            state->cursor.row,
+            state->cursor.column))
+    {
+        continue;
+    }
+
+    state->cursor.row += 1;
+    state->cursor.column = 0;
+    state->is_dirty = true;
+
+    if (!redraw_after_action(renderer, state))
+    {
+        return false;
+    }
+
+    continue;
+}
+```
+
+Both carriage return (`0x0D`) and line feed (`0x0A`) are accepted. After a successful split, the Cursor moves to the beginning of the new line.
+
+## Add Tests
+
+Add tests to `tests/test_editing.c` for splitting, merging, and Cursor transitions. The implementation package below contains the complete updated test file.
+
+The core assertions should verify these cases:
+
+| Operation                             | Expected result                                |
+| ------------------------------------- | ---------------------------------------------- |
+| Split in the middle                   | Prefix and suffix become separate lines        |
+| Split at column zero                  | New first line is empty                        |
+| Split at line end                     | New following line is empty                    |
+| Split using an invalid row or column  | Operation fails                                |
+| Merge adjacent lines                  | Text is concatenated in order                  |
+| Merge the last line with no successor | Operation fails                                |
+| Backspace at column zero              | Cursor moves to the previous line's former end |
+| Enter                                 | Cursor moves to column zero of the new line    |
+| Successful edit                       | Dirty Flag becomes true                        |
+
+For every test, destroy the Document or Editor State after the assertions so allocated buffers are released.
+
+### Complete `tests/test_editing.c`
+
+```c
+/* tests/test_editing.c */
+
+#include "document/document.h"
+#include "cursor/cursor.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <string.h>
+
+static void test_document_insert_and_delete(void)
+{
+    Document document;
+    DocumentLine *line;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'c'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+
+    line = document_get_line(&document, 0);
+    assert(line != NULL);
+    assert(line->length == 3);
+    assert(memcmp(line->data, "abc", 3) == 0);
+
+    assert(document_delete_character(&document, 0, 1));
+    assert(line->length == 2);
+    assert(memcmp(line->data, "ac", 2) == 0);
+
+    assert(!document_delete_character(&document, 0, 2));
+    assert(!document_delete_character(&document, 1, 0));
+    assert(line->length == 2);
+    assert(memcmp(line->data, "ac", 2) == 0);
+
+    document_destroy(&document);
+}
+
+static void test_cursor_horizontal_movement(void)
+{
+    Document document;
+    Cursor cursor;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'x'));
+    assert(document_insert_character(&document, 0, 1, 'y'));
+    cursor_init(&cursor);
+
+    assert(!cursor_move_left(&cursor));
+    assert(cursor.column == 0);
+    assert(cursor_move_right(&cursor, &document));
+    assert(cursor.column == 1);
+    assert(cursor_move_left(&cursor));
+    assert(cursor.column == 0);
+    assert(cursor_move_right(&cursor, &document));
+    assert(cursor_move_right(&cursor, &document));
+    assert(cursor.column == 2);
+    assert(!cursor_move_right(&cursor, &document));
+    assert(cursor.column == 2);
+
+    document_destroy(&document);
+}
+
+static void test_dirty_flag_initial_state(void)
+{
+    EditorState state;
+
+    assert(editor_state_init(&state));
+    assert(!state.is_dirty);
+    state.is_dirty = true;
+    assert(state.is_dirty);
+    editor_state_destroy(&state);
+}
+
+
+static void test_document_split_line(void)
+{
+    Document document;
+    DocumentLine *first_line;
+    DocumentLine *second_line;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+    assert(document_insert_character(&document, 0, 2, 'c'));
+
+    assert(document_split_line(&document, 0, 1));
+    assert(document.line_count == 2);
+    first_line = document_get_line(&document, 0);
+    second_line = document_get_line(&document, 1);
+    assert(first_line != NULL && second_line != NULL);
+    assert(first_line->length == 1 && memcmp(first_line->data, "a", 1) == 0);
+    assert(second_line->length == 2 && memcmp(second_line->data, "bc", 2) == 0);
+
+    assert(document_split_line(&document, 1, 0));
+    assert(document.line_count == 3);
+    assert(document_get_line(&document, 1)->length == 0);
+    assert(document_get_line(&document, 2)->length == 2);
+
+    assert(document_split_line(&document, 2, 2));
+    assert(document.line_count == 4);
+    assert(document_get_line(&document, 2)->length == 2);
+    assert(document_get_line(&document, 3)->length == 0);
+    assert(!document_split_line(&document, 4, 0));
+    assert(!document_split_line(&document, 0, 2));
+
+    document_destroy(&document);
+}
+
+static void test_document_merge_lines(void)
+{
+    Document document;
+    DocumentLine *line;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+    assert(document_split_line(&document, 0, 2));
+    assert(document_insert_character(&document, 1, 0, 'c'));
+    assert(document_insert_character(&document, 1, 1, 'd'));
+
+    assert(document_merge_lines(&document, 0));
+    assert(document.line_count == 1);
+    line = document_get_line(&document, 0);
+    assert(line != NULL && line->length == 4);
+    assert(memcmp(line->data, "abcd", 4) == 0);
+    assert(!document_merge_lines(&document, 0));
+    assert(!document_merge_lines(&document, 1));
+
+    document_destroy(&document);
+}
+
+static void test_line_editing_cursor_transitions(void)
+{
+    EditorState state;
+    const DocumentLine *previous_line;
+
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'a'));
+    assert(document_insert_character(&state.document, 0, 1, 'b'));
+    assert(cursor_set_position(&state.cursor, &state.document, 0, 1));
+
+    assert(document_split_line(&state.document, state.cursor.row, state.cursor.column));
+    state.cursor.row += 1;
+    state.cursor.column = 0;
+    state.is_dirty = true;
+    assert(state.cursor.row == 1 && state.cursor.column == 0);
+    assert(state.document.line_count == 2);
+
+    assert(document_insert_character(&state.document, 1, 0, 'c'));
+    assert(cursor_set_position(&state.cursor, &state.document, 1, 0));
+    previous_line = document_get_line(&state.document, 0);
+    assert(previous_line != NULL);
+    state.cursor.row -= 1;
+    state.cursor.column = previous_line->length;
+    assert(document_merge_lines(&state.document, state.cursor.row));
+    assert(state.cursor.row == 0 && state.cursor.column == 1);
+    assert(state.document.line_count == 1);
+    assert(state.is_dirty);
+
+    editor_state_destroy(&state);
+}
+
+int main(void)
+{
+    test_document_insert_and_delete();
+    test_cursor_horizontal_movement();
+    test_dirty_flag_initial_state();
+    test_document_split_line();
+    test_document_merge_lines();
+    test_line_editing_cursor_transitions();
+    return 0;
+}
+```
+
+## Build and Run the Tests
+
+From the repository root, run:
+
+```bash
+cmake -S . -B build/debug
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+The Chapter 48 working copy builds successfully, and both existing CTest targets pass:
+
+```bash
+100% tests passed, 0 tests failed out of 2
+```
+
+The tests cover Document splitting and merging, invalid operations, and basic Cursor transitions. Also verify the interactive behavior in a real terminal before treating the chapter as fully validated.
+
+### Complete implementation files
+
+The changes are limited to `src/document/document.h`, `src/document/document.c`, `src/main.c`, and `tests/test_editing.c`. Existing modules and the project structure remain in place.
+
+Next section: 48.3 — Verifying Line-Editing Behavior. This will focus on checking boundary cases and confirming that the Document, Cursor, and Dirty Flag remain consistent after line edits.

@@ -1,0 +1,81 @@
+---
+title: 48.1 Implementation Goal
+description: "Defines the required line-editing behavior: Enter splits the current line at the cursor, and Backspace at column zero merges it into the preceding line."
+---
+
+Chapter 48 extends the existing editor so that the user can create and remove logical lines while editing text. We will continue directly from the Chapter 47 repository snapshot, preserving its existing modules and working behavior.
+
+The supplied repository has been configured and built successfully in the verification environment. Both existing CTest tests, `smoke` and `editing`, pass before the Chapter 48 changes.
+
+## Required behavior
+
+| Operation                   | Required result                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------------- |
+| Press Enter                 | Split the current logical line at the Cursor.                                            |
+| Split in the middle         | Keep the preceding text on the original line and move the remaining text to a new line.  |
+| Split at column zero        | Insert an empty line before the existing text.                                           |
+| Split at end-of-line        | Create an empty line after the current line.                                             |
+| Backspace within a line     | Delete the character immediately before the Cursor.                                      |
+| Backspace at column zero    | Merge the current line into the preceding line.                                          |
+| Backspace on the first line | Do nothing.                                                                              |
+| Successful line edit        | Update the Cursor, set the Dirty Flag, and redraw the screen.                            |
+| Failed line edit            | Preserve the existing document contents and avoid marking an unsuccessful edit as dirty. |
+
+For example, pressing Enter in the middle of `hello world` should produce:
+
+Before:
+
+```
+hello| world
+```
+
+After:
+
+```
+hello
+| world
+```
+
+Here, `|` represents the Cursor. The original text is preserved, and the Cursor moves to the beginning of the new line.
+
+For Backspace at the beginning of the second line:
+
+Before:
+
+```
+hello
+|world
+```
+
+After:
+
+```
+hello|world
+```
+
+The Cursor moves to the former end of the preceding line.
+
+## Files changed in this milestone
+
+The implementation will extend the existing repository as follows:
+
+```
+tedit-main/
+├── src/
+│   ├── document/
+│   │   ├── document.h       [MODIFIED]
+│   │   └── document.c       [MODIFIED]
+│   └── main.c               [MODIFIED]
+└── tests/
+    └── test_editing.c       [MODIFIED]
+```
+
+- `document.c` and `document.h` will implement and expose the line-splitting and line-merging operations.
+- `main.c` will integrate Enter handling, Backspace at line boundaries, Cursor transitions, Dirty Flag updates, and redraws.
+- `test_editing.c` will add automated tests for line splitting, merging, empty lines, invalid positions, and Cursor transitions.
+
+The existing Cursor module interface, Editor State structure, Renderer, Terminal module, and CMake configuration will remain unchanged.
+
+The implementation has been built and the automated tests have passed in the working verification copy. Interactive Enter and Backspace behavior still requires manual verification in a real terminal.
+
+Next section: 48.2 — Implementing Line Splitting and Merging. It will begin with the complete source code for every modified file, followed by build instructions, implementation details, and tests.
