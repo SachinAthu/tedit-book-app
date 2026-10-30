@@ -1,0 +1,34 @@
+---
+title: 53.1 Implementation Goal and Remaining Gaps
+description: "Outlines the remaining keyboard gaps—Home/End, Delete, page navigation, Tab, UTF-8 editing, visual columns, integration, and regression tests—and their order."
+---
+
+We will continue directly from the attached `tedit-main(8).zip` repository. No replacement project or unrelated refactoring is needed.
+
+## Remaining implementation work
+
+| Feature               | Work required                                                                                             |
+| --------------------- | --------------------------------------------------------------------------------------------------------- |
+| Home and End          | Move to the beginning or end of the current logical line.                                                 |
+| Delete                | Delete the code point at the Cursor; merge with the next line when deleting at the end of a line.         |
+| Page Up and Page Down | Move vertically by a page-sized distance while preserving preferred-column behavior.                      |
+| Tab                   | Insert a tab character into the Document.                                                                 |
+| UTF-8 editing         | Ensure movement and deletion operate on complete Unicode code points, never individual UTF-8 bytes.       |
+| Visual columns        | Expand tabs for rendering and calculate Cursor visibility and horizontal scrolling using display columns. |
+| Input integration     | Connect the new key events through the existing Input Engine and Command Engine.                          |
+| Regression tests      | Cover boundaries, empty lines, Unicode characters, navigation, and terminal input.                        |
+
+## Implementation sequence
+
+We will implement the chapter in the order established in `01-outline.md`:
+
+1. 53.2: Extend terminal input parsing for Home, End, Page Up, Page Down, and Tab.
+2. 53.3–53.5: Implement line-boundary navigation, Delete editing, and page navigation.
+3. 53.6–53.8: Implement Tab insertion and the logical-to-visual column mapping required for correct rendering and scrolling.
+4. 53.9: Complete Input Engine and Command Engine integration.
+5. 53.10: Add regression tests and pseudo-terminal checks.
+6. 53.11: Update the implementation records with the verified results.
+
+Each step will build on the actual repository, with complete contents for modified files when presenting the implementation. We will run the relevant tests before proceeding and will not claim terminal behavior has been verified unless it has actually been tested.
+
+Next section: 53.2 — Terminal Sequences for Additional Keys.

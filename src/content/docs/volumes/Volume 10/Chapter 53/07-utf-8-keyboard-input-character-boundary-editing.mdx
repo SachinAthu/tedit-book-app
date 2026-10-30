@@ -1,0 +1,1046 @@
+---
+title: 53.7 UTF-8 Keyboard Input and Character-Boundary Editing
+description: "Ensures UTF-8 keyboard input becomes complete Unicode scalar values and verifies navigation and deletion operate at character boundaries."
+---
+
+## Implementation Goal
+
+Ensure terminal UTF-8 input is converted into complete Unicode scalar values before it reaches the editing pipeline, and verify that navigation and deletion operate on logical code points rather than UTF-8 bytes.
+
+## Changed Files
+
+- `tests/test_input_parser.c`
+- `tests/test_command_engine.c`
+- `tests/test_input_pipeline.c`
+
+## Complete updated source
+
+### `tests/test_input_parser.c`
+
+```c
+/* tests/test_input_parser.c */
+
+#include "input/input_parser.h"
+
+#include <assert.h>
+#include <stddef.h>
+
+static InputEvent feed(InputParser *parser, unsigned char byte)
+{
+    InputEvent event;
+    assert(input_parser_feed(parser, byte, &event));
+    return event;
+}
+
+static void test_ascii_and_control_keys(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 'x');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'x');
+    event = feed(&parser, 0x11);
+    assert(event.type == INPUT_EVENT_CTRL_Q);
+    event = feed(&parser, 0x13);
+    assert(event.type == INPUT_EVENT_CTRL_S);
+    event = feed(&parser, 0x7F);
+    assert(event.type == INPUT_EVENT_BACKSPACE);
+    event = feed(&parser, 0x08);
+    assert(event.type == INPUT_EVENT_BACKSPACE);
+    event = feed(&parser, '\r');
+    assert(event.type == INPUT_EVENT_ENTER);
+    event = feed(&parser, '\n');
+    assert(event.type == INPUT_EVENT_ENTER);
+    event = feed(&parser, '\t');
+    assert(event.type == INPUT_EVENT_TAB);
+}
+
+static void test_arrow_sequences(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 0x1B);
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(input_parser_is_waiting(&parser));
+    event = feed(&parser, '[');
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(input_parser_is_waiting(&parser));
+    event = feed(&parser, 'A');
+    assert(event.type == INPUT_EVENT_ARROW_UP);
+    assert(!input_parser_is_waiting(&parser));
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'B');
+    assert(event.type == INPUT_EVENT_ARROW_DOWN);
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'C');
+    assert(event.type == INPUT_EVENT_ARROW_RIGHT);
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'D');
+    assert(event.type == INPUT_EVENT_ARROW_LEFT);
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, '3');
+    assert(event.type == INPUT_EVENT_NONE && input_parser_is_waiting(&parser));
+    event = feed(&parser, '~');
+    assert(event.type == INPUT_EVENT_DELETE && !input_parser_is_waiting(&parser));
+}
+
+
+static void test_home_end_and_page_sequences(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'H');
+    assert(event.type == INPUT_EVENT_HOME);
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'F');
+    assert(event.type == INPUT_EVENT_END);
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, '1');
+    event = feed(&parser, '~');
+    assert(event.type == INPUT_EVENT_HOME);
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, '4');
+    event = feed(&parser, '~');
+    assert(event.type == INPUT_EVENT_END);
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, '5');
+    event = feed(&parser, '~');
+    assert(event.type == INPUT_EVENT_PAGE_UP);
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, '6');
+    event = feed(&parser, '~');
+    assert(event.type == INPUT_EVENT_PAGE_DOWN);
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, '7');
+    event = feed(&parser, '~');
+    assert(event.type == INPUT_EVENT_HOME);
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, '8');
+    event = feed(&parser, '~');
+    assert(event.type == INPUT_EVENT_END);
+}
+
+static void test_escape_timeout_and_recovery(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 0x1B);
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(input_parser_timeout(&parser, &event));
+    assert(event.type == INPUT_EVENT_ESCAPE);
+    assert(!input_parser_is_waiting(&parser));
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    assert(input_parser_timeout(&parser, &event));
+    assert(event.type == INPUT_EVENT_NONE);
+
+    event = feed(&parser, 'z');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'z');
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'X');
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 'q');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'q');
+}
+
+static void test_utf8_character(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 0xE2);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x82);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0xAC);
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 0x20AC);
+}
+
+static void test_invalid_utf8_recovers(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 0xE2);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 'a');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'a');
+}
+
+static void test_utf8_scalar_boundaries_and_recovery(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+
+    /* Two-, three-, and four-byte sequences each emit one scalar event. */
+    event = feed(&parser, 0xC3);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0xA9);
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 0x00E9);
+
+    event = feed(&parser, 0xE2);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x82);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0xAC);
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 0x20AC);
+
+    event = feed(&parser, 0xF0);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x9F);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x98);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x80);
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 0x1F600);
+
+    /* Invalid leading bytes, overlong forms, surrogates, and out-of-range
+     * values must never become character events. */
+    event = feed(&parser, 0xC0);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0xAF);
+    assert(event.type == INPUT_EVENT_NONE);
+
+    event = feed(&parser, 0xE0);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x80);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x80);
+    assert(event.type == INPUT_EVENT_NONE);
+
+    event = feed(&parser, 0xED);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0xA0);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x80);
+    assert(event.type == INPUT_EVENT_NONE);
+
+    event = feed(&parser, 0xF4);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x90);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x80);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x80);
+    assert(event.type == INPUT_EVENT_NONE);
+
+    /* A non-continuation byte aborts the incomplete sequence and is parsed
+     * again as a new input byte instead of being swallowed. */
+    event = feed(&parser, 0xE2);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 'r');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'r');
+    assert(parser.utf8_remaining == 0);
+
+    /* Timeout also clears an incomplete UTF-8 sequence. */
+    event = feed(&parser, 0xF0);
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(input_parser_timeout(&parser, &event));
+    assert(event.type == INPUT_EVENT_NONE && parser.utf8_remaining == 0);
+    event = feed(&parser, 's');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 's');
+}
+
+int main(void)
+{
+    test_ascii_and_control_keys();
+    test_arrow_sequences();
+    test_home_end_and_page_sequences();
+    test_escape_timeout_and_recovery();
+    test_utf8_character();
+    test_invalid_utf8_recovers();
+    test_utf8_scalar_boundaries_and_recovery();
+    return 0;
+}
+```
+
+### `tests/test_command_engine.c`
+
+```c
+/* tests/test_command_engine.c */
+
+#define _POSIX_C_SOURCE 200809L
+#include "command/command_engine.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static void execute(EditorState *state, EditorCommandType type, uint32_t character,
+                    bool *redraw, bool *should_quit)
+{
+    EditorCommand command = {type, character, 3};
+    assert(command_engine_execute(state, &command, NULL, redraw, should_quit));
+}
+
+static void test_editing_commands(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'a', &redraw, &should_quit);
+    assert(redraw && !should_quit && state.is_dirty);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'b', &redraw, &should_quit);
+    assert(redraw);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.column == 1);
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.column == 0);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'b');
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+    assert(redraw && state.document.line_count == 2 && state.cursor.row == 1);
+    editor_state_destroy(&state);
+}
+
+static void test_tab_insertion_uses_document_code_point(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    assert(state.configuration.tab_width == DEFAULT_TAB_WIDTH);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (uint32_t)'a', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_TAB, 0, &redraw, &should_quit);
+
+    line = document_get_line(&state.document, 0);
+    assert(redraw && !should_quit && state.is_dirty);
+    assert(line != NULL && line->length == 2);
+    assert(line->data[0] == (uint32_t)'a' && line->data[1] == (uint32_t)'\t');
+    assert(state.cursor.column == 2);
+
+    editor_state_destroy(&state);
+}
+
+static void test_home_and_end_commands(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'a', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'b', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'c', &redraw, &should_quit);
+    assert(state.cursor.column == 3);
+
+    execute(&state, EDITOR_COMMAND_MOVE_HOME, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && state.cursor.row == 0 && state.cursor.column == 0);
+    execute(&state, EDITOR_COMMAND_MOVE_HOME, 0, &redraw, &should_quit);
+    assert(!redraw && state.cursor.column == 0);
+
+    execute(&state, EDITOR_COMMAND_MOVE_END, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && state.cursor.column == 3);
+    execute(&state, EDITOR_COMMAND_MOVE_END, 0, &redraw, &should_quit);
+    assert(!redraw && state.cursor.column == 3);
+    assert(state.is_dirty);
+
+    editor_state_destroy(&state);
+}
+
+
+static void test_page_navigation_commands(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+
+    /* Build eight logical lines, each with four code points. */
+    for (size_t row = 0; row < 8; row++)
+    {
+        for (size_t column = 0; column < 4; column++)
+        {
+            execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (uint32_t)('a' + column),
+                    &redraw, &should_quit);
+        }
+        if (row + 1 < 8)
+        {
+            execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+        }
+    }
+
+    assert(state.cursor.row == 7 && state.cursor.column == 4);
+
+    /* Make one destination line shorter to verify preferred-column recovery. */
+    assert(document_delete_character(&state.document, 4, 1));
+    assert(document_delete_character(&state.document, 4, 1));
+    assert(document_delete_character(&state.document, 4, 1));
+    state.is_dirty = false;
+
+    execute(&state, EDITOR_COMMAND_PAGE_UP, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit);
+    assert(state.cursor.row == 4 && state.cursor.column == 1);
+    assert(state.cursor.preferred_column == 4);
+    assert(!state.is_dirty);
+
+    execute(&state, EDITOR_COMMAND_PAGE_UP, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.row == 1 && state.cursor.column == 4);
+    execute(&state, EDITOR_COMMAND_PAGE_UP, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.row == 0 && state.cursor.column == 4);
+    execute(&state, EDITOR_COMMAND_PAGE_UP, 0, &redraw, &should_quit);
+    assert(!redraw && state.cursor.row == 0);
+
+    execute(&state, EDITOR_COMMAND_PAGE_DOWN, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.row == 3 && state.cursor.column == 4);
+    execute(&state, EDITOR_COMMAND_PAGE_DOWN, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.row == 6 && state.cursor.column == 4);
+    execute(&state, EDITOR_COMMAND_PAGE_DOWN, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.row == 7 && state.cursor.column == 4);
+    execute(&state, EDITOR_COMMAND_PAGE_DOWN, 0, &redraw, &should_quit);
+    assert(!redraw && state.cursor.row == 7);
+    assert(!state.is_dirty);
+
+    editor_state_destroy(&state);
+}
+
+static void test_document_delete_command(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'a', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 0x20AC, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'c', &redraw, &should_quit);
+    assert(state.cursor.column == 3 && state.is_dirty);
+
+    state.is_dirty = false;
+    execute(&state, EDITOR_COMMAND_MOVE_HOME, 0, &redraw, &should_quit);
+    assert(redraw && !state.is_dirty);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    line = document_get_line(&state.document, 0);
+    assert(redraw && !should_quit && state.is_dirty);
+    assert(line != NULL && line->length == 2);
+    assert(line->data[0] == 0x20AC && line->data[1] == 'c');
+    assert(state.cursor.row == 0 && state.cursor.column == 0);
+
+    state.is_dirty = false;
+    execute(&state, EDITOR_COMMAND_MOVE_END, 0, &redraw, &should_quit);
+    assert(redraw && !state.is_dirty);
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'z', &redraw, &should_quit);
+    state.is_dirty = false;
+    execute(&state, EDITOR_COMMAND_MOVE_HOME, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_MOVE_UP, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_MOVE_END, 0, &redraw, &should_quit);
+    assert(state.cursor.row == 0 && state.cursor.column == 2);
+
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(redraw && state.is_dirty && state.document.line_count == 1);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 3);
+    assert(line->data[0] == 0x20AC && line->data[1] == 'c' && line->data[2] == 'z');
+    assert(state.cursor.row == 0 && state.cursor.column == 2);
+
+    state.is_dirty = false;
+    execute(&state, EDITOR_COMMAND_MOVE_END, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(!redraw && !state.is_dirty && state.document.line_count == 1);
+
+    editor_state_destroy(&state);
+}
+
+static void test_backspace_deletes_one_unicode_code_point(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 0x1F600, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (uint32_t)'x', &redraw, &should_quit);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 2);
+    assert(line->data[0] == 0x1F600 && line->data[1] == (uint32_t)'x');
+    assert(state.cursor.column == 2);
+
+    state.is_dirty = false;
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    line = document_get_line(&state.document, 0);
+    assert(redraw && state.is_dirty && line != NULL && line->length == 1);
+    assert(line->data[0] == 0x1F600 && state.cursor.column == 1);
+
+    state.is_dirty = false;
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    line = document_get_line(&state.document, 0);
+    assert(redraw && state.is_dirty && line != NULL && line->length == 0);
+    assert(state.cursor.column == 0);
+
+    editor_state_destroy(&state);
+}
+
+static void test_quit_and_noop(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_NONE, 0, &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(!redraw && should_quit);
+    editor_state_destroy(&state);
+}
+
+
+static void test_filename_entry_cursor_editing(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_SAVE, 0, &redraw, &should_quit);
+    assert(state.filename_entry_active && redraw);
+
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'a', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'b', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'c', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    assert(state.filename_entry_cursor == 2);
+
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'X', &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "abXc") == 0);
+    assert(state.filename_entry_cursor == 3);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "abc") == 0);
+    assert(state.filename_entry_cursor == 2);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "ab") == 0);
+
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "b") == 0);
+    assert(state.filename_entry_cursor == 0);
+
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 0x20AC, &redraw, &should_quit);
+    assert(state.filename_entry_length == 4);
+    assert(state.filename_entry_cursor == 3);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "b") == 0);
+    assert(state.filename_entry_length == 1 && state.filename_entry_cursor == 0);
+
+    execute(&state, EDITOR_COMMAND_CANCEL, 0, &redraw, &should_quit);
+    assert(!state.filename_entry_active && !state.is_dirty && state.file_path == NULL);
+    editor_state_destroy(&state);
+}
+
+static void test_dirty_quit_confirmation(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'q', &redraw, &should_quit);
+    assert(state.is_dirty);
+
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && state.quit_confirmation_active);
+    assert(strstr(state.message, "Save changes before quitting?") != NULL);
+
+    execute(&state, EDITOR_COMMAND_CANCEL, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && !state.quit_confirmation_active);
+    assert(state.is_dirty);
+    assert(strcmp(state.message, "Quit cancelled.") == 0);
+
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'n', &redraw, &should_quit);
+    assert(!redraw && should_quit && !state.quit_confirmation_active);
+    assert(state.is_dirty);
+    editor_state_destroy(&state);
+}
+
+static void test_dirty_quit_saves_unnamed_document(void)
+{
+    char path[] = "/tmp/tedit-quit-save-XXXXXX";
+    int descriptor = mkstemp(path);
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    FILE *file;
+    char contents[16];
+    size_t length;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(path) == 0);
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'z', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(state.quit_confirmation_active && !should_quit);
+
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'y', &redraw, &should_quit);
+    assert(state.filename_entry_active && state.quit_after_save && !should_quit);
+    for (size_t index = 0; path[index] != '\0'; ++index)
+    {
+        execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (unsigned char)path[index],
+                &redraw, &should_quit);
+    }
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+    assert(redraw && should_quit && !state.filename_entry_active);
+    assert(state.file_path != NULL && strcmp(state.file_path, path) == 0);
+    assert(!state.is_dirty && !state.quit_after_save);
+
+    file = fopen(path, "rb");
+    assert(file != NULL);
+    length = fread(contents, 1, sizeof(contents), file);
+    assert(!ferror(file));
+    assert(fclose(file) == 0);
+    assert(length == 2 && contents[0] == 'z' && contents[1] == '\n');
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_invalid_arguments(void)
+{
+    EditorState state;
+    EditorCommand command = {EDITOR_COMMAND_NONE, 0, 0};
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    assert(!command_engine_execute(NULL, &command, NULL, &redraw, &should_quit));
+    assert(!command_engine_execute(&state, NULL, NULL, &redraw, &should_quit));
+    assert(!command_engine_execute(&state, &command, NULL, NULL, &should_quit));
+    assert(!command_engine_execute(&state, &command, NULL, &redraw, NULL));
+    editor_state_destroy(&state);
+}
+
+
+static void test_save_as_success_and_backspace(void)
+{
+    char path[] = "/tmp/tedit-save-as-XXXXXX";
+    int descriptor = mkstemp(path);
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    unsigned char saved[8];
+    FILE *file;
+    size_t length;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(path) == 0);
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'x', &redraw, &should_quit);
+    assert(state.is_dirty);
+    execute(&state, EDITOR_COMMAND_SAVE, 0, &redraw, &should_quit);
+    assert(redraw && state.filename_entry_active && state.is_dirty);
+
+    for (size_t index = 0; path[index] != '\0'; ++index)
+    {
+        execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (unsigned char)path[index],
+                &redraw, &should_quit);
+        assert(redraw && state.filename_entry_active);
+    }
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'x', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, path) == 0);
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+
+    assert(redraw && !state.filename_entry_active);
+    assert(state.file_path != NULL && strcmp(state.file_path, path) == 0);
+    assert(!state.is_dirty);
+    assert(strcmp(state.message, "Saved successfully.") == 0);
+
+    file = fopen(path, "rb");
+    assert(file != NULL);
+    length = fread(saved, 1, sizeof(saved), file);
+    assert(!ferror(file));
+    assert(fclose(file) == 0);
+    assert(length == 2 && saved[0] == 'x' && saved[1] == '\n');
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_save_as_failure_and_cancel_preserve_document(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+    char invalid_path[] = "/tmp/tedit-save-as-fail-XXXXXX";
+    int descriptor = mkstemp(invalid_path);
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(invalid_path) == 0);
+    assert(mkdir(invalid_path, 0700) == 0);
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'q', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_SAVE, 0, &redraw, &should_quit);
+    assert(state.filename_entry_active && state.is_dirty);
+
+    for (size_t index = 0; invalid_path[index] != '\0'; ++index)
+    {
+        execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (unsigned char)invalid_path[index],
+                &redraw, &should_quit);
+    }
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+
+    assert(redraw && state.filename_entry_active);
+    assert(state.file_path == NULL);
+    assert(state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'q');
+    assert(strstr(state.message, "Save failed") != NULL);
+
+    execute(&state, EDITOR_COMMAND_CANCEL, 0, &redraw, &should_quit);
+    assert(redraw && !state.filename_entry_active);
+    assert(state.file_path == NULL && state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'q');
+    assert(strcmp(state.message, "Save As cancelled.") == 0);
+    editor_state_destroy(&state);
+    assert(rmdir(invalid_path) == 0);
+}
+
+
+static void test_dirty_quit_saves_named_document(void)
+{
+    char path[] = "/tmp/tedit-quit-named-XXXXXX";
+    int descriptor = mkstemp(path);
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    FILE *file;
+    char contents[16];
+    size_t length;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(path) == 0);
+    assert(editor_state_init(&state));
+    assert(editor_state_save_as(&state, path));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'n', &redraw, &should_quit);
+    assert(state.is_dirty);
+
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && state.quit_confirmation_active);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'Y', &redraw, &should_quit);
+    assert(redraw && should_quit && !state.quit_confirmation_active);
+    assert(!state.is_dirty && state.file_path != NULL && strcmp(state.file_path, path) == 0);
+
+    file = fopen(path, "rb");
+    assert(file != NULL);
+    length = fread(contents, 1, sizeof(contents), file);
+    assert(!ferror(file));
+    assert(fclose(file) == 0);
+    assert(length == 2 && contents[0] == 'n' && contents[1] == '\n');
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+int main(void)
+{
+    test_editing_commands();
+    test_tab_insertion_uses_document_code_point();
+    test_home_and_end_commands();
+    test_page_navigation_commands();
+    test_document_delete_command();
+    test_backspace_deletes_one_unicode_code_point();
+    test_quit_and_noop();
+    test_invalid_arguments();
+    test_save_as_success_and_backspace();
+    test_save_as_failure_and_cancel_preserve_document();
+    test_filename_entry_cursor_editing();
+    test_dirty_quit_confirmation();
+    test_dirty_quit_saves_unnamed_document();
+    test_dirty_quit_saves_named_document();
+    return 0;
+}
+```
+
+### `tests/test_input_pipeline.c`
+
+```c
+/* tests/test_input_pipeline.c */
+
+#include "command/command_engine.h"
+#include "document/document.h"
+#include "input/input_engine.h"
+#include "input/input_parser.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <string.h>
+
+static void feed_and_execute(InputParser *parser, EditorState *state, unsigned char byte,
+                             bool *redraw, bool *should_quit)
+{
+    InputEvent event;
+    EditorCommand command;
+
+    assert(input_parser_feed(parser, byte, &event));
+    assert(input_engine_translate(&event, &command));
+    command.page_rows = 3;
+    assert(command_engine_execute(state, &command, NULL, redraw, should_quit));
+}
+
+static void test_end_to_end_input_pipeline(void)
+{
+    InputParser parser;
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    input_parser_init(&parser);
+
+    feed_and_execute(&parser, &state, 'x', &redraw, &should_quit);
+    assert(redraw && !should_quit);
+    assert(state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'x');
+    assert(state.cursor.column == 1);
+
+    /* An unknown CSI sequence produces no command and does not change state. */
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    feed_and_execute(&parser, &state, 'Z', &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    assert(state.cursor.column == 1);
+
+    /* A complete arrow sequence is parsed before it becomes a command. */
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, 'D', &redraw, &should_quit);
+    assert(redraw && !should_quit);
+    assert(state.cursor.column == 0);
+
+    /* Home and End terminal sequences reach document navigation commands. */
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, 'C', &redraw, &should_quit);
+    assert(redraw && state.cursor.column == 1);
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, 'H', &redraw, &should_quit);
+    assert(redraw && state.cursor.column == 0);
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, 'F', &redraw, &should_quit);
+    assert(redraw && state.cursor.column == 1);
+
+    /* Delete removes the code point at the Cursor through the full pipeline. */
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, 'H', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '3', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '~', &redraw, &should_quit);
+    line = document_get_line(&state.document, 0);
+    assert(redraw && line != NULL && line->length == 0);
+    assert(state.cursor.row == 0 && state.cursor.column == 0 && state.is_dirty);
+
+    /* Save without an associated path starts filename entry. */
+    feed_and_execute(&parser, &state, 0x13, &redraw, &should_quit);
+    assert(redraw && !should_quit);
+    assert(state.is_dirty);
+    assert(state.filename_entry_active);
+    assert(strcmp(state.message, "Enter: save  Esc: cancel") == 0);
+
+    /* Escape is recognized after the parser's standalone-key timeout. */
+    InputEvent event;
+    EditorCommand command;
+    assert(input_parser_feed(&parser, 0x1B, &event));
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(input_parser_timeout(&parser, &event));
+    assert(event.type == INPUT_EVENT_ESCAPE);
+    assert(input_engine_translate(&event, &command));
+    assert(command.type == EDITOR_COMMAND_CANCEL);
+    assert(command_engine_execute(&state, &command, NULL, &redraw, &should_quit));
+    assert(redraw && !should_quit && !state.filename_entry_active);
+    assert(state.is_dirty);
+
+    feed_and_execute(&parser, &state, 0x11, &redraw, &should_quit);
+    assert(redraw && !should_quit && state.quit_confirmation_active);
+    assert(strstr(state.message, "Save changes before quitting?") != NULL);
+    feed_and_execute(&parser, &state, 'n', &redraw, &should_quit);
+    assert(!redraw && should_quit && !state.quit_confirmation_active);
+
+    editor_state_destroy(&state);
+}
+
+static void test_tab_insertion_pipeline(void)
+{
+    InputParser parser;
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    input_parser_init(&parser);
+    feed_and_execute(&parser, &state, 'x', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '\t', &redraw, &should_quit);
+
+    line = document_get_line(&state.document, 0);
+    assert(redraw && !should_quit && line != NULL && line->length == 2);
+    assert(line->data[0] == (uint32_t)'x' && line->data[1] == (uint32_t)'\t');
+    assert(state.cursor.column == 2 && state.is_dirty);
+
+    editor_state_destroy(&state);
+}
+
+static void test_page_navigation_pipeline(void)
+{
+    InputParser parser;
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    input_parser_init(&parser);
+
+    for (size_t row = 0; row < 8; row++)
+    {
+        feed_and_execute(&parser, &state, 'x', &redraw, &should_quit);
+        if (row + 1 < 8)
+        {
+            feed_and_execute(&parser, &state, '\r', &redraw, &should_quit);
+        }
+    }
+    assert(state.cursor.row == 7 && state.cursor.column == 1);
+    state.is_dirty = false;
+
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '5', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '~', &redraw, &should_quit);
+    assert(redraw && !should_quit && state.cursor.row == 4);
+    assert(state.cursor.column == 1 && !state.is_dirty);
+
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '6', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '~', &redraw, &should_quit);
+    assert(redraw && !should_quit && state.cursor.row == 7);
+    assert(state.cursor.column == 1 && !state.is_dirty);
+
+    editor_state_destroy(&state);
+}
+
+static void test_utf8_input_and_character_boundary_editing(void)
+{
+    InputParser parser;
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    input_parser_init(&parser);
+
+    /* U+1F600 arrives as four bytes but becomes one document code point. */
+    feed_and_execute(&parser, &state, 0xF0, &redraw, &should_quit);
+    assert(!redraw && state.cursor.column == 0);
+    feed_and_execute(&parser, &state, 0x9F, &redraw, &should_quit);
+    assert(!redraw && state.cursor.column == 0);
+    feed_and_execute(&parser, &state, 0x98, &redraw, &should_quit);
+    assert(!redraw && state.cursor.column == 0);
+    feed_and_execute(&parser, &state, 0x80, &redraw, &should_quit);
+    line = document_get_line(&state.document, 0);
+    assert(redraw && state.is_dirty && line != NULL && line->length == 1);
+    assert(line->data[0] == 0x1F600 && state.cursor.column == 1);
+
+    feed_and_execute(&parser, &state, 'x', &redraw, &should_quit);
+    assert(state.cursor.column == 2);
+    feed_and_execute(&parser, &state, 0x7F, &redraw, &should_quit);
+    line = document_get_line(&state.document, 0);
+    assert(redraw && line != NULL && line->length == 1);
+    assert(line->data[0] == 0x1F600 && state.cursor.column == 1);
+
+    feed_and_execute(&parser, &state, 0x7F, &redraw, &should_quit);
+    line = document_get_line(&state.document, 0);
+    assert(redraw && line != NULL && line->length == 0);
+    assert(state.cursor.column == 0);
+
+    editor_state_destroy(&state);
+}
+
+int main(void)
+{
+    test_end_to_end_input_pipeline();
+    test_page_navigation_pipeline();
+    test_tab_insertion_pipeline();
+    test_utf8_input_and_character_boundary_editing();
+    return 0;
+}
+```
+
+## Implemented and Verified
+
+- Added parser tests for two-byte, three-byte, and four-byte UTF-8 sequences.
+- Added rejection tests for invalid leading bytes, overlong encodings, UTF-16 surrogate values, and code points above U+10FFFF.
+- Verified that a non-continuation byte interrupts and clears a partial sequence, then is reprocessed as a new input byte.
+- Verified that parser timeout clears incomplete UTF-8 state.
+- Added Command Engine coverage proving Backspace deletes one stored Unicode code point at a time.
+- Added full input-pipeline coverage proving a four-byte UTF-8 character inserts one logical Document code point and can be removed with one Backspace operation.
+- Kept the Document and Cursor model unchanged: line lengths and cursor columns count code points, not UTF-8 bytes.
+
+## Remaining Work
+
+This milestone does not implement Unicode terminal display-width calculations. The Renderer currently expands tabs according to configured tab stops but treats each other code point as one display cell. Section 53.8 will make logical cursor positions and visual display columns explicit throughout rendering and viewport calculations.

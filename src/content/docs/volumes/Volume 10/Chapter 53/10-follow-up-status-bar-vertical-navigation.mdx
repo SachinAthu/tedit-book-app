@@ -1,0 +1,2346 @@
+---
+title: 53.10 Follow-up — Status Bar and Vertical Navigation
+description: "Refines the status bar with logical and visual columns and makes vertical navigation preserve the preferred visual column across tabs and Unicode widths."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## Goal
+
+Make cursor position reporting unambiguous when tabs and Unicode display widths cause logical code-point columns to differ from terminal display columns. Preserve visual alignment during Up, Down, Page Up, and Page Down without converting stored tabs to spaces.
+
+## Implementation
+
+- Status Bar now shows `Ln N, Col N, Visual N`.
+- All displayed coordinates are one-based. `Col` is the logical Unicode code-point column; `Visual` is the terminal display column after tab expansion and code-point width handling.
+- Added `src/text/text_layout.h` and `src/text/text_layout.c` as shared mapping utilities for Renderer and Cursor. The Cursor does not depend on Renderer.
+- Added `Cursor.preferred_visual_column` and `Cursor.preferred_visual_column_valid`.
+- Up/Down/Page Up/Page Down preserve the preferred visual column. A destination line maps that target to the nearest valid logical code-point boundary.
+- Short lines clamp the actual cursor but do not discard the preferred visual column; moving back to a longer line restores the intended visual position.
+- Horizontal movement and editing invalidate the visual preference so the next vertical move derives a fresh target from the current logical position.
+- Tabs remain stored as U+0009 and are not rewritten.
+- Recorded the behavior in ADR-034, superseding ADR-014's preferred-logical-column policy specifically for vertical navigation.
+
+## Updated files
+
+- `CMakeLists.txt`
+- `src/text/text_layout.h` (new)
+- `src/text/text_layout.c` (new)
+- `src/cursor/cursor.h`
+- `src/cursor/cursor.c`
+- `src/renderer/renderer.c`
+- `src/command/command_engine.c`
+
+## Complete source files
+
+### `CMakeLists.txt`
+
+```cmake
+# CMakeLists.txt
+
+cmake_minimum_required(VERSION 3.20)
+enable_testing()
+
+project(
+    terminal_editor
+    VERSION 0.1.0
+    LANGUAGES C
+)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+add_library(
+    tedit_core
+    STATIC
+    src/terminal/terminal.c
+    src/input/input_parser.c
+    src/input/input_engine.c
+    src/command/command_engine.c
+    src/state/editor_state.c
+    src/document/document.c
+    src/cursor/cursor.c
+    src/text/text_layout.c
+    src/viewport/viewport.c
+    src/renderer/screen_buffer.c
+    src/renderer/renderer.c
+    src/file/file.c
+    src/file/file_save.c
+)
+
+target_include_directories(tedit_core PUBLIC src)
+
+add_executable(
+    tedit
+    src/main.c
+)
+
+target_link_libraries(tedit PRIVATE tedit_core)
+
+# tests
+
+add_executable(test_smoke tests/test_smoke.c)
+add_executable(test_editing tests/test_editing.c)
+add_executable(test_file tests/test_file.c)
+add_executable(test_file_save tests/test_file_save.c)
+add_executable(test_input_parser tests/test_input_parser.c)
+add_executable(test_input_engine tests/test_input_engine.c)
+add_executable(test_command_engine tests/test_command_engine.c)
+add_executable(test_input_pipeline tests/test_input_pipeline.c)
+
+target_link_libraries(test_smoke PRIVATE tedit_core)
+target_link_libraries(test_editing PRIVATE tedit_core)
+target_link_libraries(test_file PRIVATE tedit_core)
+target_link_libraries(test_file_save PRIVATE tedit_core)
+target_link_libraries(test_input_parser PRIVATE tedit_core)
+target_link_libraries(test_input_engine PRIVATE tedit_core)
+target_link_libraries(test_command_engine PRIVATE tedit_core)
+target_link_libraries(test_input_pipeline PRIVATE tedit_core)
+
+add_test(NAME smoke COMMAND test_smoke)
+add_test(NAME editing COMMAND test_editing)
+add_test(NAME file COMMAND test_file)
+add_test(NAME file_save COMMAND test_file_save)
+add_test(NAME input_parser COMMAND test_input_parser)
+add_test(NAME input_engine COMMAND test_input_engine)
+add_test(NAME command_engine COMMAND test_command_engine)
+add_test(NAME input_pipeline COMMAND test_input_pipeline)
+```
+
+### `src/text/text_layout.h` (new)
+
+```c
+/* src/text/text_layout.h */
+
+#ifndef TEXT_TEXT_LAYOUT_H
+#define TEXT_TEXT_LAYOUT_H
+
+#include "document/document.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+/* Return the terminal display width of one Unicode code point. */
+int text_layout_code_point_width(uint32_t code_point);
+
+/* Convert a logical code-point boundary to its zero-based visual column. */
+bool text_layout_line_visual_column(const DocumentLine *line, size_t logical_column, size_t tab_width, size_t *visual_column);
+
+/*
+ * Convert a visual column to the nearest logical code-point boundary.
+ * When the target lies inside a tab or wide character, the nearest boundary
+ * is selected; ties choose the boundary before that character.
+ */
+bool text_layout_line_logical_column(const DocumentLine *line, size_t visual_column, size_t tab_width, size_t *logical_column);
+
+#endif
+```
+
+### `src/text/text_layout.c` (new)
+
+```c
+/* src/text/text_layout.c */
+
+#define _XOPEN_SOURCE 700
+#include "text_layout.h"
+
+#include <wchar.h>
+
+static bool text_layout_in_range(uint32_t value, uint32_t first, uint32_t last)
+{
+    return value >= first && value <= last;
+}
+
+static bool text_layout_advance(uint32_t code_point, size_t visual_column, size_t tab_width, size_t *advance)
+{
+    int width;
+
+    if (code_point == (uint32_t)'\t')
+    {
+        *advance = tab_width - (visual_column % tab_width);
+        return true;
+    }
+
+    width = text_layout_code_point_width(code_point);
+
+    if (width < 0)
+    {
+        width = 1;
+    }
+
+    if (width == 0 && visual_column == 0)
+    {
+        /* Match rendering of a leading combining mark with a dotted circle. */
+        width = 1;
+    }
+
+    *advance = (size_t)width;
+
+    return true;
+}
+
+int text_layout_code_point_width(uint32_t code_point)
+{
+    int width;
+
+    if (code_point > UINT32_C(0x10FFFF) || text_layout_in_range(code_point, UINT32_C(0xD800), UINT32_C(0xDFFF)))
+    {
+        return -1;
+    }
+
+    width = wcwidth((wchar_t)code_point);
+
+    if (width >= 0)
+    {
+        return width;
+    }
+
+    /* Deterministic fallback when the active locale lacks Unicode widths. */
+    if (text_layout_in_range(code_point, 0x0300, 0x036F) ||
+        text_layout_in_range(code_point, 0x0483, 0x0489) ||
+        text_layout_in_range(code_point, 0x0591, 0x05BD) ||
+        text_layout_in_range(code_point, 0x05BF, 0x05BF) ||
+        text_layout_in_range(code_point, 0x05C1, 0x05C2) ||
+        text_layout_in_range(code_point, 0x0610, 0x061A) ||
+        text_layout_in_range(code_point, 0x064B, 0x065F) ||
+        text_layout_in_range(code_point, 0x0670, 0x0670) ||
+        text_layout_in_range(code_point, 0x06D6, 0x06ED) ||
+        text_layout_in_range(code_point, 0x1AB0, 0x1AFF) ||
+        text_layout_in_range(code_point, 0x1DC0, 0x1DFF) ||
+        text_layout_in_range(code_point, 0x20D0, 0x20FF) ||
+        text_layout_in_range(code_point, 0xFE00, 0xFE0F) ||
+        text_layout_in_range(code_point, 0xFE20, 0xFE2F) ||
+        text_layout_in_range(code_point, 0xE0100, 0xE01EF))
+    {
+        return 0;
+    }
+
+    if (text_layout_in_range(code_point, 0x1100, 0x115F) ||
+        text_layout_in_range(code_point, 0x2329, 0x232A) ||
+        text_layout_in_range(code_point, 0x2E80, 0xA4CF) ||
+        text_layout_in_range(code_point, 0xAC00, 0xD7A3) ||
+        text_layout_in_range(code_point, 0xF900, 0xFAFF) ||
+        text_layout_in_range(code_point, 0xFE10, 0xFE19) ||
+        text_layout_in_range(code_point, 0xFE30, 0xFE6F) ||
+        text_layout_in_range(code_point, 0xFF00, 0xFF60) ||
+        text_layout_in_range(code_point, 0xFFE0, 0xFFE6) ||
+        text_layout_in_range(code_point, 0x1F300, 0x1FAFF) ||
+        text_layout_in_range(code_point, 0x20000, 0x3FFFD))
+    {
+        return 2;
+    }
+
+    return 1;
+}
+
+bool text_layout_line_visual_column(const DocumentLine *line, size_t logical_column, size_t tab_width, size_t *visual_column)
+{
+    size_t visual = 0;
+
+    if (line == NULL || visual_column == NULL || tab_width == 0 || logical_column > line->length || (line->length > 0 && line->data == NULL))
+    {
+        return false;
+    }
+
+    for (size_t index = 0; index < logical_column; ++index)
+    {
+        size_t advance;
+
+        if (!text_layout_advance(line->data[index], visual, tab_width, &advance) || visual > SIZE_MAX - advance)
+        {
+            return false;
+        }
+        visual += advance;
+    }
+
+    *visual_column = visual;
+
+    return true;
+}
+
+bool text_layout_line_logical_column(const DocumentLine *line, size_t target_visual_column, size_t tab_width, size_t *logical_column)
+{
+    size_t visual = 0;
+
+    if (line == NULL || logical_column == NULL || tab_width == 0 || (line->length > 0 && line->data == NULL))
+    {
+        return false;
+    }
+
+    for (size_t index = 0; index < line->length; ++index)
+    {
+        size_t advance;
+        size_t next_visual;
+
+        if (target_visual_column <= visual)
+        {
+            *logical_column = index;
+            return true;
+        }
+
+        if (!text_layout_advance(line->data[index], visual, tab_width, &advance) || visual > SIZE_MAX - advance)
+        {
+            return false;
+        }
+
+        next_visual = visual + advance;
+
+        if (target_visual_column < next_visual)
+        {
+            size_t distance_before = target_visual_column - visual;
+            size_t distance_after = next_visual - target_visual_column;
+            *logical_column = distance_before <= distance_after ? index : index + 1;
+
+            return true;
+        }
+
+        visual = next_visual;
+    }
+
+    *logical_column = line->length;
+
+    return true;
+}
+```
+
+### `src/cursor/cursor.h`
+
+```c
+/* src/cursor/cursor.h */
+
+#ifndef CURSOR_CURSOR_H
+#define CURSOR_CURSOR_H
+
+#include "document/document.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+
+/*
+ * The position of the text cursor within a document.
+ *
+ *   - row:             which line the cursor is on (zero-based).
+ *   - column:          which code point within that line (zero-based).
+ *   - preferred_column: the logical column most recently chosen horizontally.
+ *   - preferred_visual_column: the display column preserved during vertical
+ *                               movement across tabs and Unicode widths.
+ *   - preferred_visual_column_valid: whether the visual preference matches the
+ *                                    current logical cursor position.
+ */
+typedef struct
+{
+    size_t row;
+    size_t column;
+    size_t preferred_column;
+    size_t preferred_visual_column;
+    bool preferred_visual_column_valid;
+} Cursor;
+
+void cursor_init(Cursor *cursor);
+
+bool cursor_set_position(Cursor *cursor, const Document *document, size_t row, size_t column);
+
+bool cursor_advance(Cursor *cursor, const Document *document);
+
+bool cursor_move_left(Cursor *cursor);
+
+bool cursor_move_right(Cursor *cursor, const Document *document);
+
+bool cursor_move_home(Cursor *cursor);
+
+/*
+ * Move the cursor to the end of its current logical line.
+ *
+ * Parameters:
+ *   cursor   - the cursor to move.
+ *   document - the document the cursor refers to.
+ *
+ * Returns:
+ *   true if the cursor moved, false for invalid arguments or when already at
+ *   the end of the current line.
+ */
+bool cursor_move_end(Cursor *cursor, const Document *document);
+
+/* Recompute the remembered visual column from the current logical position. */
+bool cursor_update_preferred_visual_column(Cursor *cursor, const Document *document, size_t tab_width);
+
+/*
+ * Move the cursor up one line, preserving the preferred visual column.
+ *
+ * Parameters:
+ *   cursor   - the cursor to move.
+ *   document - the document the cursor refers to.
+ *
+ * Returns:
+ *   true if the cursor moved up, false if it is already on the first line.
+ */
+bool cursor_move_up(Cursor *cursor, const Document *document, size_t tab_width);
+
+/*
+ * Move the cursor up by a page-sized number of logical lines while preserving
+ * the preferred visual column.
+ *
+ * Parameters:
+ *   cursor    - the cursor to move.
+ *   document  - the document the cursor refers to.
+ *   page_rows - the number of document rows in one visible page; must be > 0.
+ *
+ * Returns:
+ *   true if the cursor position changed, false for invalid arguments or when
+ *   the cursor is already at the top boundary.
+ */
+bool cursor_move_page_up(Cursor *cursor, const Document *document, size_t page_rows, size_t tab_width);
+
+/*
+ * Move the cursor down by a page-sized number of logical lines while preserving
+ * the preferred visual column.
+ *
+ * Parameters:
+ *   cursor    - the cursor to move.
+ *   document  - the document the cursor refers to.
+ *   page_rows - the number of document rows in one visible page; must be > 0.
+ *
+ * Returns:
+ *   true if the cursor position changed, false for invalid arguments or when
+ *   the cursor is already at the bottom boundary.
+ */
+bool cursor_move_page_down(Cursor *cursor, const Document *document, size_t page_rows, size_t tab_width);
+
+/*
+ * Move the cursor down one line, preserving the preferred visual column.
+ *
+ * Parameters:
+ *   cursor   - the cursor to move.
+ *   document - the document the cursor refers to.
+ *
+ * Returns:
+ *   true if the cursor moved down, false if it is already on the last line.
+ */
+bool cursor_move_down(Cursor *cursor, const Document *document, size_t tab_width);
+
+#endif
+```
+
+### `src/cursor/cursor.c`
+
+```c
+/* src/cursor/cursor.c */
+
+#include "cursor.h"
+#include "text/text_layout.h"
+
+/*
+ * Place the cursor at the start of the document (first row, first column).
+ *
+ * Parameters:
+ *   cursor - the cursor to initialize; may be NULL.
+ *
+ * Returns:
+ *   void.
+ */
+void cursor_init(Cursor *cursor)
+{
+    if (cursor == NULL)
+    {
+        return;
+    }
+
+    cursor->row = 0;
+    cursor->column = 0;
+    cursor->preferred_column = 0;
+    cursor->preferred_visual_column = 0;
+    cursor->preferred_visual_column_valid = false;
+}
+
+/*
+ * Move the cursor to an explicit position, but only if that position lies
+ * inside the document and within the target line.
+ *
+ * Parameters:
+ *   cursor   - the cursor to move.
+ *   document - the document the cursor refers to.
+ *   row      - the zero-based target line index.
+ *   column   - the zero-based target column (0 to line length).
+ *
+ * Returns:
+ *   true if the cursor was moved, false if `cursor` or `document` is NULL,
+ *   `row` is out of range, or `column` is past the end of the line.
+ */
+bool cursor_set_position(Cursor *cursor, const Document *document, size_t row, size_t column)
+{
+    if (cursor == NULL || document == NULL || row >= document->line_count)
+    {
+        return false;
+    }
+
+    const DocumentLine *line = &document->lines[row];
+
+    if (column > line->length)
+    {
+        return false;
+    }
+
+    cursor->row = row;
+    cursor->column = column;
+    cursor->preferred_column = column;
+    cursor->preferred_visual_column = column;
+    cursor->preferred_visual_column_valid = false;
+
+    return true;
+}
+
+/*
+ * Move the cursor one column to the right, without leaving the current line.
+ *
+ * Parameters:
+ *   cursor   - the cursor to move.
+ *   document - the document the cursor refers to.
+ *
+ * Returns:
+ *   true if the cursor advanced, false if `cursor` or `document` is NULL, the
+ *   current row is out of range, or the cursor is already at the end of the
+ *   line.
+ */
+bool cursor_advance(Cursor *cursor, const Document *document)
+{
+    const DocumentLine *line;
+
+    if (cursor == NULL || document == NULL ||
+        cursor->row >= document->line_count)
+    {
+        return false;
+    }
+
+    line = &document->lines[cursor->row];
+
+    if (cursor->column >= line->length)
+    {
+        return false;
+    }
+
+    cursor->column += 1;
+    cursor->preferred_column = cursor->column;
+    cursor->preferred_visual_column_valid = false;
+
+    return true;
+}
+
+/*
+ * Move the cursor one column to the left, without leaving the current line.
+ *
+ * Parameters:
+ *   cursor - the cursor to move.
+ *
+ * Returns:
+ *   true if the cursor moved back, false if `cursor` is NULL or it is already
+ *   at the start of the line.
+ */
+bool cursor_move_left(Cursor *cursor)
+{
+    if (cursor == NULL || cursor->column == 0)
+    {
+        return false;
+    }
+
+    cursor->column -= 1;
+    cursor->preferred_column = cursor->column;
+    cursor->preferred_visual_column_valid = false;
+    return true;
+}
+
+/*
+ * Move the cursor one column to the right, without passing the end of the current logical line.
+ *
+ * Parameters:
+ *   cursor   - the cursor to move.
+ *   document - the document the cursor refers to.
+ *
+ * Returns:
+ *   true if the cursor advanced, false if `cursor` or `document` is NULL, the
+ *   current row is out of range, or the cursor is already at the end of the
+ *   line.
+ */
+bool cursor_move_right(Cursor *cursor, const Document *document)
+{
+    const DocumentLine *line;
+
+    if (cursor == NULL || document == NULL || cursor->row >= document->line_count)
+    {
+        return false;
+    }
+
+    line = &document->lines[cursor->row];
+    if (cursor->column >= line->length)
+    {
+        return false;
+    }
+
+    cursor->column += 1;
+    cursor->preferred_column = cursor->column;
+    cursor->preferred_visual_column_valid = false;
+    return true;
+}
+
+/*
+ * Move the cursor to the beginning of its current logical line.
+ *
+ * Parameters:
+ *   cursor - the cursor to move.
+ *
+ * Returns:
+ *   true if the cursor moved, false when cursor is NULL or already at column 0.
+ */
+bool cursor_move_home(Cursor *cursor)
+{
+    if (cursor == NULL || cursor->column == 0)
+    {
+        return false;
+    }
+
+    cursor->column = 0;
+    cursor->preferred_column = 0;
+    cursor->preferred_visual_column_valid = false;
+    return true;
+}
+
+/*
+ * Move the cursor to the end of its current logical line.
+ *
+ * Parameters:
+ *   cursor   - the cursor to move.
+ *   document - the document the cursor refers to.
+ *
+ * Returns:
+ *   true if the cursor moved, false for invalid arguments or when already at
+ *   the end of the current line.
+ */
+bool cursor_move_end(Cursor *cursor, const Document *document)
+{
+    const DocumentLine *line;
+
+    if (cursor == NULL || document == NULL || cursor->row >= document->line_count)
+    {
+        return false;
+    }
+
+    line = &document->lines[cursor->row];
+    if (cursor->column == line->length)
+    {
+        return false;
+    }
+
+    cursor->column = line->length;
+    cursor->preferred_column = cursor->column;
+    cursor->preferred_visual_column_valid = false;
+    return true;
+}
+
+/*
+ * Move the cursor to another line while preserving its preferred visual column.
+ *
+ * The target visual column is mapped to the nearest logical code-point boundary
+ * on the destination line. This allows tabs and wide Unicode characters to
+ * affect rendering without changing the Document's logical coordinates.
+ *
+ * Parameters:
+ *   cursor     - the cursor to move.
+ *   document   - the document the cursor refers to.
+ *   target_row - the zero-based line to move to.
+ *
+ * Returns:
+ *   true if the cursor moved, false on NULL arguments or if `target_row` is
+ *   out of range.
+ */
+bool cursor_update_preferred_visual_column(Cursor *cursor, const Document *document, size_t tab_width)
+{
+    const DocumentLine *line;
+    size_t visual_column;
+
+    if (cursor == NULL || document == NULL || tab_width == 0 ||
+        cursor->row >= document->line_count)
+    {
+        return false;
+    }
+
+    line = &document->lines[cursor->row];
+    if (!text_layout_line_visual_column(line, cursor->column, tab_width, &visual_column))
+    {
+        return false;
+    }
+
+    cursor->preferred_visual_column = visual_column;
+    cursor->preferred_visual_column_valid = true;
+    return true;
+}
+
+/* Move to a target row while preserving the preferred visual display column. */
+static bool cursor_move_vertical(Cursor *cursor, const Document *document, size_t target_row, size_t tab_width)
+{
+    const DocumentLine *target_line;
+    size_t target_column;
+
+    if (cursor == NULL || document == NULL || tab_width == 0 || cursor->row >= document->line_count || target_row >= document->line_count)
+    {
+        return false;
+    }
+
+    if (!cursor->preferred_visual_column_valid && !cursor_update_preferred_visual_column(cursor, document, tab_width))
+    {
+        return false;
+    }
+
+    target_line = &document->lines[target_row];
+    if (!text_layout_line_logical_column(target_line, cursor->preferred_visual_column, tab_width, &target_column))
+    {
+        return false;
+    }
+
+    cursor->row = target_row;
+    cursor->column = target_column;
+    return true;
+}
+
+/*
+ * Move the cursor up one line, preserving the preferred visual column.
+ *
+ * Parameters:
+ *   cursor   - the cursor to move.
+ *   document - the document the cursor refers to.
+ *
+ * Returns:
+ *   true if the cursor moved up, false on NULL arguments or if the cursor is
+ *   already on the first line.
+ */
+bool cursor_move_up(Cursor *cursor, const Document *document, size_t tab_width)
+{
+    if (cursor == NULL || document == NULL || cursor->row == 0 ||
+        cursor->row >= document->line_count)
+    {
+        return false;
+    }
+
+    return cursor_move_vertical(cursor, document, cursor->row - 1, tab_width);
+}
+
+/*
+ * Move the cursor down one line, preserving the preferred visual column.
+ *
+ * Parameters:
+ *   cursor   - the cursor to move.
+ *   document - the document the cursor refers to.
+ *
+ * Returns:
+ *   true if the cursor moved down, false on NULL arguments or if the cursor is
+ *   already on the last line.
+ */
+bool cursor_move_down(Cursor *cursor, const Document *document, size_t tab_width)
+{
+    if (cursor == NULL || document == NULL ||
+        cursor->row >= document->line_count ||
+        cursor->row + 1 >= document->line_count)
+    {
+        return false;
+    }
+
+    return cursor_move_vertical(cursor, document, cursor->row + 1, tab_width);
+}
+
+/*
+ * Move the cursor upward by one visible page while preserving its preferred
+ * visual column.
+ *
+ * Parameters:
+ *   cursor    - the cursor to move.
+ *   document  - the document the cursor refers to.
+ *   page_rows - the number of document rows in one visible page.
+ *
+ * Returns:
+ *   true if the cursor position changed, false for invalid arguments or if
+ *   the cursor is already at the first row.
+ */
+bool cursor_move_page_up(Cursor *cursor, const Document *document, size_t page_rows, size_t tab_width)
+{
+    size_t target_row;
+
+    if (cursor == NULL || document == NULL || page_rows == 0 ||
+        cursor->row >= document->line_count || cursor->row == 0)
+    {
+        return false;
+    }
+
+    target_row = cursor->row > page_rows ? cursor->row - page_rows : 0;
+    if (target_row == cursor->row)
+    {
+        return false;
+    }
+
+    return cursor_move_vertical(cursor, document, target_row, tab_width);
+}
+
+/*
+ * Move the cursor downward by one visible page while preserving its preferred
+ * visual column.
+ *
+ * Parameters:
+ *   cursor    - the cursor to move.
+ *   document  - the document the cursor refers to.
+ *   page_rows - the number of document rows in one visible page.
+ *
+ * Returns:
+ *   true if the cursor position changed, false for invalid arguments or if
+ *   the cursor is already at the last row.
+ */
+bool cursor_move_page_down(Cursor *cursor, const Document *document, size_t page_rows, size_t tab_width)
+{
+    size_t remaining_rows;
+    size_t target_row;
+
+    if (cursor == NULL || document == NULL || page_rows == 0 ||
+        cursor->row >= document->line_count ||
+        cursor->row + 1 >= document->line_count)
+    {
+        return false;
+    }
+
+    remaining_rows = document->line_count - 1 - cursor->row;
+    if (page_rows >= remaining_rows)
+    {
+        target_row = document->line_count - 1;
+    }
+    else
+    {
+        target_row = cursor->row + page_rows;
+    }
+
+    return cursor_move_vertical(cursor, document, target_row, tab_width);
+}
+```
+
+### `src/renderer/renderer.c`
+
+```c
+/* src/renderer/renderer.c */
+
+#define _XOPEN_SOURCE 700
+#include "renderer.h"
+#include "text/text_layout.h"
+
+#include <errno.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+/* Fill an in-memory ScreenBuffer with the visible part of the document. */
+static bool renderer_build_frame(Renderer *renderer, const EditorState *state);
+
+static bool renderer_draw_status_bar(Renderer *renderer, const EditorState *state);
+
+static bool renderer_draw_message_bar(Renderer *renderer, const EditorState *state);
+
+static const char *renderer_filename_prompt_prefix(const EditorState *state);
+
+/* Send a finished ScreenBuffer to the terminal. */
+static bool renderer_write_frame(Renderer *renderer);
+
+/* Grow the output buffer so it can hold at least 'required' bytes. */
+static bool renderer_ensure_output_capacity(Renderer *renderer, size_t required);
+
+/* Write all bytes to the terminal, retrying if the write is interrupted. */
+static bool renderer_write_all(const char *data, size_t length);
+
+/* Move the terminal's visible cursor to a given row and column. */
+static bool renderer_write_cursor_position(size_t row, size_t column);
+
+static size_t renderer_utf8_length(uint32_t code_point);
+
+static size_t renderer_encode_utf8(uint32_t code_point, char output[4]);
+
+static size_t renderer_tab_advance(size_t visual_column, size_t tab_width);
+static int renderer_code_point_width(uint32_t code_point);
+
+bool renderer_init(Renderer *renderer, size_t rows, size_t columns)
+{
+    if (renderer == NULL)
+    {
+        return false;
+    }
+
+    renderer->screen_buffer.cells = NULL;
+    renderer->screen_buffer.rows = 0;
+    renderer->screen_buffer.columns = 0;
+    renderer->document_rows = 0;
+    renderer->output_buffer = NULL;
+    renderer->output_capacity = 0;
+
+    if (rows < 4 || columns == 0 || !screen_buffer_init(&renderer->screen_buffer, rows, columns))
+    {
+        return false;
+    }
+
+    renderer->document_rows = rows - 3;
+    return true;
+}
+
+void renderer_destroy(Renderer *renderer)
+{
+    if (renderer == NULL)
+    {
+        return;
+    }
+
+    screen_buffer_destroy(&renderer->screen_buffer);
+
+    free(renderer->output_buffer);
+    renderer->output_buffer = NULL;
+    renderer->output_capacity = 0;
+}
+
+bool renderer_cursor_visual_column(const EditorState *state, size_t *visual_column)
+{
+    const DocumentLine *line;
+
+    if (state == NULL || visual_column == NULL || state->configuration.tab_width == 0)
+    {
+        return false;
+    }
+    if (state->document.line_count == 0)
+    {
+        if (state->cursor.row != 0 || state->cursor.column != 0)
+        {
+            return false;
+        }
+        *visual_column = 0;
+        return true;
+    }
+    if (state->cursor.row >= state->document.line_count)
+    {
+        return false;
+    }
+
+    line = &state->document.lines[state->cursor.row];
+    return text_layout_line_visual_column(line, state->cursor.column,
+                                          state->configuration.tab_width,
+                                          visual_column);
+}
+
+static size_t renderer_tab_advance(size_t visual_column, size_t tab_width)
+{
+    return tab_width - (visual_column % tab_width);
+}
+
+static int renderer_code_point_width(uint32_t code_point)
+{
+    return text_layout_code_point_width(code_point);
+}
+
+bool renderer_render(Renderer *renderer, const EditorState *state)
+{
+    bool success;
+
+    if (renderer == NULL || state == NULL || renderer->screen_buffer.cells == NULL)
+    {
+        return false;
+    }
+    if (!state->filename_entry_active)
+    {
+        size_t cursor_visual_column;
+        if (!renderer_cursor_visual_column(state, &cursor_visual_column) ||
+            state->cursor.row < state->viewport.viewport_row ||
+            cursor_visual_column < state->viewport.viewport_column ||
+            state->cursor.row - state->viewport.viewport_row >= renderer->document_rows ||
+            cursor_visual_column - state->viewport.viewport_column >= renderer->screen_buffer.columns)
+        {
+            return false;
+        }
+    }
+
+    if (!renderer_build_frame(renderer, state))
+    {
+        return false;
+    }
+
+    /*
+     * Hide the terminal text cursor while drawing.
+     */
+    if (!renderer_write_all("\x1b[?25l", 6))
+    {
+        return false;
+    }
+
+    success = renderer_write_frame(renderer);
+
+    if (success)
+    {
+        if (state->filename_entry_active)
+        {
+            const size_t prompt_length = strlen(renderer_filename_prompt_prefix(state));
+            size_t entry_column = prompt_length + state->filename_entry_cursor;
+            if (entry_column >= renderer->screen_buffer.columns)
+            {
+                entry_column = renderer->screen_buffer.columns - 1;
+            }
+            success = renderer_write_all("\x1b[30;47m", 8) &&
+                      renderer_write_cursor_position(renderer->screen_buffer.rows - 2, entry_column);
+        }
+        else
+        {
+            size_t cursor_visual_column;
+            success = renderer_cursor_visual_column(state, &cursor_visual_column) &&
+                      renderer_write_all("\x1b[0m", 4) &&
+                      renderer_write_cursor_position(
+                          state->cursor.row - state->viewport.viewport_row,
+                          cursor_visual_column - state->viewport.viewport_column);
+        }
+    }
+
+    /*
+     * Always attempt to restore cursor visibility,
+     * even if frame rendering fails.
+     */
+    if (!renderer_write_all("\x1b[?25h", 6))
+    {
+        success = false;
+    }
+
+    return success;
+}
+
+static bool renderer_build_frame(Renderer *renderer, const EditorState *state)
+{
+    if (renderer == NULL || state == NULL)
+    {
+        return false;
+    }
+
+    if (renderer->screen_buffer.cells == NULL)
+    {
+        return false;
+    }
+
+    /*
+     * Start from a clean slate: every cell becomes a blank space. A
+     * zero-line Document (the representation of an empty file) therefore
+     * renders as a blank document area without requiring a synthetic line.
+     */
+    screen_buffer_clear(&renderer->screen_buffer, (uint32_t)' ');
+
+    /* Map each screen row to its corresponding logical document row. */
+    for (size_t screen_row = 0; screen_row < renderer->document_rows; screen_row++)
+    {
+        const size_t document_row = state->viewport.viewport_row + screen_row;
+        const DocumentLine *line;
+
+        if (document_row >= state->document.line_count)
+        {
+            break;
+        }
+
+        line = &state->document.lines[document_row];
+
+        /* Map logical code points to terminal cells before horizontal clipping. */
+        size_t visual_column = 0;
+        size_t previous_cell_column = 0;
+        bool has_previous_cell = false;
+        for (size_t document_column = 0; document_column < line->length; ++document_column)
+        {
+            const uint32_t code_point = line->data[document_column];
+            size_t advance;
+
+            if (code_point == (uint32_t)'\t')
+            {
+                advance = renderer_tab_advance(visual_column, state->configuration.tab_width);
+                if (visual_column > SIZE_MAX - advance)
+                {
+                    return false;
+                }
+                for (size_t offset = 0; offset < advance; ++offset)
+                {
+                    const size_t cell_column = visual_column + offset;
+                    if (cell_column >= state->viewport.viewport_column &&
+                        cell_column - state->viewport.viewport_column < renderer->screen_buffer.columns &&
+                        !screen_buffer_set(&renderer->screen_buffer, screen_row,
+                                           cell_column - state->viewport.viewport_column, (uint32_t)' '))
+                    {
+                        return false;
+                    }
+                }
+                previous_cell_column = visual_column + advance - 1;
+                has_previous_cell = true;
+            }
+            else
+            {
+                int width = renderer_code_point_width(code_point);
+                uint32_t display_code_point = code_point;
+                if (width < 0)
+                {
+                    width = 1;
+                    display_code_point = (uint32_t)'?';
+                }
+                if (width == 0)
+                {
+                    if (has_previous_cell)
+                    {
+                        if (previous_cell_column >= state->viewport.viewport_column &&
+                            previous_cell_column - state->viewport.viewport_column < renderer->screen_buffer.columns &&
+                            !screen_buffer_append_combining(&renderer->screen_buffer, screen_row,
+                                                            previous_cell_column - state->viewport.viewport_column,
+                                                            code_point))
+                        {
+                            return false;
+                        }
+                        continue;
+                    }
+                    display_code_point = UINT32_C(0x25CC); /* dotted circle */
+                    width = 1;
+                }
+
+                advance = (size_t)width;
+                if (visual_column > SIZE_MAX - advance)
+                {
+                    return false;
+                }
+                if (visual_column >= state->viewport.viewport_column &&
+                    visual_column - state->viewport.viewport_column < renderer->screen_buffer.columns &&
+                    advance <= renderer->screen_buffer.columns -
+                                   (visual_column - state->viewport.viewport_column))
+                {
+                    const size_t cell_column = visual_column - state->viewport.viewport_column;
+                    if (!screen_buffer_set(&renderer->screen_buffer, screen_row, cell_column, display_code_point))
+                    {
+                        return false;
+                    }
+                    if (advance == 2 &&
+                        !screen_buffer_set_continuation(&renderer->screen_buffer, screen_row, cell_column + 1))
+                    {
+                        return false;
+                    }
+                    previous_cell_column = visual_column;
+                    has_previous_cell = true;
+                    if (display_code_point == UINT32_C(0x25CC) &&
+                        !screen_buffer_append_combining(&renderer->screen_buffer, screen_row, cell_column, code_point))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    previous_cell_column = visual_column;
+                    has_previous_cell = true;
+                }
+            }
+
+            if (visual_column > SIZE_MAX - advance)
+            {
+                return false;
+            }
+            visual_column += advance;
+            if (visual_column >= state->viewport.viewport_column &&
+                visual_column - state->viewport.viewport_column >= renderer->screen_buffer.columns)
+            {
+                break;
+            }
+        }
+    }
+
+    return renderer_draw_status_bar(renderer, state) &&
+           renderer_draw_message_bar(renderer, state);
+}
+
+static bool renderer_draw_status_bar(Renderer *renderer, const EditorState *state)
+{
+    char right[96];
+    const char *path;
+    const char *suffix;
+    const char *hint;
+    size_t path_length;
+    size_t suffix_length;
+    int right_length;
+    size_t status_row;
+    size_t left_limit;
+    size_t path_limit;
+    size_t path_position = 0;
+    size_t right_position;
+
+    if (renderer == NULL || state == NULL || renderer->document_rows == 0)
+    {
+        return false;
+    }
+
+    status_row = renderer->screen_buffer.rows - 1;
+
+    /*
+     * While a prompt is capturing keys, the Status Bar row shows the prompt's
+     * key hints instead of the file name and cursor position, which do not
+     * change while the prompt is open.
+     */
+    if (state->filename_entry_active || state->quit_confirmation_active)
+    {
+        hint = state->filename_entry_active ? "Enter: save  Esc: cancel"
+                                            : "Y=save N=discard Esc=cancel";
+        for (size_t column = 0; column < renderer->screen_buffer.columns; ++column)
+        {
+            if (!screen_buffer_set(&renderer->screen_buffer, status_row, column, (uint32_t)' '))
+            {
+                return false;
+            }
+        }
+        for (size_t index = 0; hint[index] != '\0' && index < renderer->screen_buffer.columns; ++index)
+        {
+            if (!screen_buffer_set(&renderer->screen_buffer, status_row, index,
+                                   (uint32_t)(unsigned char)hint[index]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    path = state->file_path != NULL ? state->file_path : "[No Name]";
+    path_length = strlen(path);
+    suffix = state->is_dirty ? " [+]" : "";
+    suffix_length = strlen(suffix);
+    size_t visual_column;
+    if (!renderer_cursor_visual_column(state, &visual_column) || visual_column == SIZE_MAX)
+    {
+        return false;
+    }
+    right_length = snprintf(right, sizeof(right), "Ln %zu, Col %zu, Visual %zu",
+                            state->cursor.row + 1, state->cursor.column + 1,
+                            visual_column + 1);
+    if (right_length < 0 || (size_t)right_length >= sizeof(right))
+    {
+        return false;
+    }
+
+    left_limit = renderer->screen_buffer.columns > (size_t)right_length + 2
+                     ? renderer->screen_buffer.columns - (size_t)right_length - 2
+                     : 0;
+    path_limit = left_limit > suffix_length ? left_limit - suffix_length : 0;
+
+    for (size_t column = 0; column < renderer->screen_buffer.columns; ++column)
+    {
+        if (!screen_buffer_set(&renderer->screen_buffer, status_row, column, (uint32_t)' '))
+        {
+            return false;
+        }
+    }
+
+    /* Render a bounded path prefix; arbitrary filesystem bytes stay printable. */
+    while (path_position < path_length && path_position < path_limit)
+    {
+        unsigned char byte = (unsigned char)path[path_position];
+        uint32_t code_point = byte >= 0x20 && byte < 0x7F
+                                  ? byte
+                                  : (byte >= 0x80 ? (uint32_t)'?' : (uint32_t)' ');
+        if (!screen_buffer_set(&renderer->screen_buffer, status_row, path_position, code_point))
+        {
+            return false;
+        }
+        ++path_position;
+    }
+
+    for (size_t index = 0; index < suffix_length && path_position + index < left_limit; ++index)
+    {
+        if (!screen_buffer_set(&renderer->screen_buffer, status_row, path_position + index,
+                               (uint32_t)(unsigned char)suffix[index]))
+        {
+            return false;
+        }
+    }
+
+    if ((size_t)right_length < renderer->screen_buffer.columns)
+    {
+        right_position = renderer->screen_buffer.columns - (size_t)right_length;
+        for (size_t index = 0; index < (size_t)right_length; ++index)
+        {
+            if (!screen_buffer_set(&renderer->screen_buffer, status_row, right_position + index,
+                                   (uint32_t)(unsigned char)right[index]))
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+static const char *renderer_filename_prompt_prefix(const EditorState *state)
+{
+    if (state == NULL)
+    {
+        return "Save as: ";
+    }
+    if (strncmp(state->message, "Save failed", sizeof("Save failed") - 1) == 0)
+    {
+        return "Save failed: ";
+    }
+    if (strncmp(state->message, "Filename is too long", sizeof("Filename is too long") - 1) == 0)
+    {
+        return "Filename too long: ";
+    }
+    if (strncmp(state->message, "Enter a file name", sizeof("Enter a file name") - 1) == 0)
+    {
+        return "Enter a file name: ";
+    }
+    return "Save as: ";
+}
+
+static bool renderer_draw_message_bar(Renderer *renderer, const EditorState *state)
+{
+    const char *prompt;
+    size_t prompt_length;
+    size_t message_row;
+    size_t column = 0;
+
+    if (renderer == NULL || state == NULL || renderer->screen_buffer.cells == NULL ||
+        renderer->screen_buffer.rows < 4)
+    {
+        return false;
+    }
+
+    message_row = renderer->screen_buffer.rows - 2;
+    prompt = renderer_filename_prompt_prefix(state);
+    prompt_length = strlen(prompt);
+    for (column = 0; column < renderer->screen_buffer.columns; ++column)
+    {
+        if (!screen_buffer_set(&renderer->screen_buffer, message_row, column, (uint32_t)' '))
+        {
+            return false;
+        }
+    }
+
+    if (state->filename_entry_active)
+    {
+        for (size_t index = 0; index < prompt_length && index < renderer->screen_buffer.columns; ++index)
+        {
+            if (!screen_buffer_set(&renderer->screen_buffer, message_row, index, (uint32_t)(unsigned char)prompt[index]))
+            {
+                return false;
+            }
+        }
+
+        column = prompt_length;
+        for (size_t index = 0; index < state->filename_entry_length && column < renderer->screen_buffer.columns; ++index, ++column)
+        {
+            const unsigned char byte = (unsigned char)state->filename_entry[index];
+            const uint32_t code_point = byte >= 0x20 && byte < 0x7F
+                                            ? byte
+                                            : (byte >= 0x80 ? (uint32_t)'?' : (uint32_t)' ');
+            if (!screen_buffer_set(&renderer->screen_buffer, message_row, column, code_point))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    const size_t message_length = strlen(state->message);
+    const size_t visible_length = message_length < renderer->screen_buffer.columns
+                                      ? message_length
+                                      : renderer->screen_buffer.columns;
+    for (column = 0; column < visible_length; ++column)
+    {
+        const unsigned char byte = (unsigned char)state->message[column];
+        const uint32_t code_point = byte >= 0x20 && byte < 0x7F
+                                        ? byte
+                                        : (byte >= 0x80 ? (uint32_t)'?' : (uint32_t)' ');
+        if (!screen_buffer_set(&renderer->screen_buffer, message_row, column, code_point))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool renderer_ensure_output_capacity(Renderer *renderer, size_t required)
+{
+    if (renderer == NULL)
+    {
+        return false;
+    }
+
+    if (required <= renderer->output_capacity)
+    {
+        return true;
+    }
+
+    char *larger = realloc(renderer->output_buffer, required);
+    if (larger == NULL)
+    {
+        return false;
+    }
+
+    renderer->output_buffer = larger;
+    renderer->output_capacity = required;
+
+    return true;
+}
+
+static bool renderer_write_frame(Renderer *renderer)
+{
+    const ScreenBuffer *buffer;
+    char sequence[64];
+
+    if (renderer == NULL)
+    {
+        return false;
+    }
+
+    buffer = &renderer->screen_buffer;
+
+    if (buffer->cells == NULL)
+    {
+        return false;
+    }
+
+    /*
+     * First pass: measure the ANSI cursor-position sequences and
+     * UTF-8-encoded cell contents.
+     */
+    size_t frame_length = 0;
+
+    for (size_t row = 0; row < buffer->rows; row++)
+    {
+        int sequence_length = snprintf(sequence, sizeof(sequence), "\x1b[%zu;1H", row + 1);
+
+        if (sequence_length < 0 || (size_t)sequence_length >= sizeof(sequence))
+        {
+            return false;
+        }
+
+        if (frame_length > SIZE_MAX - (size_t)sequence_length)
+        {
+            return false;
+        }
+
+        frame_length += (size_t)sequence_length;
+
+        const size_t message_row = buffer->rows - 2;
+        const size_t style_length = row == message_row ? sizeof("\x1b[30;47m") - 1
+                                                       : sizeof("\x1b[0m") - 1;
+        if (frame_length > SIZE_MAX - style_length)
+        {
+            return false;
+        }
+        frame_length += style_length;
+
+        for (size_t column = 0; column < buffer->columns; ++column)
+        {
+            const ScreenCell *cell = screen_buffer_get(buffer, row, column);
+
+            if (cell == NULL)
+            {
+                return false;
+            }
+
+            if (cell->continuation)
+            {
+                continue;
+            }
+            size_t encoded_length = renderer_utf8_length(cell->code_point);
+            if (encoded_length == 0 || frame_length > SIZE_MAX - encoded_length)
+            {
+                return false;
+            }
+            frame_length += encoded_length;
+            for (size_t mark = 0; mark < cell->combining_count; ++mark)
+            {
+                const size_t mark_length = renderer_utf8_length(cell->combining_code_points[mark]);
+                if (mark_length == 0 || frame_length > SIZE_MAX - mark_length)
+                {
+                    return false;
+                }
+                frame_length += mark_length;
+            }
+        }
+    }
+
+    if (!renderer_ensure_output_capacity(renderer, frame_length))
+    {
+        return false;
+    }
+
+    /*
+     * Second pass: construct the complete terminal output.
+     */
+    size_t position = 0;
+
+    for (size_t row = 0; row < buffer->rows; ++row)
+    {
+        int sequence_length = snprintf(sequence, sizeof(sequence), "\x1b[%zu;1H", row + 1);
+
+        if (sequence_length < 0 || (size_t)sequence_length >= sizeof(sequence))
+        {
+            return false;
+        }
+
+        memcpy(renderer->output_buffer + position, sequence, (size_t)sequence_length);
+        position += (size_t)sequence_length;
+
+        if (row == buffer->rows - 2)
+        {
+            static const char message_style[] = "\x1b[30;47m";
+            memcpy(renderer->output_buffer + position, message_style, sizeof(message_style) - 1);
+            position += sizeof(message_style) - 1;
+        }
+        else
+        {
+            static const char reset_style[] = "\x1b[0m";
+            memcpy(renderer->output_buffer + position, reset_style, sizeof(reset_style) - 1);
+            position += sizeof(reset_style) - 1;
+        }
+
+        for (size_t column = 0; column < buffer->columns; ++column)
+        {
+            const ScreenCell *cell = screen_buffer_get(buffer, row, column);
+
+            if (cell == NULL)
+            {
+                return false;
+            }
+
+            if (cell->continuation)
+            {
+                continue;
+            }
+            char encoded[4];
+            size_t encoded_length = renderer_encode_utf8(cell->code_point, encoded);
+
+            if (encoded_length == 0)
+            {
+                return false;
+            }
+
+            memcpy(renderer->output_buffer + position, encoded, encoded_length);
+            position += encoded_length;
+            for (size_t mark = 0; mark < cell->combining_count; ++mark)
+            {
+                char mark_bytes[4];
+                const size_t mark_length = renderer_encode_utf8(cell->combining_code_points[mark], mark_bytes);
+                if (mark_length == 0)
+                {
+                    return false;
+                }
+                memcpy(renderer->output_buffer + position, mark_bytes, mark_length);
+                position += mark_length;
+            }
+        }
+    }
+
+    return renderer_write_all(renderer->output_buffer, frame_length);
+}
+
+static bool renderer_write_all(const char *data, size_t length)
+{
+    if (data == NULL)
+    {
+        return false;
+    }
+
+    size_t written = 0;
+
+    while (written < length)
+    {
+        ssize_t result;
+
+        /* Ask the OS to write the remaining bytes. */
+        result = write(STDOUT_FILENO, data + written, length - written);
+
+        if (result < 0)
+        {
+            /* EINTR means a signal interrupted us; retrying is safe. */
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        /* A return value of 0 means nothing could be written; give up. */
+        if (result == 0)
+        {
+            return false;
+        }
+
+        written += (size_t)result;
+    }
+
+    return true;
+}
+
+static bool renderer_write_cursor_position(size_t row, size_t column)
+{
+    char sequence[64];
+    int sequence_length = snprintf(sequence, sizeof(sequence), "\x1b[%zu;%zuH", row + 1, column + 1);
+
+    if (sequence_length < 0 || (size_t)sequence_length >= sizeof(sequence))
+    {
+        return false;
+    }
+
+    return renderer_write_all(sequence, (size_t)sequence_length);
+}
+
+static size_t renderer_utf8_length(uint32_t code_point)
+{
+    if (code_point <= UINT32_C(0x7F))
+    {
+        return 1;
+    }
+
+    if (code_point <= UINT32_C(0x7FF))
+    {
+        return 2;
+    }
+
+    if (code_point >= UINT32_C(0xD800) && code_point <= UINT32_C(0xDFFF))
+    {
+        return 0;
+    }
+
+    if (code_point <= UINT32_C(0xFFFF))
+    {
+        return 3;
+    }
+
+    if (code_point <= UINT32_C(0x10FFFF))
+    {
+        return 4;
+    }
+
+    return 0;
+}
+
+static size_t renderer_encode_utf8(uint32_t code_point, char output[4])
+{
+    size_t length = renderer_utf8_length(code_point);
+
+    if (length == 0 || output == NULL)
+    {
+        return 0;
+    }
+
+    if (length == 1)
+    {
+        output[0] = (char)code_point;
+    }
+    else if (length == 2)
+    {
+        output[0] = (char)(UINT32_C(0xC0) | (code_point >> 6));
+
+        output[1] = (char)(UINT32_C(0x80) | (code_point & UINT32_C(0x3F)));
+    }
+    else if (length == 3)
+    {
+        output[0] = (char)(UINT32_C(0xE0) | (code_point >> 12));
+
+        output[1] = (char)(UINT32_C(0x80) | ((code_point >> 6) & UINT32_C(0x3F)));
+
+        output[2] = (char)(UINT32_C(0x80) | (code_point & UINT32_C(0x3F)));
+    }
+    else
+    {
+        output[0] = (char)(UINT32_C(0xF0) | (code_point >> 18));
+
+        output[1] = (char)(UINT32_C(0x80) | ((code_point >> 12) & UINT32_C(0x3F)));
+
+        output[2] = (char)(UINT32_C(0x80) | ((code_point >> 6) & UINT32_C(0x3F)));
+
+        output[3] = (char)(UINT32_C(0x80) | (code_point & UINT32_C(0x3F)));
+    }
+
+    return length;
+}
+```
+
+### `src/command/command_engine.c`
+
+```c
+/* src/command/command_engine.c */
+
+#include "command/command_engine.h"
+
+#include "cursor/cursor.h"
+#include "document/document.h"
+#include "state/editor_state.h"
+
+#include <string.h>
+
+/*
+ * This file is the "brain" of the editor: it turns commands into concrete
+ * changes to the editor state. All document edits, cursor moves, saves, and
+ * the quit flow run through command_engine_execute().
+ *
+ * Two small "modes" are handled here as well: filename entry (open after
+ * Ctrl-S on an unnamed document) and the quit confirmation (open after
+ * Ctrl-Q on a dirty document). While a mode is active, commands are routed
+ * to that mode's handler instead of the normal command switch.
+ */
+
+/*
+ * Perform a Backspace edit in the document.
+ *
+ * Deletes the code point before the cursor, or - when the cursor is at the
+ * start of a line that has one above it - merges the two lines and leaves
+ * the cursor at the join point.
+ *
+ * Parameters:
+ *   state   - the editor state to modify.
+ *   changed - out-parameter: set to true when the document changed.
+ *
+ * Returns:
+ *   true when the command was handled (including "nothing to delete" and
+ *   "deletion failed", which simply leave the document alone), false on an
+ *   internal cursor-update failure.
+ */
+static bool command_backspace(EditorState *state, bool *changed)
+{
+    if (state->cursor.column > 0)
+    {
+        const size_t delete_column = state->cursor.column - 1;
+        if (!document_delete_character(&state->document, state->cursor.row, delete_column))
+        {
+            return true;
+        }
+        if (!cursor_set_position(&state->cursor, &state->document,
+                                 state->cursor.row, delete_column))
+        {
+            return false;
+        }
+    }
+    else if (state->cursor.row > 0)
+    {
+        const size_t previous_row = state->cursor.row - 1;
+        const DocumentLine *previous_line = document_get_line(&state->document, previous_row);
+        if (previous_line == NULL)
+        {
+            return true;
+        }
+
+        const size_t previous_length = previous_line->length;
+        if (!document_merge_lines(&state->document, previous_row))
+        {
+            return true;
+        }
+        if (!cursor_set_position(&state->cursor, &state->document, previous_row, previous_length))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return true;
+    }
+
+    state->is_dirty = true;
+    *changed = true;
+    return true;
+}
+
+/*
+ * Perform a Delete edit in the document.
+ *
+ * Deletes the code point at the Cursor, or merges the current line with the
+ * following line when the Cursor is at the current line's end. At the end of
+ * the final line, the command is a no-op.
+ *
+ * `changed` is set only when the Document is modified successfully.
+ */
+static bool command_delete_character(EditorState *state, bool *changed)
+{
+    const DocumentLine *line = document_get_line(&state->document, state->cursor.row);
+
+    if (line == NULL)
+    {
+        return true;
+    }
+
+    if (state->cursor.column < line->length)
+    {
+        if (!document_delete_character(&state->document, state->cursor.row,
+                                       state->cursor.column))
+        {
+            return true;
+        }
+    }
+    else if (state->cursor.row + 1 < state->document.line_count)
+    {
+        if (!document_merge_lines(&state->document, state->cursor.row))
+        {
+            return true;
+        }
+    }
+    else
+    {
+        return true;
+    }
+
+    if (!cursor_set_position(&state->cursor, &state->document,
+                             state->cursor.row, state->cursor.column))
+    {
+        return false;
+    }
+
+    state->is_dirty = true;
+    *changed = true;
+    return true;
+}
+
+/*
+ * Encode one Unicode scalar as UTF-8.
+ *
+ * Parameters:
+ *   character - the scalar to encode.
+ *   bytes     - out-parameter: receives the encoded bytes (1..4).
+ *
+ * Returns:
+ *   the number of bytes written, or 0 if `character` is not a valid scalar.
+ */
+static size_t encode_utf8(uint32_t character, unsigned char bytes[4])
+{
+    if (character <= 0x7F)
+    {
+        bytes[0] = (unsigned char)character;
+        return 1;
+    }
+    if (character <= 0x7FF)
+    {
+        bytes[0] = (unsigned char)(0xC0 | (character >> 6));
+        bytes[1] = (unsigned char)(0x80 | (character & 0x3F));
+        return 2;
+    }
+    if (character <= 0xFFFF && !(character >= 0xD800 && character <= 0xDFFF))
+    {
+        bytes[0] = (unsigned char)(0xE0 | (character >> 12));
+        bytes[1] = (unsigned char)(0x80 | ((character >> 6) & 0x3F));
+        bytes[2] = (unsigned char)(0x80 | (character & 0x3F));
+        return 3;
+    }
+    if (character <= 0x10FFFF)
+    {
+        bytes[0] = (unsigned char)(0xF0 | (character >> 18));
+        bytes[1] = (unsigned char)(0x80 | ((character >> 12) & 0x3F));
+        bytes[2] = (unsigned char)(0x80 | ((character >> 6) & 0x3F));
+        bytes[3] = (unsigned char)(0x80 | (character & 0x3F));
+        return 4;
+    }
+    return 0;
+}
+
+/*
+ * Return the byte index at the start of the UTF-8 code point just before
+ * `position` in `text`.
+ *
+ * Used to move the filename-entry cursor left by one character rather than
+ * by one byte.
+ *
+ * Parameters:
+ *   text     - the UTF-8 string to walk.
+ *   position - the current cursor byte index.
+ *
+ * Returns:
+ *   the byte index of the previous code point, or 0 when already at the
+ *   start.
+ */
+static size_t filename_previous_boundary(const char *text, size_t position)
+{
+    if (position == 0)
+    {
+        return 0;
+    }
+
+    --position;
+    while (position > 0 && (((unsigned char)text[position] & 0xC0) == 0x80))
+    {
+        --position;
+    }
+    return position;
+}
+
+/*
+ * Return the byte index at the start of the UTF-8 code point just after
+ * `position` in `text`.
+ *
+ * Used to move the filename-entry cursor right by one character rather than
+ * by one byte.
+ *
+ * Parameters:
+ *   text     - the UTF-8 string to walk.
+ *   length   - the number of bytes in use in `text`.
+ *   position - the current cursor byte index.
+ *
+ * Returns:
+ *   the byte index of the next code point, or `length` when already at the
+ *   end.
+ */
+static size_t filename_next_boundary(const char *text, size_t length, size_t position)
+{
+    if (position >= length)
+    {
+        return length;
+    }
+
+    ++position;
+    while (position < length && (((unsigned char)text[position] & 0xC0) == 0x80))
+    {
+        ++position;
+    }
+    return position;
+}
+
+/*
+ * Close the filename-entry prompt, discarding what was typed.
+ *
+ * Parameters:
+ *   state - the editor state to update.
+ *
+ * Returns:
+ *   void.
+ */
+static void filename_entry_clear(EditorState *state)
+{
+    state->filename_entry_active = false;
+    state->filename_entry_length = 0;
+    state->filename_entry_cursor = 0;
+    state->filename_entry[0] = '\0';
+}
+
+/*
+ * Open the filename-entry prompt with an empty entry.
+ *
+ * Parameters:
+ *   state          - the editor state to update.
+ *   quit_after_save - whether a successful save should also quit the editor
+ *                     (true when the prompt was opened from the quit flow).
+ *
+ * Returns:
+ *   void.
+ */
+static void filename_entry_start(EditorState *state, bool quit_after_save)
+{
+    state->filename_entry_active = true;
+    state->filename_entry_length = 0;
+    state->filename_entry_cursor = 0;
+    state->filename_entry[0] = '\0';
+    state->quit_after_save = quit_after_save;
+    (void)editor_state_set_message(state, "Enter: save  Esc: cancel");
+}
+
+/*
+ * Perform a Ctrl-S save.
+ *
+ * A document with a known path is written back to it. An unnamed document
+ * has nowhere to go yet, so the filename-entry prompt is opened instead.
+ * When `quitting` is true and the save succeeds, the editor quits.
+ *
+ * Parameters:
+ *   state       - the editor state to read and update.
+ *   save_path   - fallback path from the command line; may be NULL.
+ *   quitting    - whether this save was triggered by the quit flow.
+ *   redraw      - out-parameter: set to true (the status message changed).
+ *   should_quit - out-parameter: set to true when the editor should exit.
+ *
+ * Returns:
+ *   always true.
+ */
+static bool command_save(EditorState *state, const char *save_path, bool quitting, bool *redraw, bool *should_quit)
+{
+    const char *current_path = state->file_path != NULL ? state->file_path : save_path;
+
+    if (current_path == NULL)
+    {
+        filename_entry_start(state, quitting);
+        *redraw = true;
+        return true;
+    }
+
+    if (editor_state_save_file(state, current_path))
+    {
+        (void)editor_state_set_message(state, "Saved successfully.");
+        state->quit_after_save = false;
+        if (quitting)
+        {
+            *should_quit = true;
+        }
+    }
+    else
+    {
+        (void)editor_state_set_message(state, "Save failed; document remains modified.");
+        state->quit_after_save = false;
+    }
+
+    *redraw = true;
+    return true;
+}
+
+/*
+ * Route a command through the active filename-entry prompt.
+ *
+ * While the prompt is open, every keystroke edits the filename: printable
+ * characters are inserted at the cursor, arrows and Backspace/Delete edit
+ * the entry, Enter saves under the typed name (quitting as well when the
+ * prompt was opened from the quit flow), and Escape cancels. Anything else
+ * is ignored.
+ *
+ * Parameters:
+ *   state       - the editor state to update.
+ *   command     - the command to handle.
+ *   redraw      - out-parameter: set to true when the entry or message
+ *                 changed.
+ *   should_quit - out-parameter: set to true when a save-and-quit finishes.
+ *
+ * Returns:
+ *   always true.
+ */
+static bool filename_entry_execute(EditorState *state, const EditorCommand *command, bool *redraw, bool *should_quit)
+{
+    if (command->type == EDITOR_COMMAND_CANCEL)
+    {
+        const bool was_quitting = state->quit_after_save;
+        filename_entry_clear(state);
+        state->quit_after_save = false;
+        (void)editor_state_set_message(state, was_quitting ? "Quit cancelled." : "Save As cancelled.");
+        *redraw = true;
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_MOVE_LEFT)
+    {
+        const size_t previous = filename_previous_boundary(state->filename_entry,
+                                                           state->filename_entry_cursor);
+        if (previous != state->filename_entry_cursor)
+        {
+            state->filename_entry_cursor = previous;
+            *redraw = true;
+        }
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_MOVE_RIGHT)
+    {
+        const size_t next = filename_next_boundary(state->filename_entry,
+                                                   state->filename_entry_length,
+                                                   state->filename_entry_cursor);
+        if (next != state->filename_entry_cursor)
+        {
+            state->filename_entry_cursor = next;
+            *redraw = true;
+        }
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_BACKSPACE)
+    {
+        if (state->filename_entry_cursor > 0)
+        {
+            const size_t previous = filename_previous_boundary(state->filename_entry, state->filename_entry_cursor);
+            const size_t removed = state->filename_entry_cursor - previous;
+            memmove(state->filename_entry + previous,
+                    state->filename_entry + state->filename_entry_cursor,
+                    state->filename_entry_length - state->filename_entry_cursor + 1);
+            state->filename_entry_length -= removed;
+            state->filename_entry_cursor = previous;
+            *redraw = true;
+        }
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_DELETE_CHARACTER)
+    {
+        if (state->filename_entry_cursor < state->filename_entry_length)
+        {
+            const size_t next = filename_next_boundary(state->filename_entry,
+                                                       state->filename_entry_length,
+                                                       state->filename_entry_cursor);
+            const size_t removed = next - state->filename_entry_cursor;
+            memmove(state->filename_entry + state->filename_entry_cursor,
+                    state->filename_entry + next,
+                    state->filename_entry_length - next + 1);
+            state->filename_entry_length -= removed;
+            *redraw = true;
+        }
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_INSERT_CHARACTER)
+    {
+        unsigned char encoded[4];
+        const size_t encoded_length = encode_utf8(command->character, encoded);
+
+        if (encoded_length == 0)
+        {
+            return true;
+        }
+        if (encoded_length > EDITOR_FILENAME_CAPACITY - 1 - state->filename_entry_length)
+        {
+            (void)editor_state_set_message(state, "Filename is too long.");
+            *redraw = true;
+            return true;
+        }
+
+        memmove(state->filename_entry + state->filename_entry_cursor + encoded_length,
+                state->filename_entry + state->filename_entry_cursor,
+                state->filename_entry_length - state->filename_entry_cursor + 1);
+        memcpy(state->filename_entry + state->filename_entry_cursor, encoded, encoded_length);
+        state->filename_entry_length += encoded_length;
+        state->filename_entry_cursor += encoded_length;
+        (void)editor_state_set_message(state, "Enter: save  Esc: cancel");
+        *redraw = true;
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_INSERT_NEWLINE)
+    {
+        if (state->filename_entry_length == 0)
+        {
+            (void)editor_state_set_message(state, "Enter a file name.");
+            *redraw = true;
+            return true;
+        }
+
+        if (editor_state_save_as(state, state->filename_entry))
+        {
+            const bool should_quit_after_save = state->quit_after_save;
+            filename_entry_clear(state);
+            state->quit_after_save = false;
+            (void)editor_state_set_message(state, "Saved successfully.");
+            if (should_quit_after_save)
+            {
+                *should_quit = true;
+            }
+        }
+        else
+        {
+            (void)editor_state_set_message(
+                state, "Save failed; check path and try again, or Esc to cancel.");
+        }
+        *redraw = true;
+        return true;
+    }
+
+    /* Ignore commands not meaningful while a filename is being entered. */
+    return true;
+}
+
+/*
+ * Route a command through the active quit-confirmation prompt.
+ *
+ * The prompt answers Ctrl-Q on a dirty document: Y saves first (opening
+ * filename entry if the document is unnamed) and then quits, N discards the
+ * changes and quits, and Escape cancels. Other keys are ignored.
+ *
+ * Parameters:
+ *   state       - the editor state to update.
+ *   command     - the command to handle.
+ *   save_path   - fallback path from the command line; may be NULL.
+ *   redraw      - out-parameter: set to true when the prompt state changed.
+ *   should_quit - out-parameter: set to true when the editor should exit.
+ *
+ * Returns:
+ *   always true.
+ */
+static bool quit_confirmation_execute(EditorState *state, const EditorCommand *command, const char *save_path, bool *redraw, bool *should_quit)
+{
+    if (command->type == EDITOR_COMMAND_CANCEL)
+    {
+        state->quit_confirmation_active = false;
+        (void)editor_state_set_message(state, "Quit cancelled.");
+        *redraw = true;
+        return true;
+    }
+
+    if (command->type != EDITOR_COMMAND_INSERT_CHARACTER)
+    {
+        return true;
+    }
+
+    if (command->character == 'n' || command->character == 'N')
+    {
+        state->quit_confirmation_active = false;
+        state->quit_after_save = false;
+        *should_quit = true;
+        return true;
+    }
+
+    if (command->character == 'y' || command->character == 'Y')
+    {
+        state->quit_confirmation_active = false;
+        return command_save(state, save_path, true, redraw, should_quit);
+    }
+
+    return true;
+}
+
+/*
+ * Execute one command against the editor state.
+ *
+ * The command may edit the document, move the cursor, save the file, open
+ * the filename-entry prompt, or start/answer the quit confirmation. The
+ * caller uses the out-parameters to decide whether to redraw and whether to
+ * leave the event loop.
+ *
+ * Parameters:
+ *   state       - the editor state to modify; must not be NULL.
+ *   command     - the command to execute; must not be NULL.
+ *   save_path   - path passed on the command line, used as the save target
+ *                 when the document has no file path of its own yet; may be
+ *                 NULL.
+ *   redraw      - out-parameter: set to true when the screen should be
+ *                 redrawn; must not be NULL.
+ *   should_quit - out-parameter: set to true when the editor should exit;
+ *                 must not be NULL.
+ *
+ * Returns:
+ *   true on success, false on NULL arguments. On success `redraw` and
+ *   `should_quit` are always written (false when the command did nothing).
+ */
+bool command_engine_execute(EditorState *state, const EditorCommand *command, const char *save_path, bool *redraw, bool *should_quit)
+{
+    bool changed = false;
+
+    if (state == NULL || command == NULL || redraw == NULL || should_quit == NULL)
+    {
+        return false;
+    }
+
+    *redraw = false;
+    *should_quit = false;
+
+    if (state->filename_entry_active)
+    {
+        return filename_entry_execute(state, command, redraw, should_quit);
+    }
+
+    if (state->quit_confirmation_active)
+    {
+        return quit_confirmation_execute(state, command, save_path, redraw, should_quit);
+    }
+
+    switch (command->type)
+    {
+    case EDITOR_COMMAND_NONE:
+        break;
+    case EDITOR_COMMAND_QUIT:
+        if (state->is_dirty)
+        {
+            state->quit_confirmation_active = true;
+            state->quit_after_save = false;
+            (void)editor_state_set_message(state, "Save changes before quitting?");
+            *redraw = true;
+        }
+        else
+        {
+            *should_quit = true;
+        }
+        break;
+    case EDITOR_COMMAND_SAVE:
+        return command_save(state, save_path, false, redraw, should_quit);
+    case EDITOR_COMMAND_CANCEL:
+        break;
+    case EDITOR_COMMAND_INSERT_CHARACTER:
+    case EDITOR_COMMAND_INSERT_TAB:
+    {
+        const uint32_t character = command->type == EDITOR_COMMAND_INSERT_TAB
+                                       ? (uint32_t)'\t'
+                                       : command->character;
+        if (!document_insert_character(&state->document, state->cursor.row, state->cursor.column, character))
+        {
+            return true;
+        }
+        if (!cursor_advance(&state->cursor, &state->document))
+        {
+            return false;
+        }
+        state->is_dirty = true;
+        changed = true;
+        break;
+    }
+    case EDITOR_COMMAND_BACKSPACE:
+        if (!command_backspace(state, &changed))
+        {
+            return false;
+        }
+        break;
+    case EDITOR_COMMAND_INSERT_NEWLINE:
+        if (!document_split_line(&state->document, state->cursor.row, state->cursor.column))
+        {
+            return true;
+        }
+        if (!cursor_set_position(&state->cursor, &state->document, state->cursor.row + 1, 0))
+        {
+            return false;
+        }
+        state->is_dirty = true;
+        changed = true;
+        break;
+    case EDITOR_COMMAND_MOVE_LEFT:
+        changed = cursor_move_left(&state->cursor);
+        break;
+    case EDITOR_COMMAND_MOVE_RIGHT:
+        changed = cursor_move_right(&state->cursor, &state->document);
+        break;
+    case EDITOR_COMMAND_MOVE_UP:
+        changed = cursor_move_up(&state->cursor, &state->document, state->configuration.tab_width);
+        break;
+    case EDITOR_COMMAND_MOVE_DOWN:
+        changed = cursor_move_down(&state->cursor, &state->document, state->configuration.tab_width);
+        break;
+    case EDITOR_COMMAND_PAGE_UP:
+        changed = cursor_move_page_up(&state->cursor, &state->document, command->page_rows, state->configuration.tab_width);
+        break;
+    case EDITOR_COMMAND_PAGE_DOWN:
+        changed = cursor_move_page_down(&state->cursor, &state->document, command->page_rows, state->configuration.tab_width);
+        break;
+    case EDITOR_COMMAND_MOVE_HOME:
+        changed = cursor_move_home(&state->cursor);
+        break;
+    case EDITOR_COMMAND_MOVE_END:
+        changed = cursor_move_end(&state->cursor, &state->document);
+        break;
+    case EDITOR_COMMAND_DELETE_CHARACTER:
+        if (!command_delete_character(state, &changed))
+        {
+            return false;
+        }
+        break;
+    default:
+        return false;
+    }
+
+    switch (command->type)
+    {
+    case EDITOR_COMMAND_INSERT_CHARACTER:
+    case EDITOR_COMMAND_INSERT_TAB:
+    case EDITOR_COMMAND_BACKSPACE:
+    case EDITOR_COMMAND_INSERT_NEWLINE:
+    case EDITOR_COMMAND_MOVE_LEFT:
+    case EDITOR_COMMAND_MOVE_RIGHT:
+    case EDITOR_COMMAND_MOVE_HOME:
+    case EDITOR_COMMAND_MOVE_END:
+    case EDITOR_COMMAND_DELETE_CHARACTER:
+        state->cursor.preferred_visual_column_valid = false;
+        break;
+    default:
+        break;
+    }
+
+    *redraw = *redraw || changed;
+    return true;
+}
+```
+
+## Navigation policy
+
+If the preferred visual target falls inside the display width of a tab or wide code point, the Cursor cannot represent an interior position. The implementation chooses the nearest logical boundary; equal-distance ties choose the boundary before that code point.
+
+<Aside>
+  Complete code for this chapter can be found in the relevent branch in the
+  Github repository at
+  https://github.com/SachinAthu/tedit/tree/chapter-53-complete.
+</Aside>

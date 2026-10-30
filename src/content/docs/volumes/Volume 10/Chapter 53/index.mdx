@@ -1,0 +1,25 @@
+---
+title: Chapter 53 — Completing Keyboard Editing and Navigation
+description: "Completes keyboard editing with Home/End, Delete, Page Up/Down, Tab, UTF-8 input, and visual-column mapping, integrated through the input and command engines."
+---
+
+## Introduction
+
+Chapter 52 completed the visible interface and the input-to-command path, but several everyday keys still did nothing. Home, End, Delete, Page Up, Page Down, and Tab were not recognized, and tabs and non-ASCII input exposed the difference between logical character positions and terminal display columns.
+
+> **How can the editor support the remaining keyboard operations while keeping logical cursor positions, visual columns, and input handling consistent?**
+
+This chapter closes those gaps incrementally. It extends terminal sequence parsing, adds Home/End and page navigation, implements Delete including line merging, and supports tab insertion with a configurable tab width. It then handles UTF-8 keyboard input at character boundaries, introduces a shared logical-to-visual column mapping for tabs and Unicode display widths, and routes the new events through the Input Engine and Command Engine. It finishes with status-bar refinements, vertical-navigation tests, and pseudo-terminal checks so navigation and rendering agree for both plain and non-ASCII text.
+
+## Sections
+
+- [53.1 Implementation Goal and Remaining Gaps](/volumes/volume-10/chapter-53/01-implementation-goal-remaining-gaps/)
+- [53.2 Terminal Sequences for Additional Keys](/volumes/volume-10/chapter-53/02-terminal-sequences-for-additional-keys/)
+- [53.3 Home and End Navigation](/volumes/volume-10/chapter-53/03-home-end-navigation/)
+- [53.4 Delete-Key Editing](/volumes/volume-10/chapter-53/04-delete-key-editing/)
+- [53.5 Page Up and Page Down Navigation](/volumes/volume-10/chapter-53/05-page-up-page-down-navigation/)
+- [53.6 Tab Insertion and Configured Tab Width](/volumes/volume-10/chapter-53/06-tab-insertion-configured-tab-width/)
+- [53.7 UTF-8 Keyboard Input and Character-Boundary Editing](/volumes/volume-10/chapter-53/07-utf-8-keyboard-input-character-boundary-editing/)
+- [53.8 Logical Cursor Positions and Visual Display Columns](/volumes/volume-10/chapter-53/08-logical-cursor-positions-visual-display-columns/)
+- [53.9 Input Engine and Command Engine Integration](/volumes/volume-10/chapter-53/09-input-engine-and-command-engine-integration/)
+- [53.10 Follow-up — Status Bar and Vertical Navigation](/volumes/volume-10/chapter-53/10-follow-up-status-bar-vertical-navigation/)

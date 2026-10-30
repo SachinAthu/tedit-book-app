@@ -1,0 +1,78 @@
+---
+title: 53.2 Terminal Sequences for Additional Keys
+description: "Extends the Input Parser to recognize Home, End, Page Up, Page Down, and Tab terminal sequences as abstract input events."
+---
+
+This section extends the existing Input Parser to recognize Home, End, Page Up, Page Down, and Tab. The parser converts raw terminal bytes into abstract `InputEvent` values; it does not execute editing commands.
+
+## 1. Update `src/input/input_parser.h`
+
+Add these values to the existing `InputEventType` enum:
+
+```c
+    INPUT_EVENT_HOME,
+    INPUT_EVENT_END,
+    INPUT_EVENT_PAGE_UP,
+    INPUT_EVENT_PAGE_DOWN,
+    INPUT_EVENT_TAB,
+```
+
+Keep the existing event values, including `INPUT_EVENT_DELETE`.
+
+## Update `src/input/input_parser.c`
+
+Recognize Tab. Add a named constant alongside the other control-byte definitions:
+
+```c
+#define INPUT_TAB 0x09
+```
+
+In the `INPUT_PARSER_NORMAL` branch, recognize it as a separate event:
+
+```c
+else if (byte == INPUT_TAB)
+{
+    event->type = INPUT_EVENT_TAB;
+}
+```
+
+This produces an abstract Tab event rather than treating the key as a printable character.
+
+Recognize Home and End. Common terminals use several sequences for these keys:
+
+| Key  | Terminal sequence | Event              |
+| ---- | ----------------- | ------------------ |
+| Home | `ESC [ H`         | `INPUT_EVENT_HOME` |
+| Home | `ESC [ 1 ~`       | `INPUT_EVENT_HOME` |
+| Home | `ESC [ 7 ~`       | `INPUT_EVENT_HOME` |
+| End  | `ESC [ F`         | `INPUT_EVENT_END`  |
+| End  | `ESC [ 4 ~`       | `INPUT_EVENT_END`  |
+| End  | `ESC [ 8 ~`       | `INPUT_EVENT_END`  |
+
+In the CSI final-byte handling, recognize `H` and `F`. In the numeric-parameter handling, map parameters `1` and `7` to Home, and `4` and `8` to End.
+
+Recognize page navigation. Extend the existing `~`-terminated CSI parameter handling:
+
+| Sequence    | Event                   |
+| ----------- | ----------------------- |
+| `ESC [ 5 ~` | `INPUT_EVENT_PAGE_UP`   |
+| `ESC [ 6 ~` | `INPUT_EVENT_PAGE_DOWN` |
+| `ESC [ 3 ~` | `INPUT_EVENT_DELETE`    |
+
+Retain the existing Delete behavior. All recognized sequences must reset the parser to `INPUT_PARSER_NORMAL` and clear the CSI parameter, just as the existing implementation does.
+
+## Extend `tests/test_input_parser.c`
+
+Add regression tests for:
+
+- Tab byte `0x09`.
+- Home and End using both final-byte and numeric-parameter sequences.
+- Page Up and Page Down.
+- Existing Delete parsing after the new cases.
+- Parser returning to its normal state after a completed sequence.
+
+The tests should feed each byte individually through the existing `feed()` helper, verifying that intermediate bytes produce `INPUT_EVENT_NONE` and that the final byte produces the expected event.
+
+Current boundary: the parser recognizes these keys, but Home, End, Page Up, Page Down, Tab, and document Delete are not yet fully connected to document-editing behavior. The next sections will implement those behaviors through the existing Input Engine and Command Engine architecture.
+
+Next: 53.3 — Home and End Navigation.
