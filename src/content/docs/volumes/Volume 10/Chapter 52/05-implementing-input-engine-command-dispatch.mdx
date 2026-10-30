@@ -1,0 +1,834 @@
+---
+title: 52.5 Implementing the Input Engine and Command Dispatch
+description: "Introduces the Input Engine and command dispatch boundary, mapping input events to editor commands and executing them against Editor State."
+---
+
+## 1. Goal
+
+This milestone separates key-event mapping from command execution. The Input Parser continues to translate terminal bytes into `InputEvent` values. The Input Engine maps those events to `EditorCommand` values. The Command Engine executes commands against `EditorState`. The Event Loop remains responsible for terminal input, viewport visibility, and deciding when to redraw.
+
+The implementation preserves the existing command set and does not introduce filename entry or Save As.
+
+## 2. Runtime flow
+
+```text
+Terminal bytes
+    |
+    v
+Input Handler (main.c)
+    |
+    v
+Input Parser -> InputEvent
+    |
+    v
+Input Engine -> EditorCommand
+    |
+    v
+Command Engine -> Editor State
+    |
+    v
+Event Loop checks redraw/quit results
+    |
+    v
+Viewport visibility -> Renderer
+```
+
+## 3. Module responsibilities
+
+- **Input Handler:** performs POSIX reads and waits for incomplete Escape sequences to time out.
+- **Input Parser:** recognizes terminal protocol bytes and produces abstract key events.
+- **Input Engine:** translates an event into a command; it does not read bytes or mutate state.
+- **Command Engine:** executes editing, cursor, save, and quit commands; it does not read input or render.
+- **Event Loop:** orchestrates the stages and redraws only when the Command Engine requests it.
+
+## 4. Command result contract
+
+`command_engine_execute()` returns an operational success value and fills two output flags:
+
+- `redraw`: the current view needs to be rendered again.
+- `should_quit`: the application should leave the Event Loop.
+
+A valid command that cannot perform an operation at a document boundary is not a fatal runtime error. For example, Backspace at the start of the first line is a successful no-op. Allocation or invariant failures that prevent the command from completing are reported as `false`.
+
+## 5. Build and test
+
+```bash
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/debug -j2
+ctest --test-dir build/debug --output-on-failure
+
+cmake -S . -B build/warnings -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS='-Wall -Wextra -Wpedantic -Werror'
+cmake --build build/warnings -j2
+ctest --test-dir build/warnings --output-on-failure
+```
+
+Both configurations passed all seven CTest targets: `smoke`, `editing`, `file`, `file_save`, `input_parser`, `input_engine`, and `command_engine`. A pseudo-terminal integration check also verified character insertion, Ctrl-S persistence, and Ctrl-Q exit.
+
+## 6. Architectural invariants
+
+1. The Input Engine only translates `InputEvent` to `EditorCommand`.
+2. The Command Engine never reads terminal bytes or writes terminal output.
+3. Document changes occur through Document operations.
+4. Successful edits update the Dirty Flag.
+5. Save feedback is stored in Editor State and displayed through the existing Renderer path.
+6. The Event Loop owns the decision to redraw and exit.
+7. Save failures remain recoverable and do not clear the Dirty Flag.
+
+## 7. Remaining limitations
+
+- The Input Handler remains in `main.c`; extracting it is not part of this milestone.
+- Key bindings are currently a direct mapping in `input_engine.c`, not a user-configurable binding table.
+- Save As and filename-entry are not implemented.
+- Terminal resizing, Unicode display-width mapping, and the terminal Delete key remain outside this milestone.
+
+## 8. Complete source listings
+
+The following are the complete contents of every new or modified source/build/test file for this milestone.
+
+### `CMakeLists.txt`
+
+```cmake
+# CMakeLists.txt
+
+cmake_minimum_required(VERSION 3.20)
+enable_testing()
+
+project(
+    terminal_editor
+    VERSION 0.1.0
+    LANGUAGES C
+)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+add_library(
+    tedit_core
+    STATIC
+    src/terminal/terminal.c
+    src/input/input_parser.c
+    src/input/input_engine.c
+    src/command/command_engine.c
+    src/state/editor_state.c
+    src/document/document.c
+    src/cursor/cursor.c
+    src/viewport/viewport.c
+    src/renderer/screen_buffer.c
+    src/renderer/renderer.c
+    src/file/file.c
+    src/file/file_save.c
+)
+
+target_include_directories(tedit_core PUBLIC src)
+
+add_executable(
+    tedit
+    src/main.c
+)
+
+target_link_libraries(tedit PRIVATE tedit_core)
+
+# tests
+
+add_executable(test_smoke tests/test_smoke.c)
+add_executable(test_editing tests/test_editing.c)
+add_executable(test_file tests/test_file.c)
+add_executable(test_file_save tests/test_file_save.c)
+add_executable(test_input_parser tests/test_input_parser.c)
+add_executable(test_input_engine tests/test_input_engine.c)
+add_executable(test_command_engine tests/test_command_engine.c)
+
+target_link_libraries(test_smoke PRIVATE tedit_core)
+target_link_libraries(test_editing PRIVATE tedit_core)
+target_link_libraries(test_file PRIVATE tedit_core)
+target_link_libraries(test_file_save PRIVATE tedit_core)
+target_link_libraries(test_input_parser PRIVATE tedit_core)
+target_link_libraries(test_input_engine PRIVATE tedit_core)
+target_link_libraries(test_command_engine PRIVATE tedit_core)
+
+add_test(NAME smoke COMMAND test_smoke)
+add_test(NAME editing COMMAND test_editing)
+add_test(NAME file COMMAND test_file)
+add_test(NAME file_save COMMAND test_file_save)
+add_test(NAME input_parser COMMAND test_input_parser)
+add_test(NAME input_engine COMMAND test_input_engine)
+add_test(NAME command_engine COMMAND test_command_engine)
+
+```
+
+### `src/main.c`
+
+```c
+/* src/main.c */
+
+#include "command/command_engine.h"
+#include "cursor/cursor.h"
+#include "document/document.h"
+#include "input/input_engine.h"
+#include "input/input_parser.h"
+#include "renderer/renderer.h"
+#include "state/editor_state.h"
+#include "terminal/terminal.h"
+
+#include <errno.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <sys/ioctl.h>
+#include <sys/select.h>
+#include <unistd.h>
+
+#define ESCAPE_TIMEOUT_MICROSECONDS 50000
+
+static bool get_terminal_size(size_t *rows, size_t *columns)
+{
+    struct winsize window_size;
+
+    if (rows == NULL || columns == NULL ||
+        ioctl(STDOUT_FILENO, TIOCGWINSZ, &window_size) == -1 ||
+        window_size.ws_row == 0 || window_size.ws_col == 0)
+    {
+        return false;
+    }
+
+    *rows = window_size.ws_row;
+    *columns = window_size.ws_col;
+    return true;
+}
+
+/* Read one byte while allowing an incomplete Escape sequence to time out. */
+static int read_escape_byte(unsigned char *byte)
+{
+    fd_set read_set;
+    struct timeval timeout;
+    int result;
+
+    FD_ZERO(&read_set);
+    FD_SET(STDIN_FILENO, &read_set);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = ESCAPE_TIMEOUT_MICROSECONDS;
+
+    do
+    {
+        result = select(STDIN_FILENO + 1, &read_set, NULL, NULL, &timeout);
+    } while (result == -1 && errno == EINTR);
+
+    if (result <= 0)
+    {
+        return result;
+    }
+
+    for (;;)
+    {
+        const ssize_t bytes_read = read(STDIN_FILENO, byte, sizeof(*byte));
+
+        if (bytes_read == 1)
+        {
+            return 1;
+        }
+        if (bytes_read == 0)
+        {
+            return 0;
+        }
+        if (errno != EINTR)
+        {
+            return -1;
+        }
+    }
+}
+
+static bool redraw_after_action(Renderer *renderer, EditorState *state)
+{
+    if (renderer == NULL || state == NULL)
+    {
+        return false;
+    }
+
+    if (!viewport_ensure_cursor_visible(
+            &state->viewport,
+            state->cursor.row,
+            state->cursor.column,
+            renderer->document_rows,
+            renderer->screen_buffer.columns))
+    {
+        return false;
+    }
+
+    return renderer_render(renderer, state);
+}
+
+static bool application_event_loop(EditorState *state, Renderer *renderer, const char *save_path)
+{
+    InputParser parser;
+    input_parser_init(&parser);
+
+    while (true)
+    {
+        unsigned char byte;
+        int read_result;
+        InputEvent event;
+        bool should_quit;
+
+        if (input_parser_is_waiting(&parser))
+        {
+            read_result = read_escape_byte(&byte);
+            if (read_result == 0)
+            {
+                if (!input_parser_timeout(&parser, &event))
+                {
+                    return false;
+                }
+                continue;
+            }
+        }
+        else
+        {
+            const ssize_t bytes_read = read(STDIN_FILENO, &byte, sizeof(byte));
+            if (bytes_read < 0)
+            {
+                if (errno == EINTR)
+                {
+                    continue;
+                }
+                return false;
+            }
+            if (bytes_read == 0)
+            {
+                return true;
+            }
+            read_result = 1;
+        }
+
+        if (read_result < 0)
+        {
+            return false;
+        }
+        if (read_result == 0)
+        {
+            return true;
+        }
+        if (!input_parser_feed(&parser, byte, &event))
+        {
+            return false;
+        }
+        EditorCommand command;
+        bool redraw;
+        if (!input_engine_translate(&event, &command))
+        {
+            return false;
+        }
+        if (!command_engine_execute(state, &command, save_path, &redraw, &should_quit))
+        {
+            return false;
+        }
+        if (redraw && !redraw_after_action(renderer, state))
+        {
+            return false;
+        }
+        if (should_quit)
+        {
+            return true;
+        }
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc > 2)
+    {
+        fprintf(stderr, "Usage: %s [filename]\n", argv[0]);
+        return 1;
+    }
+
+    const char *startup_path = argc == 2 ? argv[1] : NULL;
+    bool startup_load_failed = false;
+    TerminalState terminal;
+    EditorState state;
+    Renderer renderer;
+    size_t rows;
+    size_t columns;
+    bool state_initialized = false;
+    bool renderer_initialized = false;
+    int exit_status = 1;
+
+    if (!terminal_init(&terminal))
+    {
+        return 1;
+    }
+    if (!terminal_enable_raw_mode(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+    if (!terminal_enter_alternate_screen(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+    if (!get_terminal_size(&rows, &columns))
+    {
+        goto cleanup;
+    }
+    if (!editor_state_init(&state))
+    {
+        goto cleanup;
+    }
+    state_initialized = true;
+
+    if (startup_path != NULL && !editor_state_load_file(&state, startup_path))
+    {
+        startup_load_failed = true;
+        goto cleanup;
+    }
+    if (columns < 2 || !renderer_init(&renderer, rows, columns - 1))
+    {
+        goto cleanup;
+    }
+    renderer_initialized = true;
+
+    if (!redraw_after_action(&renderer, &state) ||
+        !application_event_loop(&state, &renderer, startup_path))
+    {
+        goto cleanup;
+    }
+
+    exit_status = 0;
+
+cleanup:
+    if (renderer_initialized)
+    {
+        renderer_destroy(&renderer);
+    }
+    if (state_initialized)
+    {
+        editor_state_destroy(&state);
+    }
+    terminal_restore(&terminal);
+    terminal_leave_alternate_screen(&terminal);
+
+    if (startup_load_failed)
+    {
+        fprintf(stderr, "tedit: unable to open or decode '%s'.\n", startup_path);
+    }
+
+    return exit_status;
+}
+
+```
+
+### `src/input/input_engine.h`
+
+```c
+/* src/input/input_engine.h */
+
+#ifndef INPUT_INPUT_ENGINE_H
+#define INPUT_INPUT_ENGINE_H
+
+#include "command/command_engine.h"
+#include "input/input_parser.h"
+
+#include <stdbool.h>
+
+/* Map one abstract key event to an editor command without changing editor state. */
+bool input_engine_translate(const InputEvent *event, EditorCommand *command);
+
+#endif
+
+```
+
+### `src/input/input_engine.c`
+
+```c
+/* src/input/input_engine.c */
+
+#include "input/input_engine.h"
+
+static void command_set(EditorCommand *command, EditorCommandType type, uint32_t character)
+{
+    command->type = type;
+    command->character = character;
+}
+
+bool input_engine_translate(const InputEvent *event, EditorCommand *command)
+{
+    if (event == NULL || command == NULL)
+    {
+        return false;
+    }
+
+    command_set(command, EDITOR_COMMAND_NONE, 0);
+
+    switch (event->type)
+    {
+        case INPUT_EVENT_NONE:
+            break;
+        case INPUT_EVENT_CHARACTER:
+            command_set(command, EDITOR_COMMAND_INSERT_CHARACTER, event->character);
+            break;
+        case INPUT_EVENT_CTRL_Q:
+            command_set(command, EDITOR_COMMAND_QUIT, 0);
+            break;
+        case INPUT_EVENT_CTRL_S:
+            command_set(command, EDITOR_COMMAND_SAVE, 0);
+            break;
+        case INPUT_EVENT_BACKSPACE:
+            command_set(command, EDITOR_COMMAND_BACKSPACE, 0);
+            break;
+        case INPUT_EVENT_ENTER:
+            command_set(command, EDITOR_COMMAND_INSERT_NEWLINE, 0);
+            break;
+        case INPUT_EVENT_ARROW_LEFT:
+            command_set(command, EDITOR_COMMAND_MOVE_LEFT, 0);
+            break;
+        case INPUT_EVENT_ARROW_RIGHT:
+            command_set(command, EDITOR_COMMAND_MOVE_RIGHT, 0);
+            break;
+        case INPUT_EVENT_ARROW_UP:
+            command_set(command, EDITOR_COMMAND_MOVE_UP, 0);
+            break;
+        case INPUT_EVENT_ARROW_DOWN:
+            command_set(command, EDITOR_COMMAND_MOVE_DOWN, 0);
+            break;
+        default:
+            return false;
+    }
+
+    return true;
+}
+
+```
+
+### `src/command/command_engine.h`
+
+```c
+/* src/command/command_engine.h */
+
+#ifndef COMMAND_COMMAND_ENGINE_H
+#define COMMAND_COMMAND_ENGINE_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "state/editor_state.h"
+
+typedef enum
+{
+    EDITOR_COMMAND_NONE = 0,
+    EDITOR_COMMAND_INSERT_CHARACTER,
+    EDITOR_COMMAND_BACKSPACE,
+    EDITOR_COMMAND_INSERT_NEWLINE,
+    EDITOR_COMMAND_MOVE_LEFT,
+    EDITOR_COMMAND_MOVE_RIGHT,
+    EDITOR_COMMAND_MOVE_UP,
+    EDITOR_COMMAND_MOVE_DOWN,
+    EDITOR_COMMAND_SAVE,
+    EDITOR_COMMAND_QUIT
+} EditorCommandType;
+
+typedef struct
+{
+    EditorCommandType type;
+    uint32_t character;
+} EditorCommand;
+
+/* Execute one command. redraw and should_quit are always initialized on success. */
+bool command_engine_execute(EditorState *state,
+                            const EditorCommand *command,
+                            const char *save_path,
+                            bool *redraw,
+                            bool *should_quit);
+
+#endif
+
+```
+
+### `src/command/command_engine.c`
+
+```c
+/* src/command/command_engine.c */
+
+#include "command/command_engine.h"
+
+#include "cursor/cursor.h"
+#include "document/document.h"
+#include "state/editor_state.h"
+
+static bool command_backspace(EditorState *state, bool *changed)
+{
+    if (state->cursor.column > 0)
+    {
+        const size_t delete_column = state->cursor.column - 1;
+        if (!document_delete_character(&state->document, state->cursor.row, delete_column))
+        {
+            return true;
+        }
+        if (!cursor_set_position(&state->cursor, &state->document,
+                                 state->cursor.row, delete_column))
+        {
+            return false;
+        }
+    }
+    else if (state->cursor.row > 0)
+    {
+        const size_t previous_row = state->cursor.row - 1;
+        const DocumentLine *previous_line = document_get_line(&state->document, previous_row);
+        if (previous_line == NULL)
+        {
+            return true;
+        }
+
+        const size_t previous_length = previous_line->length;
+        if (!document_merge_lines(&state->document, previous_row))
+        {
+            return true;
+        }
+        if (!cursor_set_position(&state->cursor, &state->document,
+                                 previous_row, previous_length))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return true;
+    }
+
+    state->is_dirty = true;
+    *changed = true;
+    return true;
+}
+
+bool command_engine_execute(EditorState *state,
+                            const EditorCommand *command,
+                            const char *save_path,
+                            bool *redraw,
+                            bool *should_quit)
+{
+    bool changed = false;
+
+    if (state == NULL || command == NULL || redraw == NULL || should_quit == NULL)
+    {
+        return false;
+    }
+
+    *redraw = false;
+    *should_quit = false;
+
+    switch (command->type)
+    {
+        case EDITOR_COMMAND_NONE:
+            break;
+        case EDITOR_COMMAND_QUIT:
+            *should_quit = true;
+            break;
+        case EDITOR_COMMAND_SAVE:
+            if (save_path == NULL)
+            {
+                (void)editor_state_set_message(state, "No file name. Save As is not available yet.");
+            }
+            else if (editor_state_save_file(state, save_path))
+            {
+                (void)editor_state_set_message(state, "Saved successfully.");
+            }
+            else
+            {
+                (void)editor_state_set_message(state, "Save failed; document remains modified.");
+            }
+            *redraw = true;
+            break;
+        case EDITOR_COMMAND_INSERT_CHARACTER:
+            if (!document_insert_character(&state->document, state->cursor.row,
+                                           state->cursor.column, command->character))
+            {
+                return true;
+            }
+            if (!cursor_advance(&state->cursor, &state->document))
+            {
+                return false;
+            }
+            state->is_dirty = true;
+            changed = true;
+            break;
+        case EDITOR_COMMAND_BACKSPACE:
+            if (!command_backspace(state, &changed))
+            {
+                return false;
+            }
+            break;
+        case EDITOR_COMMAND_INSERT_NEWLINE:
+            if (!document_split_line(&state->document, state->cursor.row, state->cursor.column))
+            {
+                return true;
+            }
+            if (!cursor_set_position(&state->cursor, &state->document,
+                                     state->cursor.row + 1, 0))
+            {
+                return false;
+            }
+            state->is_dirty = true;
+            changed = true;
+            break;
+        case EDITOR_COMMAND_MOVE_LEFT:
+            changed = cursor_move_left(&state->cursor);
+            break;
+        case EDITOR_COMMAND_MOVE_RIGHT:
+            changed = cursor_move_right(&state->cursor, &state->document);
+            break;
+        case EDITOR_COMMAND_MOVE_UP:
+            changed = cursor_move_up(&state->cursor, &state->document);
+            break;
+        case EDITOR_COMMAND_MOVE_DOWN:
+            changed = cursor_move_down(&state->cursor, &state->document);
+            break;
+        default:
+            return false;
+    }
+
+    *redraw = *redraw || changed;
+    return true;
+}
+
+```
+
+### `tests/test_input_engine.c`
+
+```c
+/* tests/test_input_engine.c */
+
+#include "input/input_engine.h"
+
+#include <assert.h>
+
+static void test_event_mapping(void)
+{
+    InputEvent event = {INPUT_EVENT_CHARACTER, 'x'};
+    EditorCommand command;
+
+    assert(input_engine_translate(&event, &command));
+    assert(command.type == EDITOR_COMMAND_INSERT_CHARACTER);
+    assert(command.character == 'x');
+
+    event.type = INPUT_EVENT_ARROW_LEFT;
+    event.character = 0;
+    assert(input_engine_translate(&event, &command));
+    assert(command.type == EDITOR_COMMAND_MOVE_LEFT);
+
+    event.type = INPUT_EVENT_CTRL_S;
+    assert(input_engine_translate(&event, &command));
+    assert(command.type == EDITOR_COMMAND_SAVE);
+
+    event.type = INPUT_EVENT_CTRL_Q;
+    assert(input_engine_translate(&event, &command));
+    assert(command.type == EDITOR_COMMAND_QUIT);
+
+    event.type = INPUT_EVENT_NONE;
+    assert(input_engine_translate(&event, &command));
+    assert(command.type == EDITOR_COMMAND_NONE);
+}
+
+static void test_invalid_arguments(void)
+{
+    InputEvent event = {INPUT_EVENT_NONE, 0};
+    EditorCommand command;
+
+    assert(!input_engine_translate(NULL, &command));
+    assert(!input_engine_translate(&event, NULL));
+}
+
+int main(void)
+{
+    test_event_mapping();
+    test_invalid_arguments();
+    return 0;
+}
+
+```
+
+### `tests/test_command_engine.c`
+
+```c
+/* tests/test_command_engine.c */
+
+#include "command/command_engine.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+
+static void execute(EditorState *state, EditorCommandType type, uint32_t character,
+                    bool *redraw, bool *should_quit)
+{
+    EditorCommand command = {type, character};
+    assert(command_engine_execute(state, &command, NULL, redraw, should_quit));
+}
+
+static void test_editing_commands(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'a', &redraw, &should_quit);
+    assert(redraw && !should_quit && state.is_dirty);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'b', &redraw, &should_quit);
+    assert(redraw);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.column == 1);
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.column == 0);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'b');
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+    assert(redraw && state.document.line_count == 2 && state.cursor.row == 1);
+    editor_state_destroy(&state);
+}
+
+static void test_quit_and_noop(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_NONE, 0, &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(!redraw && should_quit);
+    editor_state_destroy(&state);
+}
+
+static void test_invalid_arguments(void)
+{
+    EditorState state;
+    EditorCommand command = {EDITOR_COMMAND_NONE, 0};
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    assert(!command_engine_execute(NULL, &command, NULL, &redraw, &should_quit));
+    assert(!command_engine_execute(&state, NULL, NULL, &redraw, &should_quit));
+    assert(!command_engine_execute(&state, &command, NULL, NULL, &should_quit));
+    assert(!command_engine_execute(&state, &command, NULL, &redraw, NULL));
+    editor_state_destroy(&state);
+}
+
+int main(void)
+{
+    test_editing_commands();
+    test_quit_and_noop();
+    test_invalid_arguments();
+    return 0;
+}
+
+```
+
+## 9. Project records updated
+
+The repository records `IMPLEMENTATION_STATUS.md`, `context/07-current-state.md`, `context/08-implementation-status.md`, and `context/09-implementation-notes.md` now record Section 52.5, its test results, and the next milestone. The repository snapshot does not include Git metadata; create a commit in the working Git checkout after reviewing the changes.
+
+## 10. Next step
+
+Proceed to Chapter 52.6 — integration review and key-binding boundary. Keep filename-entry and Save As deferred until the input/command pipeline has been reviewed.

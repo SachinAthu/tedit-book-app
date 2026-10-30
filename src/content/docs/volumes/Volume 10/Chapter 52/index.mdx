@@ -1,0 +1,23 @@
+---
+title: Chapter 52 — Completing the Editor Interface
+description: "Completes the editor interface with status and message bars, an input parser and command dispatch, Save As, and unsaved-changes confirmation."
+---
+
+## Introduction
+
+By the end of Chapter 51 the editor could open, edit, navigate, and save files, but its interface and input path were still minimal: input handling lived in `main.c`, there was no status or message display, and unnamed documents could not be saved at all. Chapter 52 completes that interface while preserving the architecture built so far.
+
+> **How can the editor present state and feedback, and turn raw terminal bytes into commands, without letting input handling or rendering absorb responsibilities that belong elsewhere?**
+
+The chapter proceeds incrementally. It adds a Status Bar for the filename, modified marker, and cursor position, then a Message Bar for save results and errors. It extracts terminal-byte interpretation into the Input Parser, introduces the Input Engine and command dispatch, and reviews the key-binding boundary. Finally it adds filename entry and Save As, followed by refinements and unsaved-changes confirmation. Each step keeps the Document, Cursor, Viewport, File Manager, Renderer, and terminal lifecycle intact, with regression tests covering the new input-to-command path.
+
+## Sections
+
+- [52.1 Implementation Goal and Repository Baseline](/volumes/volume-10/chapter-52/01-implementation-goal-repository-baseline/)
+- [52.2 Implementing the Status Bar](/volumes/volume-10/chapter-52/02-implementing-status-bar/)
+- [52.3 Implementing the Message Bar](/volumes/volume-10/chapter-52/03-implementing-message-bar/)
+- [52.4 Implementing the Input Parser](/volumes/volume-10/chapter-52/04-implementing-input-parser/)
+- [52.5 Implementing the Input Engine and Command Dispatch](/volumes/volume-10/chapter-52/05-implementing-input-engine-command-dispatch/)
+- [52.6 Integration Review and Key-Binding Boundary](/volumes/volume-10/chapter-52/06-integration-review-key-binding-boundary/)
+- [52.7 Filename Entry and Save As](/volumes/volume-10/chapter-52/07-filename-entry-save-as/)
+- [52.8 Interface Refinement and Unsaved-Changes Confirmation](/volumes/volume-10/chapter-52/08-interface-refinement-unsaved-changes-confirmation/)

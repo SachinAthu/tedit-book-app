@@ -1,0 +1,214 @@
+---
+title: 52.6 Integration Review and Key-Binding Boundary
+description: "Reviews the complete input-to-command path, records the key-binding boundary, and adds regression tests for event mapping and the full pipeline."
+---
+
+## 1. Goal
+
+Review the complete input-to-command path before adding filename entry and Save As. This section adds regression coverage and records the key-binding boundary; it does not add configurable key bindings or change runtime behavior beyond tests.
+
+## 2. Reviewed runtime path
+
+```text
+Terminal bytes
+    |
+    v
+Input Handler (main.c)
+    |
+    v
+Input Parser
+    |
+    v
+Input Engine
+    |
+    v
+Command Engine
+    |
+    v
+Editor State
+    |
+    v
+Renderer (when redraw is requested)
+```
+
+Responsibilities remain distinct:
+
+- **Input Handler:** reads terminal bytes and manages the Escape-sequence timeout.
+- **Input Parser:** converts terminal protocol bytes into abstract `InputEvent` values.
+- **Input Engine:** maps abstract events to `EditorCommand` values.
+- **Command Engine:** executes commands and reports redraw/quit outcomes.
+- **Event Loop:** coordinates these stages and invokes the existing redraw path.
+- **Renderer:** consumes Editor State and does not handle input or execute commands.
+
+## 3. Key-binding boundary
+
+For this milestone, mappings remain fixed in `input_engine_translate()` in `src/input/input_engine.c`. There is no configuration file, runtime remapping, generic key-binding table, or user-facing binding editor. If configurable bindings are introduced later, the Input Engine is the appropriate boundary: it receives abstract events and returns commands without changing terminal parsing or command execution responsibilities.
+
+Unknown or incomplete CSI sequences are currently ignored by the Input Parser and produce no command. An unknown `InputEventType` is rejected by the Input Engine as an invalid internal value. An unknown `EditorCommandType` is rejected by the Command Engine.
+
+## 4. Complete updated source
+
+### `tests/test_input_engine.c`
+
+```c
+/* tests/test_input_engine.c */
+
+#include "input/input_engine.h"
+
+#include <assert.h>
+
+static void assert_mapping(InputEventType event_type, uint32_t character,
+                           EditorCommandType expected_type, uint32_t expected_character)
+{
+    InputEvent event = {event_type, character};
+    EditorCommand command;
+
+    assert(input_engine_translate(&event, &command));
+    assert(command.type == expected_type);
+    assert(command.character == expected_character);
+}
+
+static void test_all_supported_mappings(void)
+{
+    assert_mapping(INPUT_EVENT_NONE, 0, EDITOR_COMMAND_NONE, 0);
+    assert_mapping(INPUT_EVENT_CHARACTER, 'x', EDITOR_COMMAND_INSERT_CHARACTER, 'x');
+    assert_mapping(INPUT_EVENT_CTRL_Q, 0, EDITOR_COMMAND_QUIT, 0);
+    assert_mapping(INPUT_EVENT_CTRL_S, 0, EDITOR_COMMAND_SAVE, 0);
+    assert_mapping(INPUT_EVENT_BACKSPACE, 0, EDITOR_COMMAND_BACKSPACE, 0);
+    assert_mapping(INPUT_EVENT_ENTER, 0, EDITOR_COMMAND_INSERT_NEWLINE, 0);
+    assert_mapping(INPUT_EVENT_ARROW_LEFT, 0, EDITOR_COMMAND_MOVE_LEFT, 0);
+    assert_mapping(INPUT_EVENT_ARROW_RIGHT, 0, EDITOR_COMMAND_MOVE_RIGHT, 0);
+    assert_mapping(INPUT_EVENT_ARROW_UP, 0, EDITOR_COMMAND_MOVE_UP, 0);
+    assert_mapping(INPUT_EVENT_ARROW_DOWN, 0, EDITOR_COMMAND_MOVE_DOWN, 0);
+}
+
+static void test_invalid_arguments_and_unknown_event(void)
+{
+    InputEvent event = {INPUT_EVENT_NONE, 0};
+    EditorCommand command = {EDITOR_COMMAND_QUIT, 123};
+
+    assert(!input_engine_translate(NULL, &command));
+    assert(!input_engine_translate(&event, NULL));
+
+    event.type = (InputEventType)999;
+    assert(!input_engine_translate(&event, &command));
+}
+
+int main(void)
+{
+    test_all_supported_mappings();
+    test_invalid_arguments_and_unknown_event();
+    return 0;
+}
+```
+
+### `tests/test_input_pipeline.c`
+
+```c
+/* tests/test_input_pipeline.c */
+
+#include "command/command_engine.h"
+#include "document/document.h"
+#include "input/input_engine.h"
+#include "input/input_parser.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <string.h>
+
+static void feed_and_execute(InputParser *parser, EditorState *state, unsigned char byte,
+                             bool *redraw, bool *should_quit)
+{
+    InputEvent event;
+    EditorCommand command;
+
+    assert(input_parser_feed(parser, byte, &event));
+    assert(input_engine_translate(&event, &command));
+    assert(command_engine_execute(state, &command, NULL, redraw, should_quit));
+}
+
+static void test_end_to_end_input_pipeline(void)
+{
+    InputParser parser;
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    input_parser_init(&parser);
+
+    feed_and_execute(&parser, &state, 'x', &redraw, &should_quit);
+    assert(redraw && !should_quit);
+    assert(state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'x');
+    assert(state.cursor.column == 1);
+
+    /* An unknown CSI sequence produces no command and does not change state. */
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    feed_and_execute(&parser, &state, 'Z', &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    assert(state.cursor.column == 1);
+
+    /* A complete arrow sequence is parsed before it becomes a command. */
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, 'D', &redraw, &should_quit);
+    assert(redraw && !should_quit);
+    assert(state.cursor.column == 0);
+
+    /* Save without an associated path produces Message Bar feedback. */
+    feed_and_execute(&parser, &state, 0x13, &redraw, &should_quit);
+    assert(redraw && !should_quit);
+    assert(state.is_dirty);
+    assert(strcmp(state.message, "No file name. Save As is not available yet.") == 0);
+
+    feed_and_execute(&parser, &state, 0x11, &redraw, &should_quit);
+    assert(!redraw && should_quit);
+
+    editor_state_destroy(&state);
+}
+
+int main(void)
+{
+    test_end_to_end_input_pipeline();
+    return 0;
+}
+```
+
+## 5. Build configuration change
+
+The following lines were added to `CMakeLists.txt`:
+
+```cmake
+add_executable(test_input_pipeline tests/test_input_pipeline.c)
+target_link_libraries(test_input_pipeline PRIVATE tedit_core)
+add_test(NAME input_pipeline COMMAND test_input_pipeline)
+```
+
+The existing `test_input_engine` target remains registered; its source was expanded to cover every currently defined event mapping and invalid event values.
+
+## 6. Build and verification
+
+Run from the repository root:
+
+```bash
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/debug -j2
+ctest --test-dir build/debug --output-on-failure
+
+cmake -S . -B build/werror -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS='-Wall -Wextra -Wpedantic -Werror'
+cmake --build build/werror -j2
+ctest --test-dir build/werror --output-on-failure
+```
+
+Both builds succeeded. All eight CTest targets passed in both configurations: `smoke`, `editing`, `file`, `file_save`, `input_parser`, `input_engine`, `command_engine`, and `input_pipeline`.
+
+## 7. Next implementation milestone
+
+Implement filename entry and Save As. Filename entry should be a minimal interaction using the existing input path: printable characters, Backspace, Enter to confirm, and Escape to cancel. Save As must preserve the current file association, Document, and Dirty Flag on cancellation or failure; only a successful save should associate the new path and clear the Dirty Flag.

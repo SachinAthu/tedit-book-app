@@ -1,0 +1,47 @@
+---
+title: 52.1 Implementation Goal and Repository Baseline
+description: "Sets the Chapter 52 starting point and implementation sequence: status bar, message bar, input parser, command dispatch, Save As, and integration tests."
+---
+
+The Chapter 51 repository is the starting point. No existing modules will be replaced merely to simplify the next implementation step.
+
+Current interface limitations:
+
+Input handling remains inside `main.c`. The Status Bar, Message Bar, and Save As interaction are not implemented.
+
+## Implementation Sequence
+
+We will implement Chapter 52 in the following order.
+
+1. Status Bar: Reserve the appropriate screen row and display the filename, modified status, and logical cursor position.
+2. Message Bar: Display save results, errors, and other user-facing messages through the existing Renderer.
+3. Input Parser: Extract terminal byte and arrow-key recognition from `main.c` into the dedicated input module.
+4. Command dispatch and Input Engine: Introduce key-to-command mapping and route commands through the established Command Engine boundary.
+5. Save As: Add filename entry for an unnamed Document, connect it to the existing safe-save implementation, and update the displayed filename only after a successful save.
+6. Integration tests: Verify the new interface, keyboard shortcuts, save feedback, cancellation, and failure handling.
+
+The implementation will remain incremental. Each runnable milestone will include the complete contents of every new or modified file, build instructions, relevant tests, and a review of the resulting source state.
+
+## Existing Files to Preserve
+
+The implementation starts from the attached repository's actual structure.
+
+```
+tedit-main/
+├── src/
+│   ├── main.c
+│   ├── cursor/
+│   ├── document/
+│   ├── file/
+│   ├── renderer/
+│   ├── state/
+│   ├── terminal/
+│   └── viewport/
+├── tests/
+├── context/
+└── CMakeLists.txt
+```
+
+The existing Document, Cursor, Viewport, File Manager, safe-save implementation, and terminal lifecycle remain the foundation. Any changes to their interfaces will be identified explicitly.
+
+Next implementation section: 52.2 — Implementing the Status Bar. We will begin with the actual source changes, including screen-row allocation, filename and cursor information, modified-state display, and regression tests.

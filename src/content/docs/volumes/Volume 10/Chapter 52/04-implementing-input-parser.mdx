@@ -1,0 +1,939 @@
+---
+title: 52.4 Implementing the Input Parser
+description: "Extracts terminal-byte and escape-sequence interpretation from main.c into a dedicated Input Parser that emits abstract InputEvent values."
+---
+
+## 1. Implementation goal
+
+Move terminal-byte interpretation out of `main.c` into the dedicated Input Parser module required by the project architecture. The Input Handler remains responsible for reading bytes and timing out incomplete Escape sequences. The Input Parser translates bytes into abstract `InputEvent` values. The existing application loop consumes those events and preserves the editing behavior established in earlier chapters.
+
+This milestone does **not** introduce the Input Engine or Command Engine yet.
+
+## 2. Project changes
+
+New files:
+
+- `src/input/input_parser.h`
+- `src/input/input_parser.c`
+- `tests/test_input_parser.c`
+
+Modified files:
+
+- `CMakeLists.txt`
+- `src/main.c`
+
+Existing Document, Cursor, Viewport, Renderer, File Manager, and Terminal modules remain in place.
+
+## 3. Complete source code
+
+The complete contents of every new or modified source/header file follow.
+
+### `CMakeLists.txt`
+
+```cmake
+# CMakeLists.txt
+
+cmake_minimum_required(VERSION 3.20)
+enable_testing()
+
+project(
+    terminal_editor
+    VERSION 0.1.0
+    LANGUAGES C
+)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+add_library(
+    tedit_core
+    STATIC
+    src/terminal/terminal.c
+    src/input/input_parser.c
+    src/state/editor_state.c
+    src/document/document.c
+    src/cursor/cursor.c
+    src/viewport/viewport.c
+    src/renderer/screen_buffer.c
+    src/renderer/renderer.c
+    src/file/file.c
+    src/file/file_save.c
+)
+
+target_include_directories(tedit_core PUBLIC src)
+
+add_executable(
+    tedit
+    src/main.c
+)
+
+target_link_libraries(tedit PRIVATE tedit_core)
+
+# tests
+
+add_executable(test_smoke tests/test_smoke.c)
+add_executable(test_editing tests/test_editing.c)
+add_executable(test_file tests/test_file.c)
+add_executable(test_file_save tests/test_file_save.c)
+add_executable(test_input_parser tests/test_input_parser.c)
+
+target_link_libraries(test_smoke PRIVATE tedit_core)
+target_link_libraries(test_editing PRIVATE tedit_core)
+target_link_libraries(test_file PRIVATE tedit_core)
+target_link_libraries(test_file_save PRIVATE tedit_core)
+target_link_libraries(test_input_parser PRIVATE tedit_core)
+
+add_test(NAME smoke COMMAND test_smoke)
+add_test(NAME editing COMMAND test_editing)
+add_test(NAME file COMMAND test_file)
+add_test(NAME file_save COMMAND test_file_save)
+add_test(NAME input_parser COMMAND test_input_parser)
+
+```
+
+### `src/input/input_parser.h`
+
+```c
+/* src/input/input_parser.h */
+
+#ifndef INPUT_INPUT_PARSER_H
+#define INPUT_INPUT_PARSER_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+typedef enum
+{
+    INPUT_EVENT_NONE = 0,
+    INPUT_EVENT_CHARACTER,
+    INPUT_EVENT_CTRL_Q,
+    INPUT_EVENT_CTRL_S,
+    INPUT_EVENT_BACKSPACE,
+    INPUT_EVENT_ENTER,
+    INPUT_EVENT_ARROW_LEFT,
+    INPUT_EVENT_ARROW_RIGHT,
+    INPUT_EVENT_ARROW_UP,
+    INPUT_EVENT_ARROW_DOWN
+} InputEventType;
+
+typedef struct
+{
+    InputEventType type;
+    uint32_t character;
+} InputEvent;
+
+typedef enum
+{
+    INPUT_PARSER_NORMAL = 0,
+    INPUT_PARSER_ESCAPE,
+    INPUT_PARSER_CSI
+} InputParserState;
+
+typedef struct
+{
+    InputParserState state;
+    uint32_t utf8_code_point;
+    uint32_t utf8_minimum;
+    unsigned int utf8_remaining;
+} InputParser;
+
+void input_parser_init(InputParser *parser);
+bool input_parser_feed(InputParser *parser, unsigned char byte, InputEvent *event);
+bool input_parser_timeout(InputParser *parser, InputEvent *event);
+bool input_parser_is_waiting(const InputParser *parser);
+
+#endif
+
+```
+
+### `src/input/input_parser.c`
+
+```c
+/* src/input/input_parser.c */
+
+#include "input/input_parser.h"
+
+#include <stddef.h>
+
+#define INPUT_CONTROL_Q 0x11
+#define INPUT_CONTROL_S 0x13
+#define INPUT_BACKSPACE 0x7F
+#define INPUT_BACKSPACE_ALT 0x08
+#define INPUT_ESCAPE 0x1B
+#define INPUT_ENTER 0x0D
+#define INPUT_LINE_FEED 0x0A
+#define UTF8_CONTINUATION_MASK 0xC0
+#define UTF8_CONTINUATION_PREFIX 0x80
+#define UTF8_TWO_BYTE_PREFIX 0xC0
+#define UTF8_THREE_BYTE_PREFIX 0xE0
+#define UTF8_FOUR_BYTE_PREFIX 0xF0
+
+void input_parser_init(InputParser *parser)
+{
+    if (parser == NULL)
+    {
+        return;
+    }
+
+    parser->state = INPUT_PARSER_NORMAL;
+    parser->utf8_code_point = 0;
+    parser->utf8_minimum = 0;
+    parser->utf8_remaining = 0;
+}
+
+static void input_event_clear(InputEvent *event)
+{
+    event->type = INPUT_EVENT_NONE;
+    event->character = 0;
+}
+
+static bool input_parser_feed_utf8(InputParser *parser, unsigned char byte, InputEvent *event)
+{
+    if (parser->utf8_remaining > 0)
+    {
+        if ((byte & UTF8_CONTINUATION_MASK) != UTF8_CONTINUATION_PREFIX)
+        {
+            parser->utf8_remaining = 0;
+            parser->utf8_code_point = 0;
+            parser->utf8_minimum = 0;
+            return input_parser_feed(parser, byte, event);
+        }
+
+        parser->utf8_code_point = (parser->utf8_code_point << 6) | (uint32_t)(byte & 0x3F);
+        parser->utf8_remaining--;
+
+        if (parser->utf8_remaining == 0)
+        {
+            const uint32_t code_point = parser->utf8_code_point;
+            const bool valid = code_point >= parser->utf8_minimum &&
+                               code_point <= 0x10FFFF &&
+                               !(code_point >= 0xD800 && code_point <= 0xDFFF);
+            parser->utf8_code_point = 0;
+            parser->utf8_minimum = 0;
+
+            if (valid)
+            {
+                event->type = INPUT_EVENT_CHARACTER;
+                event->character = code_point;
+            }
+        }
+
+        return true;
+    }
+
+    if (byte >= 0xC2 && byte <= 0xDF)
+    {
+        parser->utf8_code_point = (uint32_t)(byte & 0x1F);
+        parser->utf8_minimum = 0x80;
+        parser->utf8_remaining = 1;
+    }
+    else if (byte >= 0xE0 && byte <= 0xEF)
+    {
+        parser->utf8_code_point = (uint32_t)(byte & 0x0F);
+        parser->utf8_minimum = 0x800;
+        parser->utf8_remaining = 2;
+    }
+    else if (byte >= 0xF0 && byte <= 0xF4)
+    {
+        parser->utf8_code_point = (uint32_t)(byte & 0x07);
+        parser->utf8_minimum = 0x10000;
+        parser->utf8_remaining = 3;
+    }
+
+    return true;
+}
+
+bool input_parser_feed(InputParser *parser, unsigned char byte, InputEvent *event)
+{
+    if (parser == NULL || event == NULL)
+    {
+        return false;
+    }
+
+    input_event_clear(event);
+
+    if (parser->utf8_remaining > 0)
+    {
+        return input_parser_feed_utf8(parser, byte, event);
+    }
+
+    if (parser->state == INPUT_PARSER_NORMAL)
+    {
+        if (byte == INPUT_ESCAPE)
+        {
+            parser->state = INPUT_PARSER_ESCAPE;
+        }
+        else if (byte == INPUT_CONTROL_Q)
+        {
+            event->type = INPUT_EVENT_CTRL_Q;
+        }
+        else if (byte == INPUT_CONTROL_S)
+        {
+            event->type = INPUT_EVENT_CTRL_S;
+        }
+        else if (byte == INPUT_BACKSPACE || byte == INPUT_BACKSPACE_ALT)
+        {
+            event->type = INPUT_EVENT_BACKSPACE;
+        }
+        else if (byte == INPUT_ENTER || byte == INPUT_LINE_FEED)
+        {
+            event->type = INPUT_EVENT_ENTER;
+        }
+        else if (byte >= 0x20 && byte <= 0x7E)
+        {
+            event->type = INPUT_EVENT_CHARACTER;
+            event->character = byte;
+        }
+        else if (byte >= 0x80)
+        {
+            return input_parser_feed_utf8(parser, byte, event);
+        }
+
+        return true;
+    }
+
+    if (parser->state == INPUT_PARSER_ESCAPE)
+    {
+        if (byte == '[')
+        {
+            parser->state = INPUT_PARSER_CSI;
+        }
+        else if (byte == INPUT_ESCAPE)
+        {
+            parser->state = INPUT_PARSER_ESCAPE;
+        }
+        else
+        {
+            parser->state = INPUT_PARSER_NORMAL;
+        }
+
+        return true;
+    }
+
+    parser->state = INPUT_PARSER_NORMAL;
+
+    if (byte == 'D')
+    {
+        event->type = INPUT_EVENT_ARROW_LEFT;
+    }
+    else if (byte == 'C')
+    {
+        event->type = INPUT_EVENT_ARROW_RIGHT;
+    }
+    else if (byte == 'A')
+    {
+        event->type = INPUT_EVENT_ARROW_UP;
+    }
+    else if (byte == 'B')
+    {
+        event->type = INPUT_EVENT_ARROW_DOWN;
+    }
+
+    return true;
+}
+
+bool input_parser_timeout(InputParser *parser, InputEvent *event)
+{
+    if (parser == NULL || event == NULL)
+    {
+        return false;
+    }
+
+    parser->state = INPUT_PARSER_NORMAL;
+    parser->utf8_code_point = 0;
+    parser->utf8_minimum = 0;
+    parser->utf8_remaining = 0;
+    input_event_clear(event);
+    return true;
+}
+
+bool input_parser_is_waiting(const InputParser *parser)
+{
+    return parser != NULL && parser->state != INPUT_PARSER_NORMAL;
+}
+
+```
+
+### `src/main.c`
+
+```c
+/* src/main.c */
+
+#include "cursor/cursor.h"
+#include "document/document.h"
+#include "input/input_parser.h"
+#include "renderer/renderer.h"
+#include "state/editor_state.h"
+#include "terminal/terminal.h"
+
+#include <errno.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <sys/ioctl.h>
+#include <sys/select.h>
+#include <unistd.h>
+
+#define ESCAPE_TIMEOUT_MICROSECONDS 50000
+
+static bool get_terminal_size(size_t *rows, size_t *columns)
+{
+    struct winsize window_size;
+
+    if (rows == NULL || columns == NULL ||
+        ioctl(STDOUT_FILENO, TIOCGWINSZ, &window_size) == -1 ||
+        window_size.ws_row == 0 || window_size.ws_col == 0)
+    {
+        return false;
+    }
+
+    *rows = window_size.ws_row;
+    *columns = window_size.ws_col;
+    return true;
+}
+
+/* Read one byte while allowing an incomplete Escape sequence to time out. */
+static int read_escape_byte(unsigned char *byte)
+{
+    fd_set read_set;
+    struct timeval timeout;
+    int result;
+
+    FD_ZERO(&read_set);
+    FD_SET(STDIN_FILENO, &read_set);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = ESCAPE_TIMEOUT_MICROSECONDS;
+
+    do
+    {
+        result = select(STDIN_FILENO + 1, &read_set, NULL, NULL, &timeout);
+    } while (result == -1 && errno == EINTR);
+
+    if (result <= 0)
+    {
+        return result;
+    }
+
+    for (;;)
+    {
+        const ssize_t bytes_read = read(STDIN_FILENO, byte, sizeof(*byte));
+
+        if (bytes_read == 1)
+        {
+            return 1;
+        }
+        if (bytes_read == 0)
+        {
+            return 0;
+        }
+        if (errno != EINTR)
+        {
+            return -1;
+        }
+    }
+}
+
+static bool redraw_after_action(Renderer *renderer, EditorState *state)
+{
+    if (renderer == NULL || state == NULL)
+    {
+        return false;
+    }
+
+    if (!viewport_ensure_cursor_visible(
+            &state->viewport,
+            state->cursor.row,
+            state->cursor.column,
+            renderer->document_rows,
+            renderer->screen_buffer.columns))
+    {
+        return false;
+    }
+
+    return renderer_render(renderer, state);
+}
+
+static bool handle_backspace(EditorState *state)
+{
+    if (state->cursor.column > 0)
+    {
+        const size_t delete_column = state->cursor.column - 1;
+
+        if (!document_delete_character(&state->document, state->cursor.row, delete_column))
+        {
+            return true;
+        }
+
+        if (!cursor_set_position(&state->cursor, &state->document,
+                                 state->cursor.row, delete_column))
+        {
+            return false;
+        }
+    }
+    else if (state->cursor.row > 0)
+    {
+        const size_t previous_row = state->cursor.row - 1;
+        const DocumentLine *previous_line = document_get_line(&state->document, previous_row);
+
+        if (previous_line == NULL)
+        {
+            return true;
+        }
+
+        const size_t previous_length = previous_line->length;
+        if (!document_merge_lines(&state->document, previous_row))
+        {
+            return true;
+        }
+
+        if (!cursor_set_position(&state->cursor, &state->document,
+                                 previous_row, previous_length))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return true;
+    }
+
+    state->is_dirty = true;
+    return true;
+}
+
+static bool handle_event(EditorState *state, Renderer *renderer,
+                         const char *save_path, const InputEvent *event,
+                         bool *should_quit)
+{
+    bool changed = false;
+
+    if (state == NULL || renderer == NULL || event == NULL || should_quit == NULL)
+    {
+        return false;
+    }
+
+    *should_quit = false;
+
+    switch (event->type)
+    {
+        case INPUT_EVENT_NONE:
+            return true;
+
+        case INPUT_EVENT_CTRL_Q:
+            *should_quit = true;
+            return true;
+
+        case INPUT_EVENT_CTRL_S:
+            if (save_path == NULL)
+            {
+                (void)editor_state_set_message(state, "No file name. Save As is not available yet.");
+            }
+            else if (editor_state_save_file(state, save_path))
+            {
+                (void)editor_state_set_message(state, "Saved successfully.");
+            }
+            else
+            {
+                (void)editor_state_set_message(state, "Save failed; document remains modified.");
+            }
+            return redraw_after_action(renderer, state);
+
+        case INPUT_EVENT_ARROW_LEFT:
+            changed = cursor_move_left(&state->cursor);
+            break;
+
+        case INPUT_EVENT_ARROW_RIGHT:
+            changed = cursor_move_right(&state->cursor, &state->document);
+            break;
+
+        case INPUT_EVENT_ARROW_UP:
+            changed = cursor_move_up(&state->cursor, &state->document);
+            break;
+
+        case INPUT_EVENT_ARROW_DOWN:
+            changed = cursor_move_down(&state->cursor, &state->document);
+            break;
+
+        case INPUT_EVENT_BACKSPACE:
+            if (!handle_backspace(state))
+            {
+                return false;
+            }
+            changed = state->is_dirty;
+            break;
+
+        case INPUT_EVENT_ENTER:
+            if (!document_split_line(&state->document, state->cursor.row, state->cursor.column))
+            {
+                return true;
+            }
+            if (!cursor_set_position(&state->cursor, &state->document,
+                                     state->cursor.row + 1, 0))
+            {
+                return false;
+            }
+            state->is_dirty = true;
+            changed = true;
+            break;
+
+        case INPUT_EVENT_CHARACTER:
+            if (!document_insert_character(&state->document, state->cursor.row,
+                                           state->cursor.column, event->character))
+            {
+                return false;
+            }
+            if (!cursor_advance(&state->cursor, &state->document))
+            {
+                return false;
+            }
+            state->is_dirty = true;
+            changed = true;
+            break;
+    }
+
+    return !changed || redraw_after_action(renderer, state);
+}
+
+static bool application_event_loop(EditorState *state, Renderer *renderer, const char *save_path)
+{
+    InputParser parser;
+    input_parser_init(&parser);
+
+    while (true)
+    {
+        unsigned char byte;
+        int read_result;
+        InputEvent event;
+        bool should_quit;
+
+        if (input_parser_is_waiting(&parser))
+        {
+            read_result = read_escape_byte(&byte);
+            if (read_result == 0)
+            {
+                if (!input_parser_timeout(&parser, &event))
+                {
+                    return false;
+                }
+                continue;
+            }
+        }
+        else
+        {
+            const ssize_t bytes_read = read(STDIN_FILENO, &byte, sizeof(byte));
+            if (bytes_read < 0)
+            {
+                if (errno == EINTR)
+                {
+                    continue;
+                }
+                return false;
+            }
+            if (bytes_read == 0)
+            {
+                return true;
+            }
+            read_result = 1;
+        }
+
+        if (read_result < 0)
+        {
+            return false;
+        }
+        if (read_result == 0)
+        {
+            return true;
+        }
+        if (!input_parser_feed(&parser, byte, &event))
+        {
+            return false;
+        }
+        if (!handle_event(state, renderer, save_path, &event, &should_quit))
+        {
+            return false;
+        }
+        if (should_quit)
+        {
+            return true;
+        }
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc > 2)
+    {
+        fprintf(stderr, "Usage: %s [filename]\n", argv[0]);
+        return 1;
+    }
+
+    const char *startup_path = argc == 2 ? argv[1] : NULL;
+    bool startup_load_failed = false;
+    TerminalState terminal;
+    EditorState state;
+    Renderer renderer;
+    size_t rows;
+    size_t columns;
+    bool state_initialized = false;
+    bool renderer_initialized = false;
+    int exit_status = 1;
+
+    if (!terminal_init(&terminal))
+    {
+        return 1;
+    }
+    if (!terminal_enable_raw_mode(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+    if (!terminal_enter_alternate_screen(&terminal))
+    {
+        terminal_restore(&terminal);
+        return 1;
+    }
+    if (!get_terminal_size(&rows, &columns))
+    {
+        goto cleanup;
+    }
+    if (!editor_state_init(&state))
+    {
+        goto cleanup;
+    }
+    state_initialized = true;
+
+    if (startup_path != NULL && !editor_state_load_file(&state, startup_path))
+    {
+        startup_load_failed = true;
+        goto cleanup;
+    }
+    if (columns < 2 || !renderer_init(&renderer, rows, columns - 1))
+    {
+        goto cleanup;
+    }
+    renderer_initialized = true;
+
+    if (!redraw_after_action(&renderer, &state) ||
+        !application_event_loop(&state, &renderer, startup_path))
+    {
+        goto cleanup;
+    }
+
+    exit_status = 0;
+
+cleanup:
+    if (renderer_initialized)
+    {
+        renderer_destroy(&renderer);
+    }
+    if (state_initialized)
+    {
+        editor_state_destroy(&state);
+    }
+    terminal_restore(&terminal);
+    terminal_leave_alternate_screen(&terminal);
+
+    if (startup_load_failed)
+    {
+        fprintf(stderr, "tedit: unable to open or decode '%s'.\n", startup_path);
+    }
+
+    return exit_status;
+}
+
+```
+
+### `tests/test_input_parser.c`
+
+```c
+/* tests/test_input_parser.c */
+
+#include "input/input_parser.h"
+
+#include <assert.h>
+#include <stddef.h>
+
+static InputEvent feed(InputParser *parser, unsigned char byte)
+{
+    InputEvent event;
+    assert(input_parser_feed(parser, byte, &event));
+    return event;
+}
+
+static void test_ascii_and_control_keys(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 'x');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'x');
+    event = feed(&parser, 0x11);
+    assert(event.type == INPUT_EVENT_CTRL_Q);
+    event = feed(&parser, 0x13);
+    assert(event.type == INPUT_EVENT_CTRL_S);
+    event = feed(&parser, 0x7F);
+    assert(event.type == INPUT_EVENT_BACKSPACE);
+    event = feed(&parser, 0x08);
+    assert(event.type == INPUT_EVENT_BACKSPACE);
+    event = feed(&parser, '\r');
+    assert(event.type == INPUT_EVENT_ENTER);
+    event = feed(&parser, '\n');
+    assert(event.type == INPUT_EVENT_ENTER);
+}
+
+static void test_arrow_sequences(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 0x1B);
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(input_parser_is_waiting(&parser));
+    event = feed(&parser, '[');
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(input_parser_is_waiting(&parser));
+    event = feed(&parser, 'A');
+    assert(event.type == INPUT_EVENT_ARROW_UP);
+    assert(!input_parser_is_waiting(&parser));
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'B');
+    assert(event.type == INPUT_EVENT_ARROW_DOWN);
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'C');
+    assert(event.type == INPUT_EVENT_ARROW_RIGHT);
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'D');
+    assert(event.type == INPUT_EVENT_ARROW_LEFT);
+}
+
+static void test_escape_timeout_and_recovery(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 0x1B);
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(input_parser_timeout(&parser, &event));
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(!input_parser_is_waiting(&parser));
+
+    event = feed(&parser, 'z');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'z');
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'X');
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 'q');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'q');
+}
+
+static void test_utf8_character(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 0xE2);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x82);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0xAC);
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 0x20AC);
+}
+
+static void test_invalid_utf8_recovers(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 0xE2);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 'a');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'a');
+}
+
+int main(void)
+{
+    test_ascii_and_control_keys();
+    test_arrow_sequences();
+    test_escape_timeout_and_recovery();
+    test_utf8_character();
+    test_invalid_utf8_recovers();
+    return 0;
+}
+
+```
+
+## 4. Build and test
+
+From the repository root:
+
+```bash
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/debug -j2
+ctest --test-dir build/debug --output-on-failure
+```
+
+A warning-clean build was also verified:
+
+```bash
+cmake -S . -B build/werror -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS='-Wall -Wextra -Wpedantic -Werror'
+cmake --build build/werror -j2
+ctest --test-dir build/werror --output-on-failure
+```
+
+All five CTest targets pass in both builds: `smoke`, `editing`, `file`, `file_save`, and `input_parser`. A pseudo-terminal integration test also launched the editor with a file, inserted `X`, saved with Ctrl-S, quit with Ctrl-Q, and verified that the saved contents were `Xoriginal\n`.
+
+## 5. Implementation review
+
+### Input Parser contract
+
+`input_parser_feed()` accepts one byte and produces zero or one abstract event. The parser handles:
+
+- printable ASCII characters;
+- valid UTF-8 sequences, emitted as Unicode scalar values only after all continuation bytes arrive;
+- Ctrl-Q and Ctrl-S;
+- Backspace bytes `0x7F` and `0x08`;
+- Enter (`CR`) and line feed (`LF`);
+- CSI arrow sequences `ESC [ A`, `ESC [ B`, `ESC [ C`, and `ESC [ D`.
+
+An incomplete Escape sequence produces no event. The Input Handler uses a 50 ms timeout while the parser is waiting for the next Escape-sequence byte, then calls `input_parser_timeout()` to reset parser state. Unknown CSI final bytes are ignored and return the parser to its normal state. Invalid UTF-8 continuation bytes reset the pending UTF-8 sequence and are reprocessed, allowing later ASCII input to recover.
+
+### Responsibility boundaries
+
+- **Input Handler (`main.c` for now):** reads bytes and applies the Escape-sequence timeout.
+- **Input Parser (`src/input/`):** translates bytes into key events; it does not read from the terminal or access Editor State.
+- **Application loop:** maps key events to the existing editing behavior. This mapping is still inline until the Input Engine milestone.
+
+The Input Parser has no dependency on the File Manager, Renderer, or Document. The parser test suite exercises it through its public interface.
+
+## 6. Invariants
+
+- Each call to `input_parser_feed()` clears the output event before parsing.
+- An event is emitted only after the full recognized key sequence has arrived.
+- Parser state returns to normal after a recognized or unrecognized CSI final byte.
+- An Escape timeout clears incomplete parser state and does not synthesize a command.
+- Invalid UTF-8 does not produce an invalid Unicode scalar value as a character event.
+- The application loop no longer contains byte comparisons for Ctrl keys, Backspace, Enter, or arrow-key suffixes.
+
+## 7. Current limitations
+
+- The Input Handler still lives in `main.c`; extracting it is not part of this milestone.
+- The parser recognizes the common three-byte CSI arrow forms only. Other terminal key sequences remain unsupported.
+- Control keys beyond Ctrl-Q and Ctrl-S are not mapped to events.
+- Input Engine, Command Engine, configurable key bindings, filename-entry interaction, and Save As remain unimplemented.
+
+## 8. Next implementation step
+
+Proceed to the Input Engine / command-dispatch milestone. Keep terminal protocol parsing in the Input Parser, key-to-command mapping in the Input Engine, and editor operations in the Command Engine.

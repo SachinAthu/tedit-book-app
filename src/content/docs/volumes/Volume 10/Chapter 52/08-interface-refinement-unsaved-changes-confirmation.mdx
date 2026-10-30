@@ -1,0 +1,3332 @@
+---
+title: 52.8 Interface Refinement and Unsaved-Changes Confirmation
+description: "Refines the interface with filename-entry editing and an unsaved-changes quit confirmation, backed by regression tests."
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## Implementation goal
+
+Complete the agreed Chapter 52 interface refinements without adding a separate Save As command for named documents. Ctrl-S keeps its existing behavior: save the current path when one is associated, or open filename entry when the document is unnamed.
+
+## Changed files
+
+### Production source
+
+- `src/state/editor_state.h`
+- `src/state/editor_state.c`
+- `src/input/input_parser.h`
+- `src/input/input_parser.c`
+- `src/input/input_engine.c`
+- `src/command/command_engine.h`
+- `src/command/command_engine.c`
+- `src/renderer/renderer.h`
+- `src/renderer/renderer.c`
+
+### Regression tests
+
+- `tests/test_editing.c`
+- `tests/test_input_parser.c`
+- `tests/test_input_engine.c`
+- `tests/test_command_engine.c`
+- `tests/test_input_pipeline.c`
+
+## Complete source listings
+
+The following listings are the complete contents of every changed source and test file for this milestone.
+
+### `src/state/editor_state.h`
+
+```c
+/* src/state/editor_state.h */
+
+#ifndef STATE_EDITOR_STATE_H
+#define STATE_EDITOR_STATE_H
+
+#include "cursor/cursor.h"
+#include "document/document.h"
+#include "viewport/viewport.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+
+#define EDITOR_MESSAGE_CAPACITY 256
+#define EDITOR_FILENAME_CAPACITY 4096
+
+typedef struct
+{
+    Document document;
+    Cursor cursor;
+    Viewport viewport;
+    bool is_dirty;
+    char *file_path;
+    char message[EDITOR_MESSAGE_CAPACITY];
+    bool filename_entry_active;
+    char filename_entry[EDITOR_FILENAME_CAPACITY];
+    size_t filename_entry_length;
+    size_t filename_entry_cursor;
+    bool quit_confirmation_active;
+    bool quit_after_save;
+} EditorState;
+
+bool editor_state_init(EditorState *state);
+
+bool editor_state_load_file(EditorState *state, const char *path);
+
+bool editor_state_save_file(EditorState *state, const char *path);
+
+bool editor_state_save_as(EditorState *state, const char *path);
+
+bool editor_state_set_message(EditorState *state, const char *message);
+
+void editor_state_destroy(EditorState *state);
+
+#endif
+```
+
+### `src/state/editor_state.c`
+
+```c
+/* src/state/editor_state.c */
+
+#include "editor_state.h"
+#include "file/file.h"
+
+#include <string.h>
+#include <stdlib.h>
+
+bool editor_state_init(EditorState *state)
+{
+    if (state == NULL)
+    {
+        return false;
+    }
+
+    /* Zero every field first so partial failures leave a clean state. */
+    memset(state, 0, sizeof(*state));
+
+    if (!document_init(&state->document))
+    {
+        return false;
+    }
+
+    cursor_init(&state->cursor);
+    viewport_init(&state->viewport);
+    state->is_dirty = false;
+    state->file_path = NULL;
+    state->message[0] = '\0';
+    state->filename_entry_active = false;
+    state->filename_entry[0] = '\0';
+    state->filename_entry_length = 0;
+    state->filename_entry_cursor = 0;
+    state->quit_confirmation_active = false;
+    state->quit_after_save = false;
+
+    return true;
+}
+
+bool editor_state_load_file(EditorState *state, const char *path)
+{
+    if (state == NULL || path == NULL)
+    {
+        return false;
+    }
+
+    char *new_path;
+    size_t path_length = strlen(path);
+
+    if (path_length == SIZE_MAX)
+    {
+        return false;
+    }
+
+    new_path = malloc(path_length + 1);
+    if (new_path == NULL)
+    {
+        return false;
+    }
+    memcpy(new_path, path, path_length + 1);
+
+    /* Do not change the current state or path unless loading succeeds. */
+    if (file_load_document(path, &state->document) != FILE_LOAD_OK)
+    {
+        free(new_path);
+        return false;
+    }
+
+    free(state->file_path);
+    state->file_path = new_path;
+    cursor_init(&state->cursor);
+    viewport_init(&state->viewport);
+    state->is_dirty = false;
+    state->filename_entry_active = false;
+    state->filename_entry[0] = '\0';
+    state->filename_entry_length = 0;
+    state->filename_entry_cursor = 0;
+    state->quit_confirmation_active = false;
+    state->quit_after_save = false;
+
+    return true;
+}
+
+bool editor_state_save_file(EditorState *state, const char *path)
+{
+    if (state == NULL || path == NULL)
+    {
+        return false;
+    }
+
+    if (file_save_document(path, &state->document) != FILE_SAVE_OK)
+    {
+        return false;
+    }
+
+    state->is_dirty = false;
+    return true;
+}
+
+bool editor_state_save_as(EditorState *state, const char *path)
+{
+    char *new_path;
+    size_t path_length;
+
+    if (state == NULL || path == NULL || path[0] == '\0')
+    {
+        return false;
+    }
+
+    path_length = strlen(path);
+    if (path_length == SIZE_MAX)
+    {
+        return false;
+    }
+
+    new_path = malloc(path_length + 1);
+    if (new_path == NULL)
+    {
+        return false;
+    }
+    memcpy(new_path, path, path_length + 1);
+
+    if (file_save_document(path, &state->document) != FILE_SAVE_OK)
+    {
+        free(new_path);
+        return false;
+    }
+
+    free(state->file_path);
+    state->file_path = new_path;
+    state->is_dirty = false;
+    return true;
+}
+
+bool editor_state_set_message(EditorState *state, const char *message)
+{
+    size_t length;
+
+    if (state == NULL || message == NULL)
+    {
+        return false;
+    }
+
+    length = strlen(message);
+    if (length >= sizeof(state->message))
+    {
+        length = sizeof(state->message) - 1;
+    }
+
+    memmove(state->message, message, length);
+    state->message[length] = '\0';
+    return true;
+}
+
+void editor_state_destroy(EditorState *state)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+
+    document_destroy(&state->document);
+    free(state->file_path);
+    state->file_path = NULL;
+    cursor_init(&state->cursor);
+    viewport_init(&state->viewport);
+    state->is_dirty = false;
+    state->message[0] = '\0';
+    state->filename_entry_active = false;
+    state->filename_entry[0] = '\0';
+    state->filename_entry_length = 0;
+    state->filename_entry_cursor = 0;
+    state->quit_confirmation_active = false;
+    state->quit_after_save = false;
+}
+```
+
+### `src/input/input_parser.h`
+
+```c
+/* src/input/input_parser.h */
+
+#ifndef INPUT_INPUT_PARSER_H
+#define INPUT_INPUT_PARSER_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+typedef enum
+{
+    INPUT_EVENT_NONE = 0,
+    INPUT_EVENT_CHARACTER,
+    INPUT_EVENT_CTRL_Q,
+    INPUT_EVENT_CTRL_S,
+    INPUT_EVENT_BACKSPACE,
+    INPUT_EVENT_ENTER,
+    INPUT_EVENT_ESCAPE,
+    INPUT_EVENT_ARROW_LEFT,
+    INPUT_EVENT_ARROW_RIGHT,
+    INPUT_EVENT_ARROW_UP,
+    INPUT_EVENT_ARROW_DOWN,
+    INPUT_EVENT_DELETE
+} InputEventType;
+
+typedef struct
+{
+    InputEventType type;
+    uint32_t character;
+} InputEvent;
+
+typedef enum
+{
+    INPUT_PARSER_NORMAL = 0,
+    INPUT_PARSER_ESCAPE,
+    INPUT_PARSER_CSI,
+    INPUT_PARSER_CSI_PARAMETER
+} InputParserState;
+
+typedef struct
+{
+    InputParserState state;
+    uint32_t utf8_code_point;
+    uint32_t utf8_minimum;
+    unsigned int utf8_remaining;
+    unsigned int csi_parameter;
+} InputParser;
+
+void input_parser_init(InputParser *parser);
+bool input_parser_feed(InputParser *parser, unsigned char byte, InputEvent *event);
+bool input_parser_timeout(InputParser *parser, InputEvent *event);
+bool input_parser_is_waiting(const InputParser *parser);
+
+#endif
+```
+
+### `src/input/input_parser.c`
+
+```c
+/* src/input/input_parser.c */
+
+#include "input/input_parser.h"
+
+#include <stddef.h>
+
+#define INPUT_CONTROL_Q 0x11
+#define INPUT_CONTROL_S 0x13
+#define INPUT_BACKSPACE 0x7F
+#define INPUT_BACKSPACE_ALT 0x08
+#define INPUT_ESCAPE 0x1B
+#define INPUT_ENTER 0x0D
+#define INPUT_LINE_FEED 0x0A
+#define UTF8_CONTINUATION_MASK 0xC0
+#define UTF8_CONTINUATION_PREFIX 0x80
+#define UTF8_TWO_BYTE_PREFIX 0xC0
+#define UTF8_THREE_BYTE_PREFIX 0xE0
+#define UTF8_FOUR_BYTE_PREFIX 0xF0
+
+void input_parser_init(InputParser *parser)
+{
+    if (parser == NULL)
+    {
+        return;
+    }
+
+    parser->state = INPUT_PARSER_NORMAL;
+    parser->utf8_code_point = 0;
+    parser->utf8_minimum = 0;
+    parser->utf8_remaining = 0;
+    parser->csi_parameter = 0;
+}
+
+static void input_event_clear(InputEvent *event)
+{
+    event->type = INPUT_EVENT_NONE;
+    event->character = 0;
+}
+
+static bool input_parser_feed_utf8(InputParser *parser, unsigned char byte, InputEvent *event)
+{
+    if (parser->utf8_remaining > 0)
+    {
+        if ((byte & UTF8_CONTINUATION_MASK) != UTF8_CONTINUATION_PREFIX)
+        {
+            parser->utf8_remaining = 0;
+            parser->utf8_code_point = 0;
+            parser->utf8_minimum = 0;
+            return input_parser_feed(parser, byte, event);
+        }
+
+        parser->utf8_code_point = (parser->utf8_code_point << 6) | (uint32_t)(byte & 0x3F);
+        parser->utf8_remaining--;
+
+        if (parser->utf8_remaining == 0)
+        {
+            const uint32_t code_point = parser->utf8_code_point;
+            const bool valid = code_point >= parser->utf8_minimum &&
+                               code_point <= 0x10FFFF &&
+                               !(code_point >= 0xD800 && code_point <= 0xDFFF);
+            parser->utf8_code_point = 0;
+            parser->utf8_minimum = 0;
+
+            if (valid)
+            {
+                event->type = INPUT_EVENT_CHARACTER;
+                event->character = code_point;
+            }
+        }
+
+        return true;
+    }
+
+    if (byte >= 0xC2 && byte <= 0xDF)
+    {
+        parser->utf8_code_point = (uint32_t)(byte & 0x1F);
+        parser->utf8_minimum = 0x80;
+        parser->utf8_remaining = 1;
+    }
+    else if (byte >= 0xE0 && byte <= 0xEF)
+    {
+        parser->utf8_code_point = (uint32_t)(byte & 0x0F);
+        parser->utf8_minimum = 0x800;
+        parser->utf8_remaining = 2;
+    }
+    else if (byte >= 0xF0 && byte <= 0xF4)
+    {
+        parser->utf8_code_point = (uint32_t)(byte & 0x07);
+        parser->utf8_minimum = 0x10000;
+        parser->utf8_remaining = 3;
+    }
+
+    return true;
+}
+
+bool input_parser_feed(InputParser *parser, unsigned char byte, InputEvent *event)
+{
+    if (parser == NULL || event == NULL)
+    {
+        return false;
+    }
+
+    input_event_clear(event);
+
+    if (parser->utf8_remaining > 0)
+    {
+        return input_parser_feed_utf8(parser, byte, event);
+    }
+
+    if (parser->state == INPUT_PARSER_NORMAL)
+    {
+        if (byte == INPUT_ESCAPE)
+        {
+            parser->state = INPUT_PARSER_ESCAPE;
+        }
+        else if (byte == INPUT_CONTROL_Q)
+        {
+            event->type = INPUT_EVENT_CTRL_Q;
+        }
+        else if (byte == INPUT_CONTROL_S)
+        {
+            event->type = INPUT_EVENT_CTRL_S;
+        }
+        else if (byte == INPUT_BACKSPACE || byte == INPUT_BACKSPACE_ALT)
+        {
+            event->type = INPUT_EVENT_BACKSPACE;
+        }
+        else if (byte == INPUT_ENTER || byte == INPUT_LINE_FEED)
+        {
+            event->type = INPUT_EVENT_ENTER;
+        }
+        else if (byte >= 0x20 && byte <= 0x7E)
+        {
+            event->type = INPUT_EVENT_CHARACTER;
+            event->character = byte;
+        }
+        else if (byte >= 0x80)
+        {
+            return input_parser_feed_utf8(parser, byte, event);
+        }
+
+        return true;
+    }
+
+    if (parser->state == INPUT_PARSER_ESCAPE)
+    {
+        if (byte == '[')
+        {
+            parser->state = INPUT_PARSER_CSI;
+            parser->csi_parameter = 0;
+        }
+        else if (byte == INPUT_ESCAPE)
+        {
+            parser->state = INPUT_PARSER_ESCAPE;
+        }
+        else
+        {
+            parser->state = INPUT_PARSER_NORMAL;
+        }
+
+        return true;
+    }
+
+    if (parser->state == INPUT_PARSER_CSI_PARAMETER)
+    {
+        if (byte >= '0' && byte <= '9')
+        {
+            if (parser->csi_parameter <= 999)
+            {
+                parser->csi_parameter = parser->csi_parameter * 10U +
+                                        (unsigned int)(byte - '0');
+            }
+            return true;
+        }
+
+        if (byte == '~' && parser->csi_parameter == 3)
+        {
+            event->type = INPUT_EVENT_DELETE;
+        }
+        parser->state = INPUT_PARSER_NORMAL;
+        parser->csi_parameter = 0;
+        return true;
+    }
+
+    if (byte >= '0' && byte <= '9')
+    {
+        parser->state = INPUT_PARSER_CSI_PARAMETER;
+        parser->csi_parameter = (unsigned int)(byte - '0');
+        return true;
+    }
+
+    parser->state = INPUT_PARSER_NORMAL;
+    parser->csi_parameter = 0;
+
+    if (byte == 'D')
+    {
+        event->type = INPUT_EVENT_ARROW_LEFT;
+    }
+    else if (byte == 'C')
+    {
+        event->type = INPUT_EVENT_ARROW_RIGHT;
+    }
+    else if (byte == 'A')
+    {
+        event->type = INPUT_EVENT_ARROW_UP;
+    }
+    else if (byte == 'B')
+    {
+        event->type = INPUT_EVENT_ARROW_DOWN;
+    }
+
+    return true;
+}
+
+bool input_parser_timeout(InputParser *parser, InputEvent *event)
+{
+    if (parser == NULL || event == NULL)
+    {
+        return false;
+    }
+
+    const InputParserState previous_state = parser->state;
+
+    parser->state = INPUT_PARSER_NORMAL;
+    parser->utf8_code_point = 0;
+    parser->utf8_minimum = 0;
+    parser->utf8_remaining = 0;
+    parser->csi_parameter = 0;
+    input_event_clear(event);
+    if (previous_state == INPUT_PARSER_ESCAPE)
+    {
+        event->type = INPUT_EVENT_ESCAPE;
+    }
+    return true;
+}
+
+bool input_parser_is_waiting(const InputParser *parser)
+{
+    return parser != NULL && parser->state != INPUT_PARSER_NORMAL;
+}
+```
+
+### `src/input/input_engine.c`
+
+```c
+/* src/input/input_engine.c */
+
+#include "input/input_engine.h"
+
+static void command_set(EditorCommand *command, EditorCommandType type, uint32_t character)
+{
+    command->type = type;
+    command->character = character;
+}
+
+bool input_engine_translate(const InputEvent *event, EditorCommand *command)
+{
+    if (event == NULL || command == NULL)
+    {
+        return false;
+    }
+
+    command_set(command, EDITOR_COMMAND_NONE, 0);
+
+    switch (event->type)
+    {
+        case INPUT_EVENT_NONE:
+            break;
+        case INPUT_EVENT_CHARACTER:
+            command_set(command, EDITOR_COMMAND_INSERT_CHARACTER, event->character);
+            break;
+        case INPUT_EVENT_CTRL_Q:
+            command_set(command, EDITOR_COMMAND_QUIT, 0);
+            break;
+        case INPUT_EVENT_CTRL_S:
+            command_set(command, EDITOR_COMMAND_SAVE, 0);
+            break;
+        case INPUT_EVENT_BACKSPACE:
+            command_set(command, EDITOR_COMMAND_BACKSPACE, 0);
+            break;
+        case INPUT_EVENT_ENTER:
+            command_set(command, EDITOR_COMMAND_INSERT_NEWLINE, 0);
+            break;
+        case INPUT_EVENT_ESCAPE:
+            command_set(command, EDITOR_COMMAND_CANCEL, 0);
+            break;
+        case INPUT_EVENT_ARROW_LEFT:
+            command_set(command, EDITOR_COMMAND_MOVE_LEFT, 0);
+            break;
+        case INPUT_EVENT_ARROW_RIGHT:
+            command_set(command, EDITOR_COMMAND_MOVE_RIGHT, 0);
+            break;
+        case INPUT_EVENT_ARROW_UP:
+            command_set(command, EDITOR_COMMAND_MOVE_UP, 0);
+            break;
+        case INPUT_EVENT_ARROW_DOWN:
+            command_set(command, EDITOR_COMMAND_MOVE_DOWN, 0);
+            break;
+        case INPUT_EVENT_DELETE:
+            command_set(command, EDITOR_COMMAND_DELETE_CHARACTER, 0);
+            break;
+        default:
+            return false;
+    }
+
+    return true;
+}
+```
+
+### `src/command/command_engine.h`
+
+```c
+/* src/command/command_engine.h */
+
+#ifndef COMMAND_COMMAND_ENGINE_H
+#define COMMAND_COMMAND_ENGINE_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "state/editor_state.h"
+
+typedef enum
+{
+    EDITOR_COMMAND_NONE = 0,
+    EDITOR_COMMAND_INSERT_CHARACTER,
+    EDITOR_COMMAND_BACKSPACE,
+    EDITOR_COMMAND_INSERT_NEWLINE,
+    EDITOR_COMMAND_CANCEL,
+    EDITOR_COMMAND_MOVE_LEFT,
+    EDITOR_COMMAND_MOVE_RIGHT,
+    EDITOR_COMMAND_MOVE_UP,
+    EDITOR_COMMAND_MOVE_DOWN,
+    EDITOR_COMMAND_DELETE_CHARACTER,
+    EDITOR_COMMAND_SAVE,
+    EDITOR_COMMAND_QUIT
+} EditorCommandType;
+
+typedef struct
+{
+    EditorCommandType type;
+    uint32_t character;
+} EditorCommand;
+
+/* Execute one command. redraw and should_quit are always initialized on success. */
+bool command_engine_execute(EditorState *state,
+                            const EditorCommand *command,
+                            const char *save_path,
+                            bool *redraw,
+                            bool *should_quit);
+
+#endif
+```
+
+### `src/command/command_engine.c`
+
+```c
+/* src/command/command_engine.c */
+
+#include "command/command_engine.h"
+
+#include "cursor/cursor.h"
+#include "document/document.h"
+#include "state/editor_state.h"
+
+#include <string.h>
+
+static bool command_backspace(EditorState *state, bool *changed)
+{
+    if (state->cursor.column > 0)
+    {
+        const size_t delete_column = state->cursor.column - 1;
+        if (!document_delete_character(&state->document, state->cursor.row, delete_column))
+        {
+            return true;
+        }
+        if (!cursor_set_position(&state->cursor, &state->document,
+                                 state->cursor.row, delete_column))
+        {
+            return false;
+        }
+    }
+    else if (state->cursor.row > 0)
+    {
+        const size_t previous_row = state->cursor.row - 1;
+        const DocumentLine *previous_line = document_get_line(&state->document, previous_row);
+        if (previous_line == NULL)
+        {
+            return true;
+        }
+
+        const size_t previous_length = previous_line->length;
+        if (!document_merge_lines(&state->document, previous_row))
+        {
+            return true;
+        }
+        if (!cursor_set_position(&state->cursor, &state->document,
+                                 previous_row, previous_length))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return true;
+    }
+
+    state->is_dirty = true;
+    *changed = true;
+    return true;
+}
+
+static size_t encode_utf8(uint32_t character, unsigned char bytes[4])
+{
+    if (character <= 0x7F)
+    {
+        bytes[0] = (unsigned char)character;
+        return 1;
+    }
+    if (character <= 0x7FF)
+    {
+        bytes[0] = (unsigned char)(0xC0 | (character >> 6));
+        bytes[1] = (unsigned char)(0x80 | (character & 0x3F));
+        return 2;
+    }
+    if (character <= 0xFFFF && !(character >= 0xD800 && character <= 0xDFFF))
+    {
+        bytes[0] = (unsigned char)(0xE0 | (character >> 12));
+        bytes[1] = (unsigned char)(0x80 | ((character >> 6) & 0x3F));
+        bytes[2] = (unsigned char)(0x80 | (character & 0x3F));
+        return 3;
+    }
+    if (character <= 0x10FFFF)
+    {
+        bytes[0] = (unsigned char)(0xF0 | (character >> 18));
+        bytes[1] = (unsigned char)(0x80 | ((character >> 12) & 0x3F));
+        bytes[2] = (unsigned char)(0x80 | ((character >> 6) & 0x3F));
+        bytes[3] = (unsigned char)(0x80 | (character & 0x3F));
+        return 4;
+    }
+    return 0;
+}
+
+static size_t filename_previous_boundary(const char *text, size_t position)
+{
+    if (position == 0)
+    {
+        return 0;
+    }
+
+    --position;
+    while (position > 0 && (((unsigned char)text[position] & 0xC0) == 0x80))
+    {
+        --position;
+    }
+    return position;
+}
+
+static size_t filename_next_boundary(const char *text, size_t length, size_t position)
+{
+    if (position >= length)
+    {
+        return length;
+    }
+
+    ++position;
+    while (position < length && (((unsigned char)text[position] & 0xC0) == 0x80))
+    {
+        ++position;
+    }
+    return position;
+}
+
+static void filename_entry_clear(EditorState *state)
+{
+    state->filename_entry_active = false;
+    state->filename_entry_length = 0;
+    state->filename_entry_cursor = 0;
+    state->filename_entry[0] = '\0';
+}
+
+static void filename_entry_start(EditorState *state, bool quit_after_save)
+{
+    state->filename_entry_active = true;
+    state->filename_entry_length = 0;
+    state->filename_entry_cursor = 0;
+    state->filename_entry[0] = '\0';
+    state->quit_after_save = quit_after_save;
+    (void)editor_state_set_message(state, "Enter: save  Esc: cancel");
+}
+
+static bool command_save(EditorState *state, const char *save_path, bool quitting,
+                         bool *redraw, bool *should_quit)
+{
+    const char *current_path = state->file_path != NULL ? state->file_path : save_path;
+
+    if (current_path == NULL)
+    {
+        filename_entry_start(state, quitting);
+        *redraw = true;
+        return true;
+    }
+
+    if (editor_state_save_file(state, current_path))
+    {
+        (void)editor_state_set_message(state, "Saved successfully.");
+        state->quit_after_save = false;
+        if (quitting)
+        {
+            *should_quit = true;
+        }
+    }
+    else
+    {
+        (void)editor_state_set_message(state, "Save failed; document remains modified.");
+        state->quit_after_save = false;
+    }
+
+    *redraw = true;
+    return true;
+}
+
+static bool filename_entry_execute(EditorState *state, const EditorCommand *command,
+                                   bool *redraw, bool *should_quit)
+{
+    if (command->type == EDITOR_COMMAND_CANCEL)
+    {
+        const bool was_quitting = state->quit_after_save;
+        filename_entry_clear(state);
+        state->quit_after_save = false;
+        (void)editor_state_set_message(state,
+                                       was_quitting ? "Quit cancelled." : "Save As cancelled.");
+        *redraw = true;
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_MOVE_LEFT)
+    {
+        const size_t previous = filename_previous_boundary(state->filename_entry,
+                                                           state->filename_entry_cursor);
+        if (previous != state->filename_entry_cursor)
+        {
+            state->filename_entry_cursor = previous;
+            (void)editor_state_set_message(state, "Enter: save  Esc: cancel");
+            *redraw = true;
+        }
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_MOVE_RIGHT)
+    {
+        const size_t next = filename_next_boundary(state->filename_entry,
+                                                   state->filename_entry_length,
+                                                   state->filename_entry_cursor);
+        if (next != state->filename_entry_cursor)
+        {
+            state->filename_entry_cursor = next;
+            (void)editor_state_set_message(state, "Enter: save  Esc: cancel");
+            *redraw = true;
+        }
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_BACKSPACE)
+    {
+        if (state->filename_entry_cursor > 0)
+        {
+            const size_t previous = filename_previous_boundary(state->filename_entry,
+                                                               state->filename_entry_cursor);
+            const size_t removed = state->filename_entry_cursor - previous;
+            memmove(state->filename_entry + previous,
+                    state->filename_entry + state->filename_entry_cursor,
+                    state->filename_entry_length - state->filename_entry_cursor + 1);
+            state->filename_entry_length -= removed;
+            state->filename_entry_cursor = previous;
+            (void)editor_state_set_message(state, "Enter: save  Esc: cancel");
+            *redraw = true;
+        }
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_DELETE_CHARACTER)
+    {
+        if (state->filename_entry_cursor < state->filename_entry_length)
+        {
+            const size_t next = filename_next_boundary(state->filename_entry,
+                                                       state->filename_entry_length,
+                                                       state->filename_entry_cursor);
+            const size_t removed = next - state->filename_entry_cursor;
+            memmove(state->filename_entry + state->filename_entry_cursor,
+                    state->filename_entry + next,
+                    state->filename_entry_length - next + 1);
+            state->filename_entry_length -= removed;
+            (void)editor_state_set_message(state, "Enter: save  Esc: cancel");
+            *redraw = true;
+        }
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_INSERT_CHARACTER)
+    {
+        unsigned char encoded[4];
+        const size_t encoded_length = encode_utf8(command->character, encoded);
+
+        if (encoded_length == 0)
+        {
+            return true;
+        }
+        if (encoded_length > EDITOR_FILENAME_CAPACITY - 1 - state->filename_entry_length)
+        {
+            (void)editor_state_set_message(state, "Filename is too long.");
+            *redraw = true;
+            return true;
+        }
+
+        memmove(state->filename_entry + state->filename_entry_cursor + encoded_length,
+                state->filename_entry + state->filename_entry_cursor,
+                state->filename_entry_length - state->filename_entry_cursor + 1);
+        memcpy(state->filename_entry + state->filename_entry_cursor, encoded, encoded_length);
+        state->filename_entry_length += encoded_length;
+        state->filename_entry_cursor += encoded_length;
+        (void)editor_state_set_message(state, "Enter: save  Esc: cancel");
+        *redraw = true;
+        return true;
+    }
+
+    if (command->type == EDITOR_COMMAND_INSERT_NEWLINE)
+    {
+        if (state->filename_entry_length == 0)
+        {
+            (void)editor_state_set_message(state, "Enter a file name.");
+            *redraw = true;
+            return true;
+        }
+
+        if (editor_state_save_as(state, state->filename_entry))
+        {
+            const bool should_quit_after_save = state->quit_after_save;
+            filename_entry_clear(state);
+            state->quit_after_save = false;
+            (void)editor_state_set_message(state, "Saved successfully.");
+            if (should_quit_after_save)
+            {
+                *should_quit = true;
+            }
+        }
+        else
+        {
+            (void)editor_state_set_message(
+                state, "Save failed; check path and try again, or Esc to cancel.");
+        }
+        *redraw = true;
+        return true;
+    }
+
+    /* Ignore commands not meaningful while a filename is being entered. */
+    return true;
+}
+
+static bool quit_confirmation_execute(EditorState *state, const EditorCommand *command,
+                                      const char *save_path, bool *redraw,
+                                      bool *should_quit)
+{
+    if (command->type == EDITOR_COMMAND_CANCEL)
+    {
+        state->quit_confirmation_active = false;
+        (void)editor_state_set_message(state, "Quit cancelled.");
+        *redraw = true;
+        return true;
+    }
+
+    if (command->type != EDITOR_COMMAND_INSERT_CHARACTER)
+    {
+        return true;
+    }
+
+    if (command->character == 'n' || command->character == 'N')
+    {
+        state->quit_confirmation_active = false;
+        state->quit_after_save = false;
+        *should_quit = true;
+        return true;
+    }
+
+    if (command->character == 'y' || command->character == 'Y')
+    {
+        state->quit_confirmation_active = false;
+        return command_save(state, save_path, true, redraw, should_quit);
+    }
+
+    return true;
+}
+
+bool command_engine_execute(EditorState *state,
+                            const EditorCommand *command,
+                            const char *save_path,
+                            bool *redraw,
+                            bool *should_quit)
+{
+    bool changed = false;
+
+    if (state == NULL || command == NULL || redraw == NULL || should_quit == NULL)
+    {
+        return false;
+    }
+
+    *redraw = false;
+    *should_quit = false;
+
+    if (state->filename_entry_active)
+    {
+        return filename_entry_execute(state, command, redraw, should_quit);
+    }
+
+    if (state->quit_confirmation_active)
+    {
+        return quit_confirmation_execute(state, command, save_path, redraw, should_quit);
+    }
+
+    switch (command->type)
+    {
+        case EDITOR_COMMAND_NONE:
+            break;
+        case EDITOR_COMMAND_QUIT:
+            if (state->is_dirty)
+            {
+                state->quit_confirmation_active = true;
+                state->quit_after_save = false;
+                (void)editor_state_set_message(
+                    state, "Save changes before quitting? Y=save N=discard Esc=cancel");
+                *redraw = true;
+            }
+            else
+            {
+                *should_quit = true;
+            }
+            break;
+        case EDITOR_COMMAND_SAVE:
+            return command_save(state, save_path, false, redraw, should_quit);
+        case EDITOR_COMMAND_CANCEL:
+            break;
+        case EDITOR_COMMAND_INSERT_CHARACTER:
+            if (!document_insert_character(&state->document, state->cursor.row,
+                                           state->cursor.column, command->character))
+            {
+                return true;
+            }
+            if (!cursor_advance(&state->cursor, &state->document))
+            {
+                return false;
+            }
+            state->is_dirty = true;
+            changed = true;
+            break;
+        case EDITOR_COMMAND_BACKSPACE:
+            if (!command_backspace(state, &changed))
+            {
+                return false;
+            }
+            break;
+        case EDITOR_COMMAND_INSERT_NEWLINE:
+            if (!document_split_line(&state->document, state->cursor.row, state->cursor.column))
+            {
+                return true;
+            }
+            if (!cursor_set_position(&state->cursor, &state->document,
+                                     state->cursor.row + 1, 0))
+            {
+                return false;
+            }
+            state->is_dirty = true;
+            changed = true;
+            break;
+        case EDITOR_COMMAND_MOVE_LEFT:
+            changed = cursor_move_left(&state->cursor);
+            break;
+        case EDITOR_COMMAND_MOVE_RIGHT:
+            changed = cursor_move_right(&state->cursor, &state->document);
+            break;
+        case EDITOR_COMMAND_MOVE_UP:
+            changed = cursor_move_up(&state->cursor, &state->document);
+            break;
+        case EDITOR_COMMAND_MOVE_DOWN:
+            changed = cursor_move_down(&state->cursor, &state->document);
+            break;
+        case EDITOR_COMMAND_DELETE_CHARACTER:
+            /* Document Delete is a navigation/editing milestone; ignore it here. */
+            break;
+        default:
+            return false;
+    }
+
+    *redraw = *redraw || changed;
+    return true;
+}
+```
+
+### `src/renderer/renderer.h`
+
+```c
+/* src/renderer/renderer.h */
+
+#ifndef RENDERER_RENDERER_H
+#define RENDERER_RENDERER_H
+
+#include <stdbool.h>
+#include <stddef.h>
+
+#include "state/editor_state.h"
+#include "screen_buffer.h"
+
+/*
+ * Everything needed to draw one frame of the editor to the terminal.
+ *
+ *   - screen_buffer: the off-screen grid of characters we draw into before
+ *                    sending the whole frame to the terminal.
+ *   - document_rows: document text rows; the remaining rows hold a blank
+ *                    separator, Message Bar, and bottom Status Bar.
+ *   - output_buffer: a reusable byte buffer that holds the frame (escape
+ *                    sequences plus characters) about to be written out.
+ *   - output_capacity: how many bytes output_buffer currently holds.
+ */
+typedef struct
+{
+    ScreenBuffer screen_buffer;
+    size_t document_rows;
+    char *output_buffer;
+    size_t output_capacity;
+} Renderer;
+
+bool renderer_init(Renderer *renderer, size_t rows, size_t columns);
+
+void renderer_destroy(Renderer *renderer);
+
+bool renderer_render(Renderer *renderer, const EditorState *state);
+
+#endif
+```
+
+### `src/renderer/renderer.c`
+
+```c
+/* src/renderer/renderer.c */
+
+#include "renderer.h"
+
+#include <errno.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+/* Fill an in-memory ScreenBuffer with the visible part of the document. */
+static bool renderer_build_frame(Renderer *renderer, const EditorState *state);
+static bool renderer_draw_status_bar(Renderer *renderer, const EditorState *state);
+static bool renderer_draw_message_bar(Renderer *renderer, const EditorState *state);
+static const char *renderer_filename_prompt_prefix(const EditorState *state);
+
+/* Send a finished ScreenBuffer to the terminal. */
+static bool renderer_write_frame(Renderer *renderer);
+
+/* Grow the output buffer so it can hold at least 'required' bytes. */
+static bool renderer_ensure_output_capacity(Renderer *renderer, size_t required);
+
+/* Write all bytes to the terminal, retrying if the write is interrupted. */
+static bool renderer_write_all(const char *data, size_t length);
+
+/* Move the terminal's visible cursor to a given row and column. */
+static bool renderer_write_cursor_position(size_t row, size_t column);
+
+static size_t renderer_utf8_length(uint32_t code_point);
+
+static size_t renderer_encode_utf8(uint32_t code_point, char output[4]);
+
+bool renderer_init(Renderer *renderer, size_t rows, size_t columns)
+{
+    if (renderer == NULL)
+    {
+        return false;
+    }
+
+    renderer->screen_buffer.cells = NULL;
+    renderer->screen_buffer.rows = 0;
+    renderer->screen_buffer.columns = 0;
+    renderer->document_rows = 0;
+    renderer->output_buffer = NULL;
+    renderer->output_capacity = 0;
+
+    if (rows < 4 || columns == 0 || !screen_buffer_init(&renderer->screen_buffer, rows, columns))
+    {
+        return false;
+    }
+
+    renderer->document_rows = rows - 3;
+    return true;
+}
+
+void renderer_destroy(Renderer *renderer)
+{
+    if (renderer == NULL)
+    {
+        return;
+    }
+
+    screen_buffer_destroy(&renderer->screen_buffer);
+
+    free(renderer->output_buffer);
+    renderer->output_buffer = NULL;
+    renderer->output_capacity = 0;
+}
+
+bool renderer_render(Renderer *renderer, const EditorState *state)
+{
+    bool success;
+
+    if (renderer == NULL || state == NULL || renderer->screen_buffer.cells == NULL)
+    {
+        return false;
+    }
+    if (!state->filename_entry_active &&
+        (state->cursor.row < state->viewport.viewport_row ||
+         state->cursor.column < state->viewport.viewport_column ||
+         state->cursor.row - state->viewport.viewport_row >= renderer->document_rows ||
+         state->cursor.column - state->viewport.viewport_column >= renderer->screen_buffer.columns))
+    {
+        return false;
+    }
+
+    if (!renderer_build_frame(renderer, state))
+    {
+        return false;
+    }
+
+    /*
+     * Hide the terminal text cursor while drawing.
+     */
+    if (!renderer_write_all("\x1b[?25l", 6))
+    {
+        return false;
+    }
+
+    success = renderer_write_frame(renderer);
+
+    if (success)
+    {
+        if (state->filename_entry_active)
+        {
+            const size_t prompt_length = strlen(renderer_filename_prompt_prefix(state));
+            size_t entry_column = prompt_length + state->filename_entry_cursor;
+            if (entry_column >= renderer->screen_buffer.columns)
+            {
+                entry_column = renderer->screen_buffer.columns - 1;
+            }
+            success = renderer_write_all("\x1b[30;47m", 8) &&
+                      renderer_write_cursor_position(renderer->screen_buffer.rows - 2,
+                                                     entry_column);
+        }
+        else
+        {
+            success = renderer_write_all("\x1b[0m", 4) &&
+                      renderer_write_cursor_position(
+                          state->cursor.row - state->viewport.viewport_row,
+                          state->cursor.column - state->viewport.viewport_column);
+        }
+    }
+
+    /*
+     * Always attempt to restore cursor visibility,
+     * even if frame rendering fails.
+     */
+    if (!renderer_write_all("\x1b[?25h", 6))
+    {
+        success = false;
+    }
+
+    return success;
+}
+
+static bool renderer_build_frame(Renderer *renderer, const EditorState *state)
+{
+    if (renderer == NULL || state == NULL)
+    {
+        return false;
+    }
+
+    if (renderer->screen_buffer.cells == NULL)
+    {
+        return false;
+    }
+
+    /*
+     * Start from a clean slate: every cell becomes a blank space. A
+     * zero-line Document (the representation of an empty file) therefore
+     * renders as a blank document area without requiring a synthetic line.
+     */
+    screen_buffer_clear(&renderer->screen_buffer, (uint32_t)' ');
+
+    /* Map each screen row to its corresponding logical document row. */
+    for (size_t screen_row = 0; screen_row < renderer->document_rows; screen_row++)
+    {
+        const size_t document_row = state->viewport.viewport_row + screen_row;
+        const DocumentLine *line;
+
+        if (document_row >= state->document.line_count)
+        {
+            break;
+        }
+
+        line = &state->document.lines[document_row];
+
+        /* Horizontal scrolling maps screen columns to document columns. */
+        for (size_t screen_column = 0; screen_column < renderer->screen_buffer.columns; screen_column++)
+        {
+            const size_t document_column = state->viewport.viewport_column + screen_column;
+
+            if (document_column >= line->length)
+            {
+                break;
+            }
+
+            if (!screen_buffer_set(&renderer->screen_buffer, screen_row, screen_column, line->data[document_column]))
+            {
+                return false;
+            }
+        }
+    }
+
+    return renderer_draw_status_bar(renderer, state) &&
+           renderer_draw_message_bar(renderer, state);
+}
+
+/* Draw filename, modified state, and one-based cursor position in the Status Bar row. */
+static bool renderer_draw_status_bar(Renderer *renderer, const EditorState *state)
+{
+    char right[96];
+    const char *path;
+    const char *suffix;
+    size_t path_length;
+    size_t suffix_length;
+    int right_length;
+    size_t status_row;
+    size_t left_limit;
+    size_t path_limit;
+    size_t path_position = 0;
+    size_t right_position;
+
+    if (renderer == NULL || state == NULL || renderer->document_rows == 0)
+    {
+        return false;
+    }
+
+    path = state->file_path != NULL ? state->file_path : "[No Name]";
+    path_length = strlen(path);
+    suffix = state->is_dirty ? " [+]" : "";
+    suffix_length = strlen(suffix);
+    right_length = snprintf(right, sizeof(right), "Ln %zu, Col %zu",
+                            state->cursor.row + 1, state->cursor.column + 1);
+    if (right_length < 0 || (size_t)right_length >= sizeof(right))
+    {
+        return false;
+    }
+
+    status_row = renderer->screen_buffer.rows - 1;
+    left_limit = renderer->screen_buffer.columns > (size_t)right_length + 2
+                     ? renderer->screen_buffer.columns - (size_t)right_length - 2
+                     : 0;
+    path_limit = left_limit > suffix_length ? left_limit - suffix_length : 0;
+
+    for (size_t column = 0; column < renderer->screen_buffer.columns; ++column)
+    {
+        if (!screen_buffer_set(&renderer->screen_buffer, status_row, column, (uint32_t)' '))
+        {
+            return false;
+        }
+    }
+
+    /* Render a bounded path prefix; arbitrary filesystem bytes stay printable. */
+    while (path_position < path_length && path_position < path_limit)
+    {
+        unsigned char byte = (unsigned char)path[path_position];
+        uint32_t code_point = byte >= 0x20 && byte < 0x7F
+                                  ? byte
+                                  : (byte >= 0x80 ? (uint32_t)'?' : (uint32_t)' ');
+        if (!screen_buffer_set(&renderer->screen_buffer, status_row, path_position, code_point))
+        {
+            return false;
+        }
+        ++path_position;
+    }
+
+    for (size_t index = 0; index < suffix_length && path_position + index < left_limit; ++index)
+    {
+        if (!screen_buffer_set(&renderer->screen_buffer, status_row, path_position + index,
+                               (uint32_t)(unsigned char)suffix[index]))
+        {
+            return false;
+        }
+    }
+
+    if ((size_t)right_length < renderer->screen_buffer.columns)
+    {
+        right_position = renderer->screen_buffer.columns - (size_t)right_length;
+        for (size_t index = 0; index < (size_t)right_length; ++index)
+        {
+            if (!screen_buffer_set(&renderer->screen_buffer, status_row, right_position + index,
+                                   (uint32_t)(unsigned char)right[index]))
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+static const char *renderer_filename_prompt_prefix(const EditorState *state)
+{
+    if (state == NULL)
+    {
+        return "Save as: ";
+    }
+    if (strncmp(state->message, "Save failed", sizeof("Save failed") - 1) == 0)
+    {
+        return "Save failed: ";
+    }
+    if (strncmp(state->message, "Filename is too long", sizeof("Filename is too long") - 1) == 0)
+    {
+        return "Filename too long: ";
+    }
+    if (strncmp(state->message, "Enter a file name", sizeof("Enter a file name") - 1) == 0)
+    {
+        return "Enter a file name: ";
+    }
+    return "Save as: ";
+}
+
+/* Draw the Message Bar on the row above the bottom Status Bar. */
+static bool renderer_draw_message_bar(Renderer *renderer, const EditorState *state)
+{
+    const char *prompt;
+    size_t prompt_length;
+    size_t message_row;
+    size_t column = 0;
+
+    if (renderer == NULL || state == NULL || renderer->screen_buffer.cells == NULL ||
+        renderer->screen_buffer.rows < 4)
+    {
+        return false;
+    }
+
+    message_row = renderer->screen_buffer.rows - 2;
+    prompt = renderer_filename_prompt_prefix(state);
+    prompt_length = strlen(prompt);
+    for (column = 0; column < renderer->screen_buffer.columns; ++column)
+    {
+        if (!screen_buffer_set(&renderer->screen_buffer, message_row, column, (uint32_t)' '))
+        {
+            return false;
+        }
+    }
+
+    if (state->filename_entry_active)
+    {
+        for (size_t index = 0; index < prompt_length &&
+                               index < renderer->screen_buffer.columns;
+             ++index)
+        {
+            if (!screen_buffer_set(&renderer->screen_buffer, message_row, index,
+                                   (uint32_t)(unsigned char)prompt[index]))
+            {
+                return false;
+            }
+        }
+
+        column = prompt_length;
+        for (size_t index = 0; index < state->filename_entry_length &&
+                               column < renderer->screen_buffer.columns;
+             ++index, ++column)
+        {
+            const unsigned char byte = (unsigned char)state->filename_entry[index];
+            const uint32_t code_point = byte >= 0x20 && byte < 0x7F
+                                            ? byte
+                                            : (byte >= 0x80 ? (uint32_t)'?' : (uint32_t)' ');
+            if (!screen_buffer_set(&renderer->screen_buffer, message_row, column, code_point))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    const size_t message_length = strlen(state->message);
+    const size_t visible_length = message_length < renderer->screen_buffer.columns
+                                      ? message_length
+                                      : renderer->screen_buffer.columns;
+    for (column = 0; column < visible_length; ++column)
+    {
+        const unsigned char byte = (unsigned char)state->message[column];
+        const uint32_t code_point = byte >= 0x20 && byte < 0x7F
+                                        ? byte
+                                        : (byte >= 0x80 ? (uint32_t)'?' : (uint32_t)' ');
+        if (!screen_buffer_set(&renderer->screen_buffer, message_row, column, code_point))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool renderer_ensure_output_capacity(Renderer *renderer, size_t required)
+{
+    if (renderer == NULL)
+    {
+        return false;
+    }
+
+    if (required <= renderer->output_capacity)
+    {
+        return true;
+    }
+
+    char *larger = realloc(renderer->output_buffer, required);
+    if (larger == NULL)
+    {
+        return false;
+    }
+
+    renderer->output_buffer = larger;
+    renderer->output_capacity = required;
+
+    return true;
+}
+
+static bool renderer_write_frame(Renderer *renderer)
+{
+    const ScreenBuffer *buffer;
+    char sequence[64];
+
+    if (renderer == NULL)
+    {
+        return false;
+    }
+
+    buffer = &renderer->screen_buffer;
+
+    if (buffer->cells == NULL)
+    {
+        return false;
+    }
+
+    /*
+     * First pass: measure the ANSI cursor-position sequences and
+     * UTF-8-encoded cell contents.
+     */
+    size_t frame_length = 0;
+
+    for (size_t row = 0; row < buffer->rows; row++)
+    {
+        int sequence_length = snprintf(sequence, sizeof(sequence), "\x1b[%zu;1H", row + 1);
+
+        if (sequence_length < 0 || (size_t)sequence_length >= sizeof(sequence))
+        {
+            return false;
+        }
+
+        if (frame_length > SIZE_MAX - (size_t)sequence_length)
+        {
+            return false;
+        }
+
+        frame_length += (size_t)sequence_length;
+
+        const size_t message_row = buffer->rows - 2;
+        const size_t style_length = row == message_row ? sizeof("\x1b[30;47m") - 1
+                                                       : sizeof("\x1b[0m") - 1;
+        if (frame_length > SIZE_MAX - style_length)
+        {
+            return false;
+        }
+        frame_length += style_length;
+
+        for (size_t column = 0; column < buffer->columns; ++column)
+        {
+            const ScreenCell *cell = screen_buffer_get(buffer, row, column);
+
+            if (cell == NULL)
+            {
+                return false;
+            }
+
+            size_t encoded_length = renderer_utf8_length(cell->code_point);
+
+            if (encoded_length == 0 || frame_length > SIZE_MAX - encoded_length)
+            {
+                return false;
+            }
+
+            frame_length += encoded_length;
+        }
+    }
+
+    if (!renderer_ensure_output_capacity(renderer, frame_length))
+    {
+        return false;
+    }
+
+    /*
+     * Second pass: construct the complete terminal output.
+     */
+    size_t position = 0;
+
+    for (size_t row = 0; row < buffer->rows; ++row)
+    {
+        int sequence_length = snprintf(sequence, sizeof(sequence), "\x1b[%zu;1H", row + 1);
+
+        if (sequence_length < 0 || (size_t)sequence_length >= sizeof(sequence))
+        {
+            return false;
+        }
+
+        memcpy(renderer->output_buffer + position, sequence, (size_t)sequence_length);
+        position += (size_t)sequence_length;
+
+        if (row == buffer->rows - 2)
+        {
+            static const char message_style[] = "\x1b[30;47m";
+            memcpy(renderer->output_buffer + position, message_style, sizeof(message_style) - 1);
+            position += sizeof(message_style) - 1;
+        }
+        else
+        {
+            static const char reset_style[] = "\x1b[0m";
+            memcpy(renderer->output_buffer + position, reset_style, sizeof(reset_style) - 1);
+            position += sizeof(reset_style) - 1;
+        }
+
+        for (size_t column = 0; column < buffer->columns; ++column)
+        {
+            const ScreenCell *cell = screen_buffer_get(buffer, row, column);
+
+            if (cell == NULL)
+            {
+                return false;
+            }
+
+            char encoded[4];
+            size_t encoded_length = renderer_encode_utf8(cell->code_point, encoded);
+
+            if (encoded_length == 0)
+            {
+                return false;
+            }
+
+            memcpy(renderer->output_buffer + position, encoded, encoded_length);
+
+            position += encoded_length;
+        }
+    }
+
+    return renderer_write_all(renderer->output_buffer, frame_length);
+}
+
+static bool renderer_write_all(const char *data, size_t length)
+{
+    if (data == NULL)
+    {
+        return false;
+    }
+
+    size_t written = 0;
+
+    while (written < length)
+    {
+        ssize_t result;
+
+        /* Ask the OS to write the remaining bytes. */
+        result = write(STDOUT_FILENO, data + written, length - written);
+
+        if (result < 0)
+        {
+            /* EINTR means a signal interrupted us; retrying is safe. */
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        /* A return value of 0 means nothing could be written; give up. */
+        if (result == 0)
+        {
+            return false;
+        }
+
+        written += (size_t)result;
+    }
+
+    return true;
+}
+
+static bool renderer_write_cursor_position(size_t row, size_t column)
+{
+    char sequence[64];
+    int sequence_length = snprintf(sequence, sizeof(sequence), "\x1b[%zu;%zuH", row + 1, column + 1);
+
+    if (sequence_length < 0 || (size_t)sequence_length >= sizeof(sequence))
+    {
+        return false;
+    }
+
+    return renderer_write_all(sequence, (size_t)sequence_length);
+}
+
+/*
+ * Return the number of bytes required to encode a Unicode scalar value
+ * as UTF-8. Invalid scalar values are rejected.
+ */
+static size_t renderer_utf8_length(uint32_t code_point)
+{
+    if (code_point <= UINT32_C(0x7F))
+    {
+        return 1;
+    }
+
+    if (code_point <= UINT32_C(0x7FF))
+    {
+        return 2;
+    }
+
+    if (code_point >= UINT32_C(0xD800) && code_point <= UINT32_C(0xDFFF))
+    {
+        return 0;
+    }
+
+    if (code_point <= UINT32_C(0xFFFF))
+    {
+        return 3;
+    }
+
+    if (code_point <= UINT32_C(0x10FFFF))
+    {
+        return 4;
+    }
+
+    return 0;
+}
+
+/*
+ * Encode one Unicode scalar value into a four-byte output array.
+ * The returned length is zero if the value is invalid.
+ */
+static size_t renderer_encode_utf8(uint32_t code_point, char output[4])
+{
+    size_t length = renderer_utf8_length(code_point);
+
+    if (length == 0 || output == NULL)
+    {
+        return 0;
+    }
+
+    if (length == 1)
+    {
+        output[0] = (char)code_point;
+    }
+    else if (length == 2)
+    {
+        output[0] = (char)(UINT32_C(0xC0) | (code_point >> 6));
+
+        output[1] = (char)(UINT32_C(0x80) | (code_point & UINT32_C(0x3F)));
+    }
+    else if (length == 3)
+    {
+        output[0] = (char)(UINT32_C(0xE0) | (code_point >> 12));
+
+        output[1] = (char)(UINT32_C(0x80) | ((code_point >> 6) & UINT32_C(0x3F)));
+
+        output[2] = (char)(UINT32_C(0x80) | (code_point & UINT32_C(0x3F)));
+    }
+    else
+    {
+        output[0] = (char)(UINT32_C(0xF0) | (code_point >> 18));
+
+        output[1] = (char)(UINT32_C(0x80) | ((code_point >> 12) & UINT32_C(0x3F)));
+
+        output[2] = (char)(UINT32_C(0x80) | ((code_point >> 6) & UINT32_C(0x3F)));
+
+        output[3] = (char)(UINT32_C(0x80) | (code_point & UINT32_C(0x3F)));
+    }
+
+    return length;
+}
+```
+
+### `tests/test_editing.c`
+
+```c
+/* tests/test_editing.c */
+
+#include "document/document.h"
+#include "cursor/cursor.h"
+#include "state/editor_state.h"
+#include "viewport/viewport.h"
+#include "renderer/renderer.h"
+#include "terminal/terminal.h"
+
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+/*
+ * Unit tests for the core editing behaviour.
+ *
+ * Each test function below exercises one small piece of behaviour (inserting
+ * characters, moving the cursor, scrolling the viewport, drawing, or terminal
+ * control) and uses assert() so any failure stops the program with a message.
+ * main() at the bottom simply calls every test in order.
+ */
+
+/* Compare a line's code points against a NUL-terminated ASCII string. */
+static bool line_equals(const DocumentLine *line, const char *text)
+{
+    size_t length = strlen(text);
+
+    if (line == NULL || line->length != length)
+    {
+        return false;
+    }
+
+    for (size_t index = 0; index < length; ++index)
+    {
+        if (line->data[index] != (uint32_t)(unsigned char)text[index])
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static void test_document_insert_and_delete(void)
+{
+    Document document;
+    DocumentLine *line;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'c'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+
+    line = document_get_line(&document, 0);
+    assert(line != NULL);
+    assert(line_equals(line, "abc"));
+
+    assert(document_delete_character(&document, 0, 1));
+    assert(line_equals(line, "ac"));
+
+    assert(!document_delete_character(&document, 0, 2));
+    assert(!document_delete_character(&document, 1, 0));
+    assert(line_equals(line, "ac"));
+
+    document_destroy(&document);
+}
+
+/* Moving left/right stops at the start and end of the line. */
+static void test_cursor_horizontal_movement(void)
+{
+    Document document;
+    Cursor cursor;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'x'));
+    assert(document_insert_character(&document, 0, 1, 'y'));
+    cursor_init(&cursor);
+
+    assert(!cursor_move_left(&cursor));
+    assert(cursor.column == 0);
+    assert(cursor_move_right(&cursor, &document));
+    assert(cursor.column == 1);
+    assert(cursor_move_left(&cursor));
+    assert(cursor.column == 0);
+    assert(cursor_move_right(&cursor, &document));
+    assert(cursor_move_right(&cursor, &document));
+    assert(cursor.column == 2);
+    assert(!cursor_move_right(&cursor, &document));
+    assert(cursor.column == 2);
+
+    document_destroy(&document);
+}
+
+/* Moving up/down keeps the preferred column across lines of uneven length. */
+static void test_cursor_vertical_movement_preserves_preferred_column(void)
+{
+    Document document;
+    Cursor cursor;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+    assert(document_insert_character(&document, 0, 2, 'c'));
+    assert(document_insert_character(&document, 0, 3, 'd'));
+    assert(document_insert_character(&document, 0, 4, 'e'));
+    assert(document_insert_character(&document, 0, 5, 'f'));
+    assert(document_split_line(&document, 0, 6));
+    assert(document_insert_character(&document, 1, 0, 'x'));
+    assert(document_insert_character(&document, 1, 1, 'y'));
+    assert(document_split_line(&document, 1, 2));
+    assert(document_split_line(&document, 2, 0));
+    assert(document_insert_character(&document, 3, 0, '1'));
+    assert(document_insert_character(&document, 3, 1, '2'));
+    assert(document_insert_character(&document, 3, 2, '3'));
+    assert(document_insert_character(&document, 3, 3, '4'));
+    assert(document_insert_character(&document, 3, 4, '5'));
+    assert(document_insert_character(&document, 3, 5, '6'));
+
+    cursor_init(&cursor);
+    assert(cursor_set_position(&cursor, &document, 0, 5));
+    assert(cursor_move_down(&cursor, &document));
+    assert(cursor.row == 1 && cursor.column == 2);
+    assert(cursor.preferred_column == 5);
+    assert(cursor_move_down(&cursor, &document));
+    assert(cursor.row == 2 && cursor.column == 0);
+    assert(cursor.preferred_column == 5);
+    assert(cursor_move_down(&cursor, &document));
+    assert(cursor.row == 3 && cursor.column == 5);
+    assert(cursor.preferred_column == 5);
+    assert(cursor_move_up(&cursor, &document));
+    assert(cursor.row == 2 && cursor.column == 0);
+    assert(cursor_move_up(&cursor, &document));
+    assert(cursor.row == 1 && cursor.column == 2);
+    assert(cursor_move_up(&cursor, &document));
+    assert(cursor.row == 0 && cursor.column == 5);
+    assert(!cursor_move_up(&cursor, &document));
+    assert(!cursor_move_down(NULL, &document));
+
+    document_destroy(&document);
+}
+
+/* Horizontal movement resets the remembered (preferred) column. */
+static void test_horizontal_movement_resets_preferred_column(void)
+{
+    Document document;
+    Cursor cursor;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+    assert(document_split_line(&document, 0, 2));
+    assert(document_insert_character(&document, 1, 0, 'x'));
+
+    cursor_init(&cursor);
+    assert(cursor_set_position(&cursor, &document, 0, 2));
+    assert(cursor_move_down(&cursor, &document));
+    assert(cursor.column == 1 && cursor.preferred_column == 2);
+    assert(cursor_move_left(&cursor));
+    assert(cursor.column == 0 && cursor.preferred_column == 0);
+
+    document_destroy(&document);
+}
+
+/* A freshly created state starts clean (not dirty). */
+static void test_dirty_flag_initial_state(void)
+{
+    EditorState state;
+
+    assert(editor_state_init(&state));
+    assert(!state.is_dirty);
+    assert(state.message[0] == '\0');
+    assert(editor_state_set_message(&state, "ready"));
+    assert(strcmp(state.message, "ready") == 0);
+    assert(!editor_state_set_message(NULL, "invalid"));
+    assert(!editor_state_set_message(&state, NULL));
+    state.is_dirty = true;
+    assert(state.is_dirty);
+    editor_state_destroy(&state);
+}
+
+/* Splitting a line at a column produces a prefix and a suffix line. */
+static void test_document_split_line(void)
+{
+    Document document;
+    DocumentLine *first_line;
+    DocumentLine *second_line;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+    assert(document_insert_character(&document, 0, 2, 'c'));
+
+    assert(document_split_line(&document, 0, 1));
+    assert(document.line_count == 2);
+    first_line = document_get_line(&document, 0);
+    second_line = document_get_line(&document, 1);
+    assert(first_line != NULL && second_line != NULL);
+    assert(line_equals(first_line, "a"));
+    assert(line_equals(second_line, "bc"));
+
+    assert(document_split_line(&document, 1, 0));
+    assert(document.line_count == 3);
+    assert(document_get_line(&document, 1)->length == 0);
+    assert(document_get_line(&document, 2)->length == 2);
+
+    assert(document_split_line(&document, 2, 2));
+    assert(document.line_count == 4);
+    assert(document_get_line(&document, 2)->length == 2);
+    assert(document_get_line(&document, 3)->length == 0);
+    assert(!document_split_line(&document, 4, 0));
+    assert(!document_split_line(&document, 0, 2));
+
+    document_destroy(&document);
+}
+
+/* Merging two lines joins the second onto the end of the first. */
+static void test_document_merge_lines(void)
+{
+    Document document;
+    DocumentLine *line;
+
+    assert(document_init(&document));
+    assert(document_insert_character(&document, 0, 0, 'a'));
+    assert(document_insert_character(&document, 0, 1, 'b'));
+    assert(document_split_line(&document, 0, 2));
+    assert(document_insert_character(&document, 1, 0, 'c'));
+    assert(document_insert_character(&document, 1, 1, 'd'));
+
+    assert(document_merge_lines(&document, 0));
+    assert(document.line_count == 1);
+    line = document_get_line(&document, 0);
+    assert(line != NULL && line->length == 4);
+    assert(line_equals(line, "abcd"));
+    assert(!document_merge_lines(&document, 0));
+    assert(!document_merge_lines(&document, 1));
+
+    document_destroy(&document);
+}
+
+/* Splitting and merging while editing keeps the cursor on the right line. */
+static void test_line_editing_cursor_transitions(void)
+{
+    EditorState state;
+    const DocumentLine *previous_line;
+
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'a'));
+    assert(document_insert_character(&state.document, 0, 1, 'b'));
+    assert(cursor_set_position(&state.cursor, &state.document, 0, 1));
+
+    assert(document_split_line(&state.document, state.cursor.row, state.cursor.column));
+    assert(cursor_set_position(&state.cursor, &state.document, 1, 0));
+    state.is_dirty = true;
+    assert(state.cursor.row == 1 && state.cursor.column == 0);
+    assert(state.cursor.preferred_column == 0);
+    assert(state.document.line_count == 2);
+    assert(viewport_ensure_cursor_visible(&state.viewport,
+                                          state.cursor.row,
+                                          state.cursor.column,
+                                          1, 2));
+    assert(state.viewport.viewport_row == 1);
+
+    assert(document_insert_character(&state.document, 1, 0, 'c'));
+    assert(cursor_set_position(&state.cursor, &state.document, 1, 0));
+    previous_line = document_get_line(&state.document, 0);
+    assert(previous_line != NULL);
+    assert(cursor_set_position(&state.cursor, &state.document,
+                               0, previous_line->length));
+    assert(document_merge_lines(&state.document, state.cursor.row));
+    assert(cursor_set_position(&state.cursor, &state.document, 0, 1));
+    assert(state.cursor.row == 0 && state.cursor.column == 1);
+    assert(state.cursor.preferred_column == 1);
+    assert(state.document.line_count == 1);
+    assert(viewport_ensure_cursor_visible(&state.viewport,
+                                          state.cursor.row,
+                                          state.cursor.column,
+                                          1, 2));
+    assert(state.viewport.viewport_row == 0);
+    assert(state.is_dirty);
+
+    editor_state_destroy(&state);
+}
+
+/* The viewport scrolls to keep the cursor visible. */
+static void test_viewport_tracks_cursor_visibility(void)
+{
+    Viewport viewport;
+
+    viewport_init(&viewport);
+    assert(viewport.viewport_row == 0);
+    assert(viewport.viewport_column == 0);
+
+    assert(viewport_ensure_cursor_visible(&viewport, 2, 3, 4, 5));
+    assert(viewport.viewport_row == 0);
+    assert(viewport.viewport_column == 0);
+
+    assert(viewport_ensure_cursor_visible(&viewport, 4, 6, 4, 5));
+    assert(viewport.viewport_row == 1);
+    assert(viewport.viewport_column == 2);
+
+    assert(viewport_ensure_cursor_visible(&viewport, 0, 1, 4, 5));
+    assert(viewport.viewport_row == 0);
+    assert(viewport.viewport_column == 1);
+}
+
+/* Repeated scrolling and screen edges keep the cursor inside the viewport. */
+static void test_viewport_repeated_scrolling_and_screen_boundaries(void)
+{
+    Viewport viewport;
+    const size_t screen_rows = 3;
+    const size_t screen_columns = 4;
+    size_t row;
+    size_t column;
+
+    viewport_init(&viewport);
+
+    /* Every cursor position remains inside the viewport after adjustment. */
+    for (row = 0; row < 10; ++row)
+    {
+        for (column = 0; column < 12; ++column)
+        {
+            assert(viewport_ensure_cursor_visible(
+                &viewport, row, column, screen_rows, screen_columns));
+            assert(row >= viewport.viewport_row);
+            assert(row - viewport.viewport_row < screen_rows);
+            assert(column >= viewport.viewport_column);
+            assert(column - viewport.viewport_column < screen_columns);
+        }
+    }
+
+    /* Moving back toward the document origin scrolls both axes back. */
+    assert(viewport_ensure_cursor_visible(&viewport, 0, 0,
+                                          screen_rows, screen_columns));
+    assert(viewport.viewport_row == 0);
+    assert(viewport.viewport_column == 0);
+
+    /* The last visible cell does not force an unnecessary scroll. */
+    assert(viewport_ensure_cursor_visible(&viewport, 2, 3,
+                                          screen_rows, screen_columns));
+    assert(viewport.viewport_row == 0);
+    assert(viewport.viewport_column == 0);
+
+    /* One position beyond the bottom-right visible cell scrolls by one. */
+    assert(viewport_ensure_cursor_visible(&viewport, 3, 4,
+                                          screen_rows, screen_columns));
+    assert(viewport.viewport_row == 1);
+    assert(viewport.viewport_column == 1);
+}
+
+/* The renderer uses the viewport's row/column offsets when drawing. */
+static void test_renderer_uses_viewport_offsets(void)
+{
+    EditorState state;
+    Renderer renderer;
+    int output_pipe[2];
+    int saved_stdout;
+    char output[2048];
+    ssize_t output_length;
+    const ScreenCell *cell;
+
+    assert(editor_state_init(&state));
+    assert(document_insert_character(&state.document, 0, 0, 'a'));
+    assert(document_insert_character(&state.document, 0, 1, 'b'));
+    assert(document_insert_character(&state.document, 0, 2, 'c'));
+    assert(document_split_line(&state.document, 0, 3));
+    assert(document_insert_character(&state.document, 1, 0, 'd'));
+    assert(document_insert_character(&state.document, 1, 1, 'e'));
+    assert(document_insert_character(&state.document, 1, 2, 'f'));
+    assert(document_insert_character(&state.document, 1, 3, 'g'));
+    assert(document_insert_character(&state.document, 1, 4, 'h'));
+    assert(cursor_set_position(&state.cursor, &state.document, 1, 3));
+    assert(viewport_ensure_cursor_visible(&state.viewport, 1, 3, 2, 3));
+    assert(state.viewport.viewport_row == 0);
+    assert(state.viewport.viewport_column == 1);
+
+    /* Force a vertical offset too, as if the document had been scrolled. */
+    state.viewport.viewport_row = 1;
+    state.viewport.viewport_column = 2;
+
+    assert(renderer_init(&renderer, 4, 3));
+    assert(pipe(output_pipe) == 0);
+    saved_stdout = dup(STDOUT_FILENO);
+    assert(saved_stdout >= 0);
+    assert(dup2(output_pipe[1], STDOUT_FILENO) == STDOUT_FILENO);
+    close(output_pipe[1]);
+
+    assert(renderer_render(&renderer, &state));
+
+    assert(dup2(saved_stdout, STDOUT_FILENO) == STDOUT_FILENO);
+    close(saved_stdout);
+    output_length = read(output_pipe[0], output, sizeof(output) - 1);
+    assert(output_length >= 0);
+    output[output_length] = '\0';
+    close(output_pipe[0]);
+
+    cell = screen_buffer_get(&renderer.screen_buffer, 0, 0);
+    assert(cell != NULL && cell->code_point == 'f');
+    cell = screen_buffer_get(&renderer.screen_buffer, 0, 1);
+    assert(cell != NULL && cell->code_point == 'g');
+    cell = screen_buffer_get(&renderer.screen_buffer, 0, 2);
+    assert(cell != NULL && cell->code_point == 'h');
+    assert(strstr(output, "\x1b[1;2H") != NULL);
+
+    renderer_destroy(&renderer);
+    editor_state_destroy(&state);
+}
+
+
+/* The final row is the Status Bar and reports name, dirty state, and position. */
+static void test_renderer_draws_status_bar(void)
+{
+    EditorState state;
+    Renderer renderer;
+    const ScreenCell *cell;
+    size_t status_row;
+
+    assert(editor_state_init(&state));
+    assert(renderer_init(&renderer, 5, 40));
+    state.file_path = malloc(sizeof("notes.txt"));
+    assert(state.file_path != NULL);
+    memcpy(state.file_path, "notes.txt", sizeof("notes.txt"));
+    state.is_dirty = true;
+    state.cursor.row = 1;
+    state.cursor.column = 4;
+
+    /* Capture the renderer output so the test does not write control bytes. */
+    int output_pipe[2];
+    int saved_stdout;
+    assert(pipe(output_pipe) == 0);
+    saved_stdout = dup(STDOUT_FILENO);
+    assert(saved_stdout >= 0);
+    assert(dup2(output_pipe[1], STDOUT_FILENO) == STDOUT_FILENO);
+    close(output_pipe[1]);
+
+    assert(renderer_render(&renderer, &state));
+    assert(dup2(saved_stdout, STDOUT_FILENO) == STDOUT_FILENO);
+    close(saved_stdout);
+    close(output_pipe[0]);
+
+    status_row = renderer.screen_buffer.rows - 1;
+    cell = screen_buffer_get(&renderer.screen_buffer, status_row, 0);
+    assert(cell != NULL && cell->code_point == 'n');
+    cell = screen_buffer_get(&renderer.screen_buffer, status_row, 10);
+    assert(cell != NULL && cell->code_point == '[');
+    cell = screen_buffer_get(&renderer.screen_buffer, status_row, 11);
+    assert(cell != NULL && cell->code_point == '+');
+
+    /* Cursor information is right-aligned and uses one-based coordinates. */
+    const char expected_right[] = "Ln 2, Col 5";
+    size_t right_start = renderer.screen_buffer.columns - (sizeof(expected_right) - 1);
+    for (size_t index = 0; index < sizeof(expected_right) - 1; ++index)
+    {
+        cell = screen_buffer_get(&renderer.screen_buffer, status_row, right_start + index);
+        assert(cell != NULL && cell->code_point == (uint32_t)(unsigned char)expected_right[index]);
+    }
+
+    renderer_destroy(&renderer);
+    editor_state_destroy(&state);
+}
+
+/* The final row displays the current Message Bar text and clears stale text. */
+static void test_renderer_draws_message_bar(void)
+{
+    EditorState state;
+    Renderer renderer;
+    const ScreenCell *cell;
+    char output[2048];
+    ssize_t output_length;
+
+    assert(editor_state_init(&state));
+    assert(renderer_init(&renderer, 4, 24));
+    assert(editor_state_set_message(&state, "Saved successfully."));
+
+    /* Capture output to verify the Message Bar style without terminal output. */
+    int output_pipe[2];
+    int saved_stdout;
+    assert(pipe(output_pipe) == 0);
+    saved_stdout = dup(STDOUT_FILENO);
+    assert(saved_stdout >= 0);
+    assert(dup2(output_pipe[1], STDOUT_FILENO) == STDOUT_FILENO);
+    close(output_pipe[1]);
+    assert(renderer_render(&renderer, &state));
+    assert(dup2(saved_stdout, STDOUT_FILENO) == STDOUT_FILENO);
+    close(saved_stdout);
+    output_length = read(output_pipe[0], output, sizeof(output) - 1);
+    assert(output_length >= 0);
+    output[output_length] = '\0';
+    close(output_pipe[0]);
+    assert(strstr(output, "\x1b[30;47m") != NULL);
+
+    cell = screen_buffer_get(&renderer.screen_buffer, renderer.screen_buffer.rows - 2, 0);
+    assert(cell != NULL && cell->code_point == 'S');
+    cell = screen_buffer_get(&renderer.screen_buffer, renderer.screen_buffer.rows - 2, 5);
+    assert(cell != NULL && cell->code_point == ' ');
+
+    /* The row before the Message Bar is blank; the Status Bar is last. */
+    for (size_t column = 0; column < renderer.screen_buffer.columns; ++column)
+    {
+        cell = screen_buffer_get(&renderer.screen_buffer, renderer.document_rows, column);
+        assert(cell != NULL && cell->code_point == (uint32_t)' ');
+    }
+    cell = screen_buffer_get(&renderer.screen_buffer, renderer.screen_buffer.rows - 1, 0);
+    assert(cell != NULL && cell->code_point == '[');
+
+    assert(editor_state_set_message(&state, ""));
+    assert(pipe(output_pipe) == 0);
+    saved_stdout = dup(STDOUT_FILENO);
+    assert(saved_stdout >= 0);
+    assert(dup2(output_pipe[1], STDOUT_FILENO) == STDOUT_FILENO);
+    close(output_pipe[1]);
+    assert(renderer_render(&renderer, &state));
+    assert(dup2(saved_stdout, STDOUT_FILENO) == STDOUT_FILENO);
+    close(saved_stdout);
+    close(output_pipe[0]);
+
+    for (size_t column = 0; column < renderer.screen_buffer.columns; ++column)
+    {
+        cell = screen_buffer_get(&renderer.screen_buffer, renderer.screen_buffer.rows - 2, column);
+        assert(cell != NULL && cell->code_point == (uint32_t)' ');
+    }
+
+    renderer_destroy(&renderer);
+    editor_state_destroy(&state);
+}
+
+/* A zero-line Document becomes editable on the first insertion or Enter. */
+static void test_zero_line_document_editing(void)
+{
+    Document document;
+    DocumentLine *line;
+
+    assert(document_init(&document));
+    document_destroy(&document);
+
+    assert(document_insert_character(&document, 0, 0, 'q'));
+    assert(document.line_count == 1);
+    line = document_get_line(&document, 0);
+    assert(line != NULL && line->length == 1);
+    assert(line->data[0] == (uint32_t)'q');
+
+    document_destroy(&document);
+    assert(document_init(&document));
+    document_destroy(&document);
+
+    assert(!document_insert_character(&document, 1, 0, 'q'));
+    assert(!document_insert_character(&document, 0, 1, 'q'));
+    assert(document.line_count == 0);
+
+    assert(document_split_line(&document, 0, 0));
+    assert(document.line_count == 2);
+    assert(document_get_line(&document, 0) != NULL);
+    assert(document_get_line(&document, 1) != NULL);
+    assert(document_get_line(&document, 0)->length == 0);
+    assert(document_get_line(&document, 1)->length == 0);
+    assert(!document_split_line(&document, 2, 0));
+
+    document_destroy(&document);
+}
+
+/* The renderer refuses to draw when the cursor is outside the viewport. */
+static void test_renderer_rejects_cursor_outside_viewport(void)
+{
+    EditorState state;
+    Renderer renderer;
+
+    assert(editor_state_init(&state));
+    assert(renderer_init(&renderer, 4, 4));
+
+    state.viewport.viewport_row = 1;
+    assert(!renderer_render(&renderer, &state));
+
+    state.viewport.viewport_row = 0;
+    state.viewport.viewport_column = 1;
+    assert(!renderer_render(&renderer, &state));
+
+    renderer_destroy(&renderer);
+    editor_state_destroy(&state);
+}
+
+/* Rendering an empty-file Document produces a blank frame safely. */
+static void test_renderer_renders_zero_line_document(void)
+{
+    EditorState state;
+    Renderer renderer;
+    int output_pipe[2];
+    int saved_stdout;
+    char output[512];
+    ssize_t output_length;
+
+    assert(editor_state_init(&state));
+    document_destroy(&state.document); /* Model an empty file loaded from disk. */
+    cursor_init(&state.cursor);
+    viewport_init(&state.viewport);
+
+    assert(renderer_init(&renderer, 4, 3));
+    assert(pipe(output_pipe) == 0);
+    saved_stdout = dup(STDOUT_FILENO);
+    assert(saved_stdout >= 0);
+    assert(dup2(output_pipe[1], STDOUT_FILENO) == STDOUT_FILENO);
+    close(output_pipe[1]);
+
+    assert(renderer_render(&renderer, &state));
+
+    assert(dup2(saved_stdout, STDOUT_FILENO) == STDOUT_FILENO);
+    close(saved_stdout);
+    output_length = read(output_pipe[0], output, sizeof(output) - 1);
+    assert(output_length >= 0);
+    output[output_length] = '\0';
+    close(output_pipe[0]);
+
+    for (size_t row = 0; row < renderer.screen_buffer.rows; ++row)
+    {
+        for (size_t column = 0; column < renderer.screen_buffer.columns; ++column)
+        {
+            const ScreenCell *cell = screen_buffer_get(
+                &renderer.screen_buffer, row, column);
+            assert(cell != NULL && cell->code_point == (uint32_t)' ');
+        }
+    }
+
+    assert(strstr(output, "\x1b[1;1H") != NULL);
+
+    renderer_destroy(&renderer);
+    editor_state_destroy(&state);
+}
+
+/* Cursor and viewport stay in sync through long vertical and horizontal scrolls. */
+static void test_cursor_and_viewport_remain_synchronized_during_scrolling(void)
+{
+    EditorState state;
+    const size_t visible_rows = 8;
+    const size_t visible_columns = 10;
+    size_t row;
+    size_t column;
+
+    assert(editor_state_init(&state));
+
+    /* Create forty logical lines, including the final empty line. */
+    for (row = 0; row < 39; ++row)
+    {
+        const DocumentLine *line = document_get_line(&state.document, row);
+        assert(line != NULL);
+        assert(document_split_line(&state.document, row, line->length));
+    }
+
+    assert(cursor_set_position(&state.cursor, &state.document, 0, 0));
+    for (row = 1; row < state.document.line_count; ++row)
+    {
+        assert(cursor_move_down(&state.cursor, &state.document));
+        assert(viewport_ensure_cursor_visible(&state.viewport,
+                                              state.cursor.row,
+                                              state.cursor.column,
+                                              visible_rows,
+                                              visible_columns));
+        assert(state.cursor.row - state.viewport.viewport_row < visible_rows);
+    }
+
+    for (row = state.document.line_count - 1; row > 0; --row)
+    {
+        assert(cursor_move_up(&state.cursor, &state.document));
+        assert(viewport_ensure_cursor_visible(&state.viewport,
+                                              state.cursor.row,
+                                              state.cursor.column,
+                                              visible_rows,
+                                              visible_columns));
+        assert(state.cursor.row >= state.viewport.viewport_row);
+        assert(state.cursor.row - state.viewport.viewport_row < visible_rows);
+    }
+    assert(state.cursor.row == 0);
+    assert(state.viewport.viewport_row == 0);
+
+    /* Exercise horizontal scrolling on one line longer than the viewport. */
+    for (column = 0; column < 100; ++column)
+    {
+        assert(document_insert_character(&state.document, 0, column, 'x'));
+    }
+    assert(cursor_set_position(&state.cursor, &state.document, 0, 0));
+
+    for (column = 0; column < 100; ++column)
+    {
+        assert(cursor_move_right(&state.cursor, &state.document));
+        assert(viewport_ensure_cursor_visible(&state.viewport,
+                                              state.cursor.row,
+                                              state.cursor.column,
+                                              visible_rows,
+                                              visible_columns));
+        assert(state.cursor.column >= state.viewport.viewport_column);
+        assert(state.cursor.column - state.viewport.viewport_column < visible_columns);
+    }
+
+    while (state.cursor.column > 0)
+    {
+        assert(cursor_move_left(&state.cursor));
+        assert(viewport_ensure_cursor_visible(&state.viewport,
+                                              state.cursor.row,
+                                              state.cursor.column,
+                                              visible_rows,
+                                              visible_columns));
+        assert(state.cursor.column >= state.viewport.viewport_column);
+        assert(state.cursor.column - state.viewport.viewport_column < visible_columns);
+    }
+    assert(state.viewport.viewport_column == 0);
+
+    editor_state_destroy(&state);
+}
+
+/* Entering/leaving the alternate screen toggles auto-wrap correctly. */
+static void test_terminal_disables_and_restores_autowrap(void)
+{
+    TerminalState terminal = {0};
+    int output_pipe[2];
+    int saved_stdout;
+    char output[128];
+    ssize_t output_length;
+
+    assert(pipe(output_pipe) == 0);
+    saved_stdout = dup(STDOUT_FILENO);
+    assert(saved_stdout >= 0);
+    assert(dup2(output_pipe[1], STDOUT_FILENO) == STDOUT_FILENO);
+    close(output_pipe[1]);
+
+    assert(terminal_enter_alternate_screen(&terminal));
+    assert(terminal.autowrap_disabled);
+    terminal_leave_alternate_screen(&terminal);
+    assert(!terminal.autowrap_disabled);
+    assert(!terminal.alternate_screen_enabled);
+
+    assert(dup2(saved_stdout, STDOUT_FILENO) == STDOUT_FILENO);
+    close(saved_stdout);
+    output_length = read(output_pipe[0], output, sizeof(output) - 1);
+    assert(output_length >= 0);
+    output[output_length] = '\0';
+    close(output_pipe[0]);
+
+    assert(strstr(output, "\x1b[?1049h") != NULL);
+    assert(strstr(output, "\x1b[?7l") != NULL);
+    assert(strstr(output, "\x1b[?7h") != NULL);
+    assert(strstr(output, "\x1b[?1049l") != NULL);
+}
+
+/* Invalid (zero) dimensions leave the viewport offsets unchanged. */
+static void test_viewport_invalid_dimensions_preserve_offsets(void)
+{
+    Viewport viewport;
+
+    viewport_init(&viewport);
+    assert(viewport_ensure_cursor_visible(&viewport, 8, 9, 3, 4));
+    assert(viewport.viewport_row == 6);
+    assert(viewport.viewport_column == 6);
+
+    assert(!viewport_ensure_cursor_visible(&viewport, 0, 0, 0, 4));
+    assert(!viewport_ensure_cursor_visible(&viewport, 0, 0, 3, 0));
+    assert(viewport.viewport_row == 6);
+    assert(viewport.viewport_column == 6);
+}
+
+/* Zero dimensions and a NULL viewport are rejected. */
+static void test_viewport_rejects_invalid_dimensions(void)
+{
+    Viewport viewport;
+
+    viewport_init(&viewport);
+    assert(!viewport_ensure_cursor_visible(&viewport, 0, 0, 0, 5));
+    assert(!viewport_ensure_cursor_visible(&viewport, 0, 0, 5, 0));
+    assert(!viewport_ensure_cursor_visible(NULL, 0, 0, 5, 5));
+}
+
+int main(void)
+{
+    test_document_insert_and_delete();
+    test_cursor_horizontal_movement();
+    test_cursor_vertical_movement_preserves_preferred_column();
+    test_horizontal_movement_resets_preferred_column();
+    test_dirty_flag_initial_state();
+    test_document_split_line();
+    test_document_merge_lines();
+    test_zero_line_document_editing();
+    test_line_editing_cursor_transitions();
+    test_viewport_tracks_cursor_visibility();
+    test_viewport_repeated_scrolling_and_screen_boundaries();
+    test_renderer_uses_viewport_offsets();
+    test_renderer_draws_status_bar();
+    test_renderer_draws_message_bar();
+    test_renderer_rejects_cursor_outside_viewport();
+    test_renderer_renders_zero_line_document();
+    test_cursor_and_viewport_remain_synchronized_during_scrolling();
+    test_terminal_disables_and_restores_autowrap();
+    test_viewport_invalid_dimensions_preserve_offsets();
+    test_viewport_rejects_invalid_dimensions();
+
+    return 0;
+}
+```
+
+### `tests/test_input_parser.c`
+
+```c
+/* tests/test_input_parser.c */
+
+#include "input/input_parser.h"
+
+#include <assert.h>
+#include <stddef.h>
+
+static InputEvent feed(InputParser *parser, unsigned char byte)
+{
+    InputEvent event;
+    assert(input_parser_feed(parser, byte, &event));
+    return event;
+}
+
+static void test_ascii_and_control_keys(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 'x');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'x');
+    event = feed(&parser, 0x11);
+    assert(event.type == INPUT_EVENT_CTRL_Q);
+    event = feed(&parser, 0x13);
+    assert(event.type == INPUT_EVENT_CTRL_S);
+    event = feed(&parser, 0x7F);
+    assert(event.type == INPUT_EVENT_BACKSPACE);
+    event = feed(&parser, 0x08);
+    assert(event.type == INPUT_EVENT_BACKSPACE);
+    event = feed(&parser, '\r');
+    assert(event.type == INPUT_EVENT_ENTER);
+    event = feed(&parser, '\n');
+    assert(event.type == INPUT_EVENT_ENTER);
+}
+
+static void test_arrow_sequences(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 0x1B);
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(input_parser_is_waiting(&parser));
+    event = feed(&parser, '[');
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(input_parser_is_waiting(&parser));
+    event = feed(&parser, 'A');
+    assert(event.type == INPUT_EVENT_ARROW_UP);
+    assert(!input_parser_is_waiting(&parser));
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'B');
+    assert(event.type == INPUT_EVENT_ARROW_DOWN);
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'C');
+    assert(event.type == INPUT_EVENT_ARROW_RIGHT);
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'D');
+    assert(event.type == INPUT_EVENT_ARROW_LEFT);
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, '3');
+    assert(event.type == INPUT_EVENT_NONE && input_parser_is_waiting(&parser));
+    event = feed(&parser, '~');
+    assert(event.type == INPUT_EVENT_DELETE && !input_parser_is_waiting(&parser));
+}
+
+static void test_escape_timeout_and_recovery(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 0x1B);
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(input_parser_timeout(&parser, &event));
+    assert(event.type == INPUT_EVENT_ESCAPE);
+    assert(!input_parser_is_waiting(&parser));
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    assert(input_parser_timeout(&parser, &event));
+    assert(event.type == INPUT_EVENT_NONE);
+
+    event = feed(&parser, 'z');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'z');
+
+    event = feed(&parser, 0x1B);
+    event = feed(&parser, '[');
+    event = feed(&parser, 'X');
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 'q');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'q');
+}
+
+static void test_utf8_character(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 0xE2);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0x82);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 0xAC);
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 0x20AC);
+}
+
+static void test_invalid_utf8_recovers(void)
+{
+    InputParser parser;
+    InputEvent event;
+
+    input_parser_init(&parser);
+    event = feed(&parser, 0xE2);
+    assert(event.type == INPUT_EVENT_NONE);
+    event = feed(&parser, 'a');
+    assert(event.type == INPUT_EVENT_CHARACTER && event.character == 'a');
+}
+
+int main(void)
+{
+    test_ascii_and_control_keys();
+    test_arrow_sequences();
+    test_escape_timeout_and_recovery();
+    test_utf8_character();
+    test_invalid_utf8_recovers();
+    return 0;
+}
+```
+
+### `tests/test_input_engine.c`
+
+```c
+/* tests/test_input_engine.c */
+
+#include "input/input_engine.h"
+
+#include <assert.h>
+
+static void assert_mapping(InputEventType event_type, uint32_t character,
+                           EditorCommandType expected_type, uint32_t expected_character)
+{
+    InputEvent event = {event_type, character};
+    EditorCommand command;
+
+    assert(input_engine_translate(&event, &command));
+    assert(command.type == expected_type);
+    assert(command.character == expected_character);
+}
+
+static void test_all_supported_mappings(void)
+{
+    assert_mapping(INPUT_EVENT_NONE, 0, EDITOR_COMMAND_NONE, 0);
+    assert_mapping(INPUT_EVENT_CHARACTER, 'x', EDITOR_COMMAND_INSERT_CHARACTER, 'x');
+    assert_mapping(INPUT_EVENT_CTRL_Q, 0, EDITOR_COMMAND_QUIT, 0);
+    assert_mapping(INPUT_EVENT_CTRL_S, 0, EDITOR_COMMAND_SAVE, 0);
+    assert_mapping(INPUT_EVENT_BACKSPACE, 0, EDITOR_COMMAND_BACKSPACE, 0);
+    assert_mapping(INPUT_EVENT_ENTER, 0, EDITOR_COMMAND_INSERT_NEWLINE, 0);
+    assert_mapping(INPUT_EVENT_ESCAPE, 0, EDITOR_COMMAND_CANCEL, 0);
+    assert_mapping(INPUT_EVENT_ARROW_LEFT, 0, EDITOR_COMMAND_MOVE_LEFT, 0);
+    assert_mapping(INPUT_EVENT_ARROW_RIGHT, 0, EDITOR_COMMAND_MOVE_RIGHT, 0);
+    assert_mapping(INPUT_EVENT_ARROW_UP, 0, EDITOR_COMMAND_MOVE_UP, 0);
+    assert_mapping(INPUT_EVENT_ARROW_DOWN, 0, EDITOR_COMMAND_MOVE_DOWN, 0);
+    assert_mapping(INPUT_EVENT_DELETE, 0, EDITOR_COMMAND_DELETE_CHARACTER, 0);
+}
+
+static void test_invalid_arguments_and_unknown_event(void)
+{
+    InputEvent event = {INPUT_EVENT_NONE, 0};
+    EditorCommand command = {EDITOR_COMMAND_QUIT, 123};
+
+    assert(!input_engine_translate(NULL, &command));
+    assert(!input_engine_translate(&event, NULL));
+
+    event.type = (InputEventType)999;
+    assert(!input_engine_translate(&event, &command));
+}
+
+int main(void)
+{
+    test_all_supported_mappings();
+    test_invalid_arguments_and_unknown_event();
+    return 0;
+}
+```
+
+### `tests/test_command_engine.c`
+
+```c
+/* tests/test_command_engine.c */
+
+#define _POSIX_C_SOURCE 200809L
+#include "command/command_engine.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static void execute(EditorState *state, EditorCommandType type, uint32_t character,
+                    bool *redraw, bool *should_quit)
+{
+    EditorCommand command = {type, character};
+    assert(command_engine_execute(state, &command, NULL, redraw, should_quit));
+}
+
+static void test_editing_commands(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'a', &redraw, &should_quit);
+    assert(redraw && !should_quit && state.is_dirty);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'b', &redraw, &should_quit);
+    assert(redraw);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.column == 1);
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    assert(redraw && state.cursor.column == 0);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'b');
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+    assert(redraw && state.document.line_count == 2 && state.cursor.row == 1);
+    editor_state_destroy(&state);
+}
+
+static void test_quit_and_noop(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_NONE, 0, &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(!redraw && should_quit);
+    editor_state_destroy(&state);
+}
+
+
+static void test_filename_entry_cursor_editing(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_SAVE, 0, &redraw, &should_quit);
+    assert(state.filename_entry_active && redraw);
+
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'a', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'b', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'c', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    assert(state.filename_entry_cursor == 2);
+
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'X', &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "abXc") == 0);
+    assert(state.filename_entry_cursor == 3);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "abc") == 0);
+    assert(state.filename_entry_cursor == 2);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "ab") == 0);
+
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "b") == 0);
+    assert(state.filename_entry_cursor == 0);
+
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 0x20AC, &redraw, &should_quit);
+    assert(state.filename_entry_length == 4);
+    assert(state.filename_entry_cursor == 3);
+    execute(&state, EDITOR_COMMAND_MOVE_LEFT, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_DELETE_CHARACTER, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, "b") == 0);
+    assert(state.filename_entry_length == 1 && state.filename_entry_cursor == 0);
+
+    execute(&state, EDITOR_COMMAND_CANCEL, 0, &redraw, &should_quit);
+    assert(!state.filename_entry_active && !state.is_dirty && state.file_path == NULL);
+    editor_state_destroy(&state);
+}
+
+static void test_dirty_quit_confirmation(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'q', &redraw, &should_quit);
+    assert(state.is_dirty);
+
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && state.quit_confirmation_active);
+    assert(strstr(state.message, "Save changes before quitting?") != NULL);
+
+    execute(&state, EDITOR_COMMAND_CANCEL, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && !state.quit_confirmation_active);
+    assert(state.is_dirty);
+    assert(strcmp(state.message, "Quit cancelled.") == 0);
+
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'n', &redraw, &should_quit);
+    assert(!redraw && should_quit && !state.quit_confirmation_active);
+    assert(state.is_dirty);
+    editor_state_destroy(&state);
+}
+
+static void test_dirty_quit_saves_unnamed_document(void)
+{
+    char path[] = "/tmp/tedit-quit-save-XXXXXX";
+    int descriptor = mkstemp(path);
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    FILE *file;
+    char contents[16];
+    size_t length;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(path) == 0);
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'z', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(state.quit_confirmation_active && !should_quit);
+
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'y', &redraw, &should_quit);
+    assert(state.filename_entry_active && state.quit_after_save && !should_quit);
+    for (size_t index = 0; path[index] != '\0'; ++index)
+    {
+        execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (unsigned char)path[index],
+                &redraw, &should_quit);
+    }
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+    assert(redraw && should_quit && !state.filename_entry_active);
+    assert(state.file_path != NULL && strcmp(state.file_path, path) == 0);
+    assert(!state.is_dirty && !state.quit_after_save);
+
+    file = fopen(path, "rb");
+    assert(file != NULL);
+    length = fread(contents, 1, sizeof(contents), file);
+    assert(!ferror(file));
+    assert(fclose(file) == 0);
+    assert(length == 2 && contents[0] == 'z' && contents[1] == '\n');
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_invalid_arguments(void)
+{
+    EditorState state;
+    EditorCommand command = {EDITOR_COMMAND_NONE, 0};
+    bool redraw;
+    bool should_quit;
+
+    assert(editor_state_init(&state));
+    assert(!command_engine_execute(NULL, &command, NULL, &redraw, &should_quit));
+    assert(!command_engine_execute(&state, NULL, NULL, &redraw, &should_quit));
+    assert(!command_engine_execute(&state, &command, NULL, NULL, &should_quit));
+    assert(!command_engine_execute(&state, &command, NULL, &redraw, NULL));
+    editor_state_destroy(&state);
+}
+
+
+static void test_save_as_success_and_backspace(void)
+{
+    char path[] = "/tmp/tedit-save-as-XXXXXX";
+    int descriptor = mkstemp(path);
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    unsigned char saved[8];
+    FILE *file;
+    size_t length;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(path) == 0);
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'x', &redraw, &should_quit);
+    assert(state.is_dirty);
+    execute(&state, EDITOR_COMMAND_SAVE, 0, &redraw, &should_quit);
+    assert(redraw && state.filename_entry_active && state.is_dirty);
+
+    for (size_t index = 0; path[index] != '\0'; ++index)
+    {
+        execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (unsigned char)path[index],
+                &redraw, &should_quit);
+        assert(redraw && state.filename_entry_active);
+    }
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'x', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_BACKSPACE, 0, &redraw, &should_quit);
+    assert(strcmp(state.filename_entry, path) == 0);
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+
+    assert(redraw && !state.filename_entry_active);
+    assert(state.file_path != NULL && strcmp(state.file_path, path) == 0);
+    assert(!state.is_dirty);
+    assert(strcmp(state.message, "Saved successfully.") == 0);
+
+    file = fopen(path, "rb");
+    assert(file != NULL);
+    length = fread(saved, 1, sizeof(saved), file);
+    assert(!ferror(file));
+    assert(fclose(file) == 0);
+    assert(length == 2 && saved[0] == 'x' && saved[1] == '\n');
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+static void test_save_as_failure_and_cancel_preserve_document(void)
+{
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+    char invalid_path[] = "/tmp/tedit-save-as-fail-XXXXXX";
+    int descriptor = mkstemp(invalid_path);
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(invalid_path) == 0);
+    assert(mkdir(invalid_path, 0700) == 0);
+    assert(editor_state_init(&state));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'q', &redraw, &should_quit);
+    execute(&state, EDITOR_COMMAND_SAVE, 0, &redraw, &should_quit);
+    assert(state.filename_entry_active && state.is_dirty);
+
+    for (size_t index = 0; invalid_path[index] != '\0'; ++index)
+    {
+        execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, (unsigned char)invalid_path[index],
+                &redraw, &should_quit);
+    }
+    execute(&state, EDITOR_COMMAND_INSERT_NEWLINE, 0, &redraw, &should_quit);
+
+    assert(redraw && state.filename_entry_active);
+    assert(state.file_path == NULL);
+    assert(state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'q');
+    assert(strstr(state.message, "Save failed") != NULL);
+
+    execute(&state, EDITOR_COMMAND_CANCEL, 0, &redraw, &should_quit);
+    assert(redraw && !state.filename_entry_active);
+    assert(state.file_path == NULL && state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'q');
+    assert(strcmp(state.message, "Save As cancelled.") == 0);
+    editor_state_destroy(&state);
+    assert(rmdir(invalid_path) == 0);
+}
+
+
+static void test_dirty_quit_saves_named_document(void)
+{
+    char path[] = "/tmp/tedit-quit-named-XXXXXX";
+    int descriptor = mkstemp(path);
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    FILE *file;
+    char contents[16];
+    size_t length;
+
+    assert(descriptor >= 0);
+    assert(close(descriptor) == 0);
+    assert(unlink(path) == 0);
+    assert(editor_state_init(&state));
+    assert(editor_state_save_as(&state, path));
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'n', &redraw, &should_quit);
+    assert(state.is_dirty);
+
+    execute(&state, EDITOR_COMMAND_QUIT, 0, &redraw, &should_quit);
+    assert(redraw && !should_quit && state.quit_confirmation_active);
+    execute(&state, EDITOR_COMMAND_INSERT_CHARACTER, 'Y', &redraw, &should_quit);
+    assert(redraw && should_quit && !state.quit_confirmation_active);
+    assert(!state.is_dirty && state.file_path != NULL && strcmp(state.file_path, path) == 0);
+
+    file = fopen(path, "rb");
+    assert(file != NULL);
+    length = fread(contents, 1, sizeof(contents), file);
+    assert(!ferror(file));
+    assert(fclose(file) == 0);
+    assert(length == 2 && contents[0] == 'n' && contents[1] == '\n');
+
+    editor_state_destroy(&state);
+    assert(unlink(path) == 0);
+}
+
+int main(void)
+{
+    test_editing_commands();
+    test_quit_and_noop();
+    test_invalid_arguments();
+    test_save_as_success_and_backspace();
+    test_save_as_failure_and_cancel_preserve_document();
+    test_filename_entry_cursor_editing();
+    test_dirty_quit_confirmation();
+    test_dirty_quit_saves_unnamed_document();
+    test_dirty_quit_saves_named_document();
+    return 0;
+}
+```
+
+### `tests/test_input_pipeline.c`
+
+```c
+/* tests/test_input_pipeline.c */
+
+#include "command/command_engine.h"
+#include "document/document.h"
+#include "input/input_engine.h"
+#include "input/input_parser.h"
+#include "state/editor_state.h"
+
+#include <assert.h>
+#include <string.h>
+
+static void feed_and_execute(InputParser *parser, EditorState *state, unsigned char byte,
+                             bool *redraw, bool *should_quit)
+{
+    InputEvent event;
+    EditorCommand command;
+
+    assert(input_parser_feed(parser, byte, &event));
+    assert(input_engine_translate(&event, &command));
+    assert(command_engine_execute(state, &command, NULL, redraw, should_quit));
+}
+
+static void test_end_to_end_input_pipeline(void)
+{
+    InputParser parser;
+    EditorState state;
+    bool redraw;
+    bool should_quit;
+    const DocumentLine *line;
+
+    assert(editor_state_init(&state));
+    input_parser_init(&parser);
+
+    feed_and_execute(&parser, &state, 'x', &redraw, &should_quit);
+    assert(redraw && !should_quit);
+    assert(state.is_dirty);
+    line = document_get_line(&state.document, 0);
+    assert(line != NULL && line->length == 1 && line->data[0] == 'x');
+    assert(state.cursor.column == 1);
+
+    /* An unknown CSI sequence produces no command and does not change state. */
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    feed_and_execute(&parser, &state, 'Z', &redraw, &should_quit);
+    assert(!redraw && !should_quit);
+    assert(state.cursor.column == 1);
+
+    /* A complete arrow sequence is parsed before it becomes a command. */
+    feed_and_execute(&parser, &state, 0x1B, &redraw, &should_quit);
+    feed_and_execute(&parser, &state, '[', &redraw, &should_quit);
+    feed_and_execute(&parser, &state, 'D', &redraw, &should_quit);
+    assert(redraw && !should_quit);
+    assert(state.cursor.column == 0);
+
+    /* Save without an associated path starts filename entry. */
+    feed_and_execute(&parser, &state, 0x13, &redraw, &should_quit);
+    assert(redraw && !should_quit);
+    assert(state.is_dirty);
+    assert(state.filename_entry_active);
+    assert(strcmp(state.message, "Enter: save  Esc: cancel") == 0);
+
+    /* Escape is recognized after the parser's standalone-key timeout. */
+    InputEvent event;
+    EditorCommand command;
+    assert(input_parser_feed(&parser, 0x1B, &event));
+    assert(event.type == INPUT_EVENT_NONE);
+    assert(input_parser_timeout(&parser, &event));
+    assert(event.type == INPUT_EVENT_ESCAPE);
+    assert(input_engine_translate(&event, &command));
+    assert(command.type == EDITOR_COMMAND_CANCEL);
+    assert(command_engine_execute(&state, &command, NULL, &redraw, &should_quit));
+    assert(redraw && !should_quit && !state.filename_entry_active);
+    assert(state.is_dirty);
+
+    feed_and_execute(&parser, &state, 0x11, &redraw, &should_quit);
+    assert(redraw && !should_quit && state.quit_confirmation_active);
+    assert(strstr(state.message, "Save changes before quitting?") != NULL);
+    feed_and_execute(&parser, &state, 'n', &redraw, &should_quit);
+    assert(!redraw && should_quit && !state.quit_confirmation_active);
+
+    editor_state_destroy(&state);
+}
+
+int main(void)
+{
+    test_end_to_end_input_pipeline();
+    return 0;
+}
+```
+
+## Interface layout
+
+For a terminal with `rows` rows, the Renderer now reserves:
+
+- `rows - 3` rows for document content;
+- one blank separator row;
+- the Message Bar at row `rows - 2` (zero-based);
+- the Status Bar at row `rows - 1` (zero-based).
+
+The Message Bar uses ANSI black foreground and white background (`ESC [ 30 ; 47 m`). Other rows reset rendition. During filename entry, the prompt is drawn in the Message Bar and the terminal cursor is positioned using the filename-entry cursor. The cursor placement uses the same black-on-white rendition.
+
+The viewport uses the reduced document height, so the cursor cannot scroll into either interface row. Renderer initialization now requires at least four terminal rows.
+
+## Filename-entry editing
+
+`EditorState` tracks `filename_entry_cursor` as a byte offset that always points to a UTF-8 code-point boundary. The Command Engine supports:
+
+- Left and Right: move between code-point boundaries;
+- printable character: insert at the current cursor;
+- Backspace: remove the preceding code point;
+- Delete (`ESC [ 3 ~`): remove the code point at the cursor;
+- Enter: attempt the existing safe save;
+- Escape: cancel filename entry.
+
+The Input Parser recognizes the common CSI Delete sequence. The Input Engine maps it to `EDITOR_COMMAND_DELETE_CHARACTER`, but the Command Engine acts on that command only while filename entry is active. Document Delete behavior remains deferred to the earlier navigation/editing milestone.
+
+Save failure keeps filename entry active and preserves the current file association, Document, and Dirty Flag. The Message Bar temporarily displays a save-error prefix with the editable path; editing or moving the filename cursor returns the prompt to its normal form.
+
+## Unsaved-quit confirmation
+
+Ctrl-Q exits immediately if the Dirty Flag is clear. If the document is dirty, the Message Bar asks:
+
+`Save changes before quitting? Y=save N=discard Esc=cancel`
+
+- `Y` saves and quits only after a successful save.
+- `N` quits without saving.
+- Escape cancels the quit request and returns to editing.
+- For an unnamed document, `Y` opens filename entry. The editor exits only after the save succeeds.
+- A failed save leaves the editor open and preserves the Dirty Flag.
+- Escape during filename entry after choosing `Y` cancels both the save attempt and the quit request.
+
+No separate Save As command for already-associated documents was added.
+
+## Important invariants
+
+- Renderer remains a read-only consumer of Editor State.
+- The Message Bar and Status Bar are presentation rows, never part of the document viewport.
+- Filename insertion, Backspace, and Delete preserve UTF-8 code-point boundaries.
+- Cancellation does not alter the Document, current path, or Dirty Flag.
+- Failed saves do not clear the Dirty Flag or terminate the Event Loop.
+- A quit request that requires saving succeeds only after the File Manager reports a successful save.
+
+## Build and automated tests
+
+Debug build:
+
+```bash
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/debug -j2
+ctest --test-dir build/debug --output-on-failure
+```
+
+Warning-clean build:
+
+```bash
+cmake -S . -B build/warnings -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS='-Wall -Wextra -Wpedantic -Werror'
+cmake --build build/warnings -j2
+ctest --test-dir build/warnings --output-on-failure
+```
+
+Both builds passed all eight CTest targets: `smoke`, `editing`, `file`, `file_save`, `input_parser`, `input_engine`, `command_engine`, and `input_pipeline`.
+
+Pseudo-terminal integration checks also passed for filename editing with Left/Right/Delete, Save As for an unnamed document, Message Bar styling, dirty-quit confirmation, Escape cancellation, and discard. Named and unnamed save-before-quit paths are covered by Command Engine tests.
+
+## Deferred work
+
+- Home, End, Page Up, Page Down, document Delete, and Tab remain follow-up work for the earlier navigation/editing milestones.
+- Non-ASCII filename bytes are preserved for file operations but currently appear as `?` in the Status Bar and filename-entry display.
+- Terminal resize handling, sanitizer runs, broader failure injection, and final release integration belong to Chapter 53 and later hardening work.
+
+## Current state
+
+<Aside>
+  Complete code for this chapter can be found in the relevent branch in the
+  Github repository at
+  https://github.com/SachinAthu/tedit/tree/chapter-52-complete.
+</Aside>
+
+Chapter 52 interface refinement is complete. Next: **Chapter 53 — Completing Keyboard Editing and Navigation**.
