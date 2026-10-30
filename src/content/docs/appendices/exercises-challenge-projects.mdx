@@ -1,6 +1,843 @@
 ---
 title: Appendix O — Exercises and Challenge Projects
+description: "Provides implementation exercises and larger challenge projects for evaluating understanding and exploring extensions to the terminal editor."
 sidebar:
   label: O — Exercises and Challenge Projects
   order: 15
 ---
+
+This appendix provides exercises and larger challenge projects for readers who wish to evaluate their understanding of the terminal text editor and explore possible extensions.
+
+The exercises are based on the architecture, implementation techniques, and engineering principles developed throughout this book. They are intended to encourage independent reasoning, experimentation, and practical application rather than repeat the implementation chapters.
+
+The exercises are organized into two difficulty levels:
+
+- **Level 1 — Implementation Exercises:** Modify or improve a limited part of the existing editor.
+- **Level 2 — Challenge Projects:** Explore larger architectural changes, alternative algorithms, and advanced editor capabilities.
+
+Not every exercise is intended to become part of the baseline editor. Some deliberately explore alternatives to the original design.
+
+## H.1 — Level 1: Implementation Exercises
+
+These exercises require modifying the existing editor.
+
+Each exercise should be completed using the established module boundaries, coding standards, and ownership rules.
+
+The objective is to improve a limited area of the implementation without unnecessarily redesigning unrelated components.
+
+### H.1.1 — Add a New Terminal Key Sequence
+
+**Objective**
+
+Extend the Input Parser to recognize an additional terminal key sequence and expose it to the rest of the editor through an abstract input event.
+
+**Prerequisites**
+
+- Terminal escape sequences.
+- Input Handler.
+- Input Parser.
+- Input Engine.
+- Command Engine.
+- Event-driven architecture.
+
+**Requirements**
+
+1. Select a terminal key sequence that is not already supported.
+2. Add a corresponding abstract input event.
+3. Implement recognition in the Input Parser.
+4. Map the event to an editor command through the Input Engine.
+5. Implement the command behavior in the appropriate component.
+6. Add automated tests for the complete input pipeline.
+
+**Constraints**
+
+- Do not introduce terminal-specific parsing into the Input Engine.
+- Do not allow the Input Parser to modify Editor State.
+- Preserve existing key-sequence behavior.
+- Account for incomplete and malformed escape sequences.
+- Do not assume every terminal emulator produces identical sequences.
+
+**Acceptance Criteria**
+
+- The new sequence produces the expected abstract event.
+- The Input Engine maps the event correctly.
+- The Command Engine executes the intended behavior.
+- Existing input tests continue to pass.
+- Unsupported or malformed sequences do not corrupt parser state.
+
+**Suggested Tests**
+
+- Valid sequence recognition.
+- Incomplete sequence handling.
+- Invalid sequence handling.
+- Parser recovery after malformed input.
+- End-to-end event-to-command behavior.
+
+**Extension Ideas**
+
+- Support multiple terminal representations of the same key.
+- Introduce configurable keyboard bindings.
+- Investigate terminal capability detection.
+
+### H.1.2 — Add a Regression Test for a Boundary Condition
+
+**Objective**
+
+Improve test coverage by identifying and testing a boundary condition that is not adequately covered by the existing test suite.
+
+**Prerequisites**
+
+- Document operations.
+- Cursor movement.
+- Viewport calculations.
+- Unit testing.
+- Regression testing.
+
+**Requirements**
+
+1. Select an existing component.
+2. Identify a boundary condition that could produce incorrect behavior.
+3. Reproduce the condition with a focused test.
+4. Verify the expected result.
+5. Add the test to the appropriate CTest target.
+6. Confirm that the test passes with the current implementation.
+
+Possible areas include:
+
+- Splitting an empty line.
+- Merging lines containing Unicode code points.
+- Moving the Cursor through empty lines.
+- Scrolling a document containing a single extremely long line.
+- Resizing the terminal to very small dimensions.
+- Handling a Document with zero logical lines.
+
+**Constraints**
+
+- Tests must not depend on execution order.
+- Avoid relying on arbitrary timing or manual interaction.
+- Keep unit tests independent of terminal rendering where possible.
+- Do not weaken existing assertions to make the new test pass.
+
+**Acceptance Criteria**
+
+- The test reproduces the selected boundary condition.
+- Expected behavior is explicitly verified.
+- The test detects an intentionally introduced regression.
+- The complete existing test suite continues to pass.
+
+**Suggested Tests**
+
+Test the selected operation with:
+
+- The smallest valid input.
+- The largest relevant boundary value.
+- Invalid input.
+- Repeated execution.
+- An operation that should leave state unchanged.
+
+**Extension Ideas**
+
+- Introduce property-based testing.
+- Add randomized operation sequences.
+- Explore fuzz testing for the Input Parser.
+
+### H.1.3 — Improve Terminal Output Error Handling
+
+**Objective**
+
+Strengthen the Renderer and terminal output path against failures during terminal writes.
+
+**Prerequisites**
+
+- POSIX `write()`.
+- Partial writes.
+- Interrupted system calls.
+- Renderer architecture.
+- Error handling.
+- Pseudo-terminal testing.
+
+**Requirements**
+
+1. Review the existing terminal output implementation.
+2. Identify failure conditions that are not adequately handled.
+3. Ensure partial writes are handled correctly.
+4. Handle interrupted system calls appropriately.
+5. Define the behavior when terminal output cannot be completed.
+6. Ensure rendering failures are propagated to the appropriate application layer.
+7. Add deterministic tests for relevant write failures.
+
+**Constraints**
+
+- Do not allow the Renderer to modify Document contents.
+- Do not silently report a partially written frame as successful.
+- Preserve terminal cleanup behavior.
+- Do not terminate the application for recoverable errors without justification.
+- Avoid introducing unnecessary platform dependencies.
+
+**Acceptance Criteria**
+
+- Partial writes do not silently truncate output.
+- Interrupted writes are handled correctly.
+- Non-recoverable write failures are reported.
+- Terminal cleanup remains reliable after rendering failures.
+- Tests verify the defined error-handling behavior.
+
+**Suggested Tests**
+
+- Successful complete write.
+- Partial write followed by success.
+- Interrupted write.
+- Zero-byte write.
+- Terminal output failure.
+- Failure during cursor restoration.
+
+**Extension Ideas**
+
+- Introduce an injectable terminal output interface.
+- Add a deterministic write-failure test harness.
+- Investigate terminal recovery after an incomplete frame.
+
+### H.1.4 — Implement Configurable Tab Width
+
+**Objective**
+
+Extend the existing configuration mechanism to allow users to select the tab width rather than relying exclusively on the built-in default.
+
+**Prerequisites**
+
+- Editor Configuration.
+- Text-layout calculations.
+- Renderer.
+- Cursor positioning.
+- Viewport scrolling.
+- Configuration validation.
+
+**Requirements**
+
+1. Retain the existing default tab width.
+2. Allow a user to specify a different tab width.
+3. Validate configuration values.
+4. Ensure the Renderer uses the configured value when expanding TAB characters.
+5. Ensure Cursor visual positioning uses the same tab-width rules.
+6. Ensure Viewport visibility calculations remain consistent.
+7. Document the configuration mechanism.
+
+**Constraints**
+
+- The Document must continue storing TAB as one logical code point.
+- Do not replace TAB characters with spaces during rendering.
+- Do not make the Cursor store visual columns as logical Document positions.
+- Configuration must have a single authoritative value.
+- Invalid configuration values must not produce inconsistent layout calculations.
+
+**Acceptance Criteria**
+
+- The default tab width remains four columns.
+- Alternative tab widths can be selected.
+- Rendering uses the configured tab stops.
+- Cursor positioning remains correct.
+- Horizontal scrolling remains correct.
+- Existing editing and rendering tests continue to pass.
+
+**Suggested Tests**
+
+- Default tab width.
+- Minimum accepted tab width.
+- Different configured widths.
+- Multiple consecutive TAB characters.
+- TAB near the viewport boundary.
+- Cursor movement across lines containing TAB characters.
+
+**Extension Ideas**
+
+- Add configuration-file loading.
+- Support command-line overrides.
+- Allow runtime configuration changes.
+
+### H.1.5 — Add a Diagnostic Assertion
+
+**Objective**
+
+Strengthen internal consistency checks by adding a diagnostic assertion for a Document invariant that is not already adequately checked.
+
+**Prerequisites**
+
+- Document representation.
+- Memory ownership.
+- Assertions.
+- Debug builds.
+- Document invariants.
+
+**Requirements**
+
+1. Identify an important Document invariant.
+2. Determine where the invariant should be checked.
+3. Implement an assertion in the appropriate module.
+4. Ensure the assertion is active in the intended diagnostic configuration.
+5. Add tests for the underlying valid and invalid conditions where practical.
+6. Document what the assertion protects.
+
+Potential invariants include:
+
+- Every allocated line has a valid storage pointer.
+- Line length never exceeds line capacity.
+- Document line count never exceeds allocated line capacity.
+- Logical line ordering remains valid.
+- All stored code points are valid Unicode scalar values.
+
+**Constraints**
+
+- Assertions must not replace ordinary input validation.
+- Assertions must not introduce state changes.
+- Do not add expensive validation to performance-critical paths without justification.
+- Preserve release-build behavior.
+
+**Acceptance Criteria**
+
+- The selected invariant is clearly defined.
+- The assertion detects a deliberately introduced violation.
+- Valid Document operations do not trigger the assertion.
+- Debug and Release builds behave as intended.
+
+**Suggested Tests**
+
+- Valid empty Document.
+- Valid populated Document.
+- Document after line splitting.
+- Document after line merging.
+- Document after insertion and deletion.
+- Deliberately corrupted internal state in a dedicated diagnostic test.
+
+**Extension Ideas**
+
+- Introduce a reusable Document validation function.
+- Add assertions for Cursor and Viewport invariants.
+- Integrate invariant validation into sanitizer-enabled test configurations.
+
+---
+
+## H.2 — Level 2: Challenge Projects
+
+Challenge projects require independent architectural reasoning.
+
+Unlike the implementation exercises, they may introduce new modules, data structures, state models, or interaction patterns.
+
+Readers should begin by studying the existing architecture and identifying which responsibilities must change.
+
+A successful challenge project should preserve the principles that remain applicable, even when the original implementation strategy is replaced.
+
+**Important distinction:** These projects are optional extensions. Their absence does not indicate that the baseline editor is incomplete or that the original design decisions were incorrect.
+
+### H.2.1 — Replace the Document Representation with a Gap Buffer
+
+Extension: Alternative data structure
+
+**Objective**
+
+Replace the vector-of-lines Document representation with a Gap Buffer and investigate how the alternative affects editing performance and architectural complexity.
+
+**Prerequisites**
+
+- Document abstraction.
+- Dynamic memory allocation.
+- Gap Buffer representation.
+- Insertion and deletion algorithms.
+- Memory ownership.
+- Algorithmic complexity.
+
+**Requirements**
+
+1. Study the existing Document interface.
+2. Design a Gap Buffer representation.
+3. Define the gap's position and capacity.
+4. Implement gap movement.
+5. Implement insertion and deletion.
+6. Implement gap expansion.
+7. Define how logical lines are represented or derived.
+8. Preserve the Document's externally visible editing behavior.
+9. Compare the new implementation with the original vector-of-lines representation.
+
+**Constraints**
+
+- Do not expose Gap Buffer internals to the Command Engine.
+- Preserve the Document's ownership of text.
+- Preserve logical Cursor coordinates.
+- Maintain Document validity after every successful operation.
+- Handle allocation failures without corrupting the Document.
+- Do not assume that improved insertion performance automatically improves every operation.
+
+**Acceptance Criteria**
+
+- Existing Document operations behave consistently.
+- Insertion and deletion preserve text.
+- Line splitting and merging work correctly.
+- Memory ownership is unambiguous.
+- Boundary conditions are tested.
+- The implementation passes the existing Document-related regression tests.
+- Performance differences are supported by measurements.
+
+**Suggested Tests**
+
+- Insert at the beginning, middle, and end.
+- Delete before and after the gap.
+- Move the gap repeatedly.
+- Expand the gap.
+- Split and merge logical lines.
+- Insert and delete large sequences of characters.
+- Exercise allocation failure during expansion.
+
+**Extension Ideas**
+
+- Compare Gap Buffer and vector-of-lines performance.
+- Implement a piece table as another alternative.
+- Investigate how a single contiguous gap behaves with long editing sessions.
+
+### H.2.2 — Implement Undo and Redo
+
+Extension: New editing capability
+
+**Objective**
+
+Introduce an editing history system that allows users to reverse and restore previous document modifications.
+
+**Prerequisites**
+
+- Command Engine.
+- Document operations.
+- State ownership.
+- Command Pattern.
+- Snapshots and operation history.
+- Memory management.
+
+**Requirements**
+
+1. Define the history model.
+2. Determine which editing operations are reversible.
+3. Define how an operation records the information needed for reversal.
+4. Implement undo.
+5. Implement redo.
+6. Define how new edits affect the redo history.
+7. Integrate history operations into the Command Engine.
+8. Add appropriate keyboard bindings.
+9. Ensure the Dirty Flag remains consistent with the persistence model.
+
+**Constraints**
+
+- Do not place editing-history logic inside the Renderer.
+- Do not duplicate the Document as an uncontrolled second source of truth.
+- Preserve Document invariants.
+- Define memory ownership for stored history entries.
+- Handle failed operations without corrupting history.
+- Define behavior when the history limit is reached.
+
+**Acceptance Criteria**
+
+- Undo reverses supported editing operations.
+- Redo reapplies previously undone operations.
+- A new edit after undo invalidates the abandoned redo sequence.
+- Cursor placement is restored according to the defined history model.
+- Document contents remain valid.
+- Dirty Flag behavior is consistent with the chosen model.
+
+**Suggested Tests**
+
+- Undo and redo a character insertion.
+- Undo and redo a deletion.
+- Undo and redo a line split.
+- Undo and redo a line merge.
+- Undo repeatedly until history is exhausted.
+- Redo repeatedly until history is exhausted.
+- Create a new edit after undo.
+- Test history allocation failures.
+
+**Extension Ideas**
+
+- Introduce bounded history.
+- Group consecutive character insertions into editing transactions.
+- Compare operation-based history with snapshot-based history.
+- Investigate persistent or branching editing history.
+
+### H.2.3 — Add Search and Match Navigation
+
+Extension: New editor capability
+
+**Objective**
+
+Introduce document search that allows users to locate text and navigate between matching positions.
+
+**Prerequisites**
+
+- Document representation.
+- Cursor positioning.
+- Input pipeline.
+- Command Engine.
+- Viewport management.
+- Text comparison and search algorithms.
+
+**Requirements**
+
+1. Define a Search State.
+2. Define how search queries are entered.
+3. Implement literal text matching.
+4. Implement forward and backward search.
+5. Support navigation between matches.
+6. Define wrap-around behavior.
+7. Position the Cursor at a selected match.
+8. Ensure the Viewport exposes the selected match.
+9. Provide appropriate user feedback.
+
+**Constraints**
+
+- Do not store a second authoritative copy of the Document.
+- Do not make the Renderer responsible for locating matches.
+- Search results must use logical Document coordinates.
+- Search must not modify the Document.
+- Search navigation must not set the Dirty Flag.
+- Define behavior for empty queries and invalid positions.
+
+**Acceptance Criteria**
+
+- Literal searches find expected matches.
+- Forward and backward navigation work correctly.
+- Match positions remain valid.
+- Cursor and Viewport are synchronized after navigation.
+- Search operations do not modify document contents.
+- Boundary and no-match conditions are handled correctly.
+
+**Suggested Tests**
+
+- Match at the beginning of a line.
+- Match at the end of a line.
+- Multiple matches on one line.
+- Matches across different lines.
+- No matching results.
+- Forward and backward navigation.
+- Wrap-around behavior.
+- Empty search query.
+- Search in an empty Document.
+
+**Extension Ideas**
+
+- Incremental search.
+- Case-insensitive matching.
+- Regular-expression search.
+- Match highlighting.
+- Search and replace.
+- Search result indexing.
+
+### H.2.4 — Experiment with Incremental Rendering
+
+Extension: Alternative rendering strategy
+
+**Objective**
+
+Replace or supplement full-frame redraws with an incremental rendering strategy and measure whether it improves performance.
+
+**Prerequisites**
+
+- Renderer.
+- Screen Buffer.
+- Full-redraw rendering.
+- Event Loop.
+- Terminal output.
+- Performance measurement.
+
+**Requirements**
+
+1. Establish a measurable full-redraw baseline.
+2. Identify which screen regions change after common editor operations.
+3. Design a mechanism for tracking visual changes.
+4. Implement incremental updates.
+5. Determine how the previous frame is compared with the current frame.
+6. Handle terminal resizing.
+7. Preserve correct rendering after operations that affect the entire display.
+8. Compare the results with the baseline renderer.
+
+**Constraints**
+
+- Do not allow the Renderer to modify Editor State.
+- The Document must remain the authoritative text representation.
+- The terminal must not display an inconsistent partially constructed frame.
+- Do not introduce persistent visual state without defining its ownership.
+- Preserve correct Cursor positioning.
+- Optimization must be supported by measurements.
+
+**Acceptance Criteria**
+
+- The incremental renderer produces the same visible result as full redraw.
+- Changed regions are updated correctly.
+- Unchanged regions are not unnecessarily rewritten where the design promises to avoid them.
+- Resize and scrolling behavior remain correct.
+- Performance comparisons are reproducible.
+- The original full-redraw implementation remains available as a reference or fallback.
+
+**Suggested Tests**
+
+- Single-character insertion.
+- Character deletion.
+- Cursor movement.
+- Status Bar updates.
+- Message Bar updates.
+- Vertical scrolling.
+- Horizontal scrolling.
+- Terminal resizing.
+- Full-screen changes after file loading.
+
+**Extension Ideas**
+
+- Dirty-cell tracking.
+- Dirty-row tracking.
+- Region-based redraw.
+- Frame comparison.
+- Adaptive selection between full and incremental rendering.
+
+### H.2.5 — Add Crash Recovery and Stronger Save Durability
+
+Extension: Persistence and reliability enhancement
+
+**Objective**
+
+Extend the existing file persistence model to improve recovery from unexpected application termination or system failure.
+
+**Prerequisites**
+
+- File Manager.
+- Temporary-file saving.
+- Atomic replacement.
+- POSIX file operations.
+- Dirty Flag.
+- Failure handling.
+- File-system durability concepts.
+
+**Requirements**
+
+1. Review the existing atomic save procedure.
+2. Identify which failures the current design protects against.
+3. Design a crash-recovery mechanism.
+4. Determine when recovery information should be written.
+5. Define the format of recovery data.
+6. Implement recovery-data loading.
+7. Define when recovery information is removed.
+8. Investigate stronger persistence guarantees using synchronization operations.
+9. Define how the user is informed about recoverable changes.
+
+**Constraints**
+
+- Do not assume atomic replacement guarantees power-loss durability.
+- Do not overwrite the original document with incomplete recovery data.
+- Recovery data must be distinguishable from normal document files.
+- Define ownership and cleanup of temporary recovery resources.
+- Avoid treating an incomplete recovery record as a valid Document.
+- Preserve the existing safe-save behavior.
+
+**Acceptance Criteria**
+
+- Recovery data can be written and identified.
+- Interrupted recovery writes do not corrupt the original document.
+- Valid recovery data can be loaded.
+- Invalid or incomplete recovery data is rejected safely.
+- Recovery behavior is documented.
+- The existing save procedure continues to work.
+
+**Suggested Tests**
+
+- Normal save and recovery-data cleanup.
+- Application termination during recovery-data writing.
+- Recovery from a valid recovery record.
+- Recovery from incomplete data.
+- Corrupted recovery record.
+- Failed file synchronization.
+- Failed atomic replacement.
+- Recovery after an unclean application exit.
+
+**Extension Ideas**
+
+- Periodic automatic recovery snapshots.
+- Configurable recovery intervals.
+- Recovery history.
+- Comparison between recovered and saved documents.
+- Investigation of directory synchronization and filesystem-specific durability behavior.
+
+### H.2.6 — Design Multi-Document and Multi-View Support
+
+Extension: Architectural expansion
+
+**Objective**
+
+Extend the single-document editor into an application capable of managing multiple documents and displaying multiple views.
+
+**Prerequisites**
+
+- Editor State.
+- Document ownership.
+- Cursor and Viewport.
+- Renderer.
+- Command Engine.
+- State ownership.
+- Window and layout concepts.
+
+**Requirements**
+
+1. Define how multiple Documents are owned and identified.
+2. Design a representation for the collection of open documents.
+3. Define how the active document is selected.
+4. Determine whether each document owns its own Cursor and Dirty Flag.
+5. Design a Window or View abstraction.
+6. Define how multiple views reference the same Document.
+7. Determine whether each view maintains an independent Cursor and Viewport.
+8. Extend the Command Engine to operate on the appropriate document and view.
+9. Adapt the Renderer to display the selected layout.
+10. Define document-closing behavior when unsaved changes exist.
+
+**Constraints**
+
+- Avoid duplicating Document contents merely to support multiple views.
+- Define ownership independently from visibility.
+- Preserve the existing Document invariants.
+- Do not allow one view to corrupt another view's navigation state.
+- Define the lifetime of Documents and Views explicitly.
+- Keep terminal-specific rendering details outside the Document abstraction.
+
+**Acceptance Criteria**
+
+- Multiple Documents can coexist.
+- The active Document can be changed.
+- Switching documents preserves their individual contents and editing state.
+- Multiple Views can reference the same Document without duplicating its text.
+- Each View maintains its defined navigation state.
+- Closing a Document releases its resources only when no longer needed.
+- Unsaved changes are handled according to the defined policy.
+
+**Suggested Tests**
+
+- Open two independent Documents.
+- Switch between Documents.
+- Modify one Document without affecting another.
+- Switch away from and back to a Document.
+- Create two Views of the same Document.
+- Move the Cursor independently in each View.
+- Close a Document with unsaved changes.
+- Test resource cleanup when the last View is removed.
+
+**Extension Ideas**
+
+- Tab-based document switching.
+- Split windows.
+- Horizontal and vertical window arrangements.
+- Multiple Views of one Document.
+- Independent scrolling.
+- Resizable window layouts.
+- Document switching through configurable keyboard bindings.
+
+---
+
+## H.3 — General Guidelines for Completing Exercises
+
+The following guidelines apply to all implementation exercises and challenge projects.
+
+### H.3.1 — Preserve Architectural Boundaries
+
+New functionality should respect the established responsibilities of the editor.
+
+For example:
+
+- Terminal-specific byte sequences belong in the Input Parser.
+- Keyboard-event mapping belongs in the Input Engine.
+- Editing behavior belongs in the Command Engine and the appropriate core components.
+- Text ownership belongs to the Document.
+- Cursor navigation belongs to the Cursor component.
+- Visible-region management belongs to the Viewport.
+- Frame construction belongs to the Renderer.
+- File persistence belongs to the File Manager.
+
+An extension should not introduce unnecessary dependencies between these components.
+
+### H.3.2 — Define Invariants Before Implementation
+
+Before implementing a substantial feature, identify the conditions that must remain true.
+
+For example, a new Document operation should define:
+
+- Valid row and column ranges.
+- Line ownership rules.
+- Memory allocation requirements.
+- Behavior on failure.
+- Cursor transition requirements.
+- Dirty Flag behavior.
+
+Writing these conditions before implementation makes the design easier to reason about and the resulting tests more meaningful.
+
+### H.3.3 — Test Failure Conditions
+
+Do not limit testing to successful operations.
+
+Consider:
+
+- Invalid arguments.
+- Empty input.
+- Boundary positions.
+- Allocation failures.
+- File-system errors.
+- Interrupted system calls.
+- Incomplete terminal sequences.
+- Invalid Unicode data.
+- Unexpected terminal dimensions.
+
+A reliable implementation must define what happens when an operation cannot be completed.
+
+### H.3.4 — Measure Before Optimizing
+
+When experimenting with alternative algorithms or rendering strategies, establish a baseline first.
+
+Record:
+
+- Input workload.
+- Document size.
+- Number of editing operations.
+- Execution time.
+- Memory consumption.
+- Test environment.
+
+Do not conclude that an alternative is better merely because its theoretical complexity is lower.
+
+The additional implementation and maintenance costs must also be considered.
+
+### H.3.5 — Document Architectural Changes
+
+Substantial extensions should include an explanation of the design decisions involved.
+
+When appropriate, document:
+
+- The original design.
+- The limitation being addressed.
+- The alternative considered.
+- The selected approach.
+- The trade-offs.
+- New invariants.
+- Changes to component ownership.
+- Testing evidence.
+
+For significant decisions, use an Architecture Decision Record.
+
+---
+
+## H.4 — Final Perspective
+
+Building a text editor is not simply a matter of implementing insertion, deletion, navigation, and file saving.
+
+The deeper engineering challenge is maintaining correctness while multiple components cooperate to transform user input into changes in an in-memory Document and, eventually, persistent storage.
+
+The exercises in this appendix encourage readers to move beyond reproducing an implementation and begin evaluating the reasoning behind it.
+
+A successful extension is not necessarily the one with the most features or the most sophisticated algorithm.
+
+It is one that:
+
+- Solves a clearly defined problem.
+- Preserves the invariants that remain applicable.
+- Respects component responsibilities.
+- Handles failure conditions deliberately.
+- Can be tested and verified.
+- Makes its trade-offs explicit.
+
+The objective of these exercises is to help readers become capable of designing, evaluating, and extending software systems independently.
